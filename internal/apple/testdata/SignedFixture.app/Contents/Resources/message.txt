@@ -1,0 +1,1 @@
+This original fixture is sealed by an ad-hoc signature for portable integrity tests.

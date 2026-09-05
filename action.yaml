@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+name: Setup Stemma
+description: Install Stemma from a GitHub release
+inputs:
+  version:
+    description: Release tag to install
+    default: latest
+  token:
+    description: GitHub token for downloading release assets
+    default: ${{ github.token }}
+  digest:
+    description: Optional SHA-256 of the release archive
+    required: false
+runs:
+  using: composite
+  steps:
+    - uses: jaxxstorm/action-install-gh-release@25e24d2d23ae098373794ef1d6faecb48ee52da8 # v3.0.0
+      with:
+        repo: woodleighschool/stemma
+        tag: ${{ inputs.version }}
+        token: ${{ inputs.token }}
+        digest: ${{ inputs.digest }}
+        asset-name: stemma

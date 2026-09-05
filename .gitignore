@@ -1,0 +1,27 @@
+# Go
+/stemma
+/stemma.exe
+/dist/
+/tmp/
+*.test
+coverage.out
+go.work
+go.work.sum
+
+# Local data
+.stemma/
+
+# Local configuration
+.env
+.env.*
+!.env.example
+
+# Local Mise
+.mise.local.toml
+.mise.local.lock
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*

@@ -1,0 +1,64 @@
+[tools]
+go = "1.27.0"
+"go:golang.org/x/vuln/cmd/govulncheck" = "1.7.0"
+golangci-lint = "2.13.1"
+lefthook = "2.1.12"
+actionlint = "1.7.12"
+zizmor = "1.29.0"
+oxfmt = "0.65.0"
+"npm:@commitlint/cli" = "21.2.2"
+
+[settings]
+experimental = true
+pin = true
+lockfile = true
+
+[tasks.deps]
+description = "Download Go dependencies"
+run = "go mod download"
+
+[tasks.build]
+description = "Build the standalone CLI"
+run = "go build -trimpath -o stemma ./cmd/stemma"
+
+[tasks.test]
+description = "Run portable contract and executable tests"
+run = ["go vet ./...", "go test -race -count=1 ./..."]
+
+[tasks.lint]
+description = "Run Go linters"
+run = "golangci-lint run"
+
+[tasks.format]
+description = "Format Go source"
+run = "go fmt ./..."
+
+[tasks.fmt-check]
+description = "Check Go formatting"
+run = "test -z \"$(gofmt -l .)\" || { gofmt -l .; exit 1; }"
+
+[tasks.tidy]
+description = "Tidy Go dependencies"
+run = "go mod tidy"
+
+[tasks.tidy-check]
+description = "Check Go dependencies"
+run = "go mod tidy -diff"
+
+[tasks.generate]
+description = "Generate the configuration schema"
+run = "go run ./cmd/stemma schema > stemma.schema.json"
+
+[tasks.vulncheck]
+description = "Check known Go vulnerabilities"
+run = "govulncheck ./..."
+
+[tasks.workflow-lint]
+description = "Validate GitHub workflows"
+run = [
+  "actionlint .github/workflows/*.yaml",
+  "zizmor --offline --no-ignores .github/workflows action.yaml",
+]
+
+[hooks]
+postinstall = "lefthook install"
