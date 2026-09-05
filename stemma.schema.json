@@ -1,0 +1,1748 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/woodleighschool/stemma/main/stemma.schema.json",
+  "$defs": {
+    "Artifact": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "pkg"
+          ],
+          "description": "Artifact representation. Version 1 supports portable PKG creation."
+        },
+        "identifier": {
+          "type": "string",
+          "description": "Stable reverse-domain package identifier."
+        },
+        "version": {
+          "type": "string",
+          "description": "Explicit package version, for example 1.0."
+        },
+        "payload": {
+          "type": "string",
+          "description": "Relative payload directory within the selected source tree."
+        },
+        "install_location": {
+          "type": "string",
+          "description": "Absolute installation destination. Defaults to /."
+        },
+        "filename": {
+          "type": "string",
+          "description": "Output package basename. Defaults to the artifact name with .pkg."
+        },
+        "scripts": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Preinstall and postinstall script paths within the selected source tree. Scripts are packaged without execution."
+        },
+        "from": {
+          "type": "string",
+          "enum": [
+            "source"
+          ],
+          "description": "Input artifact. Omitted or source selects the prepared source in version 1."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type",
+        "identifier",
+        "version"
+      ]
+    },
+    "Destination": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "munki",
+            "plugin",
+            "jamf",
+            "intune"
+          ],
+          "description": "Provider or destination implementation. Unknown values are rejected."
+        },
+        "path": {
+          "type": "string",
+          "description": "Filesystem path. Source paths must stay within the Stemma project."
+        },
+        "plugin": {
+          "type": "string",
+          "description": "Name of an explicitly trusted plugin declared in this project."
+        },
+        "config": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IntuneConnection"
+            },
+            {
+              "$ref": "#/$defs/JamfConnection"
+            },
+            {
+              "type": "object",
+              "description": "Native plugin connection configuration."
+            }
+          ],
+          "type": "object",
+          "description": "Destination-specific connection configuration. Reference credential environment variables instead of embedding secrets."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type"
+      ]
+    },
+    "Fragment": {
+      "properties": {
+        "version": {
+          "type": "integer",
+          "enum": [
+            1
+          ],
+          "description": "Configuration format version. Use 1."
+        },
+        "recipes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Recipe"
+          },
+          "type": "object",
+          "description": "Named software recipes. Use separate names for platform and architecture variants."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "version",
+        "recipes"
+      ],
+      "description": "Software-family fragment imported by a Stemma project. Paths are relative to this file."
+    },
+    "IntuneConnection": {
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "tenant_id_env"
+                ]
+              },
+              {
+                "required": [
+                  "client_id_env"
+                ]
+              },
+              {
+                "required": [
+                  "client_secret_env"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "token_env"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "token_env"
+            ]
+          },
+          "required": [
+            "tenant_id_env",
+            "client_id_env",
+            "client_secret_env"
+          ]
+        }
+      ],
+      "properties": {
+        "client_id_env": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Environment variable containing the app registration client ID."
+        },
+        "client_secret_env": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Environment variable containing the app registration secret. Secret values never belong in this configuration."
+        },
+        "graph_url": {
+          "type": "string",
+          "description": "Graph base URL ending in /v1.0. macOSPkgApp selects /beta automatically. HTTPS is required except localhost for tests.",
+          "default": "https://graph.microsoft.com/v1.0"
+        },
+        "tenant_id_env": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Environment variable containing the Microsoft Entra tenant ID."
+        },
+        "token_env": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Environment variable containing an existing Graph bearer token. Choose this or all three client credential variables."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Shared Graph connection for Windows and macOS apps. Set metadata.app_id on a recipe to adopt an existing app. Requires Graph DeviceManagementApps.ReadWrite.All for apply."
+    },
+    "IntuneMetadata": {
+      "oneOf": [
+        {
+          "properties": {
+            "@odata.type": {
+              "const": "#microsoft.graph.win32LobApp",
+              "description": "Native Graph app subtype. macOSPkgApp uses the beta API; other supported types use v1.0."
+            },
+            "allowedArchitectures": {
+              "enum": [
+                "x86",
+                "x64",
+                "arm64",
+                null
+              ],
+              "description": "Supported processor architecture; null clears it on an existing app. A non-null value is required for creation."
+            },
+            "app_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+            },
+            "assignments": {
+              "items": {
+                "properties": {
+                  "@odata.type": {
+                    "const": "#microsoft.graph.mobileAppAssignment"
+                  },
+                  "intent": {
+                    "type": "string",
+                    "enum": [
+                      "available",
+                      "required",
+                      "uninstall",
+                      "availableWithoutEnrollment"
+                    ],
+                    "description": "Native deployment intent."
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.groupAssignmentTarget"
+                          },
+                          "groupId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type",
+                          "groupId"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
+                          },
+                          "groupId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type",
+                          "groupId"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "intent",
+                  "target"
+                ]
+              },
+              "type": "array",
+              "maxItems": 1000,
+              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Native app description. Required for creation."
+            },
+            "developer": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "App developer label."
+            },
+            "displayName": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Company Portal display name. Required for creation."
+            },
+            "informationUrl": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Publisher information URL."
+            },
+            "installCommandLine": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Windows install command line. Required for creation; Stemma does not guess installer switches."
+            },
+            "installExperience": {
+              "properties": {
+                "@odata.type": {
+                  "const": "#microsoft.graph.win32LobAppInstallExperience"
+                },
+                "deviceRestartBehavior": {
+                  "type": "string",
+                  "enum": [
+                    "basedOnReturnCode",
+                    "allow",
+                    "suppress",
+                    "force"
+                  ],
+                  "description": "Installer restart handling; omitted fields are preserved."
+                },
+                "runAsAccount": {
+                  "type": "string",
+                  "enum": [
+                    "system",
+                    "user"
+                  ],
+                  "description": "Install as system or user. Required for creation."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
+            },
+            "isFeatured": {
+              "type": "boolean",
+              "description": "Show the app as featured. Explicit false is managed."
+            },
+            "minimumCpuSpeedInMHz": {
+              "type": "integer",
+              "maximum": 2147483647,
+              "minimum": 0,
+              "description": "Native minimum hardware requirement. Omit to leave unmanaged."
+            },
+            "minimumFreeDiskSpaceInMB": {
+              "type": "integer",
+              "maximum": 2147483647,
+              "minimum": 0,
+              "description": "Native minimum hardware requirement. Omit to leave unmanaged."
+            },
+            "minimumMemoryInMB": {
+              "type": "integer",
+              "maximum": 2147483647,
+              "minimum": 0,
+              "description": "Native minimum hardware requirement. Omit to leave unmanaged."
+            },
+            "minimumNumberOfProcessors": {
+              "type": "integer",
+              "maximum": 2147483647,
+              "minimum": 0,
+              "description": "Native minimum hardware requirement. Omit to leave unmanaged."
+            },
+            "minimumSupportedWindowsRelease": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Native minimum Windows release, such as Windows11_23H2. Required for creation."
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Administrator notes. Stemma preserves a reserved identity marker alongside these notes."
+            },
+            "owner": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "App owner label."
+            },
+            "privacyInformationUrl": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Publisher privacy information URL."
+            },
+            "publisher": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Native publisher name. Required for creation."
+            },
+            "returnCodes": {
+              "items": {
+                "properties": {
+                  "@odata.type": {
+                    "const": "#microsoft.graph.win32LobAppReturnCode"
+                  },
+                  "returnCode": {
+                    "type": "integer",
+                    "maximum": 2147483647,
+                    "minimum": -2147483648
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "success",
+                      "softReboot",
+                      "hardReboot",
+                      "retry",
+                      "failed"
+                    ],
+                    "description": "Native result classification."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "returnCode",
+                  "type"
+                ]
+              },
+              "type": "array",
+              "description": "Replace the return-code collection; an empty array clears it."
+            },
+            "rules": {
+              "items": {
+                "oneOf": [
+                  {
+                    "properties": {
+                      "@odata.type": {
+                        "const": "#microsoft.graph.win32LobAppProductCodeRule"
+                      },
+                      "productCode": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "MSI ProductCode GUID."
+                      },
+                      "productVersion": {
+                        "type": "string",
+                        "maxLength": 10000,
+                        "description": "Version used when comparison is configured."
+                      },
+                      "productVersionOperator": {
+                        "type": "string",
+                        "enum": [
+                          "notConfigured",
+                          "equal",
+                          "notEqual",
+                          "greaterThan",
+                          "greaterThanOrEqual",
+                          "lessThan",
+                          "lessThanOrEqual"
+                        ],
+                        "description": "Native comparison operator."
+                      },
+                      "ruleType": {
+                        "const": "detection"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "@odata.type",
+                      "ruleType",
+                      "productCode",
+                      "productVersionOperator"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "@odata.type": {
+                        "const": "#microsoft.graph.win32LobAppFileSystemRule"
+                      },
+                      "check32BitOn64System": {
+                        "type": "boolean"
+                      },
+                      "comparisonValue": {
+                        "type": "string",
+                        "maxLength": 10000,
+                        "description": "Value used when comparison is configured."
+                      },
+                      "fileOrFolderName": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "operationType": {
+                        "type": "string",
+                        "enum": [
+                          "exists",
+                          "version",
+                          "sizeInMB",
+                          "modifiedDate",
+                          "createdDate"
+                        ],
+                        "description": "Detected file property."
+                      },
+                      "operator": {
+                        "type": "string",
+                        "enum": [
+                          "notConfigured",
+                          "equal",
+                          "notEqual",
+                          "greaterThan",
+                          "greaterThanOrEqual",
+                          "lessThan",
+                          "lessThanOrEqual"
+                        ],
+                        "description": "Native comparison operator."
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "ruleType": {
+                        "const": "detection"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "@odata.type",
+                      "ruleType",
+                      "path",
+                      "fileOrFolderName",
+                      "operationType",
+                      "operator"
+                    ]
+                  }
+                ]
+              },
+              "type": "array",
+              "maxItems": 100,
+              "description": "Complete detection-rule collection. Creation requires at least one rule. Product-code and file-system detection are supported; requirement and script rules are unsupported."
+            },
+            "uninstallCommandLine": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Windows uninstall command line. Required for creation."
+            },
+            "artifact": {
+              "type": "string",
+              "description": "Named recipe artifact to publish. Omit to use the prepared source payload."
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "@odata.type"
+          ],
+          "title": "#microsoft.graph.win32LobApp"
+        },
+        {
+          "properties": {
+            "@odata.type": {
+              "const": "#microsoft.graph.macOSDmgApp",
+              "description": "Native Graph app subtype. macOSPkgApp uses the beta API; other supported types use v1.0."
+            },
+            "app_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+            },
+            "assignments": {
+              "items": {
+                "properties": {
+                  "@odata.type": {
+                    "const": "#microsoft.graph.mobileAppAssignment"
+                  },
+                  "intent": {
+                    "type": "string",
+                    "enum": [
+                      "available",
+                      "required",
+                      "uninstall",
+                      "availableWithoutEnrollment"
+                    ],
+                    "description": "Native deployment intent."
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.groupAssignmentTarget"
+                          },
+                          "groupId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type",
+                          "groupId"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
+                          },
+                          "groupId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type",
+                          "groupId"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "intent",
+                  "target"
+                ]
+              },
+              "type": "array",
+              "maxItems": 1000,
+              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Native app description. Required for creation."
+            },
+            "developer": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "App developer label."
+            },
+            "displayName": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Company Portal display name. Required for creation."
+            },
+            "ignoreVersionDetection": {
+              "type": "boolean",
+              "description": "Ignore installed app versions during detection. Explicit false is managed."
+            },
+            "includedApps": {
+              "items": {
+                "properties": {
+                  "@odata.type": {
+                    "const": "#microsoft.graph.macOSIncludedApp"
+                  },
+                  "bundleId": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "minLength": 1,
+                    "description": "Application CFBundleIdentifier."
+                  },
+                  "bundleVersion": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "minLength": 1,
+                    "description": "Application CFBundleShortVersionString."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "bundleId",
+                  "bundleVersion"
+                ]
+              },
+              "type": "array",
+              "maxItems": 500,
+              "minItems": 1,
+              "description": "Complete collection of included bundle IDs and versions. Required for creation; bundle IDs must be unique."
+            },
+            "informationUrl": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Publisher information URL."
+            },
+            "isFeatured": {
+              "type": "boolean",
+              "description": "Show the app as featured. Explicit false is managed."
+            },
+            "minimumSupportedOperatingSystem": {
+              "properties": {
+                "@odata.type": {
+                  "const": "#microsoft.graph.macOSMinimumOperatingSystem"
+                },
+                "v10_10": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_11": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_12": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_13": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_14": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_15": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_7": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_8": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_9": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v11_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v12_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v13_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "description": "One minimum OS selection encoded as native Graph booleans. Exactly one version must be true. Required for creation."
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Administrator notes. Stemma preserves a reserved identity marker alongside these notes."
+            },
+            "owner": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "App owner label."
+            },
+            "primaryBundleId": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Primary application CFBundleIdentifier. Required for creation; read from the vendor artifact, not the filename."
+            },
+            "primaryBundleVersion": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Primary application CFBundleShortVersionString. Required for creation."
+            },
+            "privacyInformationUrl": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Publisher privacy information URL."
+            },
+            "publisher": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Native publisher name. Required for creation."
+            },
+            "artifact": {
+              "type": "string",
+              "description": "Named recipe artifact to publish. Omit to use the prepared source payload."
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "@odata.type"
+          ],
+          "title": "#microsoft.graph.macOSDmgApp"
+        },
+        {
+          "properties": {
+            "@odata.type": {
+              "const": "#microsoft.graph.macOSPkgApp",
+              "description": "Native Graph app subtype. macOSPkgApp uses the beta API; other supported types use v1.0."
+            },
+            "app_id": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+            },
+            "assignments": {
+              "items": {
+                "properties": {
+                  "@odata.type": {
+                    "const": "#microsoft.graph.mobileAppAssignment"
+                  },
+                  "intent": {
+                    "type": "string",
+                    "enum": [
+                      "available",
+                      "required",
+                      "uninstall",
+                      "availableWithoutEnrollment"
+                    ],
+                    "description": "Native deployment intent."
+                  },
+                  "target": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.groupAssignmentTarget"
+                          },
+                          "groupId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type",
+                          "groupId"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
+                          },
+                          "groupId": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type",
+                          "groupId"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type"
+                        ]
+                      },
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "@odata.type"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "intent",
+                  "target"
+                ]
+              },
+              "type": "array",
+              "maxItems": 1000,
+              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
+            },
+            "description": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Native app description. Required for creation."
+            },
+            "developer": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "App developer label."
+            },
+            "displayName": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Company Portal display name. Required for creation."
+            },
+            "ignoreVersionDetection": {
+              "type": "boolean",
+              "description": "Ignore installed app versions during detection. Explicit false is managed."
+            },
+            "includedApps": {
+              "items": {
+                "properties": {
+                  "@odata.type": {
+                    "const": "#microsoft.graph.macOSIncludedApp"
+                  },
+                  "bundleId": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "minLength": 1,
+                    "description": "Application CFBundleIdentifier."
+                  },
+                  "bundleVersion": {
+                    "type": "string",
+                    "maxLength": 1000,
+                    "minLength": 1,
+                    "description": "Application CFBundleShortVersionString."
+                  }
+                },
+                "additionalProperties": false,
+                "type": "object",
+                "required": [
+                  "bundleId",
+                  "bundleVersion"
+                ]
+              },
+              "type": "array",
+              "maxItems": 500,
+              "minItems": 1,
+              "description": "Complete collection of included bundle IDs and versions. Required for creation; bundle IDs must be unique."
+            },
+            "informationUrl": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Publisher information URL."
+            },
+            "isFeatured": {
+              "type": "boolean",
+              "description": "Show the app as featured. Explicit false is managed."
+            },
+            "minimumSupportedOperatingSystem": {
+              "properties": {
+                "@odata.type": {
+                  "const": "#microsoft.graph.macOSMinimumOperatingSystem"
+                },
+                "v10_10": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_11": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_12": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_13": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_14": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_15": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_7": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_8": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v10_9": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v11_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v12_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v13_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v14_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v15_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v26_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "description": "One minimum OS selection encoded as native Graph booleans. Exactly one version must be true. Required for creation."
+            },
+            "notes": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Administrator notes. Stemma preserves a reserved identity marker alongside these notes."
+            },
+            "owner": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "App owner label."
+            },
+            "primaryBundleId": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Primary application CFBundleIdentifier. Required for creation; read from the vendor artifact, not the filename."
+            },
+            "primaryBundleVersion": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Primary application CFBundleShortVersionString. Required for creation."
+            },
+            "privacyInformationUrl": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Publisher privacy information URL."
+            },
+            "publisher": {
+              "type": "string",
+              "maxLength": 10000,
+              "description": "Native publisher name. Required for creation."
+            },
+            "artifact": {
+              "type": "string",
+              "description": "Named recipe artifact to publish. Omit to use the prepared source payload."
+            }
+          },
+          "additionalProperties": false,
+          "type": "object",
+          "required": [
+            "@odata.type"
+          ],
+          "title": "#microsoft.graph.macOSPkgApp"
+        }
+      ],
+      "description": "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG (v1.0), and raw macOS PKG (beta). Sources are preserved; signing and installer authoring are separate recipe policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."
+    },
+    "JamfConnection": {
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Jamf Pro server origin, such as https://school.jamfcloud.com. HTTPS is required except loopback test servers. Paths, embedded credentials, queries and fragments are rejected."
+        },
+        "client_id_env": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Environment variable containing the Jamf API client ID. Credentials are read during plan and apply."
+        },
+        "client_secret_env": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Environment variable containing the Jamf API client secret. Store the variable name here, never the secret itself."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "url",
+        "client_id_env",
+        "client_secret_env"
+      ],
+      "description": "Shared Jamf Pro connection using client credentials and the v1 package API reviewed against Jamf Pro 11.31. Requires package read/write/upload privileges and a distribution configuration that supports package upload. Put package_id in recipe metadata to adopt an existing package."
+    },
+    "JamfMetadata": {
+      "properties": {
+        "package_id": {
+          "type": "string",
+          "maxLength": 20,
+          "pattern": "^[1-9][0-9]*$",
+          "description": "Adopt this existing Jamf package ID for this recipe. Must match any saved binding. Omit to discover by Stemma's stable filename marker or create a package."
+        },
+        "categoryId": {
+          "type": "string",
+          "description": "Native category ID as a string. Use -1 for no category."
+        },
+        "fillExistingUsers": {
+          "type": "boolean",
+          "description": "Native option to fill existing user directories. Explicit false is managed."
+        },
+        "fillUserTemplate": {
+          "type": "boolean",
+          "description": "Native option to fill the user template. Explicit false is managed."
+        },
+        "info": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Native package information. Null clears the field."
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Administrator notes. Null clears the field."
+        },
+        "osInstall": {
+          "type": "boolean",
+          "description": "Native operating system installer flag. Explicit false is managed."
+        },
+        "osRequirements": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Native operating system requirement expression, such as 10.6.8, 10.7.x. Null clears the field."
+        },
+        "packageName": {
+          "type": "string",
+          "description": "Native package display name. Defaults to the artifact filename when creating a package; names are never used for identity matching."
+        },
+        "priority": {
+          "type": "integer",
+          "description": "Native package installation priority. Defaults to 10 when creating a package."
+        },
+        "rebootRequired": {
+          "type": "boolean",
+          "description": "Native package restart requirement. Explicit false is managed."
+        },
+        "suppressEula": {
+          "type": "boolean",
+          "description": "Native suppressEula package option. Explicit false is managed."
+        },
+        "suppressFromDock": {
+          "type": "boolean",
+          "description": "Native suppressFromDock package option. Explicit false is managed."
+        },
+        "suppressRegistration": {
+          "type": "boolean",
+          "description": "Native suppressRegistration package option. Explicit false is managed."
+        },
+        "suppressUpdates": {
+          "type": "boolean",
+          "description": "Native suppressUpdates package option. Explicit false is managed."
+        },
+        "artifact": {
+          "type": "string",
+          "description": "Named recipe artifact to publish. Omit to use the prepared source payload."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Native Jamf Pro v1 package metadata. Omitted fields are unmanaged; explicit false, zero and empty strings are managed. Only the documented nullable strings accept null. Policies, scope and assignments are unsupported. Content updates retain the package ID and can affect policies that already reference it."
+    },
+    "MunkiMetadata": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "https://github.com/woodleighschool/stemma/munki/metadata",
+      "properties": {
+        "display_name": {
+          "type": "string",
+          "description": "Optional display title. Omission preserves the remote title; null clears it."
+        },
+        "description": {
+          "type": "string",
+          "description": "Application description. Omission preserves the remote value; null clears it."
+        },
+        "category": {
+          "type": "string",
+          "description": "Managed Software Center category. Null clears the category."
+        },
+        "developer": {
+          "type": "string",
+          "description": "Software publisher display name. Null clears the publisher."
+        },
+        "catalogs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Complete catalog membership. An empty list removes all memberships."
+        },
+        "requires": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Complete list of Munki item dependencies. Entries are native item names, optionally with version requirements; [] clears the list."
+        },
+        "unattended_install": {
+          "type": "boolean",
+          "description": "Permit installation without interaction. Explicit false disables it."
+        },
+        "unattended_uninstall": {
+          "type": "boolean",
+          "description": "Permit removal without interaction. Explicit false disables it."
+        },
+        "uninstallable": {
+          "type": "boolean",
+          "description": "Expose supported removal using uninstall_method."
+        },
+        "uninstall_method": {
+          "type": "string",
+          "description": "Supported native removal method; requires its corresponding receipts or copy entries or script."
+        },
+        "RestartAction": {
+          "type": "string",
+          "description": "Munki restart or logout requirement after installation."
+        },
+        "minimum_os_version": {
+          "type": "string",
+          "description": "Lowest macOS version eligible for this package."
+        },
+        "maximum_os_version": {
+          "type": "string",
+          "description": "Highest macOS version eligible for this package."
+        },
+        "minimum_munki_version": {
+          "type": "string",
+          "description": "Lowest Munki client version eligible for this package."
+        },
+        "supported_architectures": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Complete architecture list using arm64 or x86_64."
+        },
+        "blocking_applications": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Applications that block installation. Empty list disables inferred blocking."
+        },
+        "installable_condition": {
+          "type": "string",
+          "description": "Munki predicate controlling installation eligibility."
+        },
+        "installed_size": {
+          "type": "integer",
+          "description": "Installed size in KiB; independent of downloaded installer size."
+        },
+        "OnDemand": {
+          "type": "boolean",
+          "description": "Allow repeated optional installation even when the item is already installed."
+        },
+        "precache": {
+          "type": "boolean",
+          "description": "Cache the installer before it is requested for installation."
+        },
+        "autoremove": {
+          "type": "boolean",
+          "description": "Remove installed software when no applicable manifest requests it."
+        },
+        "installs": {
+          "items": {
+            "properties": {
+              "type": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "CFBundleIdentifier": {
+                "type": "string"
+              },
+              "CFBundleName": {
+                "type": "string"
+              },
+              "CFBundleShortVersionString": {
+                "type": "string"
+              },
+              "CFBundleVersion": {
+                "type": "string"
+              },
+              "version_comparison_key": {
+                "type": "string"
+              },
+              "minimum_update_version": {
+                "type": "string"
+              },
+              "installer_item_location": {
+                "type": "string"
+              },
+              "minimum_os_version": {
+                "type": "string"
+              },
+              "md5checksum": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "type": "array",
+          "description": "Complete native detection list using application or bundle or plist or file entries."
+        },
+        "receipts": {
+          "items": {
+            "properties": {
+              "packageid": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "installed_size": {
+                "type": "integer"
+              },
+              "optional": {
+                "type": "boolean"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "type": "array",
+          "description": "Complete Apple package receipt list used for detection and removal."
+        },
+        "items_to_copy": {
+          "items": {
+            "properties": {
+              "source_item": {
+                "type": "string"
+              },
+              "destination_path": {
+                "type": "string"
+              },
+              "destination_item": {
+                "type": "string"
+              },
+              "user": {
+                "type": "string"
+              },
+              "group": {
+                "type": "string"
+              },
+              "mode": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false,
+            "type": "object"
+          },
+          "type": "array",
+          "description": "Payload selections and destination paths for copy_from_dmg."
+        },
+        "package_path": {
+          "type": "string",
+          "description": "Relative package path within the original installer image."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Administrator notes retained in pkginfo."
+        },
+        "installcheck_script": {
+          "type": "string",
+          "description": "Deployment-time installation check script. Never executed by Stemma."
+        },
+        "uninstallcheck_script": {
+          "type": "string",
+          "description": "Deployment-time removal check script. Never executed by Stemma."
+        },
+        "preinstall_script": {
+          "type": "string",
+          "description": "Deployment-time script before installation. Never executed by Stemma."
+        },
+        "postinstall_script": {
+          "type": "string",
+          "description": "Deployment-time script after installation. Never executed by Stemma."
+        },
+        "preuninstall_script": {
+          "type": "string",
+          "description": "Deployment-time script before removal. Never executed by Stemma."
+        },
+        "postuninstall_script": {
+          "type": "string",
+          "description": "Deployment-time script after removal. Never executed by Stemma."
+        },
+        "uninstall_script": {
+          "type": "string",
+          "description": "Deployment-time removal script. Never executed by Stemma."
+        },
+        "version_script": {
+          "type": "string",
+          "description": "Deployment-time installed-version script. Never executed by Stemma."
+        },
+        "name": {
+          "type": "string",
+          "description": "Stable native Munki name. Defaults to the recipe name when creating a package."
+        },
+        "version": {
+          "type": "string",
+          "description": "Explicit content version when the source or inspected installer does not provide one."
+        },
+        "installer_type": {
+          "type": "string",
+          "enum": [
+            "pkg",
+            "copy_from_dmg",
+            "nopkg"
+          ],
+          "description": "Preserve a vendor PKG, select items in an existing DMG, or publish a script-only item. PKG is inferred only from a .pkg payload."
+        },
+        "artifact": {
+          "type": "string",
+          "description": "Named recipe artifact to publish. Omit to use the prepared source payload."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "description": "Native Munki metadata. Omitted fields remain unmanaged; explicit lists own the whole collection."
+    },
+    "Plugin": {
+      "properties": {
+        "trusted": {
+          "type": "boolean",
+          "description": "Explicit consent to execute this plugin. Checksums prove binary identity, not publisher trust."
+        },
+        "platforms": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Source"
+          },
+          "type": "object",
+          "description": "Map runner OS/architecture to a plugin binary source, for example darwin/arm64."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "trusted",
+        "platforms"
+      ]
+    },
+    "Project": {
+      "anyOf": [
+        {
+          "required": [
+            "recipes"
+          ]
+        },
+        {
+          "required": [
+            "imports"
+          ]
+        }
+      ],
+      "properties": {
+        "version": {
+          "type": "integer",
+          "enum": [
+            1
+          ],
+          "description": "Configuration format version. Use 1."
+        },
+        "project": {
+          "type": "string",
+          "description": "Stable project identity used to recover destination bindings. Keep it unchanged when cloning or moving the repository."
+        },
+        "imports": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Project-relative software-family files, for example software/**/stemma.yaml. Every pattern must match."
+        },
+        "components": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Recipe"
+          },
+          "type": "object",
+          "description": "Reusable local recipe components. Resolved inherited fields retain their metadata ownership."
+        },
+        "recipes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Recipe"
+          },
+          "type": "object",
+          "description": "Named software recipes. Use separate names for platform and architecture variants."
+        },
+        "destinations": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Destination"
+          },
+          "type": "object",
+          "description": "Named connections. Recipe destination entries own only explicitly present native metadata fields."
+        },
+        "plugins": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Plugin"
+          },
+          "type": "object",
+          "description": "Explicitly trusted executable extensions with independently locked platform binaries."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "version",
+        "project"
+      ]
+    },
+    "Recipe": {
+      "properties": {
+        "extends": {
+          "type": "string",
+          "description": "Local component name. Maps merge recursively; lists and null replace inherited values."
+        },
+        "source": {
+          "$ref": "#/$defs/Source",
+          "description": "Acquisition input. Its lock fingerprint excludes preparation and destination metadata."
+        },
+        "platform": {
+          "type": "string",
+          "description": "Target software platform, independent of the runner operating system."
+        },
+        "arch": {
+          "type": "string",
+          "description": "Target architecture. Universal is an explicit vendor artifact containing multiple architectures."
+        },
+        "select": {
+          "type": "string",
+          "description": "Exact relative payload path within an archive. Required when several plausible payloads exist."
+        },
+        "verification": {
+          "$ref": "#/$defs/Verification",
+          "description": "Required verification subject and scope. Unsupported required checks block publication."
+        },
+        "artifacts": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Artifact"
+          },
+          "type": "object",
+          "description": "Named reproducible artifacts derived from the selected source. Destinations select them by name."
+        },
+        "destinations": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/MunkiMetadata"
+              },
+              {
+                "$ref": "#/$defs/IntuneMetadata"
+              },
+              {
+                "$ref": "#/$defs/JamfMetadata"
+              },
+              {
+                "type": "object",
+                "description": "Native plugin metadata, validated by the selected destination."
+              }
+            ]
+          },
+          "type": "object",
+          "description": "Map named destinations to their native writable metadata. Executable plugins validate their own schema."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "Source": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "http",
+            "github",
+            "file",
+            "local"
+          ],
+          "description": "Provider or destination implementation. Unknown values are rejected."
+        },
+        "include": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "description": "Local files and glob patterns relative to this software-family file. Matched bytes, modes and symlinks determine content identity."
+        },
+        "url": {
+          "type": "string",
+          "description": "Stable HTTP(S) URL without embedded credentials or expiring query parameters."
+        },
+        "path": {
+          "type": "string",
+          "description": "Filesystem path. Source paths must stay within the Stemma project."
+        },
+        "repository": {
+          "type": "string",
+          "description": "GitHub repository in owner/name form."
+        },
+        "release": {
+          "type": "string",
+          "description": "GitHub release tag or latest. New releases are resolved only during explicit updates or permitted missing lock resolution."
+        },
+        "asset": {
+          "type": "string",
+          "description": "Exact GitHub release asset filename, avoiding ambiguous glob matches."
+        },
+        "filename": {
+          "type": "string",
+          "description": "Retained artifact basename. Never a workspace or cache path."
+        },
+        "version": {
+          "type": "string",
+          "description": "Declared software version when the source cannot expose one. It is metadata, not a content identity."
+        },
+        "sha256": {
+          "type": "string",
+          "description": "Optional independently obtained SHA-256 requirement. Explicit refresh does not bypass this requirement."
+        },
+        "token_env": {
+          "type": "string",
+          "description": "Name of the environment variable containing a bearer token. The token itself is never stored in a lockfile."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "type"
+      ]
+    },
+    "Verification": {
+      "properties": {
+        "subject": {
+          "type": "string",
+          "enum": [
+            "source",
+            "payload"
+          ],
+          "description": "Verify the original source or selected payload. A container signature does not verify an inner application."
+        },
+        "integrity": {
+          "type": "boolean",
+          "description": "Require all supported signed byte and hash checks for the selected subject."
+        },
+        "signature": {
+          "type": "boolean",
+          "description": "Require a cryptographically valid signature, separately from signer trust."
+        },
+        "resources": {
+          "type": "boolean",
+          "description": "Require sealed application resources. Unsupported nested-code layouts fail closed."
+        },
+        "identity": {
+          "type": "boolean",
+          "description": "Require authenticated signer identity using an implemented trust policy."
+        },
+        "certificate_sha256": {
+          "type": "string",
+          "description": "Exact SHA-256 pin of the signer DER certificate. PKG support checks the signature; this does not claim CA trust or revocation assessment."
+        },
+        "platform": {
+          "type": "boolean",
+          "description": "Require native OS policy assessment. Unsupported on portable verifier implementations."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Project"
+    },
+    {
+      "$ref": "#/$defs/Fragment"
+    }
+  ],
+  "title": "Stemma project",
+  "description": "Reproducible source recipes and native destination metadata. Omitted metadata fields remain unmanaged; null clears only supported fields."
+}

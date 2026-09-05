@@ -1,0 +1,4 @@
+{
+  "ignorePatterns": ["stemma.schema.json"],
+  "printWidth": 100,
+}
