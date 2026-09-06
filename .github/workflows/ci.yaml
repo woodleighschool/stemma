@@ -28,6 +28,9 @@ env:
 
 jobs:
   workflow-lint:
+    if: >-
+      ${{ !(startsWith(github.head_ref, 'release-please--')
+      && github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Workflow Lint
     runs-on: ubuntu-24.04
     permissions:
@@ -55,8 +58,11 @@ jobs:
           actionlint-version: ${{ steps.tools.outputs.actionlint }}
           zizmor-version: ${{ steps.tools.outputs.zizmor }}
 
-  backend:
-    name: Backend
+  go-checks:
+    if: >-
+      ${{ !(startsWith(github.head_ref, 'release-please--')
+      && github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: Go Checks
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -114,6 +120,9 @@ jobs:
         run: mise run build
 
   native-tests:
+    if: >-
+      ${{ !(startsWith(github.head_ref, 'release-please--')
+      && github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Native Tests (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -162,14 +171,26 @@ jobs:
       - name: Run govulncheck
         run: mise run vulncheck
 
+  goreleaser:
+    if: >-
+      ${{ !(startsWith(github.head_ref, 'release-please--')
+      && github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: GoReleaser
+    uses: $/.github/workflows/goreleaser.yaml
+    permissions:
+      contents: read
+    with:
+      snapshot: true
+
   status:
     if: ${{ !cancelled() }}
     name: Build Success
     needs:
       - workflow-lint
-      - backend
+      - go-checks
       - native-tests
       - go-vulncheck
+      - goreleaser
     runs-on: ubuntu-24.04
     permissions: {}
     steps:

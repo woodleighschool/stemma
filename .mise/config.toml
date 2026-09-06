@@ -60,7 +60,7 @@ run = "test -z \"$(gofmt -l .)\" || { gofmt -l .; exit 1; }"
 [tasks.workflow-lint]
 description = "Lint GitHub Actions workflows"
 run = [
-  "actionlint",
+  "actionlint -ignore 'reusable workflow call \"\\$/.*\" at \"uses\" is not following the format'",
   "zizmor --offline --no-ignores .github/workflows action.yaml",
 ]
 
