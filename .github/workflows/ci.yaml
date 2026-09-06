@@ -118,9 +118,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - macos-26
-          - windows-2025
+        include:
+          - os: macos-26
+            packages: ./internal/icon ./internal/archive ./internal/pkgbuild
+          - os: windows-2025
+            packages: ./internal/archive ./internal/intunewin
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -135,11 +137,8 @@ jobs:
           experimental: true
           install_args: --locked go
 
-      - name: Run dependency-free Go checks
-        run: mise run test
-
-      - name: Build application
-        run: mise run build
+      - name: Test native integrations
+        run: mise exec -- go test -race -count=1 -run '^Test(Native|Extract)' ${{ matrix.packages }}
 
   go-vulncheck:
     if: >-

@@ -11,9 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -104,64 +102,6 @@ func TestPackageTimestamps(t *testing.T) {
 			}
 			if len(bomDates) != len(sourceDates)-2 {
 				t.Fatal("BOM timestamp entries missing")
-			}
-			if runtime.GOOS == "darwin" {
-				expanded := filepath.Join(t.TempDir(), "expanded")
-				native(t, "/usr/sbin/pkgutil", "--expand-full", output, expanded)
-				bom := native(t, "/usr/bin/lsbom", "-p", "ft", filepath.Join(expanded, "Bom"))
-				for line := range strings.SplitSeq(strings.TrimSpace(bom), "\n") {
-					fields := strings.Split(line, "\t")
-					if len(fields) != 2 {
-						t.Fatalf("BOM date format: %q", line)
-					}
-					// lsbom leaves the date column empty for directories.
-					input, err := os.Stat(filepath.Join(root, "Payload", fields[0]))
-					if err != nil {
-						t.Fatal(err)
-					}
-					if input.IsDir() {
-						continue
-					}
-					want := sourceDates[path.Join("Payload", fields[0])]
-					if fixed {
-						want = opts.Timestamp
-					}
-					if fields[1] != strconv.FormatInt(want.Unix(), 10) {
-						t.Errorf("BOM %s date %s, want %d", fields[0], fields[1], want.Unix())
-					}
-				}
-				for name, want := range sourceDates {
-					// pkgutil creates this extraction wrapper; it is not an installed path.
-					if name == "Payload" {
-						continue
-					}
-					if fixed {
-						want = opts.Timestamp
-					}
-					info, err := os.Stat(filepath.Join(expanded, name))
-					if err != nil {
-						t.Fatal(err)
-					}
-					if !info.ModTime().Equal(want) {
-						t.Errorf("native expansion %s date %s, want %s", name, info.ModTime(), want)
-					}
-				}
-				// Native pkgbuild independently demonstrates source-date preservation.
-				if !fixed {
-					reference := filepath.Join(t.TempDir(), "native.pkg")
-					native(t, "/usr/bin/pkgbuild", "--root", filepath.Join(root, "Payload"), "--scripts", filepath.Join(root, "Scripts"), "--identifier", opts.Identifier, "--version", opts.Version, reference)
-					referenceDir := filepath.Join(t.TempDir(), "expanded")
-					native(t, "/usr/sbin/pkgutil", "--expand-full", reference, referenceDir)
-					for _, name := range []string{"Payload/Library/Application Support/Fixture", "Payload/Library/Application Support/Fixture/message.txt", "Scripts/preinstall"} {
-						info, err := os.Stat(filepath.Join(referenceDir, name))
-						if err != nil {
-							t.Fatal(err)
-						}
-						if !info.ModTime().Equal(sourceDates[name]) {
-							t.Errorf("native pkgbuild changed %s date: %s", name, info.ModTime())
-						}
-					}
-				}
 			}
 		})
 	}

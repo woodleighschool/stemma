@@ -1,12 +1,25 @@
 # Apple fixtures
 
-Original project fixtures, generated from `fixture.c` and minimal plists with
-Apple's command-line tools. They contain no vendor application code.
+Rebuild from this directory on macOS with Xcode's command-line tools and the
+Developer ID identities below. The apps cover ad-hoc and CMS signatures; the PKG
+covers installer signature verification.
 
-- `Fixture.app` has an ad-hoc signature.
-- `fixture.pkg` is an unsigned component package made with `pkgbuild`.
-- `SignedFixture.app` and `signed-fixture.pkg` use Woodleigh School's Developer ID
-  Application and Installer identities, team `SMLKBTR495`.
+```sh
+work=$(mktemp -d)
+printf 'int main(void) { return 0; }\n' > "$work/main.c"
+clang -arch arm64 -arch x86_64 -mmacosx-version-min=13.0 \
+  -o "$work/fixture" "$work/main.c"
+cp "$work/fixture" Fixture.app/Contents/MacOS/fixture
+codesign --force --sign - --timestamp=none Fixture.app
+cp "$work/fixture" SignedFixture.app/Contents/MacOS/fixture
+codesign --force --timestamp=none \
+  --sign 'Developer ID Application: Woodleigh School (SMLKBTR495)' SignedFixture.app
+pkgbuild --component SignedFixture.app --install-location /Applications \
+  --identifier au.edu.vic.woodleigh.stemma.fixture --version 1.2.3 "$work/unsigned.pkg"
+productsign --timestamp=none \
+  --sign 'Developer ID Installer: Woodleigh School (SMLKBTR495)' \
+  "$work/unsigned.pkg" fixture.pkg
+rm -rf "$work"
+```
 
-The signed fixtures test cryptographic verification independently of a machine's
-keychain. Tests use Apple tools as additional oracles when available.
+If the installer certificate changes, update its SHA-256 pin in `apple_test.go`.

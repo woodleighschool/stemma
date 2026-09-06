@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestPackRejectsWindowsMetadata(t *testing.T) {
+func TestNativeWindowsMetadata(t *testing.T) {
 	for _, kind := range []string{"file stream", "directory stream", "hard link", "junction"} {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
@@ -42,7 +42,7 @@ func TestPackRejectsWindowsMetadata(t *testing.T) {
 	}
 }
 
-func TestPackSelectedInspectsSymlinkMetadataWithoutFollowingTarget(t *testing.T) {
+func TestNativeSymlinkMetadata(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "file")
 	if err := os.WriteFile(filename, []byte("payload"), 0o644); err != nil {

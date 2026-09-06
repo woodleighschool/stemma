@@ -9,7 +9,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestPackSelectedChecksOnlyIncludedMetadata(t *testing.T) {
+func TestNativeSelectedMetadata(t *testing.T) {
 	dir := t.TempDir()
 	file := filepath.Join(dir, "payload")
 	if err := os.WriteFile(file, []byte("payload"), 0o644); err != nil {

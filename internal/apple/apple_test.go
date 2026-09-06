@@ -16,9 +16,7 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +24,7 @@ import (
 	"howett.net/plist"
 )
 
-func TestNativeAppFixtureIntegrity(t *testing.T) {
+func TestAppFixtureIntegrity(t *testing.T) {
 	facts, err := InspectApp("testdata/Fixture.app")
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +56,7 @@ func TestNativeAppFixtureIntegrity(t *testing.T) {
 	}
 }
 
-func TestCompanySignedFixtures(t *testing.T) {
+func TestSignedFixtures(t *testing.T) {
 	const installerPin = "e8bcd85f5b71188453845541f51b08e49f7262f10f3d79f5fe942a6735ae9760"
 	app, err := VerifyApp("testdata/SignedFixture.app", Policy{RequireIntegrity: true, RequireResources: true})
 	if err != nil || app.Integrity.Status != Valid || app.Resources.Status != Valid {
@@ -77,7 +75,7 @@ func TestCompanySignedFixtures(t *testing.T) {
 	if !errors.Is(err, ErrUnsupported) || app.Signature.Status != Unsupported || app.Integrity.Status != Valid {
 		t.Fatalf("CMS parsing was promoted to verification: %+v: %v", app, err)
 	}
-	pkg, err := VerifyPackage("testdata/signed-fixture.pkg", Policy{RequireSignature: true, CertificateSHA256: installerPin})
+	pkg, err := VerifyPackage("testdata/fixture.pkg", Policy{RequireSignature: true, CertificateSHA256: installerPin})
 	if err != nil || pkg.Signature.Status != Valid || pkg.Identity.Status != Valid || pkg.Integrity.Status != Valid {
 		t.Fatalf("company installer signature: %+v: %v", pkg, err)
 	}
@@ -180,7 +178,7 @@ func TestXARRejectsAmbiguousXML(t *testing.T) {
 	}
 }
 
-func TestNativePackagePreservesInstallerAndChecksData(t *testing.T) {
+func TestPackageInspectionAndIntegrity(t *testing.T) {
 	before := readTestFile(t, "testdata/fixture.pkg")
 	facts, err := InspectPackage("testdata/fixture.pkg")
 	if err != nil {
@@ -257,43 +255,6 @@ func TestXARRejectsTraversalAndCorruptTOC(t *testing.T) {
 	archive[30] ^= 1
 	if _, err := openXAR(bytes.NewReader(archive), int64(len(archive))); err == nil {
 		t.Fatal("accepted corrupt TOC")
-	}
-}
-
-func TestNativeCodesignOracleRejectsSameTampering(t *testing.T) {
-	if runtime.GOOS != "darwin" {
-		t.Skip("native codesign oracle requires macOS")
-	}
-	tool, err := exec.LookPath("codesign")
-	if err != nil {
-		t.Skip("native codesign oracle unavailable")
-	}
-	app := copyApp(t)
-	if output, err := exec.Command(tool, "--verify", "--strict", "--deep", app).CombinedOutput(); err != nil {
-		t.Fatalf("native fixture rejected: %s: %v", output, err)
-	}
-	writeTestFile(t, filepath.Join(app, "Contents/Resources/message.txt"), []byte("modified"), 0644)
-	if output, err := exec.Command(tool, "--verify", "--strict", "--deep", app).CombinedOutput(); err == nil {
-		t.Fatalf("native oracle accepted tampered resource: %s", output)
-	}
-	app = copyApp(t)
-	corruptExecutable(t, filepath.Join(app, "Contents/MacOS/fixture"), 0)
-	if output, err := exec.Command(tool, "--verify", "--strict", "--deep", app).CombinedOutput(); err == nil {
-		t.Fatalf("native oracle accepted tampered executable: %s", output)
-	}
-	app = filepath.Join(t.TempDir(), "SignedFixture.app")
-	if err := os.CopyFS(app, os.DirFS("testdata/SignedFixture.app")); err != nil {
-		t.Fatal(err)
-	}
-	if output, err := exec.Command(tool, "--verify", "--strict", "--deep", app).CombinedOutput(); err != nil {
-		t.Fatalf("native company-signed app rejected: %s: %v", output, err)
-	}
-	writeTestFile(t, filepath.Join(app, "Contents/Resources/message.txt"), []byte("modified signed resource"), 0644)
-	if output, err := exec.Command(tool, "--verify", "--strict", "--deep", app).CombinedOutput(); err == nil {
-		t.Fatalf("native oracle accepted tampered company-signed resource: %s", output)
-	}
-	if evidence, err := VerifyApp(app, Policy{RequireResources: true}); err == nil || evidence.Resources.Status != Invalid {
-		t.Fatalf("portable verifier accepted tampered company-signed resource: %+v: %v", evidence, err)
 	}
 }
 

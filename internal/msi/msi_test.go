@@ -12,8 +12,7 @@ func TestMSIFixtureProperties(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Expected values independently read with msitools 0.106 msiinfo.
-	if info.ProductName != "MacSign Test" || info.ProductCode != "{AC01F3D3-C5D5-40DB-9E8C-ED53982E17ED}" || info.ProductVersion != "1.0.0" || info.PackageCode != "{38146DC3-67FF-42C8-A284-B7B1E3A461F9}" || info.Manufacturer != "MacSign" || info.Properties["ALLUSERS"] != "1" {
+	if info.ProductName != "Stemma MSI Fixture" || info.ProductCode != "{8B2D32B7-0BE9-4CF9-B1E7-42C27753A6B8}" || info.ProductVersion != "1.2.3" || info.PackageCode != "{71C6B8B7-EF12-4C0B-A390-AD3899831AFA}" || info.Manufacturer != "Woodleigh School" || info.Properties["ALLUSERS"] != "1" {
 		t.Fatalf("fixture product facts differ: %+v", info)
 	}
 }

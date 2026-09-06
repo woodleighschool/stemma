@@ -45,6 +45,14 @@ func TestPayloadIdentityAndRandomEnvelope(t *testing.T) {
 	if verified != m1 {
 		t.Fatalf("metadata differs: %+v / %+v", verified, m1)
 	}
+}
+
+func TestExtract(t *testing.T) {
+	source := sourceFixture(t)
+	one := filepath.Join(t.TempDir(), "package.intunewin")
+	if _, err := Write(t.Context(), source, "setup.cmd", one); err != nil {
+		t.Fatal(err)
+	}
 	destination := filepath.Join(t.TempDir(), "recovered")
 	if err := Extract(t.Context(), one, destination); err != nil {
 		t.Fatal(err)

@@ -202,8 +202,7 @@
 
 Third-party portions
 
-Files marked SPDX-License-Identifier: MIT and the MSI test fixture contain
-portions adapted from:
+Files marked SPDX-License-Identifier: MIT contain portions adapted from:
 
 WrapTune-MacOS (https://github.com/thefinder808/WrapTune-MacOS)
 Copyright (c) 2026 thefinder808
