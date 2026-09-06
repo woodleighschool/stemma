@@ -15,7 +15,7 @@ imports: [software/**/stemma.yaml]
 components:
   mac: {platform: darwin, arch: universal}
 destinations:
-  repo: {type: munki, path: repo}
+  repo: {operation: munki, path: repo}
 `)
 	writeConfig(t, root, "software/Branding/stemma.yaml", `version: 1
 recipes:
@@ -30,7 +30,7 @@ recipes:
         payload: Payload
         scripts: {postinstall: Scripts/postinstall}
     destinations:
-      repo: {artifact: package, catalogs: [testing]}
+      repo: {artifact: artifacts/package, catalogs: [testing]}
   portal:
     source: {type: http, url: "https://go.microsoft.com/fwlink/?linkid=853070", filename: CompanyPortal.pkg}
 `)
@@ -106,10 +106,10 @@ recipes:
     source: {type: local, include: [Payload/**]}
     artifacts:
       package: {type: pkg, identifier: org.example.app, version: "1.0", payload: Payload}
-    destinations: {repo: {artifact: package}}
-destinations: {repo: {type: munki, path: repo}}
+    destinations: {repo: {artifact: artifacts/package}}
+destinations: {repo: {operation: munki, path: repo}}
 `
-	for _, change := range [][2]string{{"type: pkg", "type: app"}, {"payload: Payload", "payload: ../outside"}, {"artifact: package", "artifact: missing"}, {"identifier: org.example.app", "identifier: bad/id"}, {"version: \"1.0\"", "version: \"\""}, {"payload: Payload", "scripts: {uninstall: Scripts/postinstall}"}, {"payload: Payload", "payload: Payload, filename: ../app.pkg"}} {
+	for _, change := range [][2]string{{"type: pkg", "type: app"}, {"payload: Payload", "payload: ../outside"}, {"artifact: artifacts/package", "artifact: artifacts/missing"}, {"identifier: org.example.app", "identifier: bad/id"}, {"version: \"1.0\"", "version: \"\""}, {"payload: Payload", "scripts: {uninstall: Scripts/postinstall}"}, {"payload: Payload", "payload: Payload, filename: ../app.pkg"}, {"payload: Payload", "payload: Payload, from: source"}} {
 		if _, err := Parse([]byte(strings.Replace(base, change[0], change[1], 1))); err == nil {
 			t.Fatalf("accepted invalid artifact change %v", change)
 		}

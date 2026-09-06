@@ -106,17 +106,27 @@ func appInfo(root *os.Root) (AppFacts, []byte, error) {
 	if err != nil {
 		return AppFacts{}, nil, err
 	}
+	facts, err := ParseAppInfo(data)
+	return facts, data, err
+}
+
+// ParseAppInfo reads conventional application metadata without accessing an
+// installed application or evaluating installer scripts.
+func ParseAppInfo(data []byte) (AppFacts, error) {
+	if len(data) > maxMetadata {
+		return AppFacts{}, fmt.Errorf("app Info.plist exceeds read limit")
+	}
 	var facts AppFacts
 	if _, err := plist.Unmarshal(data, &facts); err != nil {
-		return facts, nil, fmt.Errorf("app Info.plist: %w", err)
+		return facts, fmt.Errorf("app Info.plist: %w", err)
 	}
 	if facts.BundleID == "" || facts.Executable == "" {
-		return facts, nil, fmt.Errorf("app Info.plist lacks CFBundleIdentifier or CFBundleExecutable")
+		return facts, fmt.Errorf("app Info.plist lacks CFBundleIdentifier or CFBundleExecutable")
 	}
 	if facts.Executable == "." || facts.Executable == ".." || strings.ContainsAny(facts.Executable, "/\\\x00:") {
-		return facts, nil, fmt.Errorf("unsafe CFBundleExecutable %q", facts.Executable)
+		return facts, fmt.Errorf("unsafe CFBundleExecutable %q", facts.Executable)
 	}
-	return facts, data, nil
+	return facts, nil
 }
 
 func rootRead(root *os.Root, name string, limit int64) ([]byte, error) {

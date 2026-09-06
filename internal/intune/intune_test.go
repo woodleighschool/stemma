@@ -208,7 +208,7 @@ func TestUncertainCreationIsNotRepeated(t *testing.T) {
 	}
 }
 
-func fixtureRequest(t *testing.T) plugin.Request {
+func fixtureRequest(t *testing.T) plugin.ReconcileRequest {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "setup.cmd")
 	data := []byte("@echo off\r\necho fixture\r\n")
@@ -216,7 +216,7 @@ func fixtureRequest(t *testing.T) plugin.Request {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(data)
-	return plugin.Request{Protocol: plugin.ProtocolVersion, Method: "apply", Identity: plugin.Identity{Project: "example", Recipe: "test", Destination: "intune"}, Artifact: plugin.Artifact{Path: path, Filename: "setup.cmd", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}, Metadata: raw(object{
+	return plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "example", Recipe: "test", Destination: "intune"}, Artifact: plugin.Artifact{Path: path, Filename: "setup.cmd", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}, Metadata: raw(object{
 		"@odata.type": win32Type, "displayName": "Fixture", "description": "Test app", "publisher": "Fixture Publisher",
 		"installCommandLine": "setup.cmd", "uninstallCommandLine": "setup.cmd /remove", "minimumSupportedWindowsRelease": "Windows11_23H2", "allowedArchitectures": "x64",
 		"installExperience": object{"runAsAccount": "system"},

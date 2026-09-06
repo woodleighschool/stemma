@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -14,7 +15,36 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/plugin"
 )
+
+func TestReportRetainsIndependentDestinationResults(t *testing.T) {
+	report := engine.Report{Recipes: []engine.RecipeReport{
+		{Name: "missing", Error: "source unavailable"},
+		{
+			Name: "Example", Error: "one destination failed", Prepared: &engine.Prepared{Filename: "Example.pkg"},
+			Steps: []engine.StepReport{{Name: "metadata", Operation: "munki.pkginfo", Cached: true, Artifacts: map[string]engine.Prepared{"artifact": {Filename: "pkginfo.json"}}}},
+			Destinations: []engine.DestinationReport{
+				{Name: "unavailable", Error: "remote unavailable"},
+				{Name: "local", Applied: true},
+			},
+		},
+	}}
+	var out bytes.Buffer
+	if err := printReport(&out, "apply", report); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"missing: failed: source unavailable",
+		"metadata (munki.pkginfo): 1 outputs (cached: true)",
+		"unavailable: failed: remote unavailable",
+		"local: 0 changes, applied: true",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("report missing %q: %s", want, out.String())
+		}
+	}
+}
 
 func TestCompiledProjectLifecycle(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "stemma")
@@ -44,8 +74,8 @@ recipes:
       first: {description: original, unattended_install: false, catalogs: [testing]}
       second: {catalogs: [testing]}
 destinations:
-  first: {type: munki, path: first}
-  second: {type: munki, path: second}
+  first: {operation: munki, path: first}
+  second: {operation: munki, path: second}
 `, server.URL)
 	write := func(text string) {
 		t.Helper()
@@ -54,7 +84,7 @@ destinations:
 		}
 	}
 	write(manifest)
-	run := func(success bool, args ...string) engine.Report {
+	invoke := func(success bool, args ...string) []byte {
 		t.Helper()
 		arguments := append([]string{"--root", project, "--cache-dir", cache, "--output", "json"}, args...)
 		cmd := exec.CommandContext(t.Context(), binary, arguments...)
@@ -65,6 +95,11 @@ destinations:
 		if (err == nil) != success {
 			t.Fatalf("%v: err=%v stderr=%s output=%s", args, err, stderr.String(), output)
 		}
+		return output
+	}
+	run := func(success bool, args ...string) engine.Report {
+		t.Helper()
+		output := invoke(success, args...)
 		var report engine.Report
 		if len(output) > 0 {
 			if err := json.Unmarshal(output, &report); err != nil {
@@ -72,6 +107,35 @@ destinations:
 			}
 		}
 		return report
+	}
+	invoke(true, "validate", "--resolved", "--offline")
+	var descriptor plugin.Descriptor
+	if err := json.Unmarshal(invoke(true, "operations", "--offline"), &descriptor); err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.ValidateDescriptor(descriptor); err != nil {
+		t.Fatal(err)
+	}
+	operations := map[string]string{}
+	for _, operation := range descriptor.Operations {
+		operations[operation.Name] = operation.Kind
+	}
+	if operations["inspect"] != "inspect" || operations["pkg"] != "package" || operations["munki"] != "reconcile" {
+		t.Fatalf("missing operation roles: %v", operations)
+	}
+	if downloads.Load() != 0 {
+		t.Fatal("validation or catalog acquired recipe input")
+	}
+	var inspected engine.Prepared
+	fixture, err := filepath.Abs("../../internal/apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(invoke(true, "inspect", fixture), &inspected); err != nil {
+		t.Fatal(err)
+	}
+	if inspected.Facts.Version != plugin.FactsVersion || len(inspected.Facts.Subjects) < 2 {
+		t.Fatalf("inspection lost container/receipt facts: %+v", inspected.Facts)
 	}
 	run(false, "prepare")
 	run(true, "update")

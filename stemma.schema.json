@@ -41,9 +41,9 @@
         "from": {
           "type": "string",
           "enum": [
-            "source"
+            "prepared"
           ],
-          "description": "Input artifact. Omitted or source selects the prepared source in version 1."
+          "description": "Input artifact. Omitted or prepared selects the prepared source tree. Use a pkg step to consume other inputs."
         }
       },
       "additionalProperties": false,
@@ -56,23 +56,13 @@
     },
     "Destination": {
       "properties": {
-        "type": {
+        "operation": {
           "type": "string",
-          "enum": [
-            "munki",
-            "plugin",
-            "jamf",
-            "intune"
-          ],
-          "description": "Provider or destination implementation. Unknown values are rejected."
+          "description": "Registered destination operation, such as munki, intune or jamf. Trusted executable plugins register their own operation names."
         },
         "path": {
           "type": "string",
-          "description": "Filesystem path. Source paths must stay within the Stemma project."
-        },
-        "plugin": {
-          "type": "string",
-          "description": "Name of an explicitly trusted plugin declared in this project."
+          "description": "Local Munki repository path. Other operations use config for connection settings."
         },
         "config": {
           "anyOf": [
@@ -84,7 +74,7 @@
             },
             {
               "type": "object",
-              "description": "Native plugin connection configuration."
+              "description": "Connection configuration validated by the named operation."
             }
           ],
           "type": "object",
@@ -94,8 +84,22 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "type"
+        "operation"
       ]
+    },
+    "FactReference": {
+      "properties": {
+        "$fact": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9_-]{0,127}\\.[a-z][a-z0-9_]*(\\.[A-Za-z0-9_-]+)*$"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "$fact"
+      ],
+      "description": "A typed observed value from exactly one named subject. Missing facts and ambiguous selectors fail before publication."
     },
     "Fragment": {
       "properties": {
@@ -193,924 +197,2092 @@
       "description": "Shared Graph connection for Windows and macOS apps. Set metadata.app_id on a recipe to adopt an existing app. Requires Graph DeviceManagementApps.ReadWrite.All for apply."
     },
     "IntuneMetadata": {
-      "oneOf": [
+      "anyOf": [
         {
           "properties": {
             "@odata.type": {
-              "const": "#microsoft.graph.win32LobApp",
+              "anyOf": [
+                {
+                  "const": "#microsoft.graph.win32LobApp",
+                  "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
             },
             "allowedArchitectures": {
-              "enum": [
-                "x86",
-                "x64",
-                "arm64",
-                null
+              "anyOf": [
+                {
+                  "enum": [
+                    "x86",
+                    "x64",
+                    "arm64",
+                    null
+                  ],
+                  "description": "Supported processor architecture; null clears it on an existing app. A non-null value is required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
               ],
               "description": "Supported processor architecture; null clears it on an existing app. A non-null value is required for creation."
             },
             "app_id": {
-              "type": "string",
-              "minLength": 1,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
             },
             "assignments": {
-              "items": {
-                "properties": {
-                  "@odata.type": {
-                    "const": "#microsoft.graph.mobileAppAssignment"
-                  },
-                  "intent": {
-                    "type": "string",
-                    "enum": [
-                      "available",
-                      "required",
-                      "uninstall",
-                      "availableWithoutEnrollment"
-                    ],
-                    "description": "Native deployment intent."
-                  },
-                  "target": {
-                    "oneOf": [
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
                       {
                         "properties": {
                           "@odata.type": {
-                            "const": "#microsoft.graph.groupAssignmentTarget"
+                            "anyOf": [
+                              {
+                                "const": "#microsoft.graph.mobileAppAssignment"
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
                           },
-                          "groupId": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": false,
-                        "type": "object",
-                        "required": [
-                          "@odata.type",
-                          "groupId"
-                        ]
-                      },
-                      {
-                        "properties": {
-                          "@odata.type": {
-                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
+                          "intent": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "available",
+                                  "required",
+                                  "uninstall",
+                                  "availableWithoutEnrollment"
+                                ],
+                                "description": "Native deployment intent."
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ],
+                            "description": "Native deployment intent."
                           },
-                          "groupId": {
-                            "type": "string",
-                            "minLength": 1
+                          "target": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.groupAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      },
+                                      "groupId": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type",
+                                      "groupId"
+                                    ]
+                                  },
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      },
+                                      "groupId": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type",
+                                      "groupId"
+                                    ]
+                                  },
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type"
+                                    ]
+                                  },
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type"
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
                           }
                         },
                         "additionalProperties": false,
                         "type": "object",
                         "required": [
-                          "@odata.type",
-                          "groupId"
+                          "intent",
+                          "target"
                         ]
                       },
                       {
-                        "properties": {
-                          "@odata.type": {
-                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
-                          }
-                        },
-                        "additionalProperties": false,
-                        "type": "object",
-                        "required": [
-                          "@odata.type"
-                        ]
-                      },
-                      {
-                        "properties": {
-                          "@odata.type": {
-                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
-                          }
-                        },
-                        "additionalProperties": false,
-                        "type": "object",
-                        "required": [
-                          "@odata.type"
-                        ]
+                        "$ref": "#/$defs/FactReference"
                       }
                     ]
-                  }
+                  },
+                  "type": "array",
+                  "maxItems": 1000,
+                  "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
                 },
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "intent",
-                  "target"
-                ]
-              },
-              "type": "array",
-              "maxItems": 1000,
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
             "description": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Native app description. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native app description. Required for creation."
             },
             "developer": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "App developer label."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "App developer label."
             },
             "displayName": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Company Portal display name. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Company Portal display name. Required for creation."
             },
             "informationUrl": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Publisher information URL."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Publisher information URL."
             },
             "installCommandLine": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Windows install command line. Required for creation; Stemma does not guess installer switches."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Windows install command line. Required for creation; Stemma does not guess installer switches."
             },
             "installExperience": {
-              "properties": {
-                "@odata.type": {
-                  "const": "#microsoft.graph.win32LobAppInstallExperience"
+              "anyOf": [
+                {
+                  "properties": {
+                    "@odata.type": {
+                      "anyOf": [
+                        {
+                          "const": "#microsoft.graph.win32LobAppInstallExperience"
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ]
+                    },
+                    "deviceRestartBehavior": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "basedOnReturnCode",
+                            "allow",
+                            "suppress",
+                            "force"
+                          ],
+                          "description": "Installer restart handling; omitted fields are preserved."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Installer restart handling; omitted fields are preserved."
+                    },
+                    "runAsAccount": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "system",
+                            "user"
+                          ],
+                          "description": "Install as system or user. Required for creation."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Install as system or user. Required for creation."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object"
                 },
-                "deviceRestartBehavior": {
-                  "type": "string",
-                  "enum": [
-                    "basedOnReturnCode",
-                    "allow",
-                    "suppress",
-                    "force"
-                  ],
-                  "description": "Installer restart handling; omitted fields are preserved."
-                },
-                "runAsAccount": {
-                  "type": "string",
-                  "enum": [
-                    "system",
-                    "user"
-                  ],
-                  "description": "Install as system or user. Required for creation."
+                {
+                  "$ref": "#/$defs/FactReference"
                 }
-              },
-              "additionalProperties": false,
-              "type": "object"
+              ]
             },
             "isFeatured": {
-              "type": "boolean",
+              "anyOf": [
+                {
+                  "type": "boolean",
+                  "description": "Show the app as featured. Explicit false is managed."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Show the app as featured. Explicit false is managed."
             },
             "minimumCpuSpeedInMHz": {
-              "type": "integer",
-              "maximum": 2147483647,
-              "minimum": 0,
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2147483647,
+                  "minimum": 0,
+                  "description": "Native minimum hardware requirement. Omit to leave unmanaged."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native minimum hardware requirement. Omit to leave unmanaged."
             },
             "minimumFreeDiskSpaceInMB": {
-              "type": "integer",
-              "maximum": 2147483647,
-              "minimum": 0,
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2147483647,
+                  "minimum": 0,
+                  "description": "Native minimum hardware requirement. Omit to leave unmanaged."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native minimum hardware requirement. Omit to leave unmanaged."
             },
             "minimumMemoryInMB": {
-              "type": "integer",
-              "maximum": 2147483647,
-              "minimum": 0,
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2147483647,
+                  "minimum": 0,
+                  "description": "Native minimum hardware requirement. Omit to leave unmanaged."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native minimum hardware requirement. Omit to leave unmanaged."
             },
             "minimumNumberOfProcessors": {
-              "type": "integer",
-              "maximum": 2147483647,
-              "minimum": 0,
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 2147483647,
+                  "minimum": 0,
+                  "description": "Native minimum hardware requirement. Omit to leave unmanaged."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native minimum hardware requirement. Omit to leave unmanaged."
             },
             "minimumSupportedWindowsRelease": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Native minimum Windows release, such as Windows11_23H2. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native minimum Windows release, such as Windows11_23H2. Required for creation."
             },
             "notes": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Administrator notes. Stemma preserves a reserved identity marker alongside these notes."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Administrator notes. Stemma preserves a reserved identity marker alongside these notes."
             },
             "owner": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "App owner label."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "App owner label."
             },
             "privacyInformationUrl": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Publisher privacy information URL."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Publisher privacy information URL."
             },
             "publisher": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Native publisher name. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native publisher name. Required for creation."
             },
             "returnCodes": {
-              "items": {
-                "properties": {
-                  "@odata.type": {
-                    "const": "#microsoft.graph.win32LobAppReturnCode"
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "anyOf": [
+                              {
+                                "const": "#microsoft.graph.win32LobAppReturnCode"
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
+                          },
+                          "returnCode": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "maximum": 2147483647,
+                                "minimum": -2147483648
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
+                          },
+                          "type": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "success",
+                                  "softReboot",
+                                  "hardReboot",
+                                  "retry",
+                                  "failed"
+                                ],
+                                "description": "Native result classification."
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ],
+                            "description": "Native result classification."
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "returnCode",
+                          "type"
+                        ]
+                      },
+                      {
+                        "$ref": "#/$defs/FactReference"
+                      }
+                    ]
                   },
-                  "returnCode": {
-                    "type": "integer",
-                    "maximum": 2147483647,
-                    "minimum": -2147483648
-                  },
-                  "type": {
-                    "type": "string",
-                    "enum": [
-                      "success",
-                      "softReboot",
-                      "hardReboot",
-                      "retry",
-                      "failed"
-                    ],
-                    "description": "Native result classification."
-                  }
+                  "type": "array",
+                  "description": "Replace the return-code collection; an empty array clears it."
                 },
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "returnCode",
-                  "type"
-                ]
-              },
-              "type": "array",
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Replace the return-code collection; an empty array clears it."
             },
             "rules": {
-              "items": {
-                "oneOf": [
-                  {
-                    "properties": {
-                      "@odata.type": {
-                        "const": "#microsoft.graph.win32LobAppProductCodeRule"
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "@odata.type": {
+                                "anyOf": [
+                                  {
+                                    "const": "#microsoft.graph.win32LobAppProductCodeRule"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "productCode": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "description": "MSI ProductCode GUID."
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ],
+                                "description": "MSI ProductCode GUID."
+                              },
+                              "productVersion": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "maxLength": 10000,
+                                    "description": "Version used when comparison is configured."
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ],
+                                "description": "Version used when comparison is configured."
+                              },
+                              "productVersionOperator": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "notConfigured",
+                                      "equal",
+                                      "notEqual",
+                                      "greaterThan",
+                                      "greaterThanOrEqual",
+                                      "lessThan",
+                                      "lessThanOrEqual"
+                                    ],
+                                    "description": "Native comparison operator."
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ],
+                                "description": "Native comparison operator."
+                              },
+                              "ruleType": {
+                                "anyOf": [
+                                  {
+                                    "const": "detection"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "@odata.type",
+                              "ruleType",
+                              "productCode",
+                              "productVersionOperator"
+                            ]
+                          },
+                          {
+                            "properties": {
+                              "@odata.type": {
+                                "anyOf": [
+                                  {
+                                    "const": "#microsoft.graph.win32LobAppFileSystemRule"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "check32BitOn64System": {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "comparisonValue": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "maxLength": 10000,
+                                    "description": "Value used when comparison is configured."
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ],
+                                "description": "Value used when comparison is configured."
+                              },
+                              "fileOrFolderName": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "operationType": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "exists",
+                                      "version",
+                                      "sizeInMB",
+                                      "modifiedDate",
+                                      "createdDate"
+                                    ],
+                                    "description": "Detected file property."
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ],
+                                "description": "Detected file property."
+                              },
+                              "operator": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "notConfigured",
+                                      "equal",
+                                      "notEqual",
+                                      "greaterThan",
+                                      "greaterThanOrEqual",
+                                      "lessThan",
+                                      "lessThanOrEqual"
+                                    ],
+                                    "description": "Native comparison operator."
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ],
+                                "description": "Native comparison operator."
+                              },
+                              "path": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "ruleType": {
+                                "anyOf": [
+                                  {
+                                    "const": "detection"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "@odata.type",
+                              "ruleType",
+                              "path",
+                              "fileOrFolderName",
+                              "operationType",
+                              "operator"
+                            ]
+                          }
+                        ]
                       },
-                      "productCode": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "MSI ProductCode GUID."
-                      },
-                      "productVersion": {
-                        "type": "string",
-                        "maxLength": 10000,
-                        "description": "Version used when comparison is configured."
-                      },
-                      "productVersionOperator": {
-                        "type": "string",
-                        "enum": [
-                          "notConfigured",
-                          "equal",
-                          "notEqual",
-                          "greaterThan",
-                          "greaterThanOrEqual",
-                          "lessThan",
-                          "lessThanOrEqual"
-                        ],
-                        "description": "Native comparison operator."
-                      },
-                      "ruleType": {
-                        "const": "detection"
+                      {
+                        "$ref": "#/$defs/FactReference"
                       }
-                    },
-                    "additionalProperties": false,
-                    "type": "object",
-                    "required": [
-                      "@odata.type",
-                      "ruleType",
-                      "productCode",
-                      "productVersionOperator"
                     ]
                   },
-                  {
-                    "properties": {
-                      "@odata.type": {
-                        "const": "#microsoft.graph.win32LobAppFileSystemRule"
-                      },
-                      "check32BitOn64System": {
-                        "type": "boolean"
-                      },
-                      "comparisonValue": {
-                        "type": "string",
-                        "maxLength": 10000,
-                        "description": "Value used when comparison is configured."
-                      },
-                      "fileOrFolderName": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "operationType": {
-                        "type": "string",
-                        "enum": [
-                          "exists",
-                          "version",
-                          "sizeInMB",
-                          "modifiedDate",
-                          "createdDate"
-                        ],
-                        "description": "Detected file property."
-                      },
-                      "operator": {
-                        "type": "string",
-                        "enum": [
-                          "notConfigured",
-                          "equal",
-                          "notEqual",
-                          "greaterThan",
-                          "greaterThanOrEqual",
-                          "lessThan",
-                          "lessThanOrEqual"
-                        ],
-                        "description": "Native comparison operator."
-                      },
-                      "path": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "ruleType": {
-                        "const": "detection"
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object",
-                    "required": [
-                      "@odata.type",
-                      "ruleType",
-                      "path",
-                      "fileOrFolderName",
-                      "operationType",
-                      "operator"
-                    ]
-                  }
-                ]
-              },
-              "type": "array",
-              "maxItems": 100,
+                  "type": "array",
+                  "maxItems": 100,
+                  "description": "Complete detection-rule collection. Creation requires at least one rule. Product-code and file-system detection are supported; requirement and script rules are unsupported."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Complete detection-rule collection. Creation requires at least one rule. Product-code and file-system detection are supported; requirement and script rules are unsupported."
             },
             "uninstallCommandLine": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Windows uninstall command line. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Windows uninstall command line. Required for creation."
             },
             "artifact": {
               "type": "string",
-              "description": "Named recipe artifact to publish. Omit to use the prepared source payload."
+              "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
+              "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
+            },
+            "inputs": {
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
+                "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
+              },
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+              },
+              "type": "object",
+              "description": "Additional named immutable inputs supplied to the destination operation, using the same artifact reference syntax."
             }
           },
           "additionalProperties": false,
           "type": "object",
-          "required": [
-            "@odata.type"
-          ],
           "title": "#microsoft.graph.win32LobApp"
         },
         {
           "properties": {
             "@odata.type": {
-              "const": "#microsoft.graph.macOSDmgApp",
+              "anyOf": [
+                {
+                  "const": "#microsoft.graph.macOSDmgApp",
+                  "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
             },
             "app_id": {
-              "type": "string",
-              "minLength": 1,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
             },
             "assignments": {
-              "items": {
-                "properties": {
-                  "@odata.type": {
-                    "const": "#microsoft.graph.mobileAppAssignment"
-                  },
-                  "intent": {
-                    "type": "string",
-                    "enum": [
-                      "available",
-                      "required",
-                      "uninstall",
-                      "availableWithoutEnrollment"
-                    ],
-                    "description": "Native deployment intent."
-                  },
-                  "target": {
-                    "oneOf": [
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
                       {
                         "properties": {
                           "@odata.type": {
-                            "const": "#microsoft.graph.groupAssignmentTarget"
+                            "anyOf": [
+                              {
+                                "const": "#microsoft.graph.mobileAppAssignment"
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
                           },
-                          "groupId": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": false,
-                        "type": "object",
-                        "required": [
-                          "@odata.type",
-                          "groupId"
-                        ]
-                      },
-                      {
-                        "properties": {
-                          "@odata.type": {
-                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
+                          "intent": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "available",
+                                  "required",
+                                  "uninstall",
+                                  "availableWithoutEnrollment"
+                                ],
+                                "description": "Native deployment intent."
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ],
+                            "description": "Native deployment intent."
                           },
-                          "groupId": {
-                            "type": "string",
-                            "minLength": 1
+                          "target": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.groupAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      },
+                                      "groupId": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type",
+                                      "groupId"
+                                    ]
+                                  },
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      },
+                                      "groupId": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type",
+                                      "groupId"
+                                    ]
+                                  },
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type"
+                                    ]
+                                  },
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type"
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
                           }
                         },
                         "additionalProperties": false,
                         "type": "object",
                         "required": [
-                          "@odata.type",
-                          "groupId"
+                          "intent",
+                          "target"
                         ]
                       },
                       {
-                        "properties": {
-                          "@odata.type": {
-                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
-                          }
-                        },
-                        "additionalProperties": false,
-                        "type": "object",
-                        "required": [
-                          "@odata.type"
-                        ]
-                      },
-                      {
-                        "properties": {
-                          "@odata.type": {
-                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
-                          }
-                        },
-                        "additionalProperties": false,
-                        "type": "object",
-                        "required": [
-                          "@odata.type"
-                        ]
+                        "$ref": "#/$defs/FactReference"
                       }
                     ]
-                  }
+                  },
+                  "type": "array",
+                  "maxItems": 1000,
+                  "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
                 },
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "intent",
-                  "target"
-                ]
-              },
-              "type": "array",
-              "maxItems": 1000,
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
             "description": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Native app description. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native app description. Required for creation."
             },
             "developer": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "App developer label."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "App developer label."
             },
             "displayName": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Company Portal display name. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Company Portal display name. Required for creation."
             },
             "ignoreVersionDetection": {
-              "type": "boolean",
+              "anyOf": [
+                {
+                  "type": "boolean",
+                  "description": "Ignore installed app versions during detection. Explicit false is managed."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Ignore installed app versions during detection. Explicit false is managed."
             },
             "includedApps": {
-              "items": {
-                "properties": {
-                  "@odata.type": {
-                    "const": "#microsoft.graph.macOSIncludedApp"
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "anyOf": [
+                              {
+                                "const": "#microsoft.graph.macOSIncludedApp"
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
+                          },
+                          "bundleId": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 1000,
+                                "minLength": 1,
+                                "description": "Application CFBundleIdentifier."
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ],
+                            "description": "Application CFBundleIdentifier."
+                          },
+                          "bundleVersion": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 1000,
+                                "minLength": 1,
+                                "description": "Application CFBundleShortVersionString."
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ],
+                            "description": "Application CFBundleShortVersionString."
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "bundleId",
+                          "bundleVersion"
+                        ]
+                      },
+                      {
+                        "$ref": "#/$defs/FactReference"
+                      }
+                    ]
                   },
-                  "bundleId": {
-                    "type": "string",
-                    "maxLength": 1000,
-                    "minLength": 1,
-                    "description": "Application CFBundleIdentifier."
-                  },
-                  "bundleVersion": {
-                    "type": "string",
-                    "maxLength": 1000,
-                    "minLength": 1,
-                    "description": "Application CFBundleShortVersionString."
-                  }
+                  "type": "array",
+                  "maxItems": 500,
+                  "minItems": 1,
+                  "description": "Complete collection of included bundle IDs and versions. Required for creation; bundle IDs must be unique."
                 },
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "bundleId",
-                  "bundleVersion"
-                ]
-              },
-              "type": "array",
-              "maxItems": 500,
-              "minItems": 1,
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Complete collection of included bundle IDs and versions. Required for creation; bundle IDs must be unique."
             },
             "informationUrl": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Publisher information URL."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Publisher information URL."
             },
             "isFeatured": {
-              "type": "boolean",
+              "anyOf": [
+                {
+                  "type": "boolean",
+                  "description": "Show the app as featured. Explicit false is managed."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Show the app as featured. Explicit false is managed."
             },
             "minimumSupportedOperatingSystem": {
-              "properties": {
-                "@odata.type": {
-                  "const": "#microsoft.graph.macOSMinimumOperatingSystem"
+              "anyOf": [
+                {
+                  "properties": {
+                    "@odata.type": {
+                      "anyOf": [
+                        {
+                          "const": "#microsoft.graph.macOSMinimumOperatingSystem"
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ]
+                    },
+                    "v10_10": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_11": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_12": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_13": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_14": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_15": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_7": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_8": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_9": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v11_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v12_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v13_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v14_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v15_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v26_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "description": "One minimum OS selection encoded as native Graph booleans. Exactly one version must be true. Required for creation."
                 },
-                "v10_10": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_11": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_12": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_13": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_14": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_15": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_7": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_8": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_9": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v11_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v12_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v13_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v14_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v15_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v26_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                {
+                  "$ref": "#/$defs/FactReference"
                 }
-              },
-              "additionalProperties": false,
-              "type": "object",
+              ],
               "description": "One minimum OS selection encoded as native Graph booleans. Exactly one version must be true. Required for creation."
             },
             "notes": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Administrator notes. Stemma preserves a reserved identity marker alongside these notes."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Administrator notes. Stemma preserves a reserved identity marker alongside these notes."
             },
             "owner": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "App owner label."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "App owner label."
             },
             "primaryBundleId": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Primary application CFBundleIdentifier. Required for creation; read from the vendor artifact, not the filename."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Primary application CFBundleIdentifier. Required for creation; read from the vendor artifact, not the filename."
             },
             "primaryBundleVersion": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Primary application CFBundleShortVersionString. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Primary application CFBundleShortVersionString. Required for creation."
             },
             "privacyInformationUrl": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Publisher privacy information URL."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Publisher privacy information URL."
             },
             "publisher": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Native publisher name. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native publisher name. Required for creation."
             },
             "artifact": {
               "type": "string",
-              "description": "Named recipe artifact to publish. Omit to use the prepared source payload."
+              "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
+              "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
+            },
+            "inputs": {
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
+                "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
+              },
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+              },
+              "type": "object",
+              "description": "Additional named immutable inputs supplied to the destination operation, using the same artifact reference syntax."
             }
           },
           "additionalProperties": false,
           "type": "object",
-          "required": [
-            "@odata.type"
-          ],
           "title": "#microsoft.graph.macOSDmgApp"
         },
         {
           "properties": {
             "@odata.type": {
-              "const": "#microsoft.graph.macOSPkgApp",
+              "anyOf": [
+                {
+                  "const": "#microsoft.graph.macOSPkgApp",
+                  "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
             },
             "app_id": {
-              "type": "string",
-              "minLength": 1,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
             },
             "assignments": {
-              "items": {
-                "properties": {
-                  "@odata.type": {
-                    "const": "#microsoft.graph.mobileAppAssignment"
-                  },
-                  "intent": {
-                    "type": "string",
-                    "enum": [
-                      "available",
-                      "required",
-                      "uninstall",
-                      "availableWithoutEnrollment"
-                    ],
-                    "description": "Native deployment intent."
-                  },
-                  "target": {
-                    "oneOf": [
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
                       {
                         "properties": {
                           "@odata.type": {
-                            "const": "#microsoft.graph.groupAssignmentTarget"
+                            "anyOf": [
+                              {
+                                "const": "#microsoft.graph.mobileAppAssignment"
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
                           },
-                          "groupId": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "additionalProperties": false,
-                        "type": "object",
-                        "required": [
-                          "@odata.type",
-                          "groupId"
-                        ]
-                      },
-                      {
-                        "properties": {
-                          "@odata.type": {
-                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
+                          "intent": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "enum": [
+                                  "available",
+                                  "required",
+                                  "uninstall",
+                                  "availableWithoutEnrollment"
+                                ],
+                                "description": "Native deployment intent."
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ],
+                            "description": "Native deployment intent."
                           },
-                          "groupId": {
-                            "type": "string",
-                            "minLength": 1
+                          "target": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.groupAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      },
+                                      "groupId": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type",
+                                      "groupId"
+                                    ]
+                                  },
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      },
+                                      "groupId": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string",
+                                            "minLength": 1
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type",
+                                      "groupId"
+                                    ]
+                                  },
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type"
+                                    ]
+                                  },
+                                  {
+                                    "properties": {
+                                      "@odata.type": {
+                                        "anyOf": [
+                                          {
+                                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "additionalProperties": false,
+                                    "type": "object",
+                                    "required": [
+                                      "@odata.type"
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
                           }
                         },
                         "additionalProperties": false,
                         "type": "object",
                         "required": [
-                          "@odata.type",
-                          "groupId"
+                          "intent",
+                          "target"
                         ]
                       },
                       {
-                        "properties": {
-                          "@odata.type": {
-                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
-                          }
-                        },
-                        "additionalProperties": false,
-                        "type": "object",
-                        "required": [
-                          "@odata.type"
-                        ]
-                      },
-                      {
-                        "properties": {
-                          "@odata.type": {
-                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
-                          }
-                        },
-                        "additionalProperties": false,
-                        "type": "object",
-                        "required": [
-                          "@odata.type"
-                        ]
+                        "$ref": "#/$defs/FactReference"
                       }
                     ]
-                  }
+                  },
+                  "type": "array",
+                  "maxItems": 1000,
+                  "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
                 },
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "intent",
-                  "target"
-                ]
-              },
-              "type": "array",
-              "maxItems": 1000,
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
             "description": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Native app description. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native app description. Required for creation."
             },
             "developer": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "App developer label."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "App developer label."
             },
             "displayName": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Company Portal display name. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Company Portal display name. Required for creation."
             },
             "ignoreVersionDetection": {
-              "type": "boolean",
+              "anyOf": [
+                {
+                  "type": "boolean",
+                  "description": "Ignore installed app versions during detection. Explicit false is managed."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Ignore installed app versions during detection. Explicit false is managed."
             },
             "includedApps": {
-              "items": {
-                "properties": {
-                  "@odata.type": {
-                    "const": "#microsoft.graph.macOSIncludedApp"
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "@odata.type": {
+                            "anyOf": [
+                              {
+                                "const": "#microsoft.graph.macOSIncludedApp"
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
+                          },
+                          "bundleId": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 1000,
+                                "minLength": 1,
+                                "description": "Application CFBundleIdentifier."
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ],
+                            "description": "Application CFBundleIdentifier."
+                          },
+                          "bundleVersion": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "maxLength": 1000,
+                                "minLength": 1,
+                                "description": "Application CFBundleShortVersionString."
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ],
+                            "description": "Application CFBundleShortVersionString."
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "bundleId",
+                          "bundleVersion"
+                        ]
+                      },
+                      {
+                        "$ref": "#/$defs/FactReference"
+                      }
+                    ]
                   },
-                  "bundleId": {
-                    "type": "string",
-                    "maxLength": 1000,
-                    "minLength": 1,
-                    "description": "Application CFBundleIdentifier."
-                  },
-                  "bundleVersion": {
-                    "type": "string",
-                    "maxLength": 1000,
-                    "minLength": 1,
-                    "description": "Application CFBundleShortVersionString."
-                  }
+                  "type": "array",
+                  "maxItems": 500,
+                  "minItems": 1,
+                  "description": "Complete collection of included bundle IDs and versions. Required for creation; bundle IDs must be unique."
                 },
-                "additionalProperties": false,
-                "type": "object",
-                "required": [
-                  "bundleId",
-                  "bundleVersion"
-                ]
-              },
-              "type": "array",
-              "maxItems": 500,
-              "minItems": 1,
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Complete collection of included bundle IDs and versions. Required for creation; bundle IDs must be unique."
             },
             "informationUrl": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Publisher information URL."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Publisher information URL."
             },
             "isFeatured": {
-              "type": "boolean",
+              "anyOf": [
+                {
+                  "type": "boolean",
+                  "description": "Show the app as featured. Explicit false is managed."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Show the app as featured. Explicit false is managed."
             },
             "minimumSupportedOperatingSystem": {
-              "properties": {
-                "@odata.type": {
-                  "const": "#microsoft.graph.macOSMinimumOperatingSystem"
+              "anyOf": [
+                {
+                  "properties": {
+                    "@odata.type": {
+                      "anyOf": [
+                        {
+                          "const": "#microsoft.graph.macOSMinimumOperatingSystem"
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ]
+                    },
+                    "v10_10": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_11": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_12": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_13": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_14": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_15": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_7": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_8": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v10_9": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v11_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v12_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v13_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v14_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v15_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    },
+                    "v26_0": {
+                      "anyOf": [
+                        {
+                          "type": "boolean",
+                          "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "description": "One minimum OS selection encoded as native Graph booleans. Exactly one version must be true. Required for creation."
                 },
-                "v10_10": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_11": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_12": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_13": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_14": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_15": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_7": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_8": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v10_9": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v11_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v12_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v13_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v14_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v15_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                },
-                "v26_0": {
-                  "type": "boolean",
-                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                {
+                  "$ref": "#/$defs/FactReference"
                 }
-              },
-              "additionalProperties": false,
-              "type": "object",
+              ],
               "description": "One minimum OS selection encoded as native Graph booleans. Exactly one version must be true. Required for creation."
             },
             "notes": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Administrator notes. Stemma preserves a reserved identity marker alongside these notes."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Administrator notes. Stemma preserves a reserved identity marker alongside these notes."
             },
             "owner": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "App owner label."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "App owner label."
             },
             "primaryBundleId": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Primary application CFBundleIdentifier. Required for creation; read from the vendor artifact, not the filename."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Primary application CFBundleIdentifier. Required for creation; read from the vendor artifact, not the filename."
             },
             "primaryBundleVersion": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Primary application CFBundleShortVersionString. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Primary application CFBundleShortVersionString. Required for creation."
             },
             "privacyInformationUrl": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Publisher privacy information URL."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Publisher privacy information URL."
             },
             "publisher": {
-              "type": "string",
-              "maxLength": 10000,
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 10000,
+                  "description": "Native publisher name. Required for creation."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
               "description": "Native publisher name. Required for creation."
             },
             "artifact": {
               "type": "string",
-              "description": "Named recipe artifact to publish. Omit to use the prepared source payload."
+              "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
+              "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
+            },
+            "inputs": {
+              "additionalProperties": {
+                "type": "string",
+                "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
+                "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
+              },
+              "propertyNames": {
+                "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+              },
+              "type": "object",
+              "description": "Additional named immutable inputs supplied to the destination operation, using the same artifact reference syntax."
             }
           },
           "additionalProperties": false,
           "type": "object",
-          "required": [
-            "@odata.type"
-          ],
           "title": "#microsoft.graph.macOSPkgApp"
         }
       ],
@@ -1146,30 +2318,70 @@
     "JamfMetadata": {
       "properties": {
         "package_id": {
-          "type": "string",
-          "maxLength": 20,
-          "pattern": "^[1-9][0-9]*$",
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 20,
+              "pattern": "^[1-9][0-9]*$",
+              "description": "Adopt this existing Jamf package ID for this recipe. Must match any saved binding. Omit to discover by Stemma's stable filename marker or create a package."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Adopt this existing Jamf package ID for this recipe. Must match any saved binding. Omit to discover by Stemma's stable filename marker or create a package."
         },
         "categoryId": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Native category ID as a string. Use -1 for no category."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Native category ID as a string. Use -1 for no category."
         },
         "fillExistingUsers": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Native option to fill existing user directories. Explicit false is managed."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Native option to fill existing user directories. Explicit false is managed."
         },
         "fillUserTemplate": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Native option to fill the user template. Explicit false is managed."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Native option to fill the user template. Explicit false is managed."
         },
         "info": {
           "anyOf": [
             {
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Native package information. Null clears the field."
             },
             {
-              "type": "null"
+              "$ref": "#/$defs/FactReference"
             }
           ],
           "description": "Native package information. Null clears the field."
@@ -1177,60 +2389,153 @@
         "notes": {
           "anyOf": [
             {
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Administrator notes. Null clears the field."
             },
             {
-              "type": "null"
+              "$ref": "#/$defs/FactReference"
             }
           ],
           "description": "Administrator notes. Null clears the field."
         },
         "osInstall": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Native operating system installer flag. Explicit false is managed."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Native operating system installer flag. Explicit false is managed."
         },
         "osRequirements": {
           "anyOf": [
             {
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Native operating system requirement expression, such as 10.6.8, 10.7.x. Null clears the field."
             },
             {
-              "type": "null"
+              "$ref": "#/$defs/FactReference"
             }
           ],
           "description": "Native operating system requirement expression, such as 10.6.8, 10.7.x. Null clears the field."
         },
         "packageName": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Native package display name. Defaults to the artifact filename when creating a package; names are never used for identity matching."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Native package display name. Defaults to the artifact filename when creating a package; names are never used for identity matching."
         },
         "priority": {
-          "type": "integer",
+          "anyOf": [
+            {
+              "type": "integer",
+              "description": "Native package installation priority. Defaults to 10 when creating a package."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Native package installation priority. Defaults to 10 when creating a package."
         },
         "rebootRequired": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Native package restart requirement. Explicit false is managed."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Native package restart requirement. Explicit false is managed."
         },
         "suppressEula": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Native suppressEula package option. Explicit false is managed."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Native suppressEula package option. Explicit false is managed."
         },
         "suppressFromDock": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Native suppressFromDock package option. Explicit false is managed."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Native suppressFromDock package option. Explicit false is managed."
         },
         "suppressRegistration": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Native suppressRegistration package option. Explicit false is managed."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Native suppressRegistration package option. Explicit false is managed."
         },
         "suppressUpdates": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Native suppressUpdates package option. Explicit false is managed."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Native suppressUpdates package option. Explicit false is managed."
         },
         "artifact": {
           "type": "string",
-          "description": "Named recipe artifact to publish. Omit to use the prepared source payload."
+          "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
+          "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
+        },
+        "inputs": {
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
+            "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          },
+          "type": "object",
+          "description": "Additional named immutable inputs supplied to the destination operation, using the same artifact reference syntax."
         }
       },
       "additionalProperties": false,
@@ -1239,260 +2544,803 @@
     },
     "MunkiMetadata": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "https://github.com/woodleighschool/stemma/internal/munki/metadata",
       "properties": {
         "display_name": {
-          "type": "string",
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "Optional display title. Omission preserves the remote title; null clears it."
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Optional display title. Omission preserves the remote title; null clears it."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Optional display title. Omission preserves the remote title; null clears it."
         },
         "description": {
-          "type": "string",
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "Application description. Omission preserves the remote value; null clears it."
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Application description. Omission preserves the remote value; null clears it."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Application description. Omission preserves the remote value; null clears it."
         },
         "category": {
-          "type": "string",
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "Managed Software Center category. Null clears the category."
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Managed Software Center category. Null clears the category."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Managed Software Center category. Null clears the category."
         },
         "developer": {
-          "type": "string",
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "description": "Software publisher display name. Null clears the publisher."
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Software publisher display name. Null clears the publisher."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Software publisher display name. Null clears the publisher."
         },
         "catalogs": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/FactReference"
+                  }
+                ]
+              },
+              "type": "array",
+              "description": "Complete catalog membership. An empty list removes all memberships."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Complete catalog membership. An empty list removes all memberships."
         },
         "requires": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/FactReference"
+                  }
+                ]
+              },
+              "type": "array",
+              "description": "Complete list of Munki item dependencies. Entries are native item names, optionally with version requirements; [] clears the list."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Complete list of Munki item dependencies. Entries are native item names, optionally with version requirements; [] clears the list."
         },
         "unattended_install": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Permit installation without interaction. Explicit false disables it."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Permit installation without interaction. Explicit false disables it."
         },
         "unattended_uninstall": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Permit removal without interaction. Explicit false disables it."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Permit removal without interaction. Explicit false disables it."
         },
         "uninstallable": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Expose supported removal using uninstall_method."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Expose supported removal using uninstall_method."
         },
         "uninstall_method": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Supported native removal method; requires its corresponding receipts or copy entries or script."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Supported native removal method; requires its corresponding receipts or copy entries or script."
         },
         "RestartAction": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Munki restart or logout requirement after installation."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Munki restart or logout requirement after installation."
         },
         "minimum_os_version": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Lowest macOS version eligible for this package."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Lowest macOS version eligible for this package."
         },
         "maximum_os_version": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Highest macOS version eligible for this package."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Highest macOS version eligible for this package."
         },
         "minimum_munki_version": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Lowest Munki client version eligible for this package."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Lowest Munki client version eligible for this package."
         },
         "supported_architectures": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/FactReference"
+                  }
+                ]
+              },
+              "type": "array",
+              "description": "Complete architecture list using arm64 or x86_64."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Complete architecture list using arm64 or x86_64."
         },
         "blocking_applications": {
-          "items": {
-            "type": "string"
-          },
-          "type": "array",
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/FactReference"
+                  }
+                ]
+              },
+              "type": "array",
+              "description": "Applications that block installation. Empty list disables inferred blocking."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Applications that block installation. Empty list disables inferred blocking."
         },
         "installable_condition": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Munki predicate controlling installation eligibility."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Munki predicate controlling installation eligibility."
         },
         "installed_size": {
-          "type": "integer",
+          "anyOf": [
+            {
+              "type": "integer",
+              "description": "Installed size in KiB; independent of downloaded installer size."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Installed size in KiB; independent of downloaded installer size."
         },
         "OnDemand": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Allow repeated optional installation even when the item is already installed."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Allow repeated optional installation even when the item is already installed."
         },
         "precache": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Cache the installer before it is requested for installation."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Cache the installer before it is requested for installation."
         },
         "autoremove": {
-          "type": "boolean",
+          "anyOf": [
+            {
+              "type": "boolean",
+              "description": "Remove installed software when no applicable manifest requests it."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Remove installed software when no applicable manifest requests it."
         },
         "installs": {
-          "items": {
-            "properties": {
-              "type": {
-                "type": "string"
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "type": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "path": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "CFBundleIdentifier": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "CFBundleName": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "CFBundleShortVersionString": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "CFBundleVersion": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "version_comparison_key": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "minimum_update_version": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "installer_item_location": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "minimum_os_version": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "md5checksum": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  {
+                    "$ref": "#/$defs/FactReference"
+                  }
+                ]
               },
-              "path": {
-                "type": "string"
-              },
-              "CFBundleIdentifier": {
-                "type": "string"
-              },
-              "CFBundleName": {
-                "type": "string"
-              },
-              "CFBundleShortVersionString": {
-                "type": "string"
-              },
-              "CFBundleVersion": {
-                "type": "string"
-              },
-              "version_comparison_key": {
-                "type": "string"
-              },
-              "minimum_update_version": {
-                "type": "string"
-              },
-              "installer_item_location": {
-                "type": "string"
-              },
-              "minimum_os_version": {
-                "type": "string"
-              },
-              "md5checksum": {
-                "type": "string"
-              }
+              "type": "array",
+              "description": "Complete native detection list using application or bundle or plist or file entries."
             },
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "type": "array",
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Complete native detection list using application or bundle or plist or file entries."
         },
         "receipts": {
-          "items": {
-            "properties": {
-              "packageid": {
-                "type": "string"
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "packageid": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "name": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "version": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "installed_size": {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "optional": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  {
+                    "$ref": "#/$defs/FactReference"
+                  }
+                ]
               },
-              "name": {
-                "type": "string"
-              },
-              "version": {
-                "type": "string"
-              },
-              "installed_size": {
-                "type": "integer"
-              },
-              "optional": {
-                "type": "boolean"
-              }
+              "type": "array",
+              "description": "Complete Apple package receipt list used for detection and removal."
             },
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "type": "array",
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Complete Apple package receipt list used for detection and removal."
         },
         "items_to_copy": {
-          "items": {
-            "properties": {
-              "source_item": {
-                "type": "string"
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "source_item": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "destination_path": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "destination_item": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "user": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "group": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "mode": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object"
+                  },
+                  {
+                    "$ref": "#/$defs/FactReference"
+                  }
+                ]
               },
-              "destination_path": {
-                "type": "string"
-              },
-              "destination_item": {
-                "type": "string"
-              },
-              "user": {
-                "type": "string"
-              },
-              "group": {
-                "type": "string"
-              },
-              "mode": {
-                "type": "string"
-              }
+              "type": "array",
+              "description": "Payload selections and destination paths for copy_from_dmg."
             },
-            "additionalProperties": false,
-            "type": "object"
-          },
-          "type": "array",
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Payload selections and destination paths for copy_from_dmg."
         },
         "package_path": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Relative package path within the original installer image."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Relative package path within the original installer image."
         },
         "notes": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Administrator notes retained in pkginfo."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Administrator notes retained in pkginfo."
         },
         "installcheck_script": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Deployment-time installation check script. Never executed by Stemma."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Deployment-time installation check script. Never executed by Stemma."
         },
         "uninstallcheck_script": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Deployment-time removal check script. Never executed by Stemma."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Deployment-time removal check script. Never executed by Stemma."
         },
         "preinstall_script": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Deployment-time script before installation. Never executed by Stemma."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Deployment-time script before installation. Never executed by Stemma."
         },
         "postinstall_script": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Deployment-time script after installation. Never executed by Stemma."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Deployment-time script after installation. Never executed by Stemma."
         },
         "preuninstall_script": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Deployment-time script before removal. Never executed by Stemma."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Deployment-time script before removal. Never executed by Stemma."
         },
         "postuninstall_script": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Deployment-time script after removal. Never executed by Stemma."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Deployment-time script after removal. Never executed by Stemma."
         },
         "uninstall_script": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Deployment-time removal script. Never executed by Stemma."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Deployment-time removal script. Never executed by Stemma."
         },
         "version_script": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Deployment-time installed-version script. Never executed by Stemma."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Deployment-time installed-version script. Never executed by Stemma."
         },
         "name": {
-          "type": "string",
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Stable native Munki name. Defaults to the recipe name when creating a package."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
           "description": "Stable native Munki name. Defaults to the recipe name when creating a package."
         },
         "version": {
-          "type": "string",
-          "description": "Explicit content version when the source or inspected installer does not provide one."
+          "anyOf": [
+            {
+              "type": "string",
+              "description": "Explicit native content version. Omit to derive a version from the inspected artifact."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
+          "description": "Explicit native content version. Omit to derive a version from the inspected artifact."
         },
         "installer_type": {
-          "type": "string",
-          "enum": [
-            "pkg",
-            "copy_from_dmg",
-            "nopkg"
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "pkg",
+                "copy_from_dmg",
+                "nopkg"
+              ],
+              "description": "Preserve a vendor PKG, select items in an existing DMG, or publish a script-only item. PKG is inferred only from a .pkg payload."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
           ],
           "description": "Preserve a vendor PKG, select items in an existing DMG, or publish a script-only item. PKG is inferred only from a .pkg payload."
         },
         "artifact": {
           "type": "string",
-          "description": "Named recipe artifact to publish. Omit to use the prepared source payload."
+          "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
+          "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
+        },
+        "inputs": {
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
+            "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
+          },
+          "propertyNames": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+          },
+          "type": "object",
+          "description": "Additional named immutable inputs supplied to the destination operation, using the same artifact reference syntax."
         }
       },
       "additionalProperties": false,
@@ -1614,12 +3462,29 @@
           "$ref": "#/$defs/Verification",
           "description": "Required verification subject and scope. Unsupported required checks block publication."
         },
+        "subjects": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SubjectSelector"
+          },
+          "propertyNames": {
+            "pattern": "^[a-z0-9][a-z0-9_-]{0,127}$"
+          },
+          "type": "object",
+          "description": "Named selections of observed subjects for explicit fact references. Referenced selectors must match exactly one subject in the consumer input; declarations do not change delivery or detection."
+        },
         "artifacts": {
           "additionalProperties": {
             "$ref": "#/$defs/Artifact"
           },
           "type": "object",
-          "description": "Named reproducible artifacts derived from the selected source. Destinations select them by name."
+          "description": "Named reproducible packages derived from the prepared source. Refer to a package as artifacts/name."
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "type": "array",
+          "description": "Sequential operation invocations with named inputs and outputs. A step may consume only original inputs, declared artifacts or outputs of preceding steps."
         },
         "destinations": {
           "additionalProperties": {
@@ -1635,12 +3500,12 @@
               },
               {
                 "type": "object",
-                "description": "Native plugin metadata, validated by the selected destination."
+                "description": "Native metadata and typed fact references, validated by the selected operation."
               }
             ]
           },
           "type": "object",
-          "description": "Map named destinations to their native writable metadata. Executable plugins validate their own schema."
+          "description": "Map named destinations to native writable metadata. Explicit values may reference named subject facts with {$fact: subject_name.app.version}; references retain their native type and are validated before publication."
         }
       },
       "additionalProperties": false,
@@ -1656,7 +3521,7 @@
             "file",
             "local"
           ],
-          "description": "Provider or destination implementation. Unknown values are rejected."
+          "description": "Source provider. Unknown values are rejected."
         },
         "include": {
           "items": {
@@ -1689,10 +3554,6 @@
           "type": "string",
           "description": "Retained artifact basename. Never a workspace or cache path."
         },
-        "version": {
-          "type": "string",
-          "description": "Declared software version when the source cannot expose one. It is metadata, not a content identity."
-        },
         "sha256": {
           "type": "string",
           "description": "Optional independently obtained SHA-256 requirement. Explicit refresh does not bypass this requirement."
@@ -1708,15 +3569,63 @@
         "type"
       ]
     },
+    "Step": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique step name used by later input references. The names source, prepared and artifacts are reserved."
+        },
+        "operation": {
+          "type": "string",
+          "description": "Registered built-in or external operation name. Its descriptor defines accepted inputs, outputs and configuration."
+        },
+        "inputs": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "description": "Map operation input names to source, prepared, artifacts/name or priorStep/outputName. Inputs may be files or trees according to the operation contract."
+        },
+        "config": {
+          "type": "object",
+          "description": "Operation configuration validated against its registered contract."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "operation"
+      ]
+    },
+    "SubjectSelector": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Observed subject kind. All supplied criteria must match the same subject."
+        },
+        "path": {
+          "type": "string",
+          "description": "Exact relative path in the inspected input, independent of the runner filesystem."
+        },
+        "installed_path": {
+          "type": "string",
+          "description": "Exact observed absolute installation path. This selects evidence; it does not author an installation mapping."
+        },
+        "bundle_id": {
+          "type": "string",
+          "description": "Exact observed application bundle identifier."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "Verification": {
       "properties": {
         "subject": {
           "type": "string",
-          "enum": [
-            "source",
-            "payload"
-          ],
-          "description": "Verify the original source or selected payload. A container signature does not verify an inner application."
+          "pattern": "^(source|payload|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
+          "description": "Verify source, prepared, artifacts/name or stepName/outputName explicitly. Omitted or payload verifies each destination's primary artifact. A container signature does not verify an inner application."
         },
         "integrity": {
           "type": "boolean",

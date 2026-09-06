@@ -367,12 +367,12 @@ type fakeServer struct {
 	failReads        int
 }
 
-func newFixture(t *testing.T) (*fakeServer, plugin.Request) {
+func newFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest) {
 	t.Helper()
 	fake := &fakeServer{t: t, packages: make(map[string]map[string]json.RawMessage), version: 1, tokenLifetime: 1800}
 	server := httptest.NewServer(http.HandlerFunc(fake.handle))
 	t.Cleanup(server.Close)
-	request := plugin.Request{Protocol: plugin.ProtocolVersion, Method: "apply", Identity: plugin.Identity{Project: "school", Recipe: "vendor", Destination: "jamf"}, Config: raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}), Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
+	request := plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "school", Recipe: "vendor", Destination: "jamf"}, Config: raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}), Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
 	return fake, request
 }
 

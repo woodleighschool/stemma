@@ -23,9 +23,9 @@ components:
 recipes:
   app: {extends: base}
 destinations:
-  repo: {type: munki, path: repo}
+  repo: {operation: munki, path: repo}
   jamf:
-    type: jamf
+    operation: jamf
     config:
       client_secret: ${STEMMA_TEST_VALUE}
 `))
@@ -60,7 +60,7 @@ project: test
 imports: [software/stemma.yaml]
 destinations:
   jamf:
-    type: jamf
+    operation: jamf
     config:
       client_secret: ${STEMMA_TEST_SECRET}
 `)
@@ -100,7 +100,7 @@ func TestEnvironmentDoesNotExpandKeysOrBypassStrictTypes(t *testing.T) {
 	t.Setenv("STEMMA_TEST_VALUE", "private-test-value")
 	base := "version: 1\nproject: test\nrecipes: {app: {source: {type: http, url: https://example.test/app.pkg}}}\n"
 	for _, document := range []string{
-		base + "destinations: {repo: {type: jamf, config: {'${STEMMA_TEST_VALUE}': value}}}\n",
+		base + "destinations: {repo: {operation: jamf, config: {'${STEMMA_TEST_VALUE}': value}}}\n",
 		base + "unknown: '${STEMMA_TEST_VALUE}'\n",
 		strings.Replace(base, "version: 1", "version: '${STEMMA_TEST_VALUE}'", 1),
 		strings.Replace(base, "url: https://example.test/app.pkg", "url: https://example.test/app.pkg, token_env: OLD", 1),

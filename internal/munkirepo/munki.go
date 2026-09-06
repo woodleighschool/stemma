@@ -28,102 +28,71 @@ import (
 
 // Handle implements read-only planning and content-first publication to a local repository.
 // Apply serializes writers sharing this repository; external writers must use the same lock.
-func Handle(ctx context.Context, request plugin.Request) (plugin.Response, error) {
+func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+	var inputErr error
+	request, inputErr = documentInput(ctx, request)
+	if inputErr != nil {
+		return plugin.ReconcileResponse{}, inputErr
+	}
 	var connection struct {
 		Path string `json:"path"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(request.Config))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&connection); err != nil {
-		return plugin.Response{}, err
+		return plugin.ReconcileResponse{}, err
 	}
 	if connection.Path == "" {
-		return plugin.Response{}, errors.New("munki repository path is required")
+		return plugin.ReconcileResponse{}, errors.New("munki repository path is required")
 	}
 	if request.Method == "validate" {
-		_, _, err := nativeInput(request)
-		return plugin.Response{}, err
+		input, _, err := nativeInput(request)
+		if err == nil && request.Artifact.Path != "" {
+			_, err = munki.Build(input)
+		}
+		return plugin.ReconcileResponse{}, err
 	}
 	if request.Method != "plan" && request.Method != "apply" {
-		return plugin.Response{}, fmt.Errorf("unsupported Munki method %q", request.Method)
+		return plugin.ReconcileResponse{}, fmt.Errorf("unsupported Munki method %q", request.Method)
 	}
 	if request.Method == "apply" {
 		if err := os.MkdirAll(connection.Path, 0o755); err != nil {
-			return plugin.Response{}, err
+			return plugin.ReconcileResponse{}, err
 		}
 		lock := flock.New(filepath.Join(connection.Path, ".stemma.lock"))
 		ok, err := lock.TryLockContext(ctx, 50*time.Millisecond)
 		if err != nil {
-			return plugin.Response{}, err
+			return plugin.ReconcileResponse{}, err
 		}
 		if !ok {
-			return plugin.Response{}, ctx.Err()
+			return plugin.ReconcileResponse{}, ctx.Err()
 		}
 		defer func() { _ = lock.Close() }()
 	}
 	return reconcile(ctx, connection.Path, request)
 }
 
-func nativeInput(request plugin.Request) (munki.Input, map[string]any, error) {
-	var metadata map[string]any
-	if err := json.Unmarshal(request.Metadata, &metadata); err != nil {
-		return munki.Input{}, nil, err
-	}
-	if metadata == nil {
-		return munki.Input{}, nil, errors.New("munki metadata must be an object")
-	}
-	input := munki.Input{Name: request.Identity.Recipe, Version: request.Artifact.Version, SHA256: request.Artifact.SHA256, Size: request.Artifact.Size}
-	for key, value := range metadata {
-		if key != "name" && key != "version" && key != "installer_type" {
-			continue
-		}
-		text, ok := value.(string)
-		if !ok || text == "" {
-			return input, nil, fmt.Errorf("%s must be a nonempty string", key)
-		}
-		switch key {
-		case "name":
-			input.Name = text
-		case "version":
-			input.Version = text
-		case "installer_type":
-			input.InstallerType = text
-		}
-		delete(metadata, key)
-	}
-	if input.InstallerType == "" && strings.EqualFold(filepath.Ext(request.Artifact.Filename), ".pkg") {
+func nativeInput(request plugin.ReconcileRequest) (munki.Input, map[string]any, error) {
+	input := munki.Input{Name: request.Identity.Recipe, Version: request.Artifact.Version, SHA256: request.Artifact.SHA256, Size: request.Artifact.Size, InstallerLocation: "stemma/" + request.Artifact.SHA256 + "/" + request.Artifact.Filename}
+	if request.Artifact.Format == "pkg" || strings.EqualFold(filepath.Ext(request.Artifact.Filename), ".pkg") {
 		input.InstallerType = "pkg"
 	}
-	if input.InstallerType == "nopkg" {
-		input.Size = 0
-		input.SHA256 = ""
-	} else {
-		input.InstallerLocation = "stemma/" + request.Artifact.SHA256 + "/" + request.Artifact.Filename
-	}
-	raw, err := json.Marshal(metadata)
-	if err != nil {
-		return input, nil, err
-	}
-	input.Metadata = raw
-	if _, err := munki.DecodeMetadata(raw); err != nil {
-		return input, nil, err
-	}
-	return input, metadata, nil
+	return munki.Compose(input, request.Metadata)
 }
 
-func reconcile(ctx context.Context, root string, request plugin.Request) (plugin.Response, error) {
+func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
 	input, managed, err := nativeInput(request)
 	if err != nil {
-		return plugin.Response{}, err
+		return plugin.ReconcileResponse{}, err
 	}
 	identity := config.Fingerprint(request.Identity)
 	pkginfoPath := filepath.Join("pkgsinfo", "stemma", identity+".plist")
 	old, err := readObject(filepath.Join(root, pkginfoPath))
 	if err != nil {
-		return plugin.Response{}, err
+		return plugin.ReconcileResponse{}, err
 	}
 	if old != nil && owner(old) != identity {
-		return plugin.Response{}, fmt.Errorf("pkginfo %s is not owned by this destination", pkginfoPath)
+		return plugin.ReconcileResponse{}, fmt.Errorf("pkginfo %s is not owned by this destination", pkginfoPath)
 	}
 	desired := config.Merge(old, nil)
 	for key, value := range managed {
@@ -149,15 +118,15 @@ func reconcile(ctx context.Context, root string, request plugin.Request) (plugin
 	}
 	input.Metadata, err = json.Marshal(effective)
 	if err != nil {
-		return plugin.Response{}, err
+		return plugin.ReconcileResponse{}, err
 	}
 	encoded, err := munki.Build(input)
 	if err != nil {
-		return plugin.Response{}, err
+		return plugin.ReconcileResponse{}, err
 	}
 	var generated map[string]any
 	if _, err := plist.Unmarshal(encoded, &generated); err != nil {
-		return plugin.Response{}, err
+		return plugin.ReconcileResponse{}, err
 	}
 	for key, value := range managed {
 		if value != nil {
@@ -186,7 +155,7 @@ func reconcile(ctx context.Context, root string, request plugin.Request) (plugin
 	metadata, _ := desired["_metadata"].(map[string]any)
 	metadata = config.Merge(metadata, map[string]any{"stemma": identity})
 	desired["_metadata"] = metadata
-	response := plugin.Response{}
+	response := plugin.ReconcileResponse{}
 	contentPath := ""
 	if input.InstallerType != "nopkg" {
 		contentPath = filepath.Join(root, "pkgs", filepath.FromSlash(input.InstallerLocation))

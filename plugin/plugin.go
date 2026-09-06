@@ -1,20 +1,33 @@
-// Package plugin defines Stemma's versioned executable destination protocol.
+// Package plugin defines versioned contracts for built-in and executable operations.
 package plugin
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"io"
-	"os/exec"
+	"time"
 )
 
-// ProtocolVersion is the protocol understood by this SDK.
-const ProtocolVersion = 1
+// ProtocolVersion is the executable protocol understood by this SDK.
+const ProtocolVersion = 2
 
-const messageLimit = 4 << 20
+// Request invokes one advertised operation. Describe requests omit Operation and Input.
+type Request struct {
+	Protocol  int             `json:"protocol"`
+	Operation string          `json:"operation,omitempty"`
+	Method    string          `json:"method"`
+	Input     json.RawMessage `json:"input,omitempty"`
+}
+
+// Response retains partial Output when an operation fails. Callers must persist
+// recovered reconciliation bindings even when Error is present.
+type Response struct {
+	Protocol int             `json:"protocol"`
+	Output   json.RawMessage `json:"output,omitempty"`
+	Error    string          `json:"error,omitempty"`
+}
+
+// Handler implements an operation and propagates cancellation through its I/O.
+type Handler func(context.Context, Request) (Response, error)
 
 // Identity identifies a logical destination independently of its display metadata.
 type Identity struct {
@@ -23,28 +36,55 @@ type Identity struct {
 	Destination string `json:"destination"`
 }
 
-// Artifact is an immutable file leased by the engine, never a writable CAS object.
+// Artifact is an immutable file or tree leased by the engine, never a writable
+// cache object. Version is selected by a consumer; Facts retain observed versions.
 type Artifact struct {
 	Path     string `json:"path"`
 	SHA256   string `json:"sha256"`
 	Size     int64  `json:"size"`
 	Filename string `json:"filename"`
+	Format   string `json:"format,omitempty"`
+	Tree     bool   `json:"tree,omitempty"`
 	Version  string `json:"version,omitempty"`
+	Facts    Facts  `json:"facts,omitzero"`
 }
 
-// Request contains one plan or apply operation. Raw JSON retains absent, null and concrete fields.
-// Config contains connection settings, whose credentials belong to the plugin.
-type Request struct {
-	Protocol int             `json:"protocol"`
-	Method   string          `json:"method"`
-	Identity Identity        `json:"identity"`
-	Config   json.RawMessage `json:"config,omitempty"`
-	Metadata json.RawMessage `json:"metadata,omitempty"`
-	Artifact Artifact        `json:"artifact"`
-	Binding  json.RawMessage `json:"binding,omitempty"`
+// StepRequest supplies leased inputs and a writable workspace. Timestamp is the
+// retained source timestamp, allowing package creation to remain deterministic.
+type StepRequest struct {
+	Config    json.RawMessage     `json:"config,omitempty"`
+	Inputs    map[string]Artifact `json:"inputs,omitempty"`
+	Workspace string              `json:"workspace"`
+	Timestamp time.Time           `json:"timestamp,omitzero"`
 }
 
-// Change is a semantic destination change; empty Changes means no write is needed.
+// StepResponse names produced artifacts and preserves their observed facts.
+type StepResponse struct {
+	Artifacts map[string]Artifact `json:"artifacts,omitempty"`
+	Facts     Facts               `json:"facts,omitzero"`
+}
+
+// ReconcileRequest carries native desired state. Raw JSON retains absent, null,
+// false and empty collections; Config contains provider-owned connection settings.
+type ReconcileRequest struct {
+	Method   string              `json:"method"`
+	Identity Identity            `json:"identity"`
+	Config   json.RawMessage     `json:"config,omitempty"`
+	Metadata json.RawMessage     `json:"metadata,omitempty"`
+	Binding  json.RawMessage     `json:"binding,omitempty"`
+	Artifact Artifact            `json:"artifact"`
+	Inputs   map[string]Artifact `json:"inputs,omitempty"`
+	Facts    Facts               `json:"facts,omitzero"`
+}
+
+// ReconcileResponse carries changes and recovered durable bindings. An omitted
+// Binding preserves it, null clears it, and a value replaces it, including on error.
+type ReconcileResponse struct {
+	Changes []Change        `json:"changes,omitempty"`
+	Binding json.RawMessage `json:"binding,omitempty"`
+}
+
+// Change is a semantic destination change; an empty Changes list needs no write.
 type Change struct {
 	Kind   string          `json:"kind"`
 	Field  string          `json:"field"`
@@ -53,114 +93,55 @@ type Change struct {
 	After  json.RawMessage `json:"after,omitempty"`
 }
 
-// Response carries a plan or the bindings recovered after application.
-// On apply, Binding updates durable engine state: omission preserves it, null
-// clears it, and a value replaces it, even when application returns an error.
-type Response struct {
-	Protocol int             `json:"protocol"`
-	Changes  []Change        `json:"changes,omitempty"`
-	Binding  json.RawMessage `json:"binding,omitempty"`
-	Error    string          `json:"error,omitempty"`
+// FactsVersion identifies the model used for observed artifact evidence.
+const FactsVersion = 1
+
+// Facts retains separately identified subjects instead of collapsing their versions.
+type Facts struct {
+	Version  int       `json:"version"`
+	Subjects []Subject `json:"subjects,omitempty"`
 }
 
-// Handler implements one operation. Each invocation runs in a fresh process.
-type Handler func(context.Context, Request) (Response, error)
-
-// Serve handles exactly one bounded JSON request and writes exactly one response.
-// Plugins reserve stdout for this protocol and send diagnostic logging to stderr.
-func Serve(ctx context.Context, in io.Reader, out io.Writer, handle Handler) error {
-	var request Request
-	if err := decode(in, &request); err != nil {
-		return fmt.Errorf("plugin request: %w", err)
-	}
-	if request.Protocol != ProtocolVersion {
-		return fmt.Errorf("plugin protocol %d is unsupported", request.Protocol)
-	}
-	if request.Method != "plan" && request.Method != "apply" {
-		return fmt.Errorf("plugin method %q is unsupported", request.Method)
-	}
-	response, err := handle(ctx, request)
-	response.Protocol = ProtocolVersion
-	if err != nil {
-		response.Error = err.Error()
-	}
-	encoded, err := json.Marshal(response)
-	if err != nil {
-		return fmt.Errorf("plugin response: %w", err)
-	}
-	if len(encoded) > messageLimit {
-		return errors.New("plugin response exceeds size limit")
-	}
-	_, err = out.Write(append(encoded, '\n'))
-	return err
+// Subject records containment and path provenance. Path belongs to the inspected
+// artifact; InstalledPath is an installation location, never a runner lookup path.
+type Subject struct {
+	ID            string        `json:"id"`
+	Parent        string        `json:"parent,omitempty"`
+	Kind          string        `json:"kind"`
+	Path          string        `json:"path,omitempty"`
+	InstalledPath string        `json:"installed_path,omitempty"`
+	SHA256        string        `json:"sha256,omitempty"`
+	App           *AppFacts     `json:"app,omitempty"`
+	Package       *PackageFacts `json:"package,omitempty"`
+	MSI           *MSIFacts     `json:"msi,omitempty"`
 }
 
-// Run starts an explicitly selected executable without a shell. Cancellation ends
-// that process; callers own the artifact lease and persist bindings from apply
-// responses, including partial bindings returned alongside an error.
-func Run(ctx context.Context, executable string, request Request) (Response, error) {
-	if request.Method != "plan" && request.Method != "apply" {
-		return Response{}, fmt.Errorf("plugin method %q is unsupported", request.Method)
-	}
-	request.Protocol = ProtocolVersion
-	data, err := json.Marshal(request)
-	if err != nil {
-		return Response{}, fmt.Errorf("plugin request: %w", err)
-	}
-	if len(data) > messageLimit {
-		return Response{}, errors.New("plugin request exceeds size limit")
-	}
-	command := exec.CommandContext(ctx, executable)
-	command.Stdin = bytes.NewReader(data)
-	var stdout limitedBuffer
-	command.Stdout = &stdout
-	// Diagnostics may contain connection credentials. They are deliberately not
-	// copied into engine errors or durable state.
-	command.Stderr = io.Discard
-	if err := command.Run(); err != nil {
-		if ctx.Err() != nil {
-			return Response{}, ctx.Err()
-		}
-		return Response{}, fmt.Errorf("plugin process: %w", err)
-	}
-	var response Response
-	if err := decode(bytes.NewReader(stdout.Bytes()), &response); err != nil {
-		return Response{}, fmt.Errorf("plugin response: %w", err)
-	}
-	if response.Protocol != ProtocolVersion {
-		return Response{}, fmt.Errorf("plugin response protocol %d is unsupported", response.Protocol)
-	}
-	if response.Error != "" {
-		return response, fmt.Errorf("plugin: %s", response.Error)
-	}
-	return response, nil
+// AppFacts preserves an application's short version and build independently.
+type AppFacts struct {
+	BundleID   string `json:"bundle_id,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Version    string `json:"version,omitempty"`
+	Build      string `json:"build,omitempty"`
+	Executable string `json:"executable,omitempty"`
+	MinimumOS  string `json:"minimum_os,omitempty"`
 }
 
-func decode(reader io.Reader, value any) error {
-	data, err := io.ReadAll(io.LimitReader(reader, messageLimit+1))
-	if err != nil {
-		return err
-	}
-	if len(data) > messageLimit {
-		return errors.New("message exceeds size limit")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return errors.New("message must contain exactly one JSON object")
-	}
-	return nil
+// PackageFacts describes a package component without asserting installer-script effects.
+type PackageFacts struct {
+	Identifier      string `json:"identifier,omitempty"`
+	Version         string `json:"version,omitempty"`
+	InstallLocation string `json:"install_location,omitempty"`
+	InstalledSize   int64  `json:"installed_size,omitempty"`
+	HasPayload      bool   `json:"has_payload"`
 }
 
-type limitedBuffer struct{ bytes.Buffer }
-
-func (buffer *limitedBuffer) Write(data []byte) (int, error) {
-	if buffer.Len()+len(data) > messageLimit {
-		return 0, errors.New("plugin response exceeds size limit")
-	}
-	return buffer.Buffer.Write(data)
+// MSIFacts preserves MSI database identity and its native property names.
+type MSIFacts struct {
+	ProductCode    string            `json:"product_code,omitempty"`
+	ProductVersion string            `json:"product_version,omitempty"`
+	ProductName    string            `json:"product_name,omitempty"`
+	Manufacturer   string            `json:"manufacturer,omitempty"`
+	UpgradeCode    string            `json:"upgrade_code,omitempty"`
+	PackageCode    string            `json:"package_code,omitempty"`
+	Properties     map[string]string `json:"properties,omitempty"`
 }

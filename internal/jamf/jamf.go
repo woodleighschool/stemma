@@ -70,16 +70,17 @@ type payload struct {
 // Handle validates, plans or applies package-only reconciliation. Metadata uses
 // supported native writable names; package_id is an explicit adoption control.
 // It never creates, reads or changes policies, scope, assignments or prestages.
-func Handle(ctx context.Context, request plugin.Request) (plugin.Response, error) {
-	response := plugin.Response{Protocol: plugin.ProtocolVersion}
-	if request.Protocol != plugin.ProtocolVersion {
-		return response, fmt.Errorf("unsupported Jamf protocol %d", request.Protocol)
-	}
+func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+	response := plugin.ReconcileResponse{}
 	config, metadata, adopt, err := validate(request)
 	if err != nil {
 		return response, err
 	}
 	if request.Method == "validate" {
+		if request.Artifact.Path != "" {
+			_, err := inspectPayload(ctx, request.Identity, request.Artifact)
+			return response, err
+		}
 		return response, nil
 	}
 	if request.Method != "plan" && request.Method != "apply" {
@@ -195,7 +196,7 @@ func Handle(ctx context.Context, request plugin.Request) (plugin.Response, error
 	return response, nil
 }
 
-func validate(request plugin.Request) (configuration, map[string]json.RawMessage, string, error) {
+func validate(request plugin.ReconcileRequest) (configuration, map[string]json.RawMessage, string, error) {
 	var config configuration
 	if err := strictDecode(request.Config, &config); err != nil {
 		return config, nil, "", fmt.Errorf("jamf config: %w", err)

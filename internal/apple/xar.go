@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/bzip2"
 	"compress/zlib"
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha1"
@@ -38,11 +39,14 @@ type Entry struct {
 }
 
 // PackageInfo contains receipt metadata from a component's PackageInfo XML.
+// InstalledSize is the declared payload size in KiB.
 type PackageInfo struct {
 	Path            string `json:"path"`
 	Identifier      string `json:"identifier" xml:"identifier,attr"`
 	Version         string `json:"version" xml:"version,attr"`
 	InstallLocation string `json:"install_location" xml:"install-location,attr"`
+	InstalledSize   int64  `json:"installed_size,omitempty" xml:"-"`
+	HasPayload      bool   `json:"has_payload" xml:"-"`
 }
 
 // PackageFacts describes the installer container, not a verified inner application.
@@ -51,6 +55,7 @@ type PackageFacts struct {
 	Entries      []Entry       `json:"entries"`
 	Packages     []PackageInfo `json:"packages"`
 	HasSignature bool          `json:"has_signature"`
+	Applications []PackageApp  `json:"applications,omitempty"`
 }
 
 type xarChecksum struct {
@@ -104,32 +109,7 @@ type xarArchive struct {
 // InspectPackage reads a flat PKG/XAR table of contents and component receipt
 // metadata. It preserves the installer and does not expand Payload or Scripts.
 func InspectPackage(filePath string) (PackageFacts, error) {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return PackageFacts{}, err
-	}
-	defer func() { _ = f.Close() }()
-	archive, err := openXARFile(f)
-	if err != nil {
-		return PackageFacts{}, err
-	}
-	facts := PackageFacts{Format: "xar", Entries: archive.entries, HasSignature: len(archive.toc.Signatures) > 0}
-	for _, entry := range archive.entries {
-		if path.Base(entry.Path) != "PackageInfo" || entry.Type != "file" {
-			continue
-		}
-		var data bytes.Buffer
-		if err := archive.readEntry(entry.Path, &data, maxMetadata); err != nil {
-			return facts, fmt.Errorf("%s: %w", entry.Path, err)
-		}
-		var metadata PackageInfo
-		if err := xml.Unmarshal(data.Bytes(), &metadata); err != nil {
-			return facts, fmt.Errorf("%s: %w", entry.Path, err)
-		}
-		metadata.Path = entry.Path
-		facts.Packages = append(facts.Packages, metadata)
-	}
-	return facts, nil
+	return InspectPackageMetadata(context.Background(), filePath)
 }
 
 // VerifyPackage checks all supported XAR data checksums and an RSA TOC signature

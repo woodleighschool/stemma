@@ -29,7 +29,7 @@ type Entry struct {
 	Source     string    `json:"source" yaml:"source"`
 	URL        string    `json:"url,omitempty" yaml:"url,omitempty"`
 	Filename   string    `json:"filename" yaml:"filename"`
-	Version    string    `json:"version,omitempty" yaml:"version,omitempty"`
+	Release    string    `json:"release,omitempty" yaml:"release,omitempty"`
 	ReleaseID  int64     `json:"release_id,omitempty" yaml:"release_id,omitempty"`
 	AssetID    int64     `json:"asset_id,omitempty" yaml:"asset_id,omitempty"`
 	Artifact   cas.Ref   `json:"artifact" yaml:"artifact"`
@@ -67,7 +67,7 @@ func (m *Manager) Resolve(ctx context.Context, s config.Source) (Entry, error) {
 	if m.Offline && s.Type != "file" && s.Type != "local" {
 		return Entry{}, errors.New("offline mode cannot resolve sources")
 	}
-	entry := Entry{Source: s.Fingerprint(), URL: s.URL, Filename: s.Filename, Version: s.Version}
+	entry := Entry{Source: s.Fingerprint(), URL: s.URL, Filename: s.Filename}
 	if s.Type == "local" {
 		entry.Tree = true
 	}
@@ -314,9 +314,7 @@ func (m *Manager) github(ctx context.Context, s config.Source, entry *Entry) err
 			if entry.Filename == "" {
 				entry.Filename = asset.Name
 			}
-			if entry.Version == "" {
-				entry.Version = strings.TrimPrefix(release.Tag, "v")
-			}
+			entry.Release = release.Tag
 			return nil
 		}
 	}

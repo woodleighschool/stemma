@@ -29,7 +29,7 @@ recipes:
     destinations: {remote: ` + metadata + `}
 destinations:
   remote:
-    type: ` + kind + `
+    operation: ` + kind + `
     config:
       ` + endpointField + `: ${STEMMA_TEST_ENDPOINT}
       ` + secretField + `: ${STEMMA_TEST_SECRET}
@@ -53,7 +53,10 @@ destinations:
 				t.Setenv("STEMMA_TEST_ENDPOINT", step.endpoint)
 				t.Setenv("STEMMA_TEST_SECRET", step.secret)
 				called := false
-				options.Handlers = map[string]plugin.Handler{kind: func(_ context.Context, request plugin.Request) (plugin.Response, error) {
+				options.Handlers = map[string]reconcileHandler{kind: func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+					if request.Method == "validate" || request.Method == "plan" {
+						return plugin.ReconcileResponse{}, nil
+					}
 					called = true
 					if compactJSON(t, request.Binding) != step.binding {
 						t.Fatalf("run %d received binding %s, want %s", i, request.Binding, step.binding)
@@ -62,7 +65,7 @@ destinations:
 					if err := json.Unmarshal(request.Config, &settings); err != nil || settings[secretField] != step.secret {
 						t.Fatal("destination did not receive resolved secrets")
 					}
-					return plugin.Response{Binding: json.RawMessage(`{"id":"existing"}`)}, nil
+					return plugin.ReconcileResponse{Binding: json.RawMessage(`{"id":"existing"}`)}, nil
 				}}
 				if _, err := Run(t.Context(), options); err != nil || !called {
 					t.Fatalf("run %d: %v, called=%v", i, err, called)

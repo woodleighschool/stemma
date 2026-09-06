@@ -49,40 +49,51 @@ var markerPattern = regexp.MustCompile(`(?m)^\[stemma:v1 id=([0-9a-f]{64}) paylo
 // Handle validates, plans or applies an Intune destination request.
 // Callers must persist a returned Binding even when an error reports partial
 // progress. Configuration contains credential environment names, never secrets.
-func Handle(ctx context.Context, req plugin.Request) (plugin.Response, error) {
-	if req.Protocol != 0 && req.Protocol != plugin.ProtocolVersion {
-		return plugin.Response{}, errors.New("unsupported plugin protocol")
-	}
+func Handle(ctx context.Context, req plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
 	cfg, err := parseConfiguration(req.Config)
 	if err != nil {
-		return plugin.Response{}, err
+		return plugin.ReconcileResponse{}, err
+	}
+	if req.Method == "validate" && req.Artifact.Path == "" {
+		metadata, err := decodeObject(req.Metadata)
+		if err != nil {
+			return plugin.ReconcileResponse{}, err
+		}
+		// Artifact inspection can supply the subtype. Its native field contract
+		// is validated once that discriminator is available.
+		if _, exists := metadata["@odata.type"]; !exists {
+			return plugin.ReconcileResponse{}, nil
+		}
 	}
 	desired, err := validateMetadata(req.Metadata)
 	if err != nil {
-		return plugin.Response{}, err
+		return plugin.ReconcileResponse{}, err
 	}
 	cfg.AppID = text(desired["app_id"])
 	delete(desired, "app_id")
 	if req.Method == "validate" {
-		return plugin.Response{Protocol: plugin.ProtocolVersion}, nil
+		if req.Artifact.Path != "" {
+			_, err := identifyArtifact(req.Artifact, text(desired["@odata.type"]))
+			return plugin.ReconcileResponse{}, err
+		}
+		return plugin.ReconcileResponse{}, nil
 	}
 	if req.Method != "plan" && req.Method != "apply" {
-		return plugin.Response{}, fmt.Errorf("unsupported Intune method %q", req.Method)
+		return plugin.ReconcileResponse{}, fmt.Errorf("unsupported Intune method %q", req.Method)
 	}
 	c, err := newClient(cfg)
 	if err != nil {
-		return plugin.Response{}, err
+		return plugin.ReconcileResponse{}, err
 	}
 	return c.handle(ctx, req, cfg, desired)
 }
 
-func (c *client) handle(ctx context.Context, req plugin.Request, cfg configuration, desired object) (response plugin.Response, err error) {
+func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg configuration, desired object) (response plugin.ReconcileResponse, err error) {
 	typedClient := *c
 	typedClient.appType = text(desired["@odata.type"])
 	c = &typedClient
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
-	response.Protocol = plugin.ProtocolVersion
 	id := sha256.Sum256(raw(req.Identity))
 	identity := hex.EncodeToString(id[:])
 	b := binding{Identity: identity}

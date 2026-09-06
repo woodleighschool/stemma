@@ -25,6 +25,49 @@ type Input struct {
 	Metadata          json.RawMessage
 }
 
+// Compose overlays native metadata onto consumer defaults while retaining which
+// fields were supplied. Generated installer identity remains bound to the input.
+func Compose(input Input, data json.RawMessage) (Input, map[string]any, error) {
+	var metadata map[string]any
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return input, nil, err
+	}
+	if metadata == nil {
+		return input, nil, errors.New("munki metadata must be an object")
+	}
+	for _, key := range []string{"name", "version", "installer_type"} {
+		value, exists := metadata[key]
+		if !exists {
+			continue
+		}
+		text, ok := value.(string)
+		if !ok || text == "" {
+			return input, nil, fmt.Errorf("%s must be a nonempty string", key)
+		}
+		switch key {
+		case "name":
+			input.Name = text
+		case "version":
+			input.Version = text
+		case "installer_type":
+			input.InstallerType = text
+		}
+		delete(metadata, key)
+	}
+	if input.InstallerType == "nopkg" {
+		input.Size, input.SHA256, input.InstallerLocation = 0, "", ""
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		return input, nil, err
+	}
+	input.Metadata = raw
+	if _, err := DecodeMetadata(raw); err != nil {
+		return input, nil, err
+	}
+	return input, metadata, nil
+}
+
 // Metadata contains supported Munki-native fields. Fields retains presence,
 // including explicit null, alongside the typed values. Null is accepted only for
 // nullable display strings; lists use [] and booleans use false to clear values.
@@ -197,6 +240,25 @@ func DecodeMetadata(raw json.RawMessage) (Metadata, error) {
 // Build emits XML pkginfo with server-independent native Munki keys and exact
 // content identity. It never inspects or executes the referenced installer.
 func Build(input Input) ([]byte, error) {
+	values, err := Render(input)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range values {
+		if value == nil {
+			delete(values, key)
+		}
+	}
+	encoded, err := Marshal(values)
+	if err != nil {
+		return nil, fmt.Errorf("encode Munki pkginfo: %w", err)
+	}
+	return encoded, nil
+}
+
+// Render produces native desired fields with exact installer identity. Omitted
+// fields remain absent; supported explicit nulls survive for transport PATCHes.
+func Render(input Input) (map[string]any, error) {
 	if strings.TrimSpace(input.Name) == "" || strings.Contains(input.Name, "/") || strings.TrimSpace(input.Version) == "" {
 		return nil, errors.New("munki name and version are required; name must not contain a slash")
 	}
@@ -205,6 +267,11 @@ func Build(input Input) ([]byte, error) {
 		return nil, err
 	}
 	values := metadata.Values()
+	for key, value := range metadata.Fields {
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			values[key] = nil
+		}
+	}
 	values["name"], values["version"] = input.Name, input.Version
 	switch input.InstallerType {
 	case "pkg", "copy_from_dmg":
@@ -262,11 +329,7 @@ func Build(input Input) ([]byte, error) {
 		}
 		values["items_to_remove"] = remove
 	}
-	encoded, err := Marshal(values)
-	if err != nil {
-		return nil, fmt.Errorf("encode Munki pkginfo: %w", err)
-	}
-	return encoded, nil
+	return values, nil
 }
 
 // Values returns typed, concrete native fields. Null display metadata is omitted

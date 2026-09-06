@@ -1,95 +1,169 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"os"
+	"fmt"
 	"path/filepath"
-	"time"
+	"strings"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/internal/pkgbuild"
 )
 
-func derivePackage(ctx context.Context, store *cas.Store, input Prepared, spec config.Artifact, policy config.Verification, work string) (Prepared, error) {
-	if !input.Tree {
-		return Prepared{}, errors.New("package artifacts require a directory source")
-	}
-	if input.Source.ResolvedAt.IsZero() {
-		return Prepared{}, errors.New("package source has no locked timestamp; run stemma update")
-	}
-	key := config.Fingerprint(struct {
-		Implementation string
-		Input          cas.Ref
-		Timestamp      time.Time
-		Artifact       config.Artifact
-		Verification   config.Verification
-	}{pkgbuild.Version, input.Payload, input.Source.ResolvedAt, spec, policy})
-	if descriptor, ok := store.Recall(ctx, key); ok {
-		path, err := store.Path(descriptor)
-		if err != nil {
-			return Prepared{}, err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return Prepared{}, err
-		}
-		var result Prepared
-		if json.Unmarshal(data, &result) == nil && store.Verify(ctx, result.Payload) == nil {
-			result.Source = input.Source
-			if policy.Subject == "source" {
-				result.Evidence = input.Evidence
-			}
-			result.Cached = true
-			return materialize(ctx, store, result, work)
-		}
-	}
-	if err := os.MkdirAll(work, 0o700); err != nil {
-		return Prepared{}, err
-	}
-	filename := spec.Filename
-	if filename == "" {
-		filename = spec.Identifier + ".pkg"
-	}
-	output := filepath.Join(work, filename)
-	err := pkgbuild.Build(ctx, input.Path, output, pkgbuild.Options{Identifier: spec.Identifier, Version: spec.Version, InstallLocation: spec.InstallLocation, Payload: spec.Payload, Scripts: spec.Scripts, Timestamp: input.Source.ResolvedAt})
+func derivePackage(ctx context.Context, store *cas.Store, ops *operations, input Prepared, spec config.Artifact, work string) (Prepared, error) {
+	data, err := json.Marshal(spec)
 	if err != nil {
 		return Prepared{}, err
 	}
-	result, err := inspect(output)
+	var settings map[string]any
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return Prepared{}, err
+	}
+	step, err := runStep(ctx, store, ops, config.Step{Name: "package", Operation: "pkg", Config: settings}, map[string]Prepared{"input": input}, input.Source, work)
 	if err != nil {
-		return result, err
+		return Prepared{}, err
 	}
-	result.Source = input.Source
-	if policy.Subject != "source" && requested(policy) {
-		evidence, err := verify(output, policy)
-		result.Evidence = &evidence
-		if err != nil {
-			return result, err
-		}
-	} else if policy.Subject == "source" {
-		result.Evidence = input.Evidence
+	result, exists := step.Artifacts["artifact"]
+	if !exists {
+		return Prepared{}, fmt.Errorf("pkg did not produce artifact")
 	}
-	result.Payload, err = store.ImportFile(ctx, output, "")
-	if err != nil {
-		return result, err
-	}
-	data, err := json.Marshal(result)
-	if err != nil {
-		return result, err
-	}
-	descriptor, err := store.Import(ctx, bytes.NewReader(data), "")
-	if err != nil {
-		return result, err
-	}
-	return result, store.Remember(key, descriptor)
+	result.Cached = step.Cached
+	return result, nil
 }
 
 func destinationMetadata(input map[string]any) map[string]any {
 	result := config.Merge(input, nil)
 	delete(result, "artifact")
+	delete(result, "inputs")
 	return result
+}
+
+func prepareRecipe(ctx context.Context, store *cas.Store, ops *operations, recipe config.Recipe, prepared Prepared, work string, all bool, report *RecipeReport) (map[string]Prepared, error) {
+	outputs := map[string]Prepared{"prepared": prepared}
+	original := Prepared{Source: prepared.Source, Payload: prepared.Source.Artifact, Filename: prepared.Source.Filename, Tree: prepared.Source.Tree}
+	original, err := materialize(ctx, store, original, filepath.Join(work, "original"))
+	if err != nil {
+		return outputs, err
+	}
+	facts, err := inspect(ctx, original.Path)
+	if err != nil {
+		return outputs, err
+	}
+	original.Format, original.Version, original.Facts = facts.Format, facts.Version, facts.Facts
+	original.Evidence = prepared.Evidence
+	outputs["source"] = original
+	report.Artifacts = map[string]Prepared{}
+	for _, name := range sortedKeys(recipe.Artifacts) {
+		used := all || recipe.Verification.Subject == "artifacts/"+name
+		for _, metadata := range recipe.Destinations {
+			if metadata["artifact"] == "artifacts/"+name {
+				used = true
+			}
+			for _, reference := range destinationReferences(metadata) {
+				if reference == "artifacts/"+name {
+					used = true
+				}
+			}
+		}
+		for _, step := range recipe.Steps {
+			for _, ref := range step.Inputs {
+				if ref == "artifacts/"+name {
+					used = true
+				}
+			}
+		}
+		if !used {
+			continue
+		}
+		artifact, err := derivePackage(ctx, store, ops, prepared, recipe.Artifacts[name], filepath.Join(work, "artifacts", name))
+		if err != nil {
+			report.ArtifactErrors = map[string]string{name: err.Error()}
+			return outputs, fmt.Errorf("artifact %s: %w", name, err)
+		}
+		outputs["artifacts/"+name], report.Artifacts[name] = artifact, artifact
+	}
+	for _, step := range recipe.Steps {
+		inputs := map[string]Prepared{}
+		for name, reference := range step.Inputs {
+			input, exists := outputs[reference]
+			if !exists {
+				return outputs, fmt.Errorf("step %s input %s: missing output %s", step.Name, name, reference)
+			}
+			inputs[name] = input
+		}
+		if hasFactReference(step.Config) {
+			if len(inputs) != 1 {
+				return outputs, fmt.Errorf("step %s: fact references require one unambiguous input", step.Name)
+			}
+			for name, input := range inputs {
+				if !input.SuppliedFacts {
+					facts, err := Inspect(ctx, input.Path)
+					if err != nil {
+						return outputs, err
+					}
+					input.Facts = facts.Facts
+					inputs[name] = input
+				}
+				resolved, _, err := resolveMetadata(recipe, step.Config, input.Facts, "")
+				if err != nil {
+					return outputs, fmt.Errorf("step %s: %w", step.Name, err)
+				}
+				step.Config = resolved
+			}
+		}
+		result, err := runStep(ctx, store, ops, step, inputs, prepared.Source, filepath.Join(work, "steps", step.Name))
+		report.Steps = append(report.Steps, result)
+		if err != nil {
+			return outputs, fmt.Errorf("step %s: %w", step.Name, err)
+		}
+		for name, artifact := range result.Artifacts {
+			outputs[step.Name+"/"+name] = artifact
+		}
+	}
+	subjects := map[string]bool{}
+	if subject := recipe.Verification.Subject; subject == "" || subject == "payload" {
+		for _, metadata := range recipe.Destinations {
+			subject, _ := metadata["artifact"].(string)
+			if subject == "" {
+				subject = "prepared"
+			}
+			subjects[subject] = true
+		}
+		if len(subjects) == 0 {
+			subjects["prepared"] = true
+		}
+	} else if subject != "source" {
+		subjects[subject] = true
+	}
+	for _, subject := range sortedKeys(subjects) {
+		artifact, exists := outputs[subject]
+		if !exists {
+			return outputs, fmt.Errorf("verification subject references missing output %s", subject)
+		}
+		if requested(recipe.Verification) {
+			evidence, err := verify(artifact.Path, recipe.Verification)
+			artifact.Evidence = &evidence
+			outputs[subject] = artifact
+			if subject == "prepared" {
+				report.Prepared = &artifact
+			} else {
+				owner, name, _ := strings.Cut(subject, "/")
+				if owner == "artifacts" {
+					report.Artifacts[name] = artifact
+				} else {
+					for i := range report.Steps {
+						if report.Steps[i].Name == owner {
+							report.Steps[i].Artifacts[name] = artifact
+							break
+						}
+					}
+				}
+			}
+			if err != nil {
+				return outputs, fmt.Errorf("verification subject %s: %w", subject, err)
+			}
+		}
+	}
+	return outputs, nil
 }

@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"github.com/woodleighschool/stemma/plugin"
 
 	"go.yaml.in/yaml/v4"
 )
@@ -36,14 +37,32 @@ type Project struct {
 
 // Recipe describes acquisition and selection independently of delivery metadata.
 type Recipe struct {
-	Extends      string                    `yaml:"extends,omitempty" json:"extends,omitempty" jsonschema_description:"Local component name. Maps merge recursively; lists and null replace inherited values."`
-	Source       Source                    `yaml:"source" json:"source" jsonschema_description:"Acquisition input. Its lock fingerprint excludes preparation and destination metadata."`
-	Platform     string                    `yaml:"platform,omitempty" json:"platform,omitempty" jsonschema_description:"Target software platform, independent of the runner operating system."`
-	Arch         string                    `yaml:"arch,omitempty" json:"arch,omitempty" jsonschema_description:"Target architecture. Universal is an explicit vendor artifact containing multiple architectures."`
-	Select       string                    `yaml:"select,omitempty" json:"select,omitempty" jsonschema_description:"Exact relative payload path within an archive. Required when several plausible payloads exist."`
-	Verification Verification              `yaml:"verification,omitempty" json:"verification,omitzero" jsonschema_description:"Required verification subject and scope. Unsupported required checks block publication."`
-	Artifacts    map[string]Artifact       `yaml:"artifacts,omitempty" json:"artifacts,omitempty" jsonschema_description:"Named reproducible artifacts derived from the selected source. Destinations select them by name."`
-	Destinations map[string]map[string]any `yaml:"destinations,omitempty" json:"destinations,omitempty" jsonschema_description:"Named connections. Recipe destination entries own only explicitly present native metadata fields."`
+	Extends      string                     `yaml:"extends,omitempty" json:"extends,omitempty" jsonschema_description:"Local component name. Maps merge recursively; lists and null replace inherited values."`
+	Source       Source                     `yaml:"source" json:"source" jsonschema_description:"Acquisition input. Its lock fingerprint excludes preparation and destination metadata."`
+	Platform     string                     `yaml:"platform,omitempty" json:"platform,omitempty" jsonschema_description:"Target software platform, independent of the runner operating system."`
+	Arch         string                     `yaml:"arch,omitempty" json:"arch,omitempty" jsonschema_description:"Target architecture. Universal is an explicit vendor artifact containing multiple architectures."`
+	Select       string                     `yaml:"select,omitempty" json:"select,omitempty" jsonschema_description:"Exact relative payload path within an archive. Required when several plausible payloads exist."`
+	Verification Verification               `yaml:"verification,omitempty" json:"verification,omitzero" jsonschema_description:"Required verification subject and scope. Unsupported required checks block publication."`
+	Subjects     map[string]SubjectSelector `yaml:"subjects,omitempty" json:"subjects,omitempty" jsonschema_description:"Named selections of observed subjects for explicit fact references. Referenced selectors must match exactly one subject in the consumer input; declarations do not change delivery or detection."`
+	Artifacts    map[string]Artifact        `yaml:"artifacts,omitempty" json:"artifacts,omitempty" jsonschema_description:"Named reproducible packages derived from the prepared source. Refer to a package as artifacts/name."`
+	Steps        []Step                     `yaml:"steps,omitempty" json:"steps,omitempty" jsonschema_description:"Sequential operation invocations with named inputs and outputs. A step may consume only original inputs, declared artifacts or outputs of preceding steps."`
+	Destinations map[string]map[string]any  `yaml:"destinations,omitempty" json:"destinations,omitempty" jsonschema_description:"Named connections. Recipe destination entries own only explicitly present native metadata fields."`
+}
+
+// Step invokes an operation using named artifact inputs.
+type Step struct {
+	Name      string            `yaml:"name" json:"name" jsonschema_description:"Unique step name used by later input references. The names source, prepared and artifacts are reserved."`
+	Operation string            `yaml:"operation" json:"operation" jsonschema_description:"Registered built-in or external operation name. Its descriptor defines accepted inputs, outputs and configuration."`
+	Inputs    map[string]string `yaml:"inputs,omitempty" json:"inputs,omitempty" jsonschema_description:"Map operation input names to source, prepared, artifacts/name or priorStep/outputName. Inputs may be files or trees according to the operation contract."`
+	Config    map[string]any    `yaml:"config,omitempty" json:"config,omitempty" jsonschema_description:"Operation configuration validated against its registered contract."`
+}
+
+// SubjectSelector identifies one observed subject without changing its facts.
+type SubjectSelector struct {
+	Kind          string `yaml:"kind,omitempty" json:"kind,omitempty" jsonschema_description:"Observed subject kind. All supplied criteria must match the same subject."`
+	Path          string `yaml:"path,omitempty" json:"path,omitempty" jsonschema_description:"Exact relative path in the inspected input, independent of the runner filesystem."`
+	InstalledPath string `yaml:"installed_path,omitempty" json:"installed_path,omitempty" jsonschema_description:"Exact observed absolute installation path. This selects evidence; it does not author an installation mapping."`
+	BundleID      string `yaml:"bundle_id,omitempty" json:"bundle_id,omitempty" jsonschema_description:"Exact observed application bundle identifier."`
 }
 
 // Artifact declares a portable package derived from the selected source tree.
@@ -55,12 +74,12 @@ type Artifact struct {
 	InstallLocation string            `yaml:"install_location,omitempty" json:"install_location,omitempty" jsonschema_description:"Absolute installation destination. Defaults to /."`
 	Filename        string            `yaml:"filename,omitempty" json:"filename,omitempty" jsonschema_description:"Output package basename. Defaults to the artifact name with .pkg."`
 	Scripts         map[string]string `yaml:"scripts,omitempty" json:"scripts,omitempty" jsonschema_description:"Preinstall and postinstall script paths within the selected source tree. Scripts are packaged without execution."`
-	From            string            `yaml:"from,omitempty" json:"from,omitempty" jsonschema:"enum=source" jsonschema_description:"Input artifact. Omitted or source selects the prepared source in version 1."`
+	From            string            `yaml:"from,omitempty" json:"from,omitempty" jsonschema:"enum=prepared" jsonschema_description:"Input artifact. Omitted or prepared selects the prepared source tree. Use a pkg step to consume other inputs."`
 }
 
 // Source specifies one acquisition provider.
 type Source struct {
-	Type       string   `yaml:"type" json:"type" jsonschema:"enum=http,enum=github,enum=file,enum=local" jsonschema_description:"Provider or destination implementation. Unknown values are rejected."`
+	Type       string   `yaml:"type" json:"type" jsonschema:"enum=http,enum=github,enum=file,enum=local" jsonschema_description:"Source provider. Unknown values are rejected."`
 	Include    []string `yaml:"include,omitempty" json:"include,omitempty" jsonschema_description:"Local files and glob patterns relative to this software-family file. Matched bytes, modes and symlinks determine content identity."`
 	Base       string   `yaml:"-" json:"base,omitempty"`
 	URL        string   `yaml:"url,omitempty" json:"url,omitempty" jsonschema_description:"Stable HTTP(S) URL without embedded credentials or expiring query parameters."`
@@ -69,14 +88,13 @@ type Source struct {
 	Release    string   `yaml:"release,omitempty" json:"release,omitempty" jsonschema_description:"GitHub release tag or latest. New releases are resolved only during explicit updates or permitted missing lock resolution."`
 	Asset      string   `yaml:"asset,omitempty" json:"asset,omitempty" jsonschema_description:"Exact GitHub release asset filename, avoiding ambiguous glob matches."`
 	Filename   string   `yaml:"filename,omitempty" json:"filename,omitempty" jsonschema_description:"Retained artifact basename. Never a workspace or cache path."`
-	Version    string   `yaml:"version,omitempty" json:"version,omitempty" jsonschema_description:"Declared software version when the source cannot expose one. It is metadata, not a content identity."`
 	SHA256     string   `yaml:"sha256,omitempty" json:"sha256,omitempty" jsonschema_description:"Optional independently obtained SHA-256 requirement. Explicit refresh does not bypass this requirement."`
 	Token      string   `yaml:"token,omitempty" json:"token,omitempty" jsonschema_description:"Bearer token. Use ${VAR} to supply it from the environment. Excluded from source locks and fingerprints."`
 }
 
 // Verification declares the exact subject and checks required before publication.
 type Verification struct {
-	Subject           string `yaml:"subject,omitempty" json:"subject,omitempty" jsonschema:"enum=source,enum=payload" jsonschema_description:"Verify the original source or selected payload. A container signature does not verify an inner application."`
+	Subject           string `yaml:"subject,omitempty" json:"subject,omitempty" jsonschema_description:"Verify source, prepared, artifacts/name or stepName/outputName explicitly. Omitted or payload verifies each destination's primary artifact. A container signature does not verify an inner application."`
 	Integrity         bool   `yaml:"integrity,omitempty" json:"integrity,omitempty" jsonschema_description:"Require all supported signed byte and hash checks for the selected subject."`
 	Signature         bool   `yaml:"signature,omitempty" json:"signature,omitempty" jsonschema_description:"Require a cryptographically valid signature, separately from signer trust."`
 	Resources         bool   `yaml:"resources,omitempty" json:"resources,omitempty" jsonschema_description:"Require sealed application resources. Unsupported nested-code layouts fail closed."`
@@ -87,10 +105,9 @@ type Verification struct {
 
 // Destination keeps connection settings separate from native recipe metadata.
 type Destination struct {
-	Type   string         `yaml:"type" json:"type" jsonschema:"enum=munki,enum=plugin,enum=jamf,enum=intune" jsonschema_description:"Provider or destination implementation. Unknown values are rejected."`
-	Path   string         `yaml:"path,omitempty" json:"path,omitempty" jsonschema_description:"Filesystem path. Source paths must stay within the Stemma project."`
-	Plugin string         `yaml:"plugin,omitempty" json:"plugin,omitempty" jsonschema_description:"Name of an explicitly trusted plugin declared in this project."`
-	Config map[string]any `yaml:"config,omitempty" json:"config,omitempty" jsonschema_description:"Destination-specific connection configuration. Reference credential environment variables instead of embedding secrets."`
+	Operation string         `yaml:"operation" json:"operation" jsonschema_description:"Registered destination operation, such as munki, intune or jamf. Trusted executable plugins register their own operation names."`
+	Path      string         `yaml:"path,omitempty" json:"path,omitempty" jsonschema_description:"Local Munki repository path. Other operations use config for connection settings."`
+	Config    map[string]any `yaml:"config,omitempty" json:"config,omitempty" jsonschema_description:"Destination-specific connection configuration. Reference credential environment variables instead of embedding secrets."`
 }
 
 // Plugin identifies an explicitly trusted executable source for each host.
@@ -100,6 +117,7 @@ type Plugin struct {
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+var subjectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
 
 // Parse expands environment placeholders in string values and rejects unknown
 // fields, multiple documents, aliases and invalid composition.
@@ -291,9 +309,6 @@ func (p Project) Validate() error {
 		if r.Select != "" && !filepath.IsLocal(filepath.FromSlash(r.Select)) {
 			return fmt.Errorf("recipe %s: select must be a relative path", name)
 		}
-		if v := r.Verification; v.Subject != "" && v.Subject != "source" && v.Subject != "payload" {
-			return fmt.Errorf("recipe %s: verification subject must be source or payload", name)
-		}
 		if r.Verification.CertificateSHA256 != "" && !ValidDigest(r.Verification.CertificateSHA256) {
 			return fmt.Errorf("recipe %s: invalid certificate SHA-256", name)
 		}
@@ -305,14 +320,66 @@ func (p Project) Validate() error {
 				return fmt.Errorf("recipe %s artifact %s: %w", name, artifact, err)
 			}
 		}
+		for subject, selector := range r.Subjects {
+			if !subjectNamePattern.MatchString(subject) {
+				return fmt.Errorf("recipe %s: subject name %q must contain lowercase letters, digits, underscores or hyphens", name, subject)
+			}
+			if err := selector.Validate(); err != nil {
+				return fmt.Errorf("recipe %s subject %s: %w", name, subject, err)
+			}
+		}
+		steps := make(map[string]bool, len(r.Steps))
+		for _, step := range r.Steps {
+			if !namePattern.MatchString(step.Name) || step.Name == "source" || step.Name == "prepared" || step.Name == "artifacts" {
+				return fmt.Errorf("recipe %s: invalid or reserved step name %q", name, step.Name)
+			}
+			if steps[step.Name] {
+				return fmt.Errorf("recipe %s: duplicate step name %q", name, step.Name)
+			}
+			if err := validateOperation(step.Operation); err != nil {
+				return fmt.Errorf("recipe %s step %s: %w", name, step.Name, err)
+			}
+			for input, reference := range step.Inputs {
+				if !namePattern.MatchString(input) {
+					return fmt.Errorf("recipe %s step %s: invalid input name %q", name, step.Name, input)
+				}
+				if err := validateArtifactReference(reference, r.Artifacts, steps); err != nil {
+					return fmt.Errorf("recipe %s step %s input %s: %w", name, step.Name, input, err)
+				}
+			}
+			steps[step.Name] = true
+		}
+		if subject := r.Verification.Subject; subject != "" && subject != "payload" {
+			if err := validateArtifactReference(subject, r.Artifacts, steps); err != nil {
+				return fmt.Errorf("recipe %s verification subject: %w", name, err)
+			}
+		}
 		for destination, metadata := range r.Destinations {
 			if _, exists := p.Destinations[destination]; !exists {
 				return fmt.Errorf("recipe %s: unknown destination %q", name, destination)
 			}
 			if selected, exists := metadata["artifact"]; exists {
 				artifact, ok := selected.(string)
-				if _, exists := r.Artifacts[artifact]; !ok || !exists {
-					return fmt.Errorf("recipe %s destination %s: artifact must name a configured artifact", name, destination)
+				if !ok {
+					return fmt.Errorf("recipe %s destination %s: artifact must be an input reference string", name, destination)
+				}
+				if err := validateArtifactReference(artifact, r.Artifacts, steps); err != nil {
+					return fmt.Errorf("recipe %s destination %s: %w", name, destination, err)
+				}
+			}
+			if value, exists := metadata["inputs"]; exists {
+				inputs, ok := value.(map[string]any)
+				if !ok {
+					return fmt.Errorf("recipe %s destination %s: inputs must map input names to artifact reference strings", name, destination)
+				}
+				for input, value := range inputs {
+					reference, ok := value.(string)
+					if !namePattern.MatchString(input) || !ok {
+						return fmt.Errorf("recipe %s destination %s: inputs require safe names and artifact reference strings", name, destination)
+					}
+					if err := validateArtifactReference(reference, r.Artifacts, steps); err != nil {
+						return fmt.Errorf("recipe %s destination %s input %s: %w", name, destination, input, err)
+					}
 				}
 			}
 		}
@@ -321,21 +388,15 @@ func (p Project) Validate() error {
 		if !namePattern.MatchString(name) {
 			return fmt.Errorf("invalid destination name %q", name)
 		}
-		switch d.Type {
-		case "munki":
-			if d.Path == "" || d.Plugin != "" || len(d.Config) != 0 {
+		if err := validateOperation(d.Operation); err != nil {
+			return fmt.Errorf("destination %s: %w", name, err)
+		}
+		if d.Operation == "munki" {
+			if d.Path == "" || len(d.Config) != 0 {
 				return fmt.Errorf("destination %s: munki requires only path", name)
 			}
-		case "plugin":
-			if _, exists := p.Plugins[d.Plugin]; !exists || d.Path != "" {
-				return fmt.Errorf("destination %s: plugin must name a configured plugin", name)
-			}
-		case "intune", "jamf":
-			if d.Path != "" || d.Plugin != "" {
-				return fmt.Errorf("destination %s: use config for connection settings", name)
-			}
-		default:
-			return fmt.Errorf("destination %s: unsupported type %q", name, d.Type)
+		} else if d.Path != "" {
+			return fmt.Errorf("destination %s: use config for connection settings", name)
 		}
 	}
 	for name, plugin := range p.Plugins {
@@ -350,6 +411,53 @@ func (p Project) Validate() error {
 				return fmt.Errorf("plugin %s: %w", name, err)
 			}
 		}
+	}
+	return nil
+}
+
+func validateOperation(operation string) error {
+	if !plugin.ValidOperationName(operation) {
+		return errors.New("operation must be a named built-in or external capability")
+	}
+	return nil
+}
+
+func validateArtifactReference(reference string, artifacts map[string]Artifact, steps map[string]bool) error {
+	if reference == "source" || reference == "prepared" {
+		return nil
+	}
+	owner, output, ok := strings.Cut(reference, "/")
+	if !ok || !namePattern.MatchString(owner) || !namePattern.MatchString(output) {
+		return errors.New("input reference must be source, prepared, artifacts/name or stepName/outputName")
+	}
+	if owner == "artifacts" {
+		if _, exists := artifacts[output]; !exists {
+			return fmt.Errorf("unknown artifact %q", output)
+		}
+		return nil
+	}
+	if !steps[owner] {
+		return fmt.Errorf("input reference %q must name an existing preceding step", reference)
+	}
+	return nil
+}
+
+// Validate checks selector criteria without consulting the runner filesystem.
+func (s SubjectSelector) Validate() error {
+	if s.Kind == "" && s.Path == "" && s.InstalledPath == "" && s.BundleID == "" {
+		return errors.New("subject selector requires at least one criterion")
+	}
+	if s.Kind != "" && !namePattern.MatchString(s.Kind) {
+		return errors.New("subject kind must be a safe name")
+	}
+	if s.Path != "" && (!safeRelative(s.Path) || path.Clean(s.Path) != s.Path) {
+		return errors.New("subject path must be a clean relative POSIX path")
+	}
+	if s.InstalledPath != "" && (!path.IsAbs(s.InstalledPath) || path.Clean(s.InstalledPath) != s.InstalledPath || strings.ContainsAny(s.InstalledPath, "\\\x00\r\n\t")) {
+		return errors.New("subject installed_path must be a clean absolute POSIX path")
+	}
+	if !utf8.ValidString(s.BundleID) || strings.ContainsAny(s.BundleID, "\x00\r\n\t") || (s.BundleID != "" && strings.TrimSpace(s.BundleID) != s.BundleID) {
+		return errors.New("subject bundle_id must be a nonempty single-line identifier")
 	}
 	return nil
 }
@@ -398,8 +506,8 @@ func (s Source) Validate() error {
 
 // Validate checks the supported package derivation and confined source paths.
 func (a Artifact) Validate() error {
-	if a.Type != "pkg" || (a.From != "" && a.From != "source") {
-		return errors.New("artifact type must be pkg and from must be source or omitted")
+	if a.Type != "pkg" || (a.From != "" && a.From != "prepared") {
+		return errors.New("artifact type must be pkg and from must be prepared or omitted")
 	}
 	if !regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`).MatchString(a.Identifier) || len(a.Identifier) > 255 {
 		return errors.New("package identifier must be a nonempty reverse-domain identifier")
@@ -462,7 +570,7 @@ func (s Source) Fingerprint() string {
 
 // Fingerprint identifies a destination without its authentication secrets.
 func (d Destination) Fingerprint() string {
-	if d.Type == "intune" || d.Type == "jamf" {
+	if d.Operation == "intune" || d.Operation == "jamf" {
 		d.Config = maps.Clone(d.Config)
 		delete(d.Config, "token")
 		delete(d.Config, "client_secret")

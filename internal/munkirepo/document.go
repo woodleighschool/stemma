@@ -1,0 +1,68 @@
+package munkirepo
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"os"
+
+	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/plugin"
+)
+
+func documentInput(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileRequest, error) {
+	installer, exists := request.Inputs["installer"]
+	if !exists {
+		return request, nil
+	}
+	if request.Artifact.Size < 0 || request.Artifact.Size > 4<<20 {
+		return request, errors.New("pkginfo JSON exceeds size limit")
+	}
+	file, err := os.Open(request.Artifact.Path)
+	if err != nil {
+		return request, err
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(io.LimitReader(fileio.Reader{Context: ctx, Reader: file}, (4<<20)+1))
+	if err != nil {
+		return request, err
+	}
+	digest := sha256.Sum256(data)
+	if int64(len(data)) != request.Artifact.Size || hex.EncodeToString(digest[:]) != request.Artifact.SHA256 {
+		return request, errors.New("pkginfo JSON differs from its immutable descriptor")
+	}
+	var document map[string]any
+	if err := json.Unmarshal(data, &document); err != nil {
+		return request, err
+	}
+	if document == nil {
+		return request, errors.New("pkginfo JSON must be an object")
+	}
+	if document["installer_type"] != "nopkg" {
+		if document["installer_item_hash"] != installer.SHA256 {
+			return request, errors.New("pkginfo installer hash does not match installer input")
+		}
+		size, ok := document["installer_item_size"].(float64)
+		if !ok || size != float64((installer.Size+1023)/1024) {
+			return request, errors.New("pkginfo installer size does not match installer input")
+		}
+	}
+	// Content locations and computed removals belong to this repository's native
+	// renderer. The document's editable fields retain their presence semantics.
+	for _, key := range []string{"installer_item_location", "installer_item_hash", "installer_item_size", "items_to_remove"} {
+		delete(document, key)
+	}
+	var explicit map[string]any
+	if len(request.Metadata) != 0 {
+		if err := json.Unmarshal(request.Metadata, &explicit); err != nil {
+			return request, err
+		}
+	}
+	request.Metadata, err = json.Marshal(config.Merge(document, explicit))
+	request.Artifact, request.Facts = installer, installer.Facts
+	return request, err
+}

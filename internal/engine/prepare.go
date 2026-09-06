@@ -15,22 +15,24 @@ import (
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
+	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/source"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 // Prepared preserves the original source alongside selected payloads and verification evidence.
 type Prepared struct {
-	Source   source.Entry        `json:"source"`
-	Payload  cas.Ref             `json:"payload"`
-	Filename string              `json:"filename"`
-	Format   string              `json:"format"`
-	Version  string              `json:"version,omitempty"`
-	Tree     bool                `json:"tree,omitempty"`
-	App      *apple.AppFacts     `json:"app,omitempty"`
-	Package  *apple.PackageFacts `json:"package,omitempty"`
-	Evidence *apple.Evidence     `json:"evidence,omitempty"`
-	Cached   bool                `json:"cached"`
-	Path     string              `json:"-"`
+	Source        source.Entry    `json:"source"`
+	Payload       cas.Ref         `json:"payload"`
+	Filename      string          `json:"filename"`
+	Format        string          `json:"format"`
+	Version       string          `json:"version,omitempty"`
+	Tree          bool            `json:"tree,omitempty"`
+	Facts         plugin.Facts    `json:"facts"`
+	SuppliedFacts bool            `json:"supplied_facts,omitempty"`
+	Evidence      *apple.Evidence `json:"evidence,omitempty"`
+	Cached        bool            `json:"cached"`
+	Path          string          `json:"-"`
 }
 
 func prepare(ctx context.Context, store *cas.Store, entry source.Entry, recipe config.Recipe, work string) (Prepared, error) {
@@ -40,7 +42,7 @@ func prepare(ctx context.Context, store *cas.Store, entry source.Entry, recipe c
 		Filename, Select, Platform, Arch string
 		Tree                             bool
 		Verification                     config.Verification
-	}{"prepare/1", entry.Artifact, entry.Filename, recipe.Select, recipe.Platform, recipe.Arch, entry.Tree, recipe.Verification})
+	}{"prepare/2", entry.Artifact, entry.Filename, recipe.Select, recipe.Platform, recipe.Arch, entry.Tree, recipe.Verification})
 	if descriptor, ok := store.Recall(ctx, key); ok {
 		path, err := store.Path(descriptor)
 		if err != nil {
@@ -54,10 +56,6 @@ func prepare(ctx context.Context, store *cas.Store, entry source.Entry, recipe c
 		if json.Unmarshal(data, &prepared) == nil && store.Verify(ctx, prepared.Payload) == nil {
 			prepared.Source = entry
 			prepared.Cached = true
-			// Explicit source versions can change without rebuilding identical bytes.
-			if entry.Version != "" {
-				prepared.Version = entry.Version
-			}
 			return materialize(ctx, store, prepared, work)
 		}
 	}
@@ -95,7 +93,7 @@ func prepare(ctx context.Context, store *cas.Store, entry source.Entry, recipe c
 	case recipe.Select != "":
 		return Prepared{}, errors.New("select requires a supported archive source")
 	}
-	prepared, err := inspect(payload)
+	prepared, err := inspect(ctx, payload)
 	if err != nil {
 		return prepared, err
 	}
@@ -147,9 +145,6 @@ func prepare(ctx context.Context, store *cas.Store, entry source.Entry, recipe c
 		return prepared, err
 	}
 	err = store.Remember(key, descriptor)
-	if entry.Version != "" {
-		prepared.Version = entry.Version
-	}
 	return prepared, err
 }
 
@@ -168,45 +163,71 @@ func materialize(ctx context.Context, store *cas.Store, p Prepared, work string)
 	return p, archive.Extract(ctx, packed, p.Path)
 }
 
-// Inspect reads artifact facts without acquisition or publication.
-func Inspect(path string) (Prepared, error) { return inspect(path) }
+// Inspect reads complete supported artifact facts without acquisition or publication.
+func Inspect(ctx context.Context, path string) (Prepared, error) {
+	p, err := inspect(ctx, path)
+	if err != nil {
+		return p, err
+	}
+	p.Facts, err = inspection.Read(ctx, path)
+	return p, err
+}
 
-func inspect(path string) (Prepared, error) {
+func inspect(ctx context.Context, path string) (Prepared, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return Prepared{}, err
 	}
-	p := Prepared{Filename: filepath.Base(path), Format: strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."), Tree: info.IsDir(), Path: path}
-	if p.Format == "" {
-		p.Format = "binary"
+	facts, err := inspection.ReadMetadata(ctx, path)
+	if err != nil {
+		return Prepared{}, err
 	}
-	switch p.Format {
-	case "app":
-		facts, err := apple.InspectApp(path)
-		if err != nil {
-			return p, err
+	p := Prepared{Filename: filepath.Base(path), Format: strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."), Tree: info.IsDir(), Path: path, Facts: facts}
+	if len(facts.Subjects) > 0 {
+		switch facts.Subjects[0].Kind {
+		case "app", "msi", "directory":
+			p.Format = facts.Subjects[0].Kind
 		}
-		p.App = &facts
-		p.Version = facts.Version
-		if p.Version == "" {
-			p.Version = facts.Build
-		}
-	case "pkg":
-		facts, err := apple.InspectPackage(path)
-		if err != nil {
-			return p, err
-		}
-		p.Package = &facts
-		for _, component := range facts.Packages {
-			if p.Version == "" {
-				p.Version = component.Version
-			} else if p.Version != component.Version {
-				p.Version = ""
+		for _, subject := range facts.Subjects {
+			if subject.Package != nil {
+				p.Format = "pkg"
 				break
 			}
 		}
 	}
+	if p.Format == "" {
+		p.Format = "binary"
+	}
+	p.Version = artifactVersion(facts)
 	return p, nil
+}
+
+func artifactVersion(facts plugin.Facts) string {
+	var version string
+	for _, subject := range facts.Subjects {
+		var candidate string
+		switch {
+		case subject.App != nil && subject.Parent == "":
+			candidate = subject.App.Version
+			if candidate == "" {
+				candidate = subject.App.Build
+			}
+		case subject.Package != nil:
+			candidate = subject.Package.Version
+		case subject.MSI != nil:
+			candidate = subject.MSI.ProductVersion
+		default:
+			continue
+		}
+		if candidate == "" {
+			return ""
+		}
+		if version != "" && version != candidate {
+			return ""
+		}
+		version = candidate
+	}
+	return version
 }
 
 func isArchive(name string) bool {

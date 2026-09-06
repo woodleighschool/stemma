@@ -2,10 +2,12 @@ package lockfile
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +17,62 @@ import (
 	"github.com/woodleighschool/stemma/internal/source"
 	"go.yaml.in/yaml/v4"
 )
+
+func TestReleaseChangeRetainsIdenticalContentTimestamp(t *testing.T) {
+	release := "v1.2.3"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/repos/") {
+			_, _ = fmt.Fprintf(w, `{"id":12,"tag_name":%q,"assets":[{"id":34,"name":"App.pkg","browser_download_url":"https://github.com/example/app/releases/download/%s/App.pkg"}]}`, release, release)
+			return
+		}
+		_, _ = w.Write([]byte("unchanged installer"))
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	store, err := cas.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := source.New(store, root, false)
+	m.Client.Transport = releaseTransport{server: server}
+	p := config.Project{Version: 1, Project: "test", Recipes: map[string]config.Recipe{"app": {Source: config.Source{Type: "github", Repository: "example/app", Release: "latest", Asset: "App.pkg"}}}}
+	first, err := Prepare(t.Context(), p, m, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := first.File.Recipes["app"]
+	entry.ResolvedAt = time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
+	first.File.Recipes["app"] = entry
+	data, err := yaml.Marshal(first.File)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "stemma.lock.yaml"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	release = "v1.2.4"
+	refreshed, err := Prepare(t.Context(), p, m, Options{Refresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := refreshed.File.Recipes["app"]
+	if !refreshed.Changed || current.Release != release || current.Artifact != entry.Artifact || current.ResolvedAt != entry.ResolvedAt {
+		t.Fatalf("release labels changed content identity or timestamp: %+v", current)
+	}
+	warm, err := Prepare(t.Context(), p, m, Options{Frozen: true})
+	if err != nil || warm.Changed || warm.File.Recipes["app"].Release != release {
+		t.Fatalf("release did not survive the lock round trip: %+v, %v", warm, err)
+	}
+}
+
+type releaseTransport struct{ server *httptest.Server }
+
+func (transport releaseTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	forwarded := request.Clone(request.Context())
+	forwarded.URL.Scheme = "http"
+	forwarded.URL.Host = strings.TrimPrefix(transport.server.URL, "http://")
+	return transport.server.Client().Transport.RoundTrip(forwarded)
+}
 
 func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	var requests atomic.Int32

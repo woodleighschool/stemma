@@ -59,6 +59,20 @@ func TestOmittedNativeMetadataSurvivesReconciliation(t *testing.T) {
 	}
 }
 
+func TestObservedPackageFormatDoesNotRequireFilenameExtension(t *testing.T) {
+	root, request := repositoryRequest(t, "vendor-download", `{}`)
+	request.Artifact.Format = "pkg"
+	pkginfo := apply(t, root, request)
+	document := readNative[map[string]any](t, pkginfo)
+	if document["installer_item_hash"] != request.Artifact.SHA256 {
+		t.Fatal("the observed package did not retain its installer identity")
+	}
+	if _, exists := document["installer_type"]; exists {
+		t.Fatal("native PKG publication should omit installer_type")
+	}
+	assertConverged(t, request)
+}
+
 func TestCatalogsPreserveForeignNameAndVersionVariants(t *testing.T) {
 	root, request := repositoryRequest(t, "App.pkg", `{"name":"App","description":"First"}`)
 	foreign := []map[string]any{
@@ -163,7 +177,7 @@ func TestInterruptedCatalogMembershipChangeConvergesOnRetry(t *testing.T) {
 	assertConverged(t, request)
 }
 
-func repositoryRequest(t *testing.T, filename, metadata string) (string, plugin.Request) {
+func repositoryRequest(t *testing.T, filename, metadata string) (string, plugin.ReconcileRequest) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "repo")
 	content := []byte("installer content")
@@ -176,14 +190,14 @@ func repositoryRequest(t *testing.T, filename, metadata string) (string, plugin.
 	if err != nil {
 		t.Fatal(err)
 	}
-	return root, plugin.Request{
+	return root, plugin.ReconcileRequest{
 		Method: "apply", Identity: plugin.Identity{Project: "test", Recipe: "App", Destination: "munki"},
 		Config: connection, Metadata: json.RawMessage(metadata),
 		Artifact: plugin.Artifact{Path: artifactPath, Filename: filename, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(content)), Version: "1"},
 	}
 }
 
-func apply(t *testing.T, root string, request plugin.Request) string {
+func apply(t *testing.T, root string, request plugin.ReconcileRequest) string {
 	t.Helper()
 	request.Method = "apply"
 	response, err := munkirepo.Handle(t.Context(), request)
@@ -193,7 +207,7 @@ func apply(t *testing.T, root string, request plugin.Request) string {
 	return bindingPath(t, root, response)
 }
 
-func bindingPath(t *testing.T, root string, response plugin.Response) string {
+func bindingPath(t *testing.T, root string, response plugin.ReconcileResponse) string {
 	t.Helper()
 	var binding struct {
 		Pkginfo string `json:"pkginfo"`
@@ -204,7 +218,7 @@ func bindingPath(t *testing.T, root string, response plugin.Response) string {
 	return filepath.Join(root, filepath.FromSlash(binding.Pkginfo))
 }
 
-func assertConverged(t *testing.T, request plugin.Request) {
+func assertConverged(t *testing.T, request plugin.ReconcileRequest) {
 	t.Helper()
 	request.Method = "plan"
 	response, err := munkirepo.Handle(t.Context(), request)

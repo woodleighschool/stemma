@@ -5,7 +5,7 @@ project: my-apps
 
 destinations:
   munki:
-    type: munki
+    operation: munki
     path: .stemma/munki
 
 recipes:

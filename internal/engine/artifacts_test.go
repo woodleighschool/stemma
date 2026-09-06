@@ -27,8 +27,8 @@ func TestLocalPackageSharedAcrossDestinations(t *testing.T) {
 project: local-packages
 imports: [software/**/stemma.yaml]
 destinations:
-  first: {type: munki, path: first}
-  second: {type: munki, path: second}
+  first: {operation: munki, path: first}
+  second: {operation: munki, path: second}
 `)
 	fragment := `version: 1
 recipes:
@@ -45,8 +45,8 @@ recipes:
         payload: Payload
         scripts: {postinstall: Scripts/postinstall}
     destinations:
-      first: {artifact: package, description: original, catalogs: [testing]}
-      second: {artifact: package, catalogs: [testing]}
+      first: {artifact: artifacts/package, description: original, catalogs: [testing]}
+      second: {artifact: artifacts/package, catalogs: [testing]}
 `
 	write("software/Branding/stemma.yaml", fragment)
 	write("software/Branding/Payload/Library/Example/message.txt", "payload")
@@ -131,13 +131,18 @@ recipes:
     destinations:
 `, 1)
 	broken = strings.Replace(broken, "description: original", "description: independent", 1)
-	broken = strings.Replace(broken, "second: {artifact: package", "second: {artifact: broken", 1)
+	broken = strings.Replace(broken, "second: {artifact: artifacts/package", "second: {artifact: artifacts/broken", 1)
 	write("software/Branding/stemma.yaml", broken)
 	partial, err := Run(t.Context(), options)
-	if err == nil || !partial.Recipes[0].Destinations[0].Applied || partial.Recipes[0].Destinations[1].Error == "" {
-		t.Fatalf("artifact failure blocked unrelated destination: %+v, err=%v", partial, err)
+	if err == nil || partial.Recipes[0].Error == "" {
+		t.Fatalf("invalid required artifact did not fail recipe readiness: %+v, err=%v", partial, err)
 	}
-	write("software/Branding/stemma.yaml", strings.Replace(broken, "second: {artifact: broken", "second: {artifact: package", 1))
+	for _, destination := range partial.Recipes[0].Destinations {
+		if destination.Applied {
+			t.Fatal("recipe published before all required artifacts were valid")
+		}
+	}
+	write("software/Branding/stemma.yaml", strings.Replace(broken, "second: {artifact: artifacts/broken", "second: {artifact: artifacts/package", 1))
 	unused := run()
 	if _, built := unused.Recipes[0].Artifacts["broken"]; built {
 		t.Fatal("publication built an unused artifact")

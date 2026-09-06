@@ -20,7 +20,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/intunewin"
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	"github.com/woodleighschool/stemma/internal/msi"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/source"
 )
@@ -61,17 +60,14 @@ func command(out, errOut io.Writer) *cobra.Command {
 		_, err = out.Write(data)
 		return err
 	}})
-	var resolved bool
-	validate := &cobra.Command{Use: "validate", Short: "Validate configuration without acquiring or publishing", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	var resolved, validateOffline bool
+	validate := &cobra.Command{Use: "validate", Short: "Validate configuration and operation contracts before recipe acquisition", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		path, err := resolve()
 		if err != nil {
 			return err
 		}
-		p, err := config.Load(path)
+		p, err := engine.ValidateProject(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Lock: lockfile.Options{Offline: validateOffline}})
 		if err != nil {
-			return err
-		}
-		if err := engine.Validate(cmd.Context(), p); err != nil {
 			return err
 		}
 		if resolved || output == "json" {
@@ -81,7 +77,22 @@ func command(out, errOut io.Writer) *cobra.Command {
 		return err
 	}}
 	validate.Flags().BoolVar(&resolved, "resolved", false, "Show fully resolved recipe composition")
+	validate.Flags().BoolVar(&validateOffline, "offline", false, "Require verified cached plugin binaries")
 	root.AddCommand(validate, iconCommand(out))
+	var operationsOffline bool
+	operations := &cobra.Command{Use: "operations", Short: "Print built-in and trusted plugin operation contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		path, err := resolve()
+		if err != nil {
+			return err
+		}
+		descriptor, err := engine.Catalog(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Lock: lockfile.Options{Offline: operationsOffline}})
+		if err != nil {
+			return err
+		}
+		return writeJSON(out, descriptor)
+	}}
+	operations.Flags().BoolVar(&operationsOffline, "offline", false, "Require verified cached plugin binaries")
+	root.AddCommand(operations)
 	for _, method := range []string{"update", "prepare", "plan", "apply"} {
 		var frozen, noFrozen, refresh, ignore, offline bool
 		cmd := &cobra.Command{Use: method + " [recipe...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Acquire and inspect locked inputs without publication", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
@@ -127,7 +138,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 		cmd.MarkFlagsMutuallyExclusive("offline", "no-lockfile", "refresh")
 		root.AddCommand(cmd)
 	}
-	root.AddCommand(&cobra.Command{Use: "inspect FILE", Short: "Read artifact metadata without executing it", Args: cobra.ExactArgs(1), RunE: func(_ *cobra.Command, args []string) error {
+	root.AddCommand(&cobra.Command{Use: "inspect FILE", Short: "Read artifact metadata without executing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		switch strings.ToLower(filepath.Ext(args[0])) {
 		case ".intunewin":
 			value, err := intunewin.Inspect(args[0])
@@ -135,14 +146,8 @@ func command(out, errOut io.Writer) *cobra.Command {
 				return err
 			}
 			return writeJSON(out, value)
-		case ".msi":
-			value, err := msi.Read(args[0])
-			if err != nil {
-				return err
-			}
-			return writeJSON(out, value)
 		default:
-			value, err := engine.Inspect(args[0])
+			value, err := engine.Inspect(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
@@ -289,6 +294,8 @@ func printReport(out io.Writer, method string, r engine.Report) error {
 	for _, recipe := range r.Recipes {
 		if recipe.Error != "" {
 			_, _ = fmt.Fprintf(&text, "%s: failed: %s\n", recipe.Name, recipe.Error)
+		}
+		if recipe.Prepared == nil {
 			continue
 		}
 		_, _ = fmt.Fprintf(&text, "%s: %s %s (source cached: %t, preparation cached: %t)\n", recipe.Name, recipe.Prepared.Filename, recipe.Prepared.Version, recipe.SourceCached, recipe.Prepared.Cached)
@@ -297,6 +304,9 @@ func printReport(out io.Writer, method string, r engine.Report) error {
 		}
 		for name, failure := range recipe.ArtifactErrors {
 			_, _ = fmt.Fprintf(&text, "  %s: failed: %s\n", name, failure)
+		}
+		for _, step := range recipe.Steps {
+			_, _ = fmt.Fprintf(&text, "  %s (%s): %d outputs (cached: %t)\n", step.Name, step.Operation, len(step.Artifacts), step.Cached)
 		}
 		for _, destination := range recipe.Destinations {
 			if destination.Error != "" {
