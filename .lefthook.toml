@@ -3,5 +3,9 @@ git_url = "https://github.com/woodleighschool/.github"
 ref = "main"
 configs = ["lefthook.common.toml"]
 
+[pre-commit.commands.zizmor-action]
+glob = ["action.yaml"]
+run = "zizmor --offline {staged_files}"
+
 [commit-msg.commands.commitlint]
 run = "commitlint --default-config --edit {1}"

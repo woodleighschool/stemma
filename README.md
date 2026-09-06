@@ -68,7 +68,6 @@ mise run build
 mise run generate
 mise run test
 mise run lint
-mise run workflow-lint
 ```
 
 ## 📄 License

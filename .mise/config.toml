@@ -57,13 +57,6 @@ run = "go fmt ./..."
 description = "Check Go formatting"
 run = "test -z \"$(gofmt -l .)\" || { gofmt -l .; exit 1; }"
 
-[tasks.workflow-lint]
-description = "Lint GitHub Actions workflows"
-run = [
-  "actionlint -ignore 'reusable workflow call \"\\$/.*\" at \"uses\" is not following the format'",
-  "zizmor --offline --no-ignores .github/workflows action.yaml",
-]
-
 [tasks.clean]
 description = "Remove local build outputs"
 run = "rm -f stemma stemma.exe coverage.out && rm -rf dist"
