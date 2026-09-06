@@ -12,9 +12,9 @@ go.work.sum
 .stemma/
 
 # Local configuration
+/stemma.yaml
 .env
 .env.*
-!.env.example
 
 # Local Mise
 .mise.local.toml

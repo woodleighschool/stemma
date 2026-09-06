@@ -1,11 +1,11 @@
 [tools]
-go = "1.27.0"
+go = "1.27.1"
 "go:golang.org/x/vuln/cmd/govulncheck" = "1.7.0"
-golangci-lint = "2.13.1"
+golangci-lint = "2.13.2"
 lefthook = "2.1.12"
 actionlint = "1.7.12"
-zizmor = "1.29.0"
-oxfmt = "0.65.0"
+zizmor = "1.30.0"
+oxfmt = "0.66.0"
 "npm:@commitlint/cli" = "21.2.2"
 
 [settings]
@@ -14,51 +14,59 @@ pin = true
 lockfile = true
 
 [tasks.deps]
-description = "Download Go dependencies"
+description = "Install dependencies"
 run = "go mod download"
 
 [tasks.build]
-description = "Build the standalone CLI"
-run = "go build -trimpath -o stemma ./cmd/stemma"
+description = "Build application"
+run = "go build -o stemma ./cmd/stemma"
+
+[tasks.tidy]
+description = "Tidy the Go module"
+run = "go mod tidy"
+
+[tasks.tidy-check]
+description = "Check the Go module is tidy"
+run = "go mod tidy -diff"
+
+[tasks.vulncheck]
+description = "Scan for known vulnerabilities with govulncheck"
+run = "govulncheck ./..."
+
+[tasks.generate]
+description = "Generate committed artifacts"
+run = "go run ./cmd/stemma schema > stemma.schema.json"
 
 [tasks.test]
-description = "Run portable contract and executable tests"
+description = "Run dependency-free Go checks"
 run = ["go vet ./...", "go test -race -count=1 ./..."]
 
+[tasks.lint-fix]
+description = "Run linters and apply fixes"
+run = "golangci-lint run --fix"
+
 [tasks.lint]
-description = "Run Go linters"
+description = "Run linters"
 run = "golangci-lint run"
 
 [tasks.format]
-description = "Format Go source"
+description = "Format Go code"
 run = "go fmt ./..."
 
 [tasks.fmt-check]
 description = "Check Go formatting"
 run = "test -z \"$(gofmt -l .)\" || { gofmt -l .; exit 1; }"
 
-[tasks.tidy]
-description = "Tidy Go dependencies"
-run = "go mod tidy"
-
-[tasks.tidy-check]
-description = "Check Go dependencies"
-run = "go mod tidy -diff"
-
-[tasks.generate]
-description = "Generate the configuration schema"
-run = "go run ./cmd/stemma schema > stemma.schema.json"
-
-[tasks.vulncheck]
-description = "Check known Go vulnerabilities"
-run = "govulncheck ./..."
-
 [tasks.workflow-lint]
-description = "Validate GitHub workflows"
+description = "Lint GitHub Actions workflows"
 run = [
-  "actionlint .github/workflows/*.yaml",
+  "actionlint",
   "zizmor --offline --no-ignores .github/workflows action.yaml",
 ]
+
+[tasks.clean]
+description = "Remove local build outputs"
+run = "rm -f stemma stemma.exe coverage.out && rm -rf dist"
 
 [hooks]
 postinstall = "lefthook install"

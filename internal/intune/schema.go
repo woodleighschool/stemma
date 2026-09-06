@@ -132,7 +132,7 @@ func validateMetadata(data []byte) (object, error) {
 				return nil, err
 			}
 		case appType != win32Type && key == "minimumSupportedOperatingSystem":
-			if err := validateMinimumOS(value, appType); err != nil {
+			if err := validateMinimumOS(value); err != nil {
 				return nil, err
 			}
 		case key == "assignments":
@@ -146,20 +146,18 @@ func validateMetadata(data []byte) (object, error) {
 	return m, nil
 }
 
-func minimumOSFields(appType string) []string {
+func minimumOSFields() []string {
 	fields := []string{"v10_7", "v10_8", "v10_9", "v10_10", "v10_11", "v10_12", "v10_13", "v10_14", "v10_15", "v11_0", "v12_0", "v13_0"}
-	if appType == pkgType {
-		fields = append(fields, "v14_0", "v15_0", "v26_0")
-	}
+	fields = append(fields, "v14_0", "v15_0", "v26_0")
 	return fields
 }
 
-func validateMinimumOS(value any, appType string) error {
+func validateMinimumOS(value any) error {
 	operatingSystem, ok := value.(object)
 	if !ok {
 		return errors.New("minimumSupportedOperatingSystem must be an object")
 	}
-	allowed := append(minimumOSFields(appType), "@odata.type")
+	allowed := append(minimumOSFields(), "@odata.type")
 	if err := fields(operatingSystem, allowed...); err != nil {
 		return err
 	}

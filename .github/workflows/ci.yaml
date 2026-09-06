@@ -1,56 +1,182 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: CI
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+    paths-ignore:
+      - "**.md"
+      - ".release-please-manifest.json"
   pull_request:
+    branches:
+      - main
   merge_group:
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 env:
   MISE_NO_HOOKS: "1"
+  MISE_TASK_RUN_AUTO_INSTALL: "false"
 
 jobs:
-  test:
-    name: Test (${{ matrix.os }})
+  workflow-lint:
+    name: Workflow Lint
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: false
+
+      - name: Resolve linter versions
+        id: tools
+        run: |
+          echo "actionlint=$(mise config get tools.actionlint)" >> "$GITHUB_OUTPUT"
+          echo "zizmor=$(mise config get tools.zizmor)" >> "$GITHUB_OUTPUT"
+
+      - name: Lint workflows
+        uses: home-operations/.github/actions/workflow-lint@69cad1e407df8070dd9cfc3314551e473544014e # workflow-lint-v1.0.3
+        with:
+          actionlint-version: ${{ steps.tools.outputs.actionlint }}
+          zizmor-version: ${{ steps.tools.outputs.zizmor }}
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          experimental: true
+          install_args: --locked go golangci-lint actionlint zizmor
+
+      - name: Cache Go modules and build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
+          restore-keys: ${{ runner.os }}-go-
+
+      - name: Cache golangci-lint
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/golangci-lint
+          key: ${{ runner.os }}-golangci-lint-${{ hashFiles('go.sum', '.golangci.yml', '.mise/mise.lock') }}
+
+      - name: Check Go formatting
+        run: mise run fmt-check
+
+      - name: Check Go module tidiness
+        run: mise run tidy-check
+
+      - name: Run Go lint
+        run: mise run lint
+
+      - name: Regenerate committed artifacts
+        run: mise run generate
+
+      - name: Check generated artifacts are committed
+        run: |
+          generated_status=$(git status --short --untracked-files=all -- stemma.schema.json)
+          test -z "$generated_status" || {
+            printf '%s\n' "$generated_status"
+            git diff -- stemma.schema.json
+            exit 1
+          }
+
+      - name: Run dependency-free Go checks
+        run: mise run test
+
+      - name: Build application
+        run: mise run build
+
+  native-tests:
+    name: Native Tests (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        os:
+          - macos-26
+          - windows-2025
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
-        with:
-          go-version-file: go.mod
-      - run: go test -race -count=1 ./...
-      - run: go build -trimpath ./cmd/stemma
 
-  checks:
-    name: Checks
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      - name: Setup Mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
         with:
           experimental: true
-          install_args: --locked go golangci-lint actionlint zizmor go:golang.org/x/vuln/cmd/govulncheck
-      - run: mise run fmt-check
-      - run: mise run tidy-check
-      - run: mise run lint
-      - run: mise run workflow-lint
-      - run: mise run vulncheck
-      - run: mise run generate
-      - run: git diff --exit-code -- stemma.schema.json
+          install_args: --locked go
+
+      - name: Run dependency-free Go checks
+        run: mise run test
+
+      - name: Build application
+        run: mise run build
+
+  go-vulncheck:
+    if: >-
+      ${{ !(startsWith(github.head_ref, 'release-please--')
+      && github.event.pull_request.head.repo.full_name == github.repository) }}
+    name: Go Vulncheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          experimental: true
+          install_args: --locked go go:golang.org/x/vuln/cmd/govulncheck
+
+      - name: Run govulncheck
+        run: mise run vulncheck
+
+  status:
+    if: ${{ !cancelled() }}
+    name: Build Success
+    needs:
+      - workflow-lint
+      - backend
+      - native-tests
+      - go-vulncheck
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Any jobs failed?
+        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
+        run: exit 1
+      - name: All jobs passed or skipped?
+        if: ${{ !(contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+        run: echo "All jobs passed or skipped" && echo "${{ toJSON(needs.*.result) }}"

@@ -174,7 +174,7 @@
         },
         "graph_url": {
           "type": "string",
-          "description": "Graph base URL ending in /v1.0. macOSPkgApp selects /beta automatically. HTTPS is required except localhost for tests.",
+          "description": "Graph base URL ending in /v1.0. macOS apps select /beta automatically. HTTPS is required.",
           "default": "https://graph.microsoft.com/v1.0"
         },
         "tenant_id_env": {
@@ -198,7 +198,7 @@
           "properties": {
             "@odata.type": {
               "const": "#microsoft.graph.win32LobApp",
-              "description": "Native Graph app subtype. macOSPkgApp uses the beta API; other supported types use v1.0."
+              "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
             },
             "allowedArchitectures": {
               "enum": [
@@ -573,7 +573,7 @@
           "properties": {
             "@odata.type": {
               "const": "#microsoft.graph.macOSDmgApp",
-              "description": "Native Graph app subtype. macOSPkgApp uses the beta API; other supported types use v1.0."
+              "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
             },
             "app_id": {
               "type": "string",
@@ -781,6 +781,18 @@
                 "v13_0": {
                   "type": "boolean",
                   "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v14_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v15_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
+                },
+                "v26_0": {
+                  "type": "boolean",
+                  "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
                 }
               },
               "additionalProperties": false,
@@ -833,7 +845,7 @@
           "properties": {
             "@odata.type": {
               "const": "#microsoft.graph.macOSPkgApp",
-              "description": "Native Graph app subtype. macOSPkgApp uses the beta API; other supported types use v1.0."
+              "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
             },
             "app_id": {
               "type": "string",
@@ -1102,7 +1114,7 @@
           "title": "#microsoft.graph.macOSPkgApp"
         }
       ],
-      "description": "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG (v1.0), and raw macOS PKG (beta). Sources are preserved; signing and installer authoring are separate recipe policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."
+      "description": "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG and PKG (beta). Sources are preserved; signing and installer authoring are separate recipe policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."
     },
     "JamfConnection": {
       "properties": {

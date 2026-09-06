@@ -14,7 +14,7 @@ func MetadataSchema() *jsonschema.Schema {
 	variants := make([]*jsonschema.Schema, 0, 3)
 	for _, appType := range []string{win32Type, dmgType, pkgType} {
 		p := map[string]*jsonschema.Schema{
-			"@odata.type":           {Const: appType, Description: "Native Graph app subtype. macOSPkgApp uses the beta API; other supported types use v1.0."},
+			"@odata.type":           {Const: appType, Description: "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."},
 			"app_id":                {Type: "string", MinLength: new(uint64(1)), Description: "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."},
 			"displayName":           {Type: "string", MaxLength: new(uint64(10000)), Description: "Company Portal display name. Required for creation."},
 			"description":           {Type: "string", MaxLength: new(uint64(10000)), Description: "Native app description. Required for creation."},
@@ -56,7 +56,7 @@ func MetadataSchema() *jsonschema.Schema {
 				"bundleVersion": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleShortVersionString."},
 			}, "bundleId", "bundleVersion")}
 			operatingSystem := map[string]*jsonschema.Schema{"@odata.type": {Const: "#microsoft.graph.macOSMinimumOperatingSystem"}}
-			for _, key := range minimumOSFields(appType) {
+			for _, key := range minimumOSFields() {
 				operatingSystem[key] = &jsonschema.Schema{Type: "boolean", Description: "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."}
 			}
 			p["minimumSupportedOperatingSystem"] = objectSchema(operatingSystem)
@@ -66,7 +66,7 @@ func MetadataSchema() *jsonschema.Schema {
 		variant.Title = appType
 		variants = append(variants, variant)
 	}
-	return &jsonschema.Schema{OneOf: variants, Description: "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG (v1.0), and raw macOS PKG (beta). Sources are preserved; signing and installer authoring are separate recipe policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."}
+	return &jsonschema.Schema{OneOf: variants, Description: "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG and PKG (beta). Sources are preserved; signing and installer authoring are separate recipe policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."}
 }
 
 func objectSchema(properties map[string]*jsonschema.Schema, required ...string) *jsonschema.Schema {
@@ -129,7 +129,7 @@ func rulesSchema() *jsonschema.Schema {
 // to recipe metadata because one connection may publish many different apps.
 func ConnectionSchema() *jsonschema.Schema {
 	schema := objectSchema(map[string]*jsonschema.Schema{
-		"graph_url":         {Type: "string", Default: "https://graph.microsoft.com/v1.0", Description: "Graph base URL ending in /v1.0. macOSPkgApp selects /beta automatically. HTTPS is required except localhost for tests."},
+		"graph_url":         {Type: "string", Default: "https://graph.microsoft.com/v1.0", Description: "Graph base URL ending in /v1.0. macOS apps select /beta automatically. HTTPS is required."},
 		"token_env":         {Type: "string", MinLength: new(uint64(1)), Description: "Environment variable containing an existing Graph bearer token. Choose this or all three client credential variables."},
 		"tenant_id_env":     {Type: "string", MinLength: new(uint64(1)), Description: "Environment variable containing the Microsoft Entra tenant ID."},
 		"client_id_env":     {Type: "string", MinLength: new(uint64(1)), Description: "Environment variable containing the app registration client ID."},

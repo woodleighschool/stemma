@@ -6,6 +6,7 @@ import (
 	"crypto/sha3"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -62,7 +64,7 @@ func TestPackageFirstPublicationUnchangedAndMetadataOnly(t *testing.T) {
 	if server.count("POST "+packagePath+"/1/upload") != 1 {
 		t.Fatal("metadata-only change uploaded content")
 	}
-	current := server.record("1")
+	current := server.record()
 	if stringField(current, "packageName") != "Renamed" || stringField(current, "notes") != "operator-owned note" || string(current["info"]) != "null" || string(current["rebootRequired"]) != "false" {
 		t.Fatalf("presence ownership failed: %s", raw(current))
 	}
@@ -72,7 +74,7 @@ func TestPackageFirstPublicationUnchangedAndMetadataOnly(t *testing.T) {
 	if err != nil || len(response.Changes) != 0 {
 		t.Fatalf("omitted fields should remain unmanaged: %+v: %v", response, err)
 	}
-	if stringField(server.record("1"), "info") != "now owned remotely" {
+	if stringField(server.record(), "info") != "now owned remotely" {
 		t.Fatal("omission restored an old managed value")
 	}
 }
@@ -100,22 +102,23 @@ func TestRecoverMissingBindingAndStablePackageContentUpdate(t *testing.T) {
 	if state.PackageID != "1" || state.PayloadSHA256 != request.Artifact.SHA256 {
 		t.Fatalf("wrong replacement binding: %+v", state)
 	}
-	current := server.record("1")
+	current := server.record()
 	if stringField(current, "sha256") != request.Artifact.SHA256 || stringField(current, "packageName") != "New version" {
 		t.Fatalf("replacement not read back: %s", raw(current))
 	}
 }
 
 func TestAmbiguousCreateAndUploadAreReobserved(t *testing.T) {
-	for _, phase := range []string{"create", "upload"} {
+	for _, phase := range []string{"create", "upload", "metadata"} {
 		t.Run(phase, func(t *testing.T) {
 			server, request := newFixture(t)
 			server.failAfter = phase
+			request.Metadata = raw(map[string]any{"packageName": "Managed"})
 			response, err := Handle(t.Context(), request)
 			if err != nil {
 				t.Fatalf("committed %s was not recovered: %v", phase, err)
 			}
-			if len(response.Binding) == 0 || server.count("POST "+packagePath) != 1 || server.count("POST "+packagePath+"/1/upload") != 1 {
+			if len(response.Binding) == 0 || server.count("POST "+packagePath) != 1 || server.count("POST "+packagePath+"/1/upload") != 1 || server.count("PUT "+packagePath+"/1") != 1 {
 				t.Fatalf("ambiguous %s was replayed", phase)
 			}
 		})
@@ -131,6 +134,10 @@ func TestFailedUploadRetainsBindingForRetry(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "test-client-secret") {
 		t.Fatal("credential leaked in HTTP error")
+	}
+	var state binding
+	if err := json.Unmarshal(response.Binding, &state); err != nil || state.PackageID != "1" || state.PendingCreate {
+		t.Fatalf("failed upload did not retain the created package ID: %s: %v", response.Binding, err)
 	}
 	request.Binding = response.Binding
 	server.failBeforeUpload = false
@@ -200,11 +207,96 @@ func TestPackageAdoptionAndUnknownRemoteFields(t *testing.T) {
 	if server.count("POST "+packagePath) != 1 {
 		t.Fatal("explicit adoption created a duplicate")
 	}
-	server.set("newServerField", raw("must not be erased"))
+	remote := raw(map[string]any{"label": "must not be erased", "enabled": false, "nested": map[string]any{"notes": nil}, "values": []any{"one", "two"}})
+	server.set("newServerField", remote)
 	request.Binding = response.Binding
-	request.Metadata = raw(map[string]any{"packageName": "Further change"})
-	if _, err := Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), "lossy full-object PUT") {
-		t.Fatalf("unknown remote field was silently dropped: %v", err)
+	request.Metadata = raw(map[string]any{"packageName": "Further change", "notes": "", "priority": 0})
+	if _, err := Handle(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	current := server.record()
+	if !equalJSON(current["newServerField"], remote) || string(current["notes"]) != `""` || string(current["priority"]) != "0" {
+		t.Fatalf("native values or omitted remote fields changed: %s", raw(current))
+	}
+}
+
+func TestAuthenticationRefreshesBeforeExpiry(t *testing.T) {
+	server, request := newFixture(t)
+	server.tokenLifetime = 1
+	if _, err := Handle(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if server.count("POST /api/v1/oauth/token") < 2 {
+		t.Fatal("expiring token was not refreshed during publication")
+	}
+}
+
+func TestReadRetriesWithoutReplayingCreation(t *testing.T) {
+	server, request := newFixture(t)
+	server.failReads = 1
+	if _, err := Handle(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if server.count("GET "+packagePath) != 2 || server.count("POST "+packagePath) != 1 {
+		t.Fatal("transient read failed to retry safely")
+	}
+}
+
+func TestAuthenticationHonorsCancellation(t *testing.T) {
+	_, request := newFixture(t)
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		close(started)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+	request.Config = raw(configuration{URL: server.URL, ClientIDEnv: "STEMMA_TEST_JAMF_CLIENT_ID", ClientSecretEnv: "STEMMA_TEST_JAMF_CLIENT_SECRET"})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := Handle(ctx, request)
+		done <- err
+	}()
+	select {
+	case <-started:
+	case err := <-done:
+		t.Fatalf("authentication failed before request: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("authentication request did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("authentication cancellation: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("authentication outlived cancelled publication")
+	}
+}
+
+func TestAuthenticationRejectsCrossOriginRedirect(t *testing.T) {
+	_, request := newFixture(t)
+	received := make(chan struct{}, 1)
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received <- struct{}{}
+		writeJSON(t, w, map[string]any{"access_token": "unexpected-token", "expires_in": 1800})
+	}))
+	t.Cleanup(target.Close)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(server.Close)
+	request.Config = raw(configuration{URL: server.URL, ClientIDEnv: "STEMMA_TEST_JAMF_CLIENT_ID", ClientSecretEnv: "STEMMA_TEST_JAMF_CLIENT_SECRET"})
+	if _, err := Handle(t.Context(), request); err == nil {
+		t.Fatal("authentication followed a cross-origin redirect")
+	}
+	select {
+	case <-received:
+		t.Fatal("OAuth client credentials reached another origin")
+	default:
 	}
 }
 
@@ -270,13 +362,16 @@ type fakeServer struct {
 	failAfter        string
 	failBeforeUpload bool
 	hideDiscovery    bool
+	tokenLifetime    int
+	tokens           int
+	failReads        int
 }
 
 func newFixture(t *testing.T) (*fakeServer, plugin.Request) {
 	t.Helper()
 	t.Setenv("STEMMA_TEST_JAMF_CLIENT_ID", "test-client-id")
 	t.Setenv("STEMMA_TEST_JAMF_CLIENT_SECRET", "test-client-secret")
-	fake := &fakeServer{t: t, packages: make(map[string]map[string]json.RawMessage), version: 1}
+	fake := &fakeServer{t: t, packages: make(map[string]map[string]json.RawMessage), version: 1, tokenLifetime: 1800}
 	server := httptest.NewServer(http.HandlerFunc(fake.handle))
 	t.Cleanup(server.Close)
 	request := plugin.Request{Protocol: plugin.ProtocolVersion, Method: "apply", Identity: plugin.Identity{Project: "school", Recipe: "vendor", Destination: "jamf"}, Config: raw(configuration{URL: server.URL, ClientIDEnv: "STEMMA_TEST_JAMF_CLIENT_ID", ClientSecretEnv: "STEMMA_TEST_JAMF_CLIENT_SECRET"}), Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
@@ -305,10 +400,11 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		if r.Form.Get("client_id") != "test-client-id" || r.Form.Get("client_secret") != "test-client-secret" || r.Form.Get("grant_type") != "client_credentials" {
 			s.t.Error("incorrect OAuth2 client credential request")
 		}
-		writeJSON(s.t, w, map[string]any{"access_token": "test-token", "expires_in": 1800})
+		s.tokens++
+		writeJSON(s.t, w, map[string]any{"access_token": "test-token-" + strconv.Itoa(s.tokens), "expires_in": s.tokenLifetime})
 		return
 	}
-	if r.Header.Get("Authorization") != "Bearer test-token" {
+	if r.Header.Get("Authorization") != "Bearer test-token-"+strconv.Itoa(s.tokens) {
 		s.t.Error("missing bearer token")
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -316,6 +412,11 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == packagePath {
 		switch r.Method {
 		case http.MethodGet:
+			if s.failReads > 0 {
+				s.failReads--
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			if !strings.HasPrefix(r.URL.Query().Get("filter"), `fileName=="stemma-`) {
 				s.t.Error("discovery did not use deterministic filename identity")
 			}
@@ -412,6 +513,10 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		s.packages[id] = fields
 		s.version++
+		if s.failAfter == "metadata" {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		writeJSON(s.t, w, fields)
 	default:
 		s.t.Errorf("unexpected package method %s", r.Method)
@@ -455,10 +560,10 @@ func (s *fakeServer) set(key string, value json.RawMessage) {
 	defer s.mu.Unlock()
 	s.packages["1"][key] = value
 }
-func (s *fakeServer) record(id string) map[string]json.RawMessage {
+func (s *fakeServer) record() map[string]json.RawMessage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	record, err := decodeObject(raw(s.packages[id]))
+	record, err := decodeObject(raw(s.packages["1"]))
 	if err != nil {
 		s.t.Fatal(err)
 	}

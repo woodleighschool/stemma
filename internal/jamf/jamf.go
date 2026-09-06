@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
@@ -23,11 +22,17 @@ import (
 	"strings"
 	"time"
 
+	sdkclient "github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/client"
+	sdkconfig "github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/config"
+	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/constants"
+	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/jamf_pro_api/packages"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/plugin"
+	"go.uber.org/zap"
+	"resty.dev/v3"
 )
 
-const packagePath = "/api/v1/packages"
+const packagePath = constants.EndpointJamfProPackagesV1
 const responseLimit = 8 << 20
 
 type configuration struct {
@@ -45,9 +50,8 @@ type binding struct {
 }
 
 type client struct {
-	http   *http.Client
-	config configuration
-	token  string
+	transport *sdkclient.Transport
+	packages  *packages.Packages
 }
 
 type observed struct {
@@ -85,10 +89,10 @@ func Handle(ctx context.Context, request plugin.Request) (plugin.Response, error
 	if err != nil {
 		return response, err
 	}
-	c := &client{config: config, http: &http.Client{Timeout: 15 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	if err := c.authenticate(ctx); err != nil {
+	c, err := newClient(ctx, config)
+	if err != nil {
 		return response, err
 	}
 	identity := identityDigest(request.Identity)
@@ -281,7 +285,6 @@ var managedFields = map[string]fieldRule{
 	"suppressRegistration": {"bool", false, "Native suppressRegistration package option. Explicit false is managed."},
 }
 
-var writableFields = []string{"packageName", "fileName", "categoryId", "info", "notes", "priority", "osRequirements", "fillUserTemplate", "fillExistingUsers", "swu", "rebootRequired", "selfHealNotify", "selfHealingAction", "osInstall", "serialNumber", "parentPackageId", "basePath", "suppressUpdates", "ignoreConflicts", "suppressFromDock", "suppressEula", "suppressRegistration", "installLanguage", "md5", "sha256", "sha3512", "hashType", "hashValue", "osInstallerVersion", "manifest", "manifestFileName", "format"}
 var readOnlyFields = []string{"id", "indexed", "cloudTransferStatus", "size"}
 
 func defaults(filename, display string) map[string]json.RawMessage {
@@ -362,81 +365,77 @@ func contentMatches(current *observed, content payload) bool {
 	return strings.EqualFold(stringField(current.Fields, "sha256"), content.sha256)
 }
 
-func (c *client) authenticate(ctx context.Context) error {
-	id, secret := os.Getenv(c.config.ClientIDEnv), os.Getenv(c.config.ClientSecretEnv)
+func newClient(ctx context.Context, config configuration) (*client, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	id, secret := os.Getenv(config.ClientIDEnv), os.Getenv(config.ClientSecretEnv)
 	if id == "" || secret == "" {
-		return errors.New("jamf client credential environment variables are unset")
+		return nil, errors.New("jamf client credential environment variables are unset")
 	}
-	form := url.Values{"grant_type": {"client_credentials"}, "client_id": {id}, "client_secret": {secret}}
-	data, _, err := c.call(ctx, http.MethodPost, "/api/v1/oauth/token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()), nil)
-	if err != nil {
-		return fmt.Errorf("jamf authentication: %w", err)
-	}
-	var token struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(data, &token); err != nil || token.AccessToken == "" {
-		return errors.New("jamf returned an invalid access token response")
-	}
-	c.token = token.AccessToken
-	return nil
-}
-
-type httpError struct{ status int }
-
-func (e *httpError) Error() string { return fmt.Sprintf("jamf HTTP %d", e.status) }
-
-func (c *client) call(ctx context.Context, method, path, contentType string, body io.Reader, headers http.Header) ([]byte, http.Header, error) {
-	request, err := http.NewRequestWithContext(ctx, method, c.config.URL+path, body)
-	if err != nil {
-		return nil, nil, err
-	}
-	request.Header = headers.Clone()
-	if request.Header == nil {
-		request.Header = make(http.Header)
-	}
-	request.Header.Set("Accept", "application/json")
-	if contentType != "" {
-		request.Header.Set("Content-Type", contentType)
-	}
-	if c.token != "" {
-		request.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	if length := request.Header.Get("Content-Length"); length != "" {
-		request.ContentLength, _ = strconv.ParseInt(length, 10, 64)
-		request.Header.Del("Content-Length")
-	}
-	response, err := c.http.Do(request)
+	transport, err := sdkclient.NewTransport(&sdkconfig.AuthConfig{
+		InstanceDomain: config.URL, AuthMethod: constants.AuthMethodOAuth2,
+		ClientID: id, ClientSecret: secret, HideSensitiveData: true,
+	}, func(settings *sdkclient.TransportSettings) error {
+		settings.Logger = zap.NewNop()
+		settings.Timeout = 15 * time.Minute
+		settings.HTTPTransport = operationTransport{ctx, config.URL}
+		return nil
+	})
 	if err != nil {
 		if ctx.Err() != nil {
-			return nil, nil, ctx.Err()
+			return nil, ctx.Err()
 		}
-		return nil, nil, errors.New("jamf request transport failed")
+		return nil, errors.New("jamf authentication failed")
 	}
-	defer func() { _ = response.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
+	transport.GetHTTPClient().SetRedirectPolicy(resty.RedirectNoPolicy())
+	transport.GetHTTPClient().SetResponseBodyLimit(responseLimit)
+	return &client{transport: transport, packages: packages.NewPackages(transport)}, nil
+}
+
+// The SDK's separate authentication client does not inherit request contexts.
+// Keep token fetches within the operation lifetime and the configured origin.
+type operationTransport struct {
+	ctx    context.Context
+	origin string
+}
+
+func (t operationTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.URL.Scheme+"://"+request.URL.Host != t.origin {
+		return nil, errors.New("jamf request left the configured origin")
+	}
+	if request.URL.Path == constants.EndpointOAuthToken {
+		request = request.Clone(t.ctx)
+	}
+	return http.DefaultTransport.RoundTrip(request)
+}
+
+func requestError(ctx context.Context, response *resty.Response, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if response != nil && !response.IsStatusSuccess() {
+		return fmt.Errorf("jamf HTTP %d", response.StatusCode())
+	}
 	if err != nil {
-		return nil, response.Header, errors.New("jamf response read failed")
+		return errors.New("jamf request failed")
 	}
-	if len(data) > responseLimit {
-		return nil, response.Header, errors.New("jamf response exceeds 8 MiB")
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, response.Header, &httpError{response.StatusCode}
-	}
-	return data, response.Header, nil
+	return nil
 }
 
 func (c *client) get(ctx context.Context, id string) (*observed, error) {
 	if !validID(id) {
 		return nil, errors.New("invalid Jamf package ID")
 	}
-	data, headers, err := c.call(ctx, http.MethodGet, packagePath+"/"+id, "", nil, nil)
-	var status *httpError
-	if errors.As(err, &status) && status.status == http.StatusNotFound {
+	// Typed package models cannot retain unknown fields or distinguish null
+	// from empty strings when merging a full-object update.
+	response, data, err := c.transport.NewRequest(ctx).
+		SetHeader("Accept", constants.ApplicationJSON).
+		GetBytes(packagePath + "/" + id)
+	if response != nil && response.StatusCode() == http.StatusNotFound {
 		return nil, nil
 	}
-	if err != nil {
+	if err := requestError(ctx, response, err); err != nil {
 		return nil, err
 	}
 	fields, err := decodeObject(data)
@@ -446,7 +445,7 @@ func (c *client) get(ctx context.Context, id string) (*observed, error) {
 	if stringField(fields, "id") != id {
 		return nil, errors.New("jamf response ID does not match requested package")
 	}
-	return &observed{Fields: fields, ETag: headers.Get("ETag")}, nil
+	return &observed{Fields: fields, ETag: response.Header().Get("ETag")}, nil
 }
 
 func (c *client) observe(ctx context.Context, id, prefix string) (*observed, error) {
@@ -460,64 +459,53 @@ func (c *client) observe(ctx context.Context, id, prefix string) (*observed, err
 }
 
 func (c *client) discover(ctx context.Context, prefix string) (*observed, error) {
-	var found *observed
-	for page := range 100 {
-		query := url.Values{"page": {strconv.Itoa(page)}, "page-size": {"100"}, "sort": {"id:asc"}, "filter": {`fileName=="` + prefix + `*"`}}
-		data, _, err := c.call(ctx, http.MethodGet, packagePath+"?"+query.Encode(), "", nil, nil)
-		if err != nil {
-			return nil, err
-		}
-		var result struct {
-			TotalCount int               `json:"totalCount"`
-			Results    []json.RawMessage `json:"results"`
-		}
-		if err := json.Unmarshal(data, &result); err != nil {
-			return nil, err
-		}
-		for _, entry := range result.Results {
-			fields, err := decodeObject(entry)
-			if err != nil {
-				return nil, err
-			}
-			name := stringField(fields, "fileName")
-			if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ".pkg") {
-				continue
-			}
-			digest := strings.TrimSuffix(strings.TrimPrefix(name, prefix), ".pkg")
-			if decoded, err := hex.DecodeString(digest); err != nil || len(decoded) != sha256.Size {
-				continue
-			}
-			if found != nil {
-				return nil, errors.New("multiple Jamf packages have this logical identity; specify package_id for explicit adoption")
-			}
-			id := stringField(fields, "id")
-			if !validID(id) {
-				return nil, errors.New("jamf discovery returned an invalid package ID")
-			}
-			found, err = c.get(ctx, id)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if (page+1)*100 >= result.TotalCount {
-			return found, nil
-		}
-		if len(result.Results) == 0 {
-			return nil, errors.New("jamf package pagination ended before totalCount")
-		}
+	result, response, err := c.packages.ListV1(ctx, map[string]string{
+		"page-size": "100", "sort": "id:asc", "filter": `fileName=="` + prefix + `*"`,
+	})
+	if err := requestError(ctx, response, err); err != nil {
+		return nil, err
 	}
-	return nil, errors.New("jamf package discovery exceeds 10000 records")
+	var found string
+	for _, entry := range result.Results {
+		if !strings.HasPrefix(entry.FileName, prefix) || !strings.HasSuffix(entry.FileName, ".pkg") {
+			continue
+		}
+		digest := strings.TrimSuffix(strings.TrimPrefix(entry.FileName, prefix), ".pkg")
+		if decoded, err := hex.DecodeString(digest); err != nil || len(decoded) != sha256.Size {
+			continue
+		}
+		if found != "" {
+			return nil, errors.New("multiple Jamf packages have this logical identity; specify package_id for explicit adoption")
+		}
+		if !validID(entry.ID) {
+			return nil, errors.New("jamf discovery returned an invalid package ID")
+		}
+		found = entry.ID
+	}
+	if found == "" {
+		return nil, nil
+	}
+	return c.get(ctx, found)
 }
 
 func (c *client) create(ctx context.Context, fields map[string]json.RawMessage) (string, error) {
-	data, _, err := c.call(ctx, http.MethodPost, packagePath, "application/json", bytes.NewReader(raw(fields)), nil)
-	if err != nil {
+	var body packages.RequestPackage
+	if err := json.Unmarshal(raw(fields), &body); err != nil {
 		return "", err
 	}
-	var result struct {
-		ID string `json:"id"`
+	// CreateV1 performs a distribution-point preflight inside the create call,
+	// which would make a failed read indistinguishable from an ambiguous write.
+	var result packages.CreateResponse
+	response, err := c.transport.NewRequest(ctx).
+		SetHeader("Accept", constants.ApplicationJSON).
+		SetHeader("Content-Type", constants.ApplicationJSON).
+		SetBody(&body).
+		SetResult(&result).
+		Post(packagePath)
+	if err := requestError(ctx, response, err); err != nil {
+		return "", err
 	}
-	if err := json.Unmarshal(data, &result); err != nil || !validID(result.ID) {
+	if !validID(result.ID) {
 		return "", errors.New("jamf create response has no valid package ID")
 	}
 	return result.ID, nil
@@ -544,22 +532,19 @@ func (c *client) merge(ctx context.Context, current *observed, changes map[strin
 	if !changed {
 		return fresh, nil
 	}
-	body := make(map[string]json.RawMessage)
-	for key, value := range fresh.Fields {
-		switch {
-		case slices.Contains(writableFields, key):
-			body[key] = value
-		case slices.Contains(readOnlyFields, key):
-		default:
-			return nil, fmt.Errorf("unknown Jamf package response field %q blocks a lossy full-object PUT", key)
-		}
+	body := maps.Clone(fresh.Fields)
+	for _, key := range readOnlyFields {
+		delete(body, key)
 	}
 	maps.Copy(body, changes)
-	headers := make(http.Header)
-	if fresh.ETag != "" {
-		headers.Set("If-Match", fresh.ETag)
-	}
-	_, _, putErr := c.call(ctx, http.MethodPut, packagePath+"/"+id, "application/json", bytes.NewReader(raw(body)), headers)
+	response, putErr := c.transport.NewRequest(ctx).
+		SetHeader("Accept", constants.ApplicationJSON).
+		SetHeader("Content-Type", constants.ApplicationJSON).
+		SetHeader("If-Match", fresh.ETag).
+		SetBody(body).
+		DisableRetry().
+		Put(packagePath + "/" + id)
+	putErr = requestError(ctx, response, putErr)
 	readback, err := c.get(ctx, id)
 	if err != nil || readback == nil {
 		return nil, errors.New("jamf metadata update could not be read back")
@@ -581,21 +566,12 @@ func (c *client) upload(ctx context.Context, id, file string, content payload) e
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	var envelope bytes.Buffer
-	writer := multipart.NewWriter(&envelope)
-	if _, err := writer.CreateFormFile("file", content.filename); err != nil {
-		return err
-	}
-	headSize := envelope.Len()
-	if err := writer.Close(); err != nil {
-		return err
-	}
-	data := envelope.Bytes()
-	body := io.MultiReader(bytes.NewReader(data[:headSize]), io.NewSectionReader(f, 0, content.size), bytes.NewReader(data[headSize:]))
-	headers := make(http.Header)
-	headers.Set("Content-Length", strconv.FormatInt(int64(len(data))+content.size, 10))
-	_, _, err = c.call(ctx, http.MethodPost, packagePath+"/"+id+"/upload", writer.FormDataContentType(), body, headers)
-	return err
+	// UploadV1 uses the local basename; Stemma's identity marker is the remote filename.
+	response, err := c.transport.NewRequest(ctx).
+		SetHeader("Accept", constants.ApplicationJSON).
+		SetMultipartFile("file", content.filename, f, content.size, nil).
+		Post(packagePath + "/" + id + "/upload")
+	return requestError(ctx, response, err)
 }
 
 func (c *client) awaitContent(ctx context.Context, id string, content payload) (*observed, error) {

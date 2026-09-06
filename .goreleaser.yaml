@@ -1,34 +1,56 @@
+---
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 version: 2
 project_name: stemma
+
 before:
   hooks:
-    - go mod tidy -diff
-    - go run github.com/google/go-licenses/v2@v2.0.1 save ./cmd/stemma --save_path=.stemma/release-licenses --force
+    - mise run tidy-check
+
 builds:
-  - main: ./cmd/stemma
+  - id: stemma
+    main: ./cmd/stemma
     binary: stemma
-    env: [CGO_ENABLED=0]
-    goos: [darwin, linux, windows]
-    goarch: [amd64, arm64]
-    flags: [-trimpath]
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
     mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
     ldflags:
-      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.date={{ .Date }}
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
+
 archives:
-  - formats: [tar.gz]
+  - ids:
+      - stemma
+    formats:
+      - tar.gz
     format_overrides:
       - goos: windows
-        formats: [zip]
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
       - README.md
       - stemma.schema.json
-      - src: .stemma/release-licenses
-        dst: licenses
+      - stemma.example.yaml
+
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
   algorithm: sha256
+
 release:
   mode: keep-existing
+
 changelog:
   disable: true

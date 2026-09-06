@@ -9,9 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	abs "github.com/microsoft/kiota-abstractions-go"
 	"maps"
-	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -70,7 +69,7 @@ func Handle(ctx context.Context, req plugin.Request) (plugin.Response, error) {
 	if req.Method != "plan" && req.Method != "apply" {
 		return plugin.Response{}, fmt.Errorf("unsupported Intune method %q", req.Method)
 	}
-	c, err := newClient(ctx, cfg)
+	c, err := newClient(cfg)
 	if err != nil {
 		return plugin.Response{}, err
 	}
@@ -80,9 +79,6 @@ func Handle(ctx context.Context, req plugin.Request) (plugin.Response, error) {
 func (c *client) handle(ctx context.Context, req plugin.Request, cfg configuration, desired object) (response plugin.Response, err error) {
 	typedClient := *c
 	typedClient.appType = text(desired["@odata.type"])
-	if typedClient.appType == pkgType {
-		typedClient.base = strings.TrimSuffix(c.base, "/v1.0") + "/beta"
-	}
 	c = &typedClient
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
@@ -149,7 +145,7 @@ func (c *client) handle(ctx context.Context, req plugin.Request, cfg configurati
 	if value, owned := desired["assignments"]; owned {
 		var existing []any
 		if current != nil {
-			items, err := c.list(ctx, appPath(b.AppID)+"/assignments")
+			items, err := c.list(ctx, c.assignments(b.AppID))
 			if err != nil {
 				return response, err
 			}
@@ -186,7 +182,7 @@ func (c *client) handle(ctx context.Context, req plugin.Request, cfg configurati
 			body["setupFilePath"] = prepared.setup
 		}
 		b.UncertainCreate = true
-		if err := c.request(ctx, http.MethodPost, appsPath, body, &current); err != nil {
+		if err := c.request(ctx, abs.POST, c.apps(), body, &current); err != nil {
 			return response, err
 		}
 		b.AppID = text(current["id"])
@@ -202,7 +198,7 @@ func (c *client) handle(ctx context.Context, req plugin.Request, cfg configurati
 	}
 	// Re-observe after potentially long uploads so nested unmanaged fields and
 	// notes changed by another administrator are preserved by the final PATCH.
-	if err := c.request(ctx, http.MethodGet, appPath(b.AppID), nil, &current); err != nil {
+	if err := c.request(ctx, abs.GET, c.app(b.AppID), nil, &current); err != nil {
 		return response, err
 	}
 	patch, _ := metadataPatch(current, desired, b)
@@ -220,7 +216,7 @@ func (c *client) handle(ctx context.Context, req plugin.Request, cfg configurati
 	}
 	if len(patch) > 0 {
 		patch["@odata.type"] = c.appType
-		if err := c.request(ctx, http.MethodPatch, appPath(b.AppID), patch, nil); err != nil {
+		if err := c.request(ctx, abs.PATCH, c.app(b.AppID), patch, nil); err != nil {
 			return response, err
 		}
 	}
@@ -240,7 +236,7 @@ func (c *client) handle(ctx context.Context, req plugin.Request, cfg configurati
 		return response, errors.New("intune metadata readback differs from requested values")
 	}
 	if assignmentChanged {
-		items, err := c.list(ctx, appPath(b.AppID)+"/assignments")
+		items, err := c.list(ctx, c.assignments(b.AppID))
 		if err != nil {
 			return response, err
 		}
@@ -249,10 +245,10 @@ func (c *client) handle(ctx context.Context, req plugin.Request, cfg configurati
 			existing = append(existing, item)
 		}
 		assignments, _ = reconcileAssignments(existing, desired["assignments"].([]any))
-		if err := c.request(ctx, http.MethodPost, appPath(b.AppID)+"/assign", object{"mobileAppAssignments": assignments}, nil); err != nil {
+		if err := c.request(ctx, abs.POST, c.assign(b.AppID), object{"mobileAppAssignments": assignments}, nil); err != nil {
 			return response, err
 		}
-		items, err = c.list(ctx, appPath(b.AppID)+"/assignments")
+		items, err = c.list(ctx, c.assignments(b.AppID))
 		if err != nil {
 			return response, err
 		}
@@ -268,8 +264,6 @@ func (c *client) handle(ctx context.Context, req plugin.Request, cfg configurati
 	return response, nil
 }
 
-func appPath(id string) string { return appsPath + "/" + url.PathEscape(id) }
-
 func (c *client) observe(ctx context.Context, cfg configuration, b *binding) (object, error) {
 	if cfg.AppID != "" && b.AppID != "" && cfg.AppID != b.AppID {
 		return nil, errors.New("configured app_id conflicts with saved Intune binding")
@@ -279,12 +273,12 @@ func (c *client) observe(ctx context.Context, cfg configuration, b *binding) (ob
 	}
 	if b.AppID != "" {
 		var app object
-		if err := c.request(ctx, http.MethodGet, appPath(b.AppID), nil, &app); err != nil {
+		if err := c.request(ctx, abs.GET, c.app(b.AppID), nil, &app); err != nil {
 			return nil, fmt.Errorf("read bound app; Stemma will not recreate it implicitly: %w", err)
 		}
 		return app, nil
 	}
-	apps, err := c.list(ctx, appsPath+"?$top=100")
+	apps, err := c.list(ctx, c.apps())
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +388,7 @@ func validateCreation(m object) error {
 		}
 	}
 	if m["@odata.type"] != win32Type {
-		if err := validateMinimumOS(m["minimumSupportedOperatingSystem"], text(m["@odata.type"])); err != nil {
+		if err := validateMinimumOS(m["minimumSupportedOperatingSystem"]); err != nil {
 			return err
 		}
 		if err := validateIncludedApps(m["includedApps"]); err != nil {
@@ -418,7 +412,7 @@ func validateCreation(m object) error {
 
 func (c *client) waitPublished(ctx context.Context, id string, b binding, current *object) error {
 	for range 360 {
-		if err := c.request(ctx, http.MethodGet, appPath(id), nil, current); err != nil {
+		if err := c.request(ctx, abs.GET, c.app(id), nil, current); err != nil {
 			return err
 		}
 		if text((*current)["publishingState"]) == "published" && (b.Pending == nil || text((*current)["committedContentVersion"]) == b.Pending.VersionID) {

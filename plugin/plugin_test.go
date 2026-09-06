@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -15,6 +16,9 @@ import (
 
 func TestExecutableProtocolPreservesPresenceAndCancellation(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "echo")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
 	command := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "./testdata/echo")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v\n%s", err, output)
