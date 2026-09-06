@@ -129,15 +129,15 @@ func rulesSchema() *jsonschema.Schema {
 // to recipe metadata because one connection may publish many different apps.
 func ConnectionSchema() *jsonschema.Schema {
 	schema := objectSchema(map[string]*jsonschema.Schema{
-		"graph_url":         {Type: "string", Default: "https://graph.microsoft.com/v1.0", Description: "Graph base URL ending in /v1.0. macOS apps select /beta automatically. HTTPS is required."},
-		"token_env":         {Type: "string", MinLength: new(uint64(1)), Description: "Environment variable containing an existing Graph bearer token. Choose this or all three client credential variables."},
-		"tenant_id_env":     {Type: "string", MinLength: new(uint64(1)), Description: "Environment variable containing the Microsoft Entra tenant ID."},
-		"client_id_env":     {Type: "string", MinLength: new(uint64(1)), Description: "Environment variable containing the app registration client ID."},
-		"client_secret_env": {Type: "string", MinLength: new(uint64(1)), Description: "Environment variable containing the app registration secret. Secret values never belong in this configuration."},
+		"graph_url":     {Type: "string", Default: "https://graph.microsoft.com/v1.0", Description: "Graph base URL ending in /v1.0. macOS apps select /beta automatically. HTTPS is required."},
+		"token":         {Type: "string", MinLength: new(uint64(1)), Description: "Existing Graph bearer token. Choose this or all three client credentials. Use ${VAR} to supply it from the environment."},
+		"tenant_id":     {Type: "string", MinLength: new(uint64(1)), Description: "Microsoft Entra tenant ID. Use ${VAR} to supply it from the environment."},
+		"client_id":     {Type: "string", MinLength: new(uint64(1)), Description: "App registration client ID. Use ${VAR} to supply it from the environment."},
+		"client_secret": {Type: "string", MinLength: new(uint64(1)), Description: "App registration secret. Use ${VAR} to supply it from the environment."},
 	})
 	schema.OneOf = []*jsonschema.Schema{
-		{Required: []string{"token_env"}, Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Required: []string{"tenant_id_env"}}, {Required: []string{"client_id_env"}}, {Required: []string{"client_secret_env"}}}}},
-		{Required: []string{"tenant_id_env", "client_id_env", "client_secret_env"}, Not: &jsonschema.Schema{Required: []string{"token_env"}}},
+		{Required: []string{"token"}, Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Required: []string{"tenant_id"}}, {Required: []string{"client_id"}}, {Required: []string{"client_secret"}}}}},
+		{Required: []string{"tenant_id", "client_id", "client_secret"}, Not: &jsonschema.Schema{Required: []string{"token"}}},
 	}
 	schema.Description = "Shared Graph connection for Windows and macOS apps. Set metadata.app_id on a recipe to adopt an existing app. Requires Graph DeviceManagementApps.ReadWrite.All for apply."
 	return schema

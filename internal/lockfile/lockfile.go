@@ -114,7 +114,7 @@ func Prepare(ctx context.Context, p config.Project, m *source.Manager, opts Opti
 		return current, nil
 	}
 	acquire := func(key string, s config.Source, entry source.Entry) (source.Entry, error) {
-		matches := entry.Source == config.Fingerprint(s) && !entry.ResolvedAt.IsZero()
+		matches := entry.Source == s.Fingerprint() && !entry.ResolvedAt.IsZero()
 		if s.Type == "file" || s.Type == "local" {
 			if !matches && (opts.Frozen || opts.Offline) {
 				return source.Entry{}, fmt.Errorf("%s is missing or stale in the lockfile; run stemma update", key)
@@ -161,7 +161,7 @@ func Prepare(ctx context.Context, p config.Project, m *source.Manager, opts Opti
 		for _, platform := range names(p.Plugins[name].Platforms) {
 			if !opts.PluginsOnly {
 				entry := old.Plugins[name][platform]
-				if opts.Ignore || entry.Source != config.Fingerprint(p.Plugins[name].Platforms[platform]) {
+				if opts.Ignore || entry.Source != p.Plugins[name].Platforms[platform].Fingerprint() {
 					return result, fmt.Errorf("plugin %s/%s is not locked; run stemma plugins install (plugins never update implicitly)", name, platform)
 				}
 				if _, err := m.Acquire(ctx, p.Plugins[name].Platforms[platform], entry); err != nil {

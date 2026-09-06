@@ -58,7 +58,14 @@ Omitted fields inside objects remain unmanaged.
 Declare trusted plugin binaries, then run `stemma plugins install` or
 `stemma plugins update`. Plugins handle `plan` and `apply`.
 Persist `.stemma/state` separately from the disposable cache, or set
-`STEMMA_STATE_DIR`. Credentials are referenced by environment-variable name.
+`STEMMA_STATE_DIR`.
+
+String values support whole-value environment placeholders, for example
+`token: ${GITHUB_TOKEN}` or `client_secret: ${JAMF_CLIENT_SECRET}`. Export the
+variables before running commands. Unset variables fail configuration loading;
+values remain strings, including empty strings. Embedded interpolation and shell
+expressions are unsupported. Mapping keys remain literal. Source tokens and
+native destination authentication secrets do not affect lock or binding identity.
 
 ## 🧑‍💻 Development
 

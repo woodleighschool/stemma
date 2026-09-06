@@ -229,7 +229,7 @@ func deliver(ctx context.Context, opts Options, p config.Project, locked lockfil
 	destination := p.Destinations[name]
 	identity := plugin.Identity{Project: p.Project, Recipe: recipe, Destination: name}
 	key := recipe + "/" + name
-	connection := config.Fingerprint(destination)
+	connection := destination.Fingerprint()
 	previous := current.Bindings[key]
 	if previous.Connection != connection {
 		previous = binding{Connection: connection}
@@ -298,8 +298,8 @@ func deliver(ctx context.Context, opts Options, p config.Project, locked lockfil
 	return report, err
 }
 
-// Validate checks native connection and metadata contracts without credentials,
-// acquisition or destination requests. Plugins validate their own protocol input.
+// Validate checks native connection and metadata contracts without acquisition
+// or destination requests. Plugins validate their own protocol input.
 func Validate(ctx context.Context, p config.Project) error {
 	for name, recipe := range p.Recipes {
 		for destination, metadata := range recipe.Destinations {

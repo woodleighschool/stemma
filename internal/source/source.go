@@ -67,7 +67,7 @@ func (m *Manager) Resolve(ctx context.Context, s config.Source) (Entry, error) {
 	if m.Offline && s.Type != "file" && s.Type != "local" {
 		return Entry{}, errors.New("offline mode cannot resolve sources")
 	}
-	entry := Entry{Source: config.Fingerprint(s), URL: s.URL, Filename: s.Filename, Version: s.Version}
+	entry := Entry{Source: s.Fingerprint(), URL: s.URL, Filename: s.Filename, Version: s.Version}
 	if s.Type == "local" {
 		entry.Tree = true
 	}
@@ -110,7 +110,7 @@ func (m *Manager) Resolve(ctx context.Context, s config.Source) (Entry, error) {
 
 // Acquire uses cached bytes or fetches precisely the locked URL and expected digest.
 func (m *Manager) Acquire(ctx context.Context, s config.Source, entry Entry) (bool, error) {
-	if !validFilename(entry.Filename) || entry.Source != config.Fingerprint(s) || !config.ValidDigest(entry.Artifact.SHA256) {
+	if !validFilename(entry.Filename) || entry.Source != s.Fingerprint() || !config.ValidDigest(entry.Artifact.SHA256) {
 		return false, errors.New("invalid or stale source lock")
 	}
 	if s.Type == "file" || s.Type == "local" {
@@ -224,7 +224,7 @@ func (m *Manager) download(ctx context.Context, s config.Source, entry Entry, ex
 	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
 		return cas.Ref{}, errors.New("locked asset does not belong to the configured GitHub repository")
 	}
-	req, err := m.request(ctx, entry.URL, s.TokenEnv)
+	req, err := m.request(ctx, entry.URL, s.Token)
 	if err != nil {
 		return cas.Ref{}, err
 	}
@@ -259,17 +259,13 @@ func (m *Manager) importTree(ctx context.Context, root *os.Root, names []string,
 	return m.Store.ImportFile(ctx, staging.Name(), expected)
 }
 
-func (m *Manager) request(ctx context.Context, address, tokenEnv string) (*http.Request, error) {
+func (m *Manager) request(ctx context.Context, address, token string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "stemma/0.1")
-	if tokenEnv != "" {
-		token := os.Getenv(tokenEnv)
-		if token == "" {
-			return nil, fmt.Errorf("environment variable %s is required", tokenEnv)
-		}
+	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	return req, nil
@@ -280,7 +276,7 @@ func (m *Manager) github(ctx context.Context, s config.Source, entry *Entry) err
 	if s.Release != "" && s.Release != "latest" {
 		endpoint = "https://api.github.com/repos/" + s.Repository + "/releases/tags/" + url.PathEscape(s.Release)
 	}
-	req, err := m.request(ctx, endpoint, s.TokenEnv)
+	req, err := m.request(ctx, endpoint, s.Token)
 	if err != nil {
 		return err
 	}

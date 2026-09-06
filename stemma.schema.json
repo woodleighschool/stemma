@@ -129,63 +129,63 @@
             "anyOf": [
               {
                 "required": [
-                  "tenant_id_env"
+                  "tenant_id"
                 ]
               },
               {
                 "required": [
-                  "client_id_env"
+                  "client_id"
                 ]
               },
               {
                 "required": [
-                  "client_secret_env"
+                  "client_secret"
                 ]
               }
             ]
           },
           "required": [
-            "token_env"
+            "token"
           ]
         },
         {
           "not": {
             "required": [
-              "token_env"
+              "token"
             ]
           },
           "required": [
-            "tenant_id_env",
-            "client_id_env",
-            "client_secret_env"
+            "tenant_id",
+            "client_id",
+            "client_secret"
           ]
         }
       ],
       "properties": {
-        "client_id_env": {
+        "client_id": {
           "type": "string",
           "minLength": 1,
-          "description": "Environment variable containing the app registration client ID."
+          "description": "App registration client ID. Use ${VAR} to supply it from the environment."
         },
-        "client_secret_env": {
+        "client_secret": {
           "type": "string",
           "minLength": 1,
-          "description": "Environment variable containing the app registration secret. Secret values never belong in this configuration."
+          "description": "App registration secret. Use ${VAR} to supply it from the environment."
         },
         "graph_url": {
           "type": "string",
           "description": "Graph base URL ending in /v1.0. macOS apps select /beta automatically. HTTPS is required.",
           "default": "https://graph.microsoft.com/v1.0"
         },
-        "tenant_id_env": {
+        "tenant_id": {
           "type": "string",
           "minLength": 1,
-          "description": "Environment variable containing the Microsoft Entra tenant ID."
+          "description": "Microsoft Entra tenant ID. Use ${VAR} to supply it from the environment."
         },
-        "token_env": {
+        "token": {
           "type": "string",
           "minLength": 1,
-          "description": "Environment variable containing an existing Graph bearer token. Choose this or all three client credential variables."
+          "description": "Existing Graph bearer token. Choose this or all three client credentials. Use ${VAR} to supply it from the environment."
         }
       },
       "additionalProperties": false,
@@ -1123,23 +1123,23 @@
           "minLength": 1,
           "description": "Jamf Pro server origin, such as https://school.jamfcloud.com. HTTPS is required except loopback test servers. Paths, embedded credentials, queries and fragments are rejected."
         },
-        "client_id_env": {
+        "client_id": {
           "type": "string",
           "minLength": 1,
-          "description": "Environment variable containing the Jamf API client ID. Credentials are read during plan and apply."
+          "description": "Jamf API client ID. Use ${VAR} to supply it from the environment."
         },
-        "client_secret_env": {
+        "client_secret": {
           "type": "string",
           "minLength": 1,
-          "description": "Environment variable containing the Jamf API client secret. Store the variable name here, never the secret itself."
+          "description": "Jamf API client secret. Use ${VAR} to supply it from the environment."
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
         "url",
-        "client_id_env",
-        "client_secret_env"
+        "client_id",
+        "client_secret"
       ],
       "description": "Shared Jamf Pro connection using client credentials and the v1 package API reviewed against Jamf Pro 11.31. Requires package read/write/upload privileges and a distribution configuration that supports package upload. Put package_id in recipe metadata to adopt an existing package."
     },
@@ -1697,9 +1697,9 @@
           "type": "string",
           "description": "Optional independently obtained SHA-256 requirement. Explicit refresh does not bypass this requirement."
         },
-        "token_env": {
+        "token": {
           "type": "string",
-          "description": "Name of the environment variable containing a bearer token. The token itself is never stored in a lockfile."
+          "description": "Bearer token. Use ${VAR} to supply it from the environment. Excluded from source locks and fingerprints."
         }
       },
       "additionalProperties": false,
@@ -1756,5 +1756,5 @@
     }
   ],
   "title": "Stemma project",
-  "description": "Reproducible source recipes and native destination metadata. Omitted metadata fields remain unmanaged; null clears only supported fields."
+  "description": "Reproducible source recipes and native destination metadata. String values support whole-value ${VAR} environment placeholders. Omitted metadata fields remain unmanaged; null clears only supported fields."
 }

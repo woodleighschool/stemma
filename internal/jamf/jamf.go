@@ -36,9 +36,9 @@ const packagePath = constants.EndpointJamfProPackagesV1
 const responseLimit = 8 << 20
 
 type configuration struct {
-	URL             string `json:"url" jsonschema:"minLength=1" jsonschema_description:"Jamf Pro server origin, such as https://school.jamfcloud.com. HTTPS is required except loopback test servers. Paths, embedded credentials, queries and fragments are rejected."`
-	ClientIDEnv     string `json:"client_id_env" jsonschema:"minLength=1" jsonschema_description:"Environment variable containing the Jamf API client ID. Credentials are read during plan and apply."`
-	ClientSecretEnv string `json:"client_secret_env" jsonschema:"minLength=1" jsonschema_description:"Environment variable containing the Jamf API client secret. Store the variable name here, never the secret itself."`
+	URL          string `json:"url" jsonschema:"minLength=1" jsonschema_description:"Jamf Pro server origin, such as https://school.jamfcloud.com. HTTPS is required except loopback test servers. Paths, embedded credentials, queries and fragments are rejected."`
+	ClientID     string `json:"client_id" jsonschema:"minLength=1" jsonschema_description:"Jamf API client ID. Use ${VAR} to supply it from the environment."`
+	ClientSecret string `json:"client_secret" jsonschema:"minLength=1" jsonschema_description:"Jamf API client secret. Use ${VAR} to supply it from the environment."`
 }
 
 type binding struct {
@@ -212,8 +212,8 @@ func validate(request plugin.Request) (configuration, map[string]json.RawMessage
 		return config, nil, "", errors.New("jamf url must use HTTPS (HTTP is allowed only for loopback test servers)")
 	}
 	config.URL = strings.TrimRight(config.URL, "/")
-	if config.ClientIDEnv == "" || config.ClientSecretEnv == "" {
-		return config, nil, "", errors.New("jamf client_id_env and client_secret_env are required")
+	if config.ClientID == "" || config.ClientSecret == "" {
+		return config, nil, "", errors.New("jamf client_id and client_secret are required")
 	}
 	metadata, err := decodeObject(request.Metadata)
 	if err != nil {
@@ -367,13 +367,9 @@ func newClient(ctx context.Context, config configuration) (*client, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	id, secret := os.Getenv(config.ClientIDEnv), os.Getenv(config.ClientSecretEnv)
-	if id == "" || secret == "" {
-		return nil, errors.New("jamf client credential environment variables are unset")
-	}
 	transport, err := sdkclient.NewTransport(&sdkconfig.AuthConfig{
 		InstanceDomain: config.URL, AuthMethod: constants.AuthMethodOAuth2,
-		ClientID: id, ClientSecret: secret, HideSensitiveData: true,
+		ClientID: config.ClientID, ClientSecret: config.ClientSecret, HideSensitiveData: true,
 	}, func(settings *sdkclient.TransportSettings) error {
 		settings.Logger = zap.NewNop()
 		settings.Timeout = 15 * time.Minute

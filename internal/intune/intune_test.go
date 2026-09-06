@@ -518,9 +518,8 @@ func TestMacValidationAndAdoption(t *testing.T) {
 	req := fixtureRequest(t)
 	req.Method = "plan"
 	req.Artifact.Filename = "existing.dmg"
-	req.Config = raw(object{"graph_url": fake.url + "/v1.0", "token_env": "STEMMA_TEST_INTUNE_TOKEN"})
+	req.Config = raw(object{"graph_url": fake.url + "/v1.0", "token": "test-token"})
 	req.Metadata = raw(object{"@odata.type": dmgType, "app_id": "app-1", "displayName": "Adopted"})
-	t.Setenv("STEMMA_TEST_INTUNE_TOKEN", "test-token")
 	cfg, err := parseConfiguration(req.Config)
 	if err != nil {
 		t.Fatal(err)
@@ -541,7 +540,7 @@ func TestMacValidationAndAdoption(t *testing.T) {
 	if _, err := Handle(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
-	req.Config = raw(object{"token_env": "unused", "app_id": "app-1"})
+	req.Config = raw(object{"token": "unused", "app_id": "app-1"})
 	if _, err := Handle(t.Context(), req); err == nil {
 		t.Fatal("accepted recipe adoption ID in shared connection")
 	}

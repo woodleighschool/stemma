@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -25,12 +24,12 @@ import (
 )
 
 type configuration struct {
-	GraphURL        string `json:"graph_url,omitempty"`
-	TokenEnv        string `json:"token_env,omitempty"`
-	TenantIDEnv     string `json:"tenant_id_env,omitempty"`
-	ClientIDEnv     string `json:"client_id_env,omitempty"`
-	ClientSecretEnv string `json:"client_secret_env,omitempty"`
-	AppID           string `json:"-"`
+	GraphURL     string `json:"graph_url,omitempty"`
+	Token        string `json:"token,omitempty"`
+	TenantID     string `json:"tenant_id,omitempty"`
+	ClientID     string `json:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"`
+	AppID        string `json:"-"`
 }
 
 type client struct {
@@ -62,10 +61,10 @@ func parseConfiguration(data []byte) (configuration, error) {
 	if !strings.HasSuffix(strings.TrimRight(base.Path, "/"), "/v1.0") {
 		return cfg, errors.New("graph_url must end in /v1.0; macOS apps select /beta automatically")
 	}
-	if cfg.TokenEnv == "" && (cfg.TenantIDEnv == "" || cfg.ClientIDEnv == "" || cfg.ClientSecretEnv == "") {
-		return cfg, errors.New("set token_env or all client credential environment names")
+	if cfg.Token == "" && (cfg.TenantID == "" || cfg.ClientID == "" || cfg.ClientSecret == "") {
+		return cfg, errors.New("set token or tenant_id, client_id and client_secret")
 	}
-	if cfg.TokenEnv != "" && (cfg.TenantIDEnv != "" || cfg.ClientIDEnv != "" || cfg.ClientSecretEnv != "") {
+	if cfg.Token != "" && (cfg.TenantID != "" || cfg.ClientID != "" || cfg.ClientSecret != "") {
 		return cfg, errors.New("choose one Intune authentication method")
 	}
 	return cfg, nil
@@ -76,18 +75,10 @@ func newClient(cfg configuration) (*client, error) {
 	hosts := []string{endpoint.Hostname()}
 	var auth authentication.AuthenticationProvider
 	var err error
-	if cfg.TokenEnv != "" {
-		token := os.Getenv(cfg.TokenEnv)
-		if token == "" {
-			return nil, fmt.Errorf("credential environment variable %s is empty", cfg.TokenEnv)
-		}
-		auth, err = authentication.NewApiKeyAuthenticationProviderWithValidHosts("Bearer "+token, "Authorization", authentication.HEADER_KEYLOCATION, hosts)
+	if cfg.Token != "" {
+		auth, err = authentication.NewApiKeyAuthenticationProviderWithValidHosts("Bearer "+cfg.Token, "Authorization", authentication.HEADER_KEYLOCATION, hosts)
 	} else {
-		tenant, id, secret := os.Getenv(cfg.TenantIDEnv), os.Getenv(cfg.ClientIDEnv), os.Getenv(cfg.ClientSecretEnv)
-		if tenant == "" || id == "" || secret == "" {
-			return nil, errors.New("intune client credential environment variables are empty")
-		}
-		credential, credentialErr := azidentity.NewClientSecretCredential(tenant, id, secret, nil)
+		credential, credentialErr := azidentity.NewClientSecretCredential(cfg.TenantID, cfg.ClientID, cfg.ClientSecret, nil)
 		if credentialErr != nil {
 			return nil, errors.New("cannot create Intune client credential")
 		}

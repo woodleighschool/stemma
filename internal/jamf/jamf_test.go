@@ -251,7 +251,7 @@ func TestAuthenticationHonorsCancellation(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	t.Cleanup(server.Close)
-	request.Config = raw(configuration{URL: server.URL, ClientIDEnv: "STEMMA_TEST_JAMF_CLIENT_ID", ClientSecretEnv: "STEMMA_TEST_JAMF_CLIENT_SECRET"})
+	request.Config = raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -289,7 +289,7 @@ func TestAuthenticationRejectsCrossOriginRedirect(t *testing.T) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 	}))
 	t.Cleanup(server.Close)
-	request.Config = raw(configuration{URL: server.URL, ClientIDEnv: "STEMMA_TEST_JAMF_CLIENT_ID", ClientSecretEnv: "STEMMA_TEST_JAMF_CLIENT_SECRET"})
+	request.Config = raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"})
 	if _, err := Handle(t.Context(), request); err == nil {
 		t.Fatal("authentication followed a cross-origin redirect")
 	}
@@ -316,7 +316,7 @@ func TestStrictValidationPreservesNullFalseAndZero(t *testing.T) {
 		}
 	}
 	request.Metadata = raw(map[string]any{})
-	request.Config = raw(map[string]any{"url": "https://example.com", "client_id_env": "ID", "client_secret_env": "SECRET", "package_id": "1"})
+	request.Config = raw(map[string]any{"url": "https://example.com", "client_id": "ID", "client_secret": "SECRET", "package_id": "1"})
 	if _, err := Handle(t.Context(), request); err == nil {
 		t.Fatal("accepted recipe adoption in shared destination config")
 	}
@@ -369,12 +369,10 @@ type fakeServer struct {
 
 func newFixture(t *testing.T) (*fakeServer, plugin.Request) {
 	t.Helper()
-	t.Setenv("STEMMA_TEST_JAMF_CLIENT_ID", "test-client-id")
-	t.Setenv("STEMMA_TEST_JAMF_CLIENT_SECRET", "test-client-secret")
 	fake := &fakeServer{t: t, packages: make(map[string]map[string]json.RawMessage), version: 1, tokenLifetime: 1800}
 	server := httptest.NewServer(http.HandlerFunc(fake.handle))
 	t.Cleanup(server.Close)
-	request := plugin.Request{Protocol: plugin.ProtocolVersion, Method: "apply", Identity: plugin.Identity{Project: "school", Recipe: "vendor", Destination: "jamf"}, Config: raw(configuration{URL: server.URL, ClientIDEnv: "STEMMA_TEST_JAMF_CLIENT_ID", ClientSecretEnv: "STEMMA_TEST_JAMF_CLIENT_SECRET"}), Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
+	request := plugin.Request{Protocol: plugin.ProtocolVersion, Method: "apply", Identity: plugin.Identity{Project: "school", Recipe: "vendor", Destination: "jamf"}, Config: raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}), Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
 	return fake, request
 }
 

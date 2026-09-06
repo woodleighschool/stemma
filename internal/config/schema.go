@@ -18,7 +18,7 @@ func Schema() ([]byte, error) {
 	s := r.Reflect(&Project{})
 	s.ID = "https://raw.githubusercontent.com/woodleighschool/stemma/main/stemma.schema.json"
 	s.Title = "Stemma project"
-	s.Description = "Reproducible source recipes and native destination metadata. Omitted metadata fields remain unmanaged; null clears only supported fields."
+	s.Description = "Reproducible source recipes and native destination metadata. String values support whole-value ${VAR} environment placeholders. Omitted metadata fields remain unmanaged; null clears only supported fields."
 	project := s.Definitions["Project"]
 	project.Required = slices.DeleteFunc(project.Required, func(name string) bool { return name == "recipes" })
 	project.AnyOf = []*jsonschema.Schema{{Required: []string{"recipes"}}, {Required: []string{"imports"}}}

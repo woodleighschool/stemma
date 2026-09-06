@@ -111,6 +111,55 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	}
 }
 
+func TestSourceTokenRotationPreservesFrozenLock(t *testing.T) {
+	var token atomic.Value
+	token.Store("first-token")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+token.Load().(string) {
+			t.Error("source did not send the supplied token")
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte("installer"))
+	}))
+	t.Cleanup(server.Close)
+	root := t.TempDir()
+	store, err := cas.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := source.New(store, root, false)
+	project := config.Project{Version: 1, Project: "test", Recipes: map[string]config.Recipe{
+		"app": {Source: config.Source{Type: "http", URL: server.URL + "/app.pkg", Token: "first-token"}},
+	}}
+	first, err := Prepare(t.Context(), project, manager, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := yaml.Marshal(first.File)
+	if err != nil || bytes.Contains(data, []byte("first-token")) {
+		t.Fatalf("lock retained credential: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "stemma.lock.yaml"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	object, err := store.Path(first.File.Recipes["app"].Artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(object); err != nil {
+		t.Fatal(err)
+	}
+	token.Store("rotated-token")
+	recipe := project.Recipes["app"]
+	recipe.Source.Token = "rotated-token"
+	project.Recipes["app"] = recipe
+	second, err := Prepare(t.Context(), project, manager, Options{Frozen: true})
+	if err != nil || second.Changed || second.CacheHits["app"] || second.File.Recipes["app"].ResolvedAt != first.File.Recipes["app"].ResolvedAt {
+		t.Fatalf("token rotation invalidated a frozen lock or prevented acquisition: %v", err)
+	}
+}
+
 func TestLocalChangesRehashWarmLocks(t *testing.T) {
 	for _, kind := range []string{"file", "local"} {
 		t.Run(kind, func(t *testing.T) {

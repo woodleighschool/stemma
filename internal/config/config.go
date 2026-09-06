@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -57,7 +58,7 @@ type Artifact struct {
 	From            string            `yaml:"from,omitempty" json:"from,omitempty" jsonschema:"enum=source" jsonschema_description:"Input artifact. Omitted or source selects the prepared source in version 1."`
 }
 
-// Source specifies one provider. Environment variables are referenced by name.
+// Source specifies one acquisition provider.
 type Source struct {
 	Type       string   `yaml:"type" json:"type" jsonschema:"enum=http,enum=github,enum=file,enum=local" jsonschema_description:"Provider or destination implementation. Unknown values are rejected."`
 	Include    []string `yaml:"include,omitempty" json:"include,omitempty" jsonschema_description:"Local files and glob patterns relative to this software-family file. Matched bytes, modes and symlinks determine content identity."`
@@ -70,7 +71,7 @@ type Source struct {
 	Filename   string   `yaml:"filename,omitempty" json:"filename,omitempty" jsonschema_description:"Retained artifact basename. Never a workspace or cache path."`
 	Version    string   `yaml:"version,omitempty" json:"version,omitempty" jsonschema_description:"Declared software version when the source cannot expose one. It is metadata, not a content identity."`
 	SHA256     string   `yaml:"sha256,omitempty" json:"sha256,omitempty" jsonschema_description:"Optional independently obtained SHA-256 requirement. Explicit refresh does not bypass this requirement."`
-	TokenEnv   string   `yaml:"token_env,omitempty" json:"token_env,omitempty" jsonschema_description:"Name of the environment variable containing a bearer token. The token itself is never stored in a lockfile."`
+	Token      string   `yaml:"token,omitempty" json:"token,omitempty" jsonschema_description:"Bearer token. Use ${VAR} to supply it from the environment. Excluded from source locks and fingerprints."`
 }
 
 // Verification declares the exact subject and checks required before publication.
@@ -100,10 +101,11 @@ type Plugin struct {
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
-// Parse rejects unknown fields, multiple documents, aliases and invalid composition.
+// Parse expands environment placeholders in string values and rejects unknown
+// fields, multiple documents, aliases and invalid composition.
 func Parse(data []byte) (Project, error) {
 	var p Project
-	document, err := parseDocument(data, &p)
+	document, err := parseConfig(data, &p)
 	if err != nil {
 		return p, err
 	}
@@ -376,11 +378,11 @@ func (s Source) Validate() error {
 			return errors.New("GitHub source requires repository owner/name and an exact asset name")
 		}
 	case "file":
-		if !safeRelative(s.Path) || s.URL != "" || s.Repository != "" || s.Release != "" || s.Asset != "" || s.TokenEnv != "" {
+		if !safeRelative(s.Path) || s.URL != "" || s.Repository != "" || s.Release != "" || s.Asset != "" || s.Token != "" {
 			return errors.New("file source requires a project-relative path only")
 		}
 	case "local":
-		if len(s.Include) == 0 || s.Path != "" || s.URL != "" || s.Repository != "" || s.Release != "" || s.Asset != "" || s.TokenEnv != "" || (s.Base != "" && !safeRelative(s.Base)) {
+		if len(s.Include) == 0 || s.Path != "" || s.URL != "" || s.Repository != "" || s.Release != "" || s.Asset != "" || s.Token != "" || (s.Base != "" && !safeRelative(s.Base)) {
 			return errors.New("local source requires include patterns relative to its software-family file")
 		}
 		for _, pattern := range s.Include {
@@ -450,6 +452,22 @@ func ValidateHTTPURL(address string) error {
 		}
 	}
 	return nil
+}
+
+// Fingerprint identifies acquisition settings independently of credentials.
+func (s Source) Fingerprint() string {
+	s.Token = ""
+	return Fingerprint(s)
+}
+
+// Fingerprint identifies a destination without its authentication secrets.
+func (d Destination) Fingerprint() string {
+	if d.Type == "intune" || d.Type == "jamf" {
+		d.Config = maps.Clone(d.Config)
+		delete(d.Config, "token")
+		delete(d.Config, "client_secret")
+	}
+	return Fingerprint(d)
 }
 
 // Fingerprint returns a canonical digest, independent of map iteration order.

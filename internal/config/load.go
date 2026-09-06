@@ -20,14 +20,14 @@ type Fragment struct {
 }
 
 // Load resolves inline recipes and imported software-family files within the
-// project directory. It does not read credentials or use the network.
+// project directory and expands environment placeholders without using the network.
 func Load(filename string) (Project, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return Project{}, err
 	}
 	var p Project
-	document, err := parseDocument(data, &p)
+	document, err := parseConfig(data, &p)
 	if err != nil {
 		return p, err
 	}
@@ -67,7 +67,7 @@ func Load(filename string) (Project, error) {
 				return p, fmt.Errorf("import %s: %w", name, err)
 			}
 			var fragment Fragment
-			document, err := parseDocument(data, &fragment)
+			document, err := parseConfig(data, &fragment)
 			if err != nil {
 				return p, fmt.Errorf("import %s: %w", name, err)
 			}
