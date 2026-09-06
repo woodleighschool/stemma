@@ -19,8 +19,7 @@ A reproducible software artifact pipeline, run locally or in CI as one binary.
 ## 🚀 Usage
 
 ```sh
-stemma init my-apps
-cd my-apps
+cp stemma.example.yaml stemma.yaml
 stemma update
 stemma plan
 stemma apply
@@ -39,6 +38,8 @@ Commit `stemma.yaml`, software files and `stemma.lock.yaml`.
 
 `prepare` stops before publication; `inspect` reads artifact facts.
 Use `package --help` for standalone packaging and `completion` for shell setup.
+`stemma icon App.app --out icons/App.png` retains a macOS-rendered PNG;
+`--refresh` explicitly replaces it.
 
 ## ⚙️ Configuration
 

@@ -81,7 +81,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 		return err
 	}}
 	validate.Flags().BoolVar(&resolved, "resolved", false, "Show fully resolved recipe composition")
-	root.AddCommand(validate)
+	root.AddCommand(validate, iconCommand(out))
 	for _, method := range []string{"update", "prepare", "plan", "apply"} {
 		var frozen, noFrozen, refresh, ignore, offline bool
 		cmd := &cobra.Command{Use: method + " [recipe...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Acquire and inspect locked inputs without publication", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
@@ -212,7 +212,6 @@ func command(out, errOut io.Writer) *cobra.Command {
 		}})
 	}
 	root.AddCommand(plugins)
-	root.AddCommand(initCommand())
 	return root
 }
 
@@ -309,64 +308,4 @@ func printReport(out io.Writer, method string, r engine.Report) error {
 	}
 	_, err := io.WriteString(out, text.String())
 	return err
-}
-
-func initCommand() *cobra.Command {
-	return &cobra.Command{Use: "init [directory]", Short: "Create a minimal Stemma project without overwriting files", Args: cobra.MaximumNArgs(1), RunE: func(_ *cobra.Command, args []string) error {
-		dir := "."
-		if len(args) > 0 {
-			dir = args[0]
-		}
-		files := []struct{ name, data string }{
-			{".gitignore", ".stemma/\n"},
-			{"software/Chrome/stemma.yaml", `# yaml-language-server: $schema=https://raw.githubusercontent.com/woodleighschool/stemma/main/stemma.schema.json
-version: 1
-recipes:
-  chrome:
-    source:
-      type: http
-      url: https://dl.google.com/dl/chrome/mac/universal/stable/gcem/GoogleChrome.pkg
-      filename: GoogleChrome.pkg
-    platform: darwin
-    arch: universal
-    verification:
-      integrity: true
-      signature: true
-    destinations:
-      munki:
-        name: Google Chrome
-        catalogs: [testing]
-`},
-			{"stemma.yaml", `# yaml-language-server: $schema=https://raw.githubusercontent.com/woodleighschool/stemma/main/stemma.schema.json
-version: 1
-project: my-apps
-imports:
-  - software/**/stemma.yaml
-destinations:
-  munki:
-    type: munki
-    path: .stemma/munki
-`},
-		}
-		for _, item := range files {
-			if _, err := os.Lstat(filepath.Join(dir, item.name)); !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("refusing to overwrite %s", item.name)
-			}
-		}
-		for _, item := range files {
-			path := filepath.Join(dir, item.name)
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				return err
-			}
-			file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-			if err != nil {
-				return err
-			}
-			_, writeErr := io.WriteString(file, item.data)
-			if err := errors.Join(writeErr, file.Close()); err != nil {
-				return err
-			}
-		}
-		return nil
-	}}
 }

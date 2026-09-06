@@ -3,7 +3,7 @@ project_name: stemma
 before:
   hooks:
     - go mod tidy -diff
-    - go run github.com/google/go-licenses/v2@v2.0.1 save ./cmd/stemma --save_path=.stemma/release-licenses --force
+    - sh .github/scripts/licenses.sh
 builds:
   - main: ./cmd/stemma
     binary: stemma
@@ -23,6 +23,7 @@ archives:
       - LICENSE
       - README.md
       - stemma.schema.json
+      - stemma.example.yaml
       - src: .stemma/release-licenses
         dst: licenses
 checksum:

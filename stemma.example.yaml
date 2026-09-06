@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/woodleighschool/stemma/main/stemma.schema.json
+version: 1
+project: my-apps
+
+destinations:
+  munki:
+    type: munki
+    path: .stemma/munki
+
+recipes:
+  chrome:
+    source:
+      type: http
+      url: https://dl.google.com/dl/chrome/mac/universal/stable/gcem/GoogleChrome.pkg
+      filename: GoogleChrome.pkg
+    platform: darwin
+    arch: universal
+    verification:
+      integrity: true
+      signature: true
+    destinations:
+      munki:
+        name: Google Chrome
+        catalogs: [testing]

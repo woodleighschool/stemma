@@ -35,7 +35,13 @@ run = "go fmt ./..."
 
 [tasks.fmt-check]
 description = "Check Go formatting"
-run = "test -z \"$(gofmt -l .)\" || { gofmt -l .; exit 1; }"
+run = '''
+unformatted="$(git ls-files -z --cached --others --exclude-standard -- '*.go' | xargs -0 gofmt -l)"
+if [ -n "$unformatted" ]; then
+  printf '%s\n' "$unformatted"
+  exit 1
+fi
+'''
 
 [tasks.tidy]
 description = "Tidy Go dependencies"

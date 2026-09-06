@@ -254,7 +254,7 @@ func deliver(ctx context.Context, opts Options, p config.Project, locked lockfil
 	if err != nil {
 		return report, err
 	}
-	req := plugin.Request{Method: opts.Method, Identity: identity, Config: configData, Metadata: metadata, Artifact: plugin.Artifact{Path: prepared.Path, SHA256: prepared.Payload.SHA256, Size: prepared.Payload.Size, Filename: prepared.Filename, Version: prepared.Version}, Binding: previous.Binding}
+	req := plugin.Request{Protocol: plugin.ProtocolVersion, Method: opts.Method, Identity: identity, Config: configData, Metadata: metadata, Artifact: plugin.Artifact{Path: prepared.Path, SHA256: prepared.Payload.SHA256, Size: prepared.Payload.Size, Filename: prepared.Filename, Version: prepared.Version}, Binding: previous.Binding}
 	var response plugin.Response
 	if destination.Type == "plugin" {
 		platform := runtime.GOOS + "/" + runtime.GOARCH
@@ -318,7 +318,7 @@ func Validate(ctx context.Context, p config.Project) error {
 			if err != nil {
 				return err
 			}
-			_, err = handler(ctx, plugin.Request{Method: "validate", Config: configData, Metadata: metadataData})
+			_, err = handler(ctx, plugin.Request{Protocol: plugin.ProtocolVersion, Method: "validate", Config: configData, Metadata: metadataData})
 			if err != nil {
 				return fmt.Errorf("%s/%s: %w", name, destination, err)
 			}

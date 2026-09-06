@@ -1,0 +1,3 @@
+# Signed fixtures must retain their exact bytes, including embedded text files.
+internal/apple/testdata/*.app/** binary
+internal/apple/testdata/*.pkg binary

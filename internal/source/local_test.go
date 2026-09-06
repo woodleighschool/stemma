@@ -17,6 +17,10 @@ func TestLocalIncludesSnapshotOnlyMatchedInputs(t *testing.T) {
 	base := filepath.Join(root, "software", "Branding")
 	writeInput(t, filepath.Join(base, "Payload", "Branding.txt"), "branding", 0o640)
 	writeInput(t, filepath.Join(base, "Scripts", "postinstall"), "#!/bin/sh\nexit 0\n", 0o755)
+	script, err := os.Stat(filepath.Join(base, "Scripts", "postinstall"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	writeInput(t, filepath.Join(base, "stemma.yaml"), "configuration", 0o600)
 	writeInput(t, filepath.Join(base, "adjacent.txt"), "unrelated", 0o600)
 	if err := os.Symlink("Branding.txt", filepath.Join(base, "Payload", "current")); err != nil {
@@ -53,7 +57,7 @@ func TestLocalIncludesSnapshotOnlyMatchedInputs(t *testing.T) {
 		}
 		entries[header.Name] = header
 	}
-	if len(entries) != 5 || entries["Scripts/postinstall"].Mode != 0o755 || entries["Payload/current"].Linkname != "Branding.txt" {
+	if len(entries) != 5 || entries["Scripts/postinstall"].Mode != int64(script.Mode().Perm()) || entries["Payload/current"].Linkname != "Branding.txt" {
 		t.Fatalf("snapshot selection, modes, or symlinks changed: %#v", entries)
 	}
 	writeInput(t, filepath.Join(base, "adjacent.txt"), "new unrelated content", 0o600)

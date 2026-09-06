@@ -2,6 +2,7 @@ package intune
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/microsoft/kiota-abstractions-go/authentication"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -242,10 +244,19 @@ type graphFixture struct {
 func newGraphFixture(t *testing.T) (*graphFixture, *client) {
 	t.Helper()
 	fake := &graphFixture{blocks: map[string][]byte{}}
-	server := httptest.NewServer(http.HandlerFunc(fake.serve))
+	server := httptest.NewTLSServer(http.HandlerFunc(fake.serve))
 	t.Cleanup(server.Close)
 	fake.url = server.URL
-	return fake, &client{base: server.URL + "/v1.0", token: "test-token", http: server.Client(), pollInterval: time.Millisecond}
+	auth, err := authentication.NewApiKeyAuthenticationProvider("Bearer test-token", "Authorization", authentication.HEADER_KEYLOCATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := newSDKClient(server.URL+"/v1.0", auth, server.Client().Transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.pollInterval = time.Millisecond
+	return fake, c
 }
 
 func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +265,15 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 	write := func(value any) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(value)
+	}
+	if r.Header.Get("Content-Encoding") == "gzip" {
+		reader, err := gzip.NewReader(r.Body)
+		if err != nil {
+			http.Error(w, "invalid gzip", 400)
+			return
+		}
+		defer func() { _ = reader.Close() }()
+		r.Body = reader
 	}
 	var body object
 	if r.Method == http.MethodPost || r.Method == http.MethodPatch {
@@ -272,9 +292,13 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "read error", 400)
 			return
 		}
-		if r.URL.Query().Get("comp") == "block" {
+		switch r.URL.Query().Get("comp") {
+		case "block":
 			f.blocks[r.URL.Query().Get("blockid")] = data
-		} else {
+		case "":
+			f.uploaded = data
+			f.blobLists++
+		default:
 			var list struct {
 				Latest []string `xml:"Latest"`
 			}
@@ -327,7 +351,7 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		w.WriteHeader(204)
 	case strings.HasSuffix(path, "/contentVersions") && r.Method == http.MethodPost:
-		if f.app == nil || !strings.Contains(path, "/"+strings.TrimPrefix(text(f.app["@odata.type"]), "#")+"/contentVersions") {
+		if f.app == nil || !strings.Contains(path, "/"+strings.TrimPrefix(text(f.app["@odata.type"]), "#microsoft.")+"/contentVersions") {
 			http.Error(w, "wrong subtype content path", http.StatusBadRequest)
 			return
 		}
@@ -406,6 +430,7 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 	for _, appType := range []string{dmgType, pkgType} {
 		t.Run(appType, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
+			fake.expectedAPI = "beta"
 			extension := ".dmg"
 			if appType == pkgType {
 				fake.expectedAPI = "beta"
@@ -448,7 +473,7 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 			fake.app["owner"] = "Remote owner"
 			fake.app["ignoreVersionDetection"] = true
 			req.Binding = response.Binding
-			req.Metadata = raw(object{"@odata.type": appType, "primaryBundleVersion": "1.1", "ignoreVersionDetection": false, "minimumSupportedOperatingSystem": object{"v13_0": true}})
+			req.Metadata = raw(object{"@odata.type": appType, "primaryBundleVersion": "1.1", "ignoreVersionDetection": false, "minimumSupportedOperatingSystem": object{"v14_0": true}})
 			desired, err = validateMetadata(req.Metadata)
 			if err != nil {
 				t.Fatal(err)
@@ -458,7 +483,7 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 				t.Fatal(err)
 			}
 			operatingSystem := fake.app["minimumSupportedOperatingSystem"].(object)
-			if operatingSystem["v12_0"] != false || operatingSystem["v13_0"] != true {
+			if operatingSystem["v12_0"] != false || operatingSystem["v14_0"] != true {
 				t.Fatal("minimum OS retained two selections")
 			}
 			if fake.app["owner"] != "Remote owner" || fake.app["ignoreVersionDetection"] != false || fake.versions != 1 || fake.blobLists != 1 {
@@ -479,7 +504,7 @@ func TestMacValidationAndAdoption(t *testing.T) {
 		{"@odata.type": dmgType, "installCommandLine": "unsupported"},
 		{"@odata.type": win32Type, "primaryBundleId": "org.example.app"},
 		{"@odata.type": dmgType, "minimumSupportedOperatingSystem": object{"v12_0": true, "v13_0": true}},
-		{"@odata.type": dmgType, "minimumSupportedOperatingSystem": object{"v14_0": true}},
+		{"@odata.type": dmgType, "minimumSupportedOperatingSystem": object{"v99_0": true}},
 		{"@odata.type": pkgType, "includedApps": []any{}},
 		{"@odata.type": pkgType, "preInstallScript": object{"scriptContent": "unsupported"}},
 	} {
@@ -487,7 +512,8 @@ func TestMacValidationAndAdoption(t *testing.T) {
 			t.Fatalf("accepted unsupported native metadata: %s", raw(metadata))
 		}
 	}
-	fake, _ := newGraphFixture(t)
+	fake, c := newGraphFixture(t)
+	fake.expectedAPI = "beta"
 	fake.app = object{"@odata.type": dmgType, "id": "app-1", "notes": "", "committedContentVersion": "1", "publishingState": "published"}
 	req := fixtureRequest(t)
 	req.Method = "plan"
@@ -495,10 +521,20 @@ func TestMacValidationAndAdoption(t *testing.T) {
 	req.Config = raw(object{"graph_url": fake.url + "/v1.0", "token_env": "STEMMA_TEST_INTUNE_TOKEN"})
 	req.Metadata = raw(object{"@odata.type": dmgType, "app_id": "app-1", "displayName": "Adopted"})
 	t.Setenv("STEMMA_TEST_INTUNE_TOKEN", "test-token")
-	if _, err := Handle(t.Context(), req); err != nil {
+	cfg, err := parseConfiguration(req.Config)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fake.paths) != 1 || fake.paths[0] != "/v1.0"+appsPath+"/app-1" {
+	desired, err := validateMetadata(req.Metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.AppID = text(desired["app_id"])
+	delete(desired, "app_id")
+	if _, err := c.handle(t.Context(), req, cfg, desired); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.paths) != 1 || fake.paths[0] != "/beta"+appsPath+"/app-1" {
 		t.Fatalf("adoption did not read explicit per-recipe ID: %v", fake.paths)
 	}
 	req.Method = "validate"

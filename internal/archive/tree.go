@@ -29,20 +29,22 @@ func Pack(ctx context.Context, root string, output io.Writer) error {
 // order. Nil names selects the whole scoped root; directory names alone do not
 // select their contents. Symlink parents are rejected rather than dereferenced.
 func PackSelected(ctx context.Context, root *os.Root, names []string, output io.Writer) error {
-	directory, err := root.Open(".")
-	if err != nil {
-		return err
-	}
-	info, statErr := directory.Stat()
-	if statErr == nil {
-		statErr = CheckMetadata(directory, info)
-	}
-	closeErr := directory.Close()
-	if statErr != nil {
-		return statErr
-	}
-	if closeErr != nil {
-		return closeErr
+	if names == nil {
+		directory, err := root.Open(".")
+		if err != nil {
+			return err
+		}
+		info, statErr := directory.Stat()
+		if statErr == nil {
+			statErr = CheckMetadata(directory, info)
+		}
+		closeErr := directory.Close()
+		if statErr != nil {
+			return statErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
 	}
 	var selected map[string]bool
 	if names != nil {
@@ -71,7 +73,7 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 	var total int64
 	count := 0
 	visited := map[string]bool{".": true}
-	err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
+	err := fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -108,6 +110,7 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 			if err != nil {
 				return err
 			}
+			target = filepath.ToSlash(target)
 			resolved := filepath.Clean(filepath.Join(filepath.Dir(name), target))
 			if filepath.IsAbs(target) || !filepath.IsLocal(resolved) || strings.Contains(target, "\\") {
 				return fmt.Errorf("escaping symlink %s", name)
@@ -169,7 +172,7 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 		}
 		return nil
 	})
-	closeErr = w.Close()
+	closeErr := w.Close()
 	if err != nil {
 		return err
 	}
