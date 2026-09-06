@@ -77,7 +77,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 		return err
 	}}
 	validate.Flags().BoolVar(&resolved, "resolved", false, "Show fully resolved recipe composition")
-	validate.Flags().BoolVar(&validateOffline, "offline", false, "Require verified cached plugin binaries")
+	validate.Flags().BoolVar(&validateOffline, "offline", false, "Require verified cached plugin bundles")
 	root.AddCommand(validate, iconCommand(out))
 	var operationsOffline bool
 	operations := &cobra.Command{Use: "operations", Short: "Print built-in and trusted plugin operation contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
@@ -91,7 +91,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 		}
 		return writeJSON(out, descriptor)
 	}}
-	operations.Flags().BoolVar(&operationsOffline, "offline", false, "Require verified cached plugin binaries")
+	operations.Flags().BoolVar(&operationsOffline, "offline", false, "Require verified cached plugin bundles")
 	root.AddCommand(operations)
 	for _, method := range []string{"update", "prepare", "plan", "apply"} {
 		var frozen, noFrozen, refresh, ignore, offline bool
@@ -173,7 +173,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 	}})
 	root.AddCommand(cache)
 	plugins := &cobra.Command{Use: "plugins", Short: "Install and update explicitly trusted executable plugins"}
-	plugins.AddCommand(&cobra.Command{Use: "list", Short: "Show configured plugins and locked platform binaries", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
+	plugins.AddCommand(&cobra.Command{Use: "list", Short: "Show configured plugin images", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
 		path, err := resolve()
 		if err != nil {
 			return err
@@ -185,7 +185,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 		return writeJSON(out, p.Plugins)
 	}})
 	for _, method := range []string{"install", "update"} {
-		plugins.AddCommand(&cobra.Command{Use: method, Short: "Resolve plugin binaries and write their immutable locks", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		plugins.AddCommand(&cobra.Command{Use: method, Short: "Resolve plugin images and lock their release indexes", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 			path, err := resolve()
 			if err != nil {
 				return err

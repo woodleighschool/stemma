@@ -22,6 +22,8 @@ require (
 	github.com/microsoft/kiota-serialization-text-go v1.1.3
 	github.com/microsoftgraph/msgraph-sdk-go-core v1.4.1
 	github.com/mikelolasagasti/xz v1.0.1
+	github.com/opencontainers/go-digest v1.0.0
+	github.com/opencontainers/image-spec v1.1.1
 	github.com/pb33f/ordered-map/v2 v2.3.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
@@ -30,6 +32,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
 	golang.org/x/sys v0.47.0
 	howett.net/plist v1.0.1
+	oras.land/oras-go/v2 v2.6.2
 	resty.dev/v3 v3.0.0-rc.3
 )
 

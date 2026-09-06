@@ -22,6 +22,7 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 
 	"go.yaml.in/yaml/v4"
+	"oras.land/oras-go/v2/registry"
 )
 
 // Project is the resolved configuration of a Stemma root.
@@ -32,7 +33,7 @@ type Project struct {
 	Components   map[string]Recipe      `yaml:"components,omitempty" json:"components,omitempty" jsonschema_description:"Reusable local recipe components. Resolved inherited fields retain their metadata ownership."`
 	Recipes      map[string]Recipe      `yaml:"recipes" json:"recipes" jsonschema_description:"Named software recipes. Use separate names for platform and architecture variants."`
 	Destinations map[string]Destination `yaml:"destinations,omitempty" json:"destinations,omitempty" jsonschema_description:"Named connections. Recipe destination entries own only explicitly present native metadata fields."`
-	Plugins      map[string]Plugin      `yaml:"plugins,omitempty" json:"plugins,omitempty" jsonschema_description:"Explicitly trusted executable extensions with independently locked platform binaries."`
+	Plugins      map[string]Plugin      `yaml:"plugins,omitempty" json:"plugins,omitempty" jsonschema_description:"Explicitly trusted OCI plugin images, locked by release index digest."`
 }
 
 // Recipe describes acquisition and selection independently of delivery metadata.
@@ -110,10 +111,10 @@ type Destination struct {
 	Config    map[string]any `yaml:"config,omitempty" json:"config,omitempty" jsonschema_description:"Destination-specific connection configuration. Reference credential environment variables instead of embedding secrets."`
 }
 
-// Plugin identifies an explicitly trusted executable source for each host.
+// Plugin identifies an explicitly trusted OCI release for all runner platforms.
 type Plugin struct {
-	Trusted   bool              `yaml:"trusted" json:"trusted" jsonschema_description:"Explicit consent to execute this plugin. Checksums prove binary identity, not publisher trust."`
-	Platforms map[string]Source `yaml:"platforms" json:"platforms" jsonschema_description:"Map runner OS/architecture to a plugin binary source, for example darwin/arm64."`
+	Trusted bool   `yaml:"trusted" json:"trusted" jsonschema_description:"Explicit consent to execute this plugin. Checksums prove binary identity, not publisher trust."`
+	Image   string `yaml:"image" json:"image" jsonschema_description:"OCI registry reference with a tag or digest, for example ghcr.io/woodleighschool/woodstar/stemma:v1.0.0."`
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -400,16 +401,12 @@ func (p Project) Validate() error {
 		}
 	}
 	for name, plugin := range p.Plugins {
-		if !namePattern.MatchString(name) || !plugin.Trusted || len(plugin.Platforms) == 0 {
-			return fmt.Errorf("plugin %s: requires a valid name, trusted: true and platform sources", name)
+		if !namePattern.MatchString(name) || !plugin.Trusted {
+			return fmt.Errorf("plugin %s: requires a valid name and trusted: true", name)
 		}
-		for platform, source := range plugin.Platforms {
-			if !regexp.MustCompile(`^(darwin|linux|windows)/(amd64|arm64)$`).MatchString(platform) {
-				return fmt.Errorf("plugin %s: invalid platform %q", name, platform)
-			}
-			if err := source.Validate(); err != nil {
-				return fmt.Errorf("plugin %s: %w", name, err)
-			}
+		ref, err := registry.ParseReference(plugin.Image)
+		if err != nil || ref.Reference == "" {
+			return fmt.Errorf("plugin %s: image must be an OCI registry reference with a tag or digest", name)
 		}
 	}
 	return nil

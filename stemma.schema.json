@@ -3353,19 +3353,16 @@
           "type": "boolean",
           "description": "Explicit consent to execute this plugin. Checksums prove binary identity, not publisher trust."
         },
-        "platforms": {
-          "additionalProperties": {
-            "$ref": "#/$defs/Source"
-          },
-          "type": "object",
-          "description": "Map runner OS/architecture to a plugin binary source, for example darwin/arm64."
+        "image": {
+          "type": "string",
+          "description": "OCI registry reference with a tag or digest, for example ghcr.io/woodleighschool/woodstar/stemma:v1.0.0."
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
         "trusted",
-        "platforms"
+        "image"
       ]
     },
     "Project": {
@@ -3426,7 +3423,7 @@
             "$ref": "#/$defs/Plugin"
           },
           "type": "object",
-          "description": "Explicitly trusted executable extensions with independently locked platform binaries."
+          "description": "Explicitly trusted OCI plugin images, locked by release index digest."
         }
       },
       "additionalProperties": false,

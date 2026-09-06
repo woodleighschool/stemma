@@ -5,6 +5,29 @@ import (
 	"testing"
 )
 
+func TestPluginOCIReferences(t *testing.T) {
+	for _, test := range []struct {
+		image          string
+		trusted, valid bool
+	}{
+		{"ghcr.io/example/plugin:v1", true, true},
+		{"ghcr.io/example/plugin@sha256:" + strings.Repeat("a", 64), true, true},
+		{"ghcr.io/example/plugin", true, false},
+		{"https://ghcr.io/example/plugin:v1", true, false},
+		{"ghcr.io/example/plugin:v1", false, false},
+	} {
+		t.Run(test.image, func(t *testing.T) {
+			project := Project{Version: 1, Project: "test", Recipes: map[string]Recipe{"fixture": {Source: Source{Type: "file", Path: "fixture.pkg"}}}, Plugins: map[string]Plugin{"fixture": {Image: test.image, Trusted: test.trusted}}}
+			if err := project.Validate(); (err == nil) != test.valid {
+				t.Fatalf("valid=%v error=%v", test.valid, err)
+			}
+		})
+	}
+	if _, err := Parse([]byte("version: 1\nproject: test\nrecipes:\n  fixture:\n    source: {type: file, path: fixture.pkg}\nplugins:\n  fixture:\n    trusted: true\n    platforms: {linux/amd64: {type: file, path: plugin}}\n")); err == nil {
+		t.Fatal("removed raw executable configuration was accepted")
+	}
+}
+
 func TestCompositionRetainsPresence(t *testing.T) {
 	p, err := Parse([]byte(`version: 1
 project: test

@@ -1,7 +1,15 @@
 package engine
 
 import (
+	"archive/tar"
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"github.com/klauspost/compress/zstd"
+	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/woodleighschool/stemma/internal/plugins"
+	"go.yaml.in/yaml/v4"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -36,8 +44,7 @@ project: operations
 plugins:
   provider:
     trusted: true
-    platforms:
-      %s/%s: {type: file, path: echo}
+    image: registry.example/plugins/echo:v1
 recipes:
   fixture:
     source: {type: http, url: %s/payload.bin}
@@ -55,7 +62,7 @@ recipes:
       remote: {artifact: second/finished, displayName: original}
 destinations:
   remote: {operation: echo.reconcile, config: {}}
-`, runtime.GOOS, runtime.GOARCH, server.URL)
+`, server.URL)
 	path := filepath.Join(root, "stemma.yaml")
 	write := func(data string) {
 		t.Helper()
@@ -72,6 +79,7 @@ destinations:
 	if err != nil {
 		t.Fatal(err)
 	}
+	installFixturePlugin(t, store, root, binary, "original resource")
 	if _, err := lockfile.Prepare(t.Context(), project, source.New(store, root, false), lockfile.Options{PluginsOnly: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -106,12 +114,25 @@ destinations:
 	if err := os.RemoveAll(store.Dir); err != nil {
 		t.Fatal(err)
 	}
+	store, err = cas.Open(store.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installFixturePlugin(t, store, root, binary, "original resource")
 	third, err := Run(t.Context(), opts)
 	if err != nil || third.Recipes[0].Steps[2].Artifacts["finished"].Payload != first.Recipes[0].Steps[2].Artifacts["finished"].Payload {
 		t.Fatalf("cold operation output changed: %+v %v", third, err)
 	}
+	installFixturePlugin(t, store, root, binary, "changed resource")
+	changed, err := Run(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.Recipes[0].Steps[0].Cached {
+		t.Fatal("resource-only bundle change reused plugin step cache")
+	}
 	// A second provider advertising the same names cannot shadow the first.
-	write(strings.Replace(manifest, "recipes:\n", fmt.Sprintf("  other:\n    trusted: true\n    platforms:\n      %s/%s: {type: file, path: echo}\nrecipes:\n", runtime.GOOS, runtime.GOARCH), 1))
+	write(strings.Replace(manifest, "recipes:\n", "  other:\n    trusted: true\n    image: registry.example/plugins/echo:v1\nrecipes:\n", 1))
 	project, err = config.Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -126,5 +147,74 @@ destinations:
 	}
 	if downloads.Load() != count {
 		t.Fatal("collision discovered after recipe acquisition")
+	}
+}
+
+func installFixturePlugin(t *testing.T, store *cas.Store, root, binary, resource string) {
+	t.Helper()
+	data, err := os.ReadFile(binary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "plugin"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	var bundle bytes.Buffer
+	compressed, err := zstd.NewWriter(&bundle, zstd.WithEncoderConcurrency(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := tar.NewWriter(compressed)
+	for _, file := range []struct {
+		name string
+		data []byte
+	}{{name, data}, {"resource.txt", []byte(resource)}} {
+		if err := writer.WriteHeader(&tar.Header{Name: file.name, Mode: 0o755, Size: int64(len(file.data))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write(file.data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := compressed.Close(); err != nil {
+		t.Fatal(err)
+	}
+	put := func(media string, data []byte) ocispec.Descriptor {
+		t.Helper()
+		ref, err := store.Import(t.Context(), bytes.NewReader(data), "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ocispec.Descriptor{MediaType: media, Digest: digest.Digest("sha256:" + ref.SHA256), Size: ref.Size}
+	}
+	config := put(ocispec.MediaTypeEmptyJSON, []byte("{}"))
+	layer := put(plugins.BundleType, bundle.Bytes())
+	data, err = json.Marshal(ocispec.Manifest{SchemaVersion: 2, MediaType: ocispec.MediaTypeImageManifest, ArtifactType: plugins.ArtifactType, Config: config, Layers: []ocispec.Descriptor{layer}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := put(ocispec.MediaTypeImageManifest, data)
+	manifest.Platform = &ocispec.Platform{OS: runtime.GOOS, Architecture: runtime.GOARCH}
+	data, err = json.Marshal(ocispec.Index{SchemaVersion: 2, MediaType: ocispec.MediaTypeImageIndex, Manifests: []ocispec.Descriptor{manifest}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := put(ocispec.MediaTypeImageIndex, data)
+	entry := plugins.Entry{Image: "registry.example/plugins/echo:v1", Digest: index.Digest.String(), Size: index.Size}
+	locked, err := lockfile.Load(filepath.Join(root, "stemma.lock.yaml"))
+	if err != nil {
+		locked = lockfile.File{Version: 1, Recipes: map[string]source.Entry{}}
+	}
+	locked.Plugins = map[string]plugins.Entry{"provider": entry, "other": entry}
+	data, err = yaml.Marshal(locked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "stemma.lock.yaml"), data, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

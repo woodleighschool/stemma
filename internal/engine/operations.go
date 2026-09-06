@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 
 	"github.com/invopop/jsonschema"
@@ -21,6 +20,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/munki"
 	"github.com/woodleighschool/stemma/internal/munkirepo"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
+	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -324,26 +324,20 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 		names = append(names, name)
 	}
 	slices.Sort(names)
-	platform := runtime.GOOS + "/" + runtime.GOARCH
+	pluginStore := plugins.New(manager.Store, manager.Offline)
 	for _, name := range names {
 		provider := p.Plugins[name]
-		spec, supported := provider.Platforms[platform]
-		if !supported {
-			return nil, fmt.Errorf("plugin %s has no binary for %s", name, platform)
-		}
-		entry, exists := locked.Plugins[name][platform]
+		entry, exists := locked.Plugins[name]
 		if !exists {
-			return nil, fmt.Errorf("plugin %s/%s is not locked; run stemma plugins install", name, platform)
+			return nil, fmt.Errorf("plugin %s is not locked; run stemma plugins install", name)
 		}
-		if _, err := manager.Acquire(ctx, spec, entry); err != nil {
+		bundle, err := pluginStore.Acquire(ctx, provider.Image, entry)
+		if err != nil {
 			return nil, fmt.Errorf("plugin %s: %w", name, err)
 		}
-		executable := filepath.Join(work, name, entry.Filename)
-		if err := manager.Store.Materialize(ctx, entry.Artifact, executable); err != nil {
-			return nil, err
-		}
-		if err := os.Chmod(executable, 0o700); err != nil {
-			return nil, err
+		executable, err := pluginStore.Materialize(ctx, bundle, filepath.Join(work, name))
+		if err != nil {
+			return nil, fmt.Errorf("plugin %s: %w", name, err)
 		}
 		response, err := plugin.Run(ctx, executable, plugin.Request{Method: "describe"})
 		if err != nil {
@@ -363,9 +357,9 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 				return nil, fmt.Errorf("plugin %s: %w", name, err)
 			}
 			ops.identity[operation.Name] = config.Fingerprint(struct {
-				Binary     cas.Ref
+				Manifest   string
 				Descriptor plugin.Descriptor
-			}{entry.Artifact, descriptor})
+			}{bundle.Manifest, descriptor})
 		}
 	}
 	return ops, nil

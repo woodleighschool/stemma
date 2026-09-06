@@ -15,15 +15,16 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
 	"go.yaml.in/yaml/v4"
 )
 
-// File contains digest-pinned recipes and platform-specific plugin executables.
+// File contains digest-pinned recipes and plugin release indexes.
 type File struct {
-	Version int                                `yaml:"version" json:"version"`
-	Recipes map[string]source.Entry            `yaml:"recipes" json:"recipes"`
-	Plugins map[string]map[string]source.Entry `yaml:"plugins,omitempty" json:"plugins,omitempty"`
+	Version int                      `yaml:"version" json:"version"`
+	Recipes map[string]source.Entry  `yaml:"recipes" json:"recipes"`
+	Plugins map[string]plugins.Entry `yaml:"plugins,omitempty" json:"plugins,omitempty"`
 }
 
 // Options controls lock consumption independently of cache use.
@@ -84,7 +85,7 @@ func Load(path string) (File, error) {
 // Prepare obtains exactly the required inputs, then replaces the lockfile atomically.
 // A failed resolution never writes a partially updated lockfile.
 func Prepare(ctx context.Context, p config.Project, m *source.Manager, opts Options) (Result, error) {
-	result := Result{File: File{Version: 1, Recipes: map[string]source.Entry{}, Plugins: map[string]map[string]source.Entry{}}, CacheHits: map[string]bool{}}
+	result := Result{File: File{Version: 1, Recipes: map[string]source.Entry{}, Plugins: map[string]plugins.Entry{}}, CacheHits: map[string]bool{}}
 	if opts.Frozen && (opts.Refresh || opts.Ignore) {
 		return result, errors.New("frozen lockfile conflicts with refresh or no-lockfile")
 	}
@@ -156,26 +157,24 @@ func Prepare(ctx context.Context, p config.Project, m *source.Manager, opts Opti
 		}
 		result.File.Recipes[name] = entry
 	}
+	pluginStore := plugins.New(m.Store, opts.Offline || m.Offline)
 	for _, name := range names(p.Plugins) {
-		result.File.Plugins[name] = map[string]source.Entry{}
-		for _, platform := range names(p.Plugins[name].Platforms) {
-			if !opts.PluginsOnly {
-				entry := old.Plugins[name][platform]
-				if opts.Ignore || entry.Source != p.Plugins[name].Platforms[platform].Fingerprint() {
-					return result, fmt.Errorf("plugin %s/%s is not locked; run stemma plugins install (plugins never update implicitly)", name, platform)
-				}
-				if _, err := m.Acquire(ctx, p.Plugins[name].Platforms[platform], entry); err != nil {
-					return result, err
-				}
-				result.File.Plugins[name][platform] = entry
-				continue
+		image := p.Plugins[name].Image
+		entry := old.Plugins[name]
+		if opts.Ignore || entry.Validate(image) != nil || (opts.PluginsOnly && opts.Refresh) {
+			if !opts.PluginsOnly || opts.Frozen || opts.Offline {
+				return result, fmt.Errorf("plugin %s is not locked; run stemma plugins install (plugins never update implicitly)", name)
 			}
-			entry, err := acquire("plugin/"+name+"/"+platform, p.Plugins[name].Platforms[platform], old.Plugins[name][platform])
+			var err error
+			entry, err = pluginStore.Resolve(ctx, image)
 			if err != nil {
-				return result, err
+				return result, fmt.Errorf("plugin %s: %w", name, err)
 			}
-			result.File.Plugins[name][platform] = entry
 		}
+		if _, err := pluginStore.Acquire(ctx, image, entry); err != nil {
+			return result, fmt.Errorf("plugin %s: %w", name, err)
+		}
+		result.File.Plugins[name] = entry
 	}
 	result.Changed = config.Fingerprint(result.File) != config.Fingerprint(old)
 	if opts.Frozen && result.Changed {

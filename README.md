@@ -146,16 +146,13 @@ The local Munki operation also accepts an installer directly.
 ## 🔌 Operations
 
 Plugins are trusted executable providers, separate from source acquisition and
-destination connections. Declare a binary source for each supported runner:
+destination connections. Each OCI release supplies bundles for its supported runners:
 
 ```yaml
 plugins:
   inventory:
     trusted: true
-    platforms:
-      darwin/arm64:
-        type: file
-        path: tools/inventory
+    image: ghcr.io/example/inventory:v1.0.0
 destinations:
   inventory:
     operation: inventory.reconcile
@@ -163,7 +160,11 @@ destinations:
       token: ${INVENTORY_TOKEN}
 ```
 
-Run `stemma plugins install` or `stemma plugins update` to lock the binaries.
+Run `stemma plugins install` to pin the release index in `stemma.lock.yaml`.
+Only the current runner's bundle is fetched. Tags move only on explicit
+`stemma plugins update`; normal runs and cold cache recovery use the locked digest.
+Registry authentication uses the standard Docker/ORAS credential store and helpers.
+No container runtime is required.
 The [Go SDK](plugin) uses protocol v2: one executable advertises multiple named
 operations with input/output JSON Schemas, runner requirements, methods and side
 effects. Providers with constrained configuration also declare a `config_schema`
@@ -176,7 +177,32 @@ effects. Reconciliation operations support `validate`, `plan` and `apply`.
 Plugins execute with the caller's privileges; workspaces are leases, not sandboxes.
 Failed reconciliation responses can retain bindings for completed remote work.
 Persist `.stemma/state` separately from the disposable cache, or set `STEMMA_STATE_DIR`.
-Credentials are referenced by environment-variable name.
+Supply credentials as literal configuration values using `${VAR}` expansion.
+
+### Publishing a plugin
+
+Build a standalone executable for each supported OS/architecture pair. Package
+it as `plugin` (`plugin.exe` on Windows) at the root of one tar.zst archive,
+alongside any resources and licences. Resolve resources relative to the executable.
+Normalize archive ordering, ownership, modes and timestamps for reproducible bundles.
+
+Publish each bundle with ORAS, then assemble one OCI platform index:
+
+```sh
+oras push ghcr.io/example/inventory:v1.0.0-linux-amd64 \
+  --artifact-platform linux/amd64 \
+  --artifact-type application/vnd.stemma.plugin.v1 \
+  --annotation org.opencontainers.image.created=1970-01-01T00:00:00Z \
+  plugin.tar.zst:application/vnd.stemma.plugin.bundle.v1.tar+zstd
+oras manifest index create ghcr.io/example/inventory:v1.0.0 v1.0.0-linux-amd64
+```
+
+Add platform tags to the index command for Darwin, Linux or Windows on amd64 or
+arm64. Each manifest contains exactly one bundle. The index selects the runner;
+the executable's `describe` response owns operation contracts. The selected
+manifest digest identifies the implementation, so resource changes invalidate
+cached operation output. [Woodstar](https://github.com/woodleighschool/woodstar/tree/main/stemma)
+uses GoReleaser archives and its ORAS publisher for this contract.
 
 ## 🔎 Artifact support
 
