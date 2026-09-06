@@ -1,4 +1,4 @@
 {
-  "ignorePatterns": ["stemma.schema.json"],
+  "ignorePatterns": ["stemma.schema.json", "internal/graph*/kiota-lock.json"],
   "printWidth": 100,
 }

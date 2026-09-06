@@ -193,3 +193,50 @@ func TestAzureSDKMultipartRetry(t *testing.T) {
 		t.Fatal("multipart upload lost or reordered bytes")
 	}
 }
+
+func TestOpaqueClientsPreserveWireJSON(t *testing.T) {
+	body := []byte(`{"unknown":null,"enabled":false,"count":0,"assignments":[],"installExperience":{"futureField":"kept"}}`)
+	for _, version := range []string{"v1.0", "beta"} {
+		t.Run(version, func(t *testing.T) {
+			c, _ := sdkFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "POST" || r.URL.Path != "/"+version+"/deviceAppManagement/mobileApps" {
+					t.Errorf("request: %s %s", r.Method, r.URL.Path)
+				}
+				if r.Header.Get("Content-Type") != "application/json" {
+					t.Errorf("content type: %s", r.Header.Get("Content-Type"))
+				}
+				got, err := io.ReadAll(r.Body)
+				if err != nil || !bytes.Equal(got, body) {
+					t.Errorf("body changed: %s; %v", got, err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(body)
+			})
+			var got []byte
+			var err error
+			if version == "v1.0" {
+				got, err = c.stable.MobileApps().Post(t.Context(), body, nil)
+			} else {
+				got, err = c.beta.MobileApps().Post(t.Context(), body, nil)
+			}
+			if err != nil || !bytes.Equal(got, body) {
+				t.Fatalf("response changed: %s; %v", got, err)
+			}
+		})
+	}
+}
+
+func TestOpaqueClientKeepsStatusWithoutLeakingBody(t *testing.T) {
+	c, _ := sdkFixture(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"code":"Unavailable","message":"secret-token"}}`)
+	})
+	_, err := c.stable.MobileApps().Post(t.Context(), []byte(`{}`), nil)
+	if err == nil {
+		t.Fatal("accepted failed request")
+	}
+	if got := graphError(t.Context(), err).Error(); got != "intune HTTP status 503" {
+		t.Fatalf("error=%s", got)
+	}
+}

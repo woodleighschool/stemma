@@ -37,6 +37,11 @@ run = "govulncheck ./..."
 description = "Generate committed artifacts"
 run = "go run ./cmd/stemma schema > stemma.schema.json"
 
+[tasks.generate-graph]
+description = "Regenerate scoped Microsoft Graph clients"
+tools = { "github:microsoft/kiota" = "1.35.0" }
+run = "go run ./internal/intune/generate.go"
+
 [tasks.test]
 description = "Run dependency-free Go checks"
 run = ["go vet ./...", "go test -race -count=1 ./..."]

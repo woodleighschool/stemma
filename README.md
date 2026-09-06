@@ -70,6 +70,9 @@ mise run test
 mise run lint
 ```
 
+`mise run generate-graph` regenerates the scoped Graph clients. Its Kiota version
+and OpenAPI revision are pinned; ordinary builds use the committed Go sources.
+
 ## 📄 License
 
 [Apache-2.0](LICENSE), with MIT-licensed portions identified in their source headers.
