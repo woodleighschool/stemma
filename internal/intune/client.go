@@ -18,11 +18,10 @@ import (
 	"github.com/microsoft/kiota-abstractions-go/authentication"
 	khttp "github.com/microsoft/kiota-http-go"
 	kjson "github.com/microsoft/kiota-serialization-json-go"
-	betadam "github.com/microsoftgraph/msgraph-beta-sdk-go/deviceappmanagement"
 	core "github.com/microsoftgraph/msgraph-sdk-go-core"
 	graphauth "github.com/microsoftgraph/msgraph-sdk-go-core/authentication"
-	dam "github.com/microsoftgraph/msgraph-sdk-go/deviceappmanagement"
-	"github.com/microsoftgraph/msgraph-sdk-go/models/odataerrors"
+	betadam "github.com/woodleighschool/stemma/internal/intune/graph/beta/deviceappmanagement"
+	dam "github.com/woodleighschool/stemma/internal/intune/graph/stable/deviceappmanagement"
 )
 
 type configuration struct {
@@ -155,7 +154,7 @@ func (c *client) request(ctx context.Context, method abs.HttpMethod, builder *ab
 	if body != nil {
 		info.SetStreamContentAndContentType(raw(body), "application/json")
 	}
-	data, err := builder.RequestAdapter.SendPrimitive(ctx, info, "[]byte", abs.ErrorMappings{"XXX": odataerrors.CreateODataErrorFromDiscriminatorValue})
+	data, err := builder.RequestAdapter.SendPrimitive(ctx, info, "[]byte", nil)
 	if err != nil {
 		return graphError(ctx, err)
 	}

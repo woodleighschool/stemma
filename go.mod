@@ -7,8 +7,8 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
-	github.com/deploymenttheory/go-bindings-macosplatform v0.19.0
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
+	github.com/ebitengine/purego v0.10.2
 	github.com/gofrs/flock v0.13.1
 	github.com/invopop/jsonschema v0.14.0
 	github.com/klauspost/compress v1.20.0
@@ -16,9 +16,10 @@ require (
 	github.com/mholt/archives v0.1.5
 	github.com/microsoft/kiota-abstractions-go v1.10.1
 	github.com/microsoft/kiota-http-go v1.5.6
+	github.com/microsoft/kiota-serialization-form-go v1.1.3
 	github.com/microsoft/kiota-serialization-json-go v1.1.4
-	github.com/microsoftgraph/msgraph-beta-sdk-go v0.166.0
-	github.com/microsoftgraph/msgraph-sdk-go v1.102.0
+	github.com/microsoft/kiota-serialization-multipart-go v1.1.2
+	github.com/microsoft/kiota-serialization-text-go v1.1.3
 	github.com/microsoftgraph/msgraph-sdk-go-core v1.4.1
 	github.com/pb33f/ordered-map/v2 v2.3.1
 	github.com/spf13/cobra v1.10.2
@@ -41,7 +42,6 @@ require (
 	github.com/buger/jsonparser v1.6.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
-	github.com/ebitengine/purego v0.10.2 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect

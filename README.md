@@ -70,6 +70,9 @@ mise run test
 mise run lint
 ```
 
+`mise run generate-graph` regenerates the pinned Kiota clients for Intune. We scope them to
+avoid the full Microsoft Graph SDKs’ high memory use during cold builds.
+
 ## 📄 License
 
 [Apache-2.0](LICENSE), with MIT-licensed portions identified in their source headers.

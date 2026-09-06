@@ -1,0 +1,51 @@
+{
+  "descriptionHash": "5CFA1F15199EA8B59BEBBC205DDE86B40E31D30A63A79B2FA37DB1461CBFD5ECE9E1C2A087634EF4AB95A5A5B32BAA51421B33B339AC964CB63EF538CC395B72",
+  "descriptionLocation": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/0d13ff1/openapi/beta/openapi.yaml",
+  "lockFileVersion": "1.0.0",
+  "kiotaVersion": "1.35.0",
+  "clientClassName": "ApiClient",
+  "typeAccessModifier": "Public",
+  "clientNamespaceName": "github.com/woodleighschool/stemma/internal/intune/graph/beta",
+  "language": "Go",
+  "usesBackingStore": false,
+  "excludeBackwardCompatible": true,
+  "includeAdditionalData": true,
+  "disableSSLValidation": false,
+  "serializers": [
+    "Microsoft.Kiota.Serialization.Json.JsonSerializationWriterFactory",
+    "Microsoft.Kiota.Serialization.Text.TextSerializationWriterFactory",
+    "Microsoft.Kiota.Serialization.Form.FormSerializationWriterFactory",
+    "Microsoft.Kiota.Serialization.Multipart.MultipartSerializationWriterFactory"
+  ],
+  "deserializers": [
+    "Microsoft.Kiota.Serialization.Json.JsonParseNodeFactory",
+    "Microsoft.Kiota.Serialization.Text.TextParseNodeFactory",
+    "Microsoft.Kiota.Serialization.Form.FormParseNodeFactory"
+  ],
+  "structuredMimeTypes": [
+    "text/plain"
+  ],
+  "includePatterns": [
+    "/deviceAppManagement/mobileApps#GET",
+    "/deviceAppManagement/mobileApps#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}#GET",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}#PATCH",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/assignments#GET",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/assign#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSDmgApp/contentVersions#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSDmgApp/contentVersions/{mobileAppContent-id}/files#GET",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSDmgApp/contentVersions/{mobileAppContent-id}/files#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSDmgApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}#GET",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSDmgApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}/commit#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSDmgApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}/renewUpload#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSPkgApp/contentVersions#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSPkgApp/contentVersions/{mobileAppContent-id}/files#GET",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSPkgApp/contentVersions/{mobileAppContent-id}/files#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSPkgApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}#GET",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSPkgApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}/commit#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSPkgApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}/renewUpload#POST"
+  ],
+  "excludePatterns": [],
+  "disabledValidationRules": [],
+  "allowedExternalOrigins": []
+}
