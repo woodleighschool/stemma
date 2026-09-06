@@ -281,8 +281,10 @@ func deliver(ctx context.Context, opts Options, p config.Project, locked lockfil
 		response, err = handler(ctx, req)
 	}
 	report.Changes = response.Changes
-	if opts.Method == "apply" && len(response.Binding) > 0 {
-		previous.Binding = response.Binding
+	if opts.Method == "apply" && (err == nil || len(response.Binding) > 0) {
+		if len(response.Binding) > 0 {
+			previous.Binding = response.Binding
+		}
 		if err == nil {
 			previous.Source = prepared.Source.Artifact.SHA256
 			previous.Payload = prepared.Payload.SHA256

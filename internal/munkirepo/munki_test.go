@@ -10,8 +10,8 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/munki"
 	"github.com/woodleighschool/stemma/internal/munkirepo"
-	"github.com/woodleighschool/stemma/munki"
 	"github.com/woodleighschool/stemma/plugin"
 )
 

@@ -385,7 +385,7 @@ func fixtureArtifact(t *testing.T, content string) plugin.Artifact {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256([]byte(content))
-	return plugin.Artifact{Path: file, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(content)), Filename: "vendor.pkg", MediaType: "application/octet-stream"}
+	return plugin.Artifact{Path: file, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(content)), Filename: "vendor.pkg"}
 }
 
 func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {

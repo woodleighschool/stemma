@@ -21,7 +21,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/fileio"
-	"github.com/woodleighschool/stemma/munki"
+	"github.com/woodleighschool/stemma/internal/munki"
 	"github.com/woodleighschool/stemma/plugin"
 	"howett.net/plist"
 )

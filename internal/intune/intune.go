@@ -158,7 +158,6 @@ func (c *client) handle(ctx context.Context, req plugin.Request, cfg configurati
 			response.Changes = append(response.Changes, plugin.Change{Kind: "assignments", Field: "assignments", Action: "replace", Before: raw(existing), After: raw(assignments)})
 		}
 	}
-	response.Observation = raw(current)
 	if req.Method == "plan" {
 		return response, nil
 	}
@@ -260,7 +259,6 @@ func (c *client) handle(ctx context.Context, req plugin.Request, cfg configurati
 			return response, errors.New("intune assignments readback differs from requested targeting")
 		}
 	}
-	response.Observation = raw(current)
 	return response, nil
 }
 

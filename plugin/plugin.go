@@ -25,32 +25,23 @@ type Identity struct {
 
 // Artifact is an immutable file leased by the engine, never a writable CAS object.
 type Artifact struct {
-	Path      string `json:"path"`
-	SHA256    string `json:"sha256"`
-	Size      int64  `json:"size"`
-	Filename  string `json:"filename"`
-	MediaType string `json:"media_type,omitempty"`
-	Version   string `json:"version,omitempty"`
+	Path     string `json:"path"`
+	SHA256   string `json:"sha256"`
+	Size     int64  `json:"size"`
+	Filename string `json:"filename"`
+	Version  string `json:"version,omitempty"`
 }
 
-// Request contains one operation. Raw JSON retains absent, null and concrete fields.
+// Request contains one plan or apply operation. Raw JSON retains absent, null and concrete fields.
 // Config contains connection settings, whose credentials belong to the plugin.
 type Request struct {
-	Protocol    int             `json:"protocol"`
-	Method      string          `json:"method"`
-	Identity    Identity        `json:"identity"`
-	Config      json.RawMessage `json:"config,omitempty"`
-	Metadata    json.RawMessage `json:"metadata,omitempty"`
-	Artifact    Artifact        `json:"artifact"`
-	Binding     json.RawMessage `json:"binding,omitempty"`
-	Observation json.RawMessage `json:"observation,omitempty"`
-}
-
-// Descriptor declares the plugin's identity and supported destination formats.
-type Descriptor struct {
-	Name         string   `json:"name"`
-	Version      string   `json:"version"`
-	Capabilities []string `json:"capabilities"`
+	Protocol int             `json:"protocol"`
+	Method   string          `json:"method"`
+	Identity Identity        `json:"identity"`
+	Config   json.RawMessage `json:"config,omitempty"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
+	Artifact Artifact        `json:"artifact"`
+	Binding  json.RawMessage `json:"binding,omitempty"`
 }
 
 // Change is a semantic destination change; empty Changes means no write is needed.
@@ -63,14 +54,13 @@ type Change struct {
 }
 
 // Response carries a plan or the bindings recovered after application.
-// Binding is durable engine state; Observation is transient remote readback.
+// On apply, Binding updates durable engine state: omission preserves it, null
+// clears it, and a value replaces it, even when application returns an error.
 type Response struct {
-	Protocol    int             `json:"protocol"`
-	Descriptor  *Descriptor     `json:"descriptor,omitempty"`
-	Changes     []Change        `json:"changes,omitempty"`
-	Binding     json.RawMessage `json:"binding,omitempty"`
-	Observation json.RawMessage `json:"observation,omitempty"`
-	Error       string          `json:"error,omitempty"`
+	Protocol int             `json:"protocol"`
+	Changes  []Change        `json:"changes,omitempty"`
+	Binding  json.RawMessage `json:"binding,omitempty"`
+	Error    string          `json:"error,omitempty"`
 }
 
 // Handler implements one operation. Each invocation runs in a fresh process.
@@ -85,6 +75,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, handle Handler) err
 	}
 	if request.Protocol != ProtocolVersion {
 		return fmt.Errorf("plugin protocol %d is unsupported", request.Protocol)
+	}
+	if request.Method != "plan" && request.Method != "apply" {
+		return fmt.Errorf("plugin method %q is unsupported", request.Method)
 	}
 	response, err := handle(ctx, request)
 	response.Protocol = ProtocolVersion
@@ -103,8 +96,12 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, handle Handler) err
 }
 
 // Run starts an explicitly selected executable without a shell. Cancellation ends
-// that process; callers own the artifact lease and persist successful bindings.
+// that process; callers own the artifact lease and persist bindings from apply
+// responses, including partial bindings returned alongside an error.
 func Run(ctx context.Context, executable string, request Request) (Response, error) {
+	if request.Method != "plan" && request.Method != "apply" {
+		return Response{}, fmt.Errorf("plugin method %q is unsupported", request.Method)
+	}
 	request.Protocol = ProtocolVersion
 	data, err := json.Marshal(request)
 	if err != nil {

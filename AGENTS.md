@@ -33,7 +33,7 @@ Guidance for agents and humans working in this repository. This file is self-con
 
 - Follow [Effective Go](https://go.dev/doc/effective_go) and [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments). Let `gofmt -s` own formatting.
 - `go.mod` declares the language floor; Mise pins the toolchain used by local tasks and CI. Use modern standard-library constructs supported by the declared version.
-- Put executable composition in `cmd/<app>/main.go` and owned behaviour under `internal`. Keep `main` to configuration, logging, dependency construction, lifecycle, and exit status. Public packages such as `plugin` and `munki` exist for independently built integrations; keep their contracts deliberate.
+- Put executable composition in `cmd/<app>/main.go` and owned behaviour under `internal`. Keep `main` to configuration, logging, dependency construction, lifecycle, and exit status. The public `plugin` package defines the executable destination contract; native destination models and rendering stay internal.
 - Use `github.com/caarlos0/env/v11` for application-owned environment configuration. Parse into one config type, derive and validate in one load boundary, and fail at startup. Document config fields with their purpose and meaningful defaults.
 - Use `github.com/spf13/pflag` for application-owned flags and Cobra when the CLI has commands or more than a small flag surface. Structured files suit user-authored domain configuration; all sources converge on one validation path.
 - Use `log/slog` for diagnostics, configured once at composition. Reserve stdout for command reports and plugin protocol responses; send diagnostics to stderr. Inject `*slog.Logger` only at a genuine reusable boundary.

@@ -8,7 +8,7 @@ import (
 	orderedmap "github.com/pb33f/ordered-map/v2"
 	"github.com/woodleighschool/stemma/internal/intune"
 	"github.com/woodleighschool/stemma/internal/jamf"
-	"github.com/woodleighschool/stemma/munki"
+	"github.com/woodleighschool/stemma/internal/munki"
 )
 
 // Schema generates editor documentation from the same typed fields used at runtime.

@@ -124,7 +124,6 @@ func Handle(ctx context.Context, request plugin.Request) (plugin.Response, error
 	}
 	changes := plan(current, metadata, content, request.Artifact.Filename)
 	response.Changes = changes
-	response.Observation = raw(current)
 	response.Binding = raw(state)
 	if request.Method == "plan" {
 		return response, nil
@@ -193,7 +192,6 @@ func Handle(ctx context.Context, request plugin.Request) (plugin.Response, error
 	}
 	state.PayloadSHA256 = content.sha256
 	response.Binding = raw(state)
-	response.Observation = raw(current)
 	return response, nil
 }
 

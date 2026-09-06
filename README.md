@@ -14,7 +14,7 @@ A reproducible software artifact pipeline, run locally or in CI as one binary.
 - Locked HTTP, GitHub and local inputs, organised by software family
 - Shared preparation, portable PKG and Intune Windows packaging
 - Native Intune, Jamf and Munki destinations
-- Executable plugins, including Woodstar's separately owned integration
+- Additional destinations through plugins
 
 ## 🚀 Usage
 
@@ -44,7 +44,7 @@ Use `package --help` for standalone packaging and `completion` for shell setup.
 ## ⚙️ Configuration
 
 The [generated schema](stemma.schema.json) provides editor validation and hover
-descriptions from Go definitions.
+descriptions.
 
 Keep shared settings in the root and import `software/**/stemma.yaml` for
 software families and their assets. Components apply defaults; named artifacts
@@ -56,7 +56,7 @@ Native metadata retains field ownership: omission preserves existing values,
 Omitted fields inside objects remain unmanaged.
 
 Declare trusted plugin binaries, then run `stemma plugins install` or
-`stemma plugins update`. Woodstar owns [its plugin](https://github.com/woodleighschool/woodstar/tree/main/stemma).
+`stemma plugins update`. Plugins handle `plan` and `apply`.
 Persist `.stemma/state` separately from the disposable cache, or set
 `STEMMA_STATE_DIR`. Credentials are referenced by environment-variable name.
 

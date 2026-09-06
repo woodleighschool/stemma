@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/woodleighschool/stemma/munki"
+	"github.com/woodleighschool/stemma/internal/munki"
 	"howett.net/plist"
 )
 

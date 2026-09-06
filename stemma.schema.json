@@ -1239,7 +1239,7 @@
     },
     "MunkiMetadata": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "$id": "https://github.com/woodleighschool/stemma/munki/metadata",
+      "$id": "https://github.com/woodleighschool/stemma/internal/munki/metadata",
       "properties": {
         "display_name": {
           "type": "string",
