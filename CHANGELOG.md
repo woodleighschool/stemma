@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.1](https://github.com/woodleighschool/stemma/compare/0.1.0...0.1.1) (2026-09-06)
+
+
+### Code Refactoring
+
+* scope Intune clients and simplify native icon rendering ([4bc469f](https://github.com/woodleighschool/stemma/commit/4bc469f7acafcb1c7793acb2cc4b99ce7b4c8a1d))
+* tighten destination plugin boundaries ([0f10fce](https://github.com/woodleighschool/stemma/commit/0f10fcef286158abe1553ce4a73186d5bfac5a84))
+
 ## 0.1.0 (2026-09-06)
 
 
