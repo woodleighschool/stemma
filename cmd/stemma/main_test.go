@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -16,14 +15,18 @@ import (
 	"github.com/woodleighschool/stemma/internal/engine"
 )
 
-func TestCompiledProjectLifecycle(t *testing.T) {
-	binary := filepath.Join(t.TempDir(), "stemma")
-	if runtime.GOOS == "windows" {
-		binary += ".exe"
+func TestMain(m *testing.M) {
+	if os.Getenv("STEMMA_TEST_MAIN") == "1" {
+		main()
+		return
 	}
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, ".")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v\n%s", err, output)
+	os.Exit(m.Run())
+}
+
+func TestCompiledProjectLifecycle(t *testing.T) {
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
 	}
 	installer, err := os.ReadFile("../../internal/apple/testdata/fixture.pkg")
 	if err != nil {
@@ -58,7 +61,7 @@ destinations:
 		t.Helper()
 		arguments := append([]string{"--root", project, "--cache-dir", cache, "--output", "json"}, args...)
 		cmd := exec.CommandContext(t.Context(), binary, arguments...)
-		cmd.Env = append(os.Environ(), "CI=true")
+		cmd.Env = append(os.Environ(), "CI=true", "STEMMA_TEST_MAIN=1")
 		var stderr strings.Builder
 		cmd.Stderr = &stderr
 		output, err := cmd.Output()
