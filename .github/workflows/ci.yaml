@@ -22,13 +22,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-15, windows-2025]
+        os: [ubuntu-24.04, macos-15-intel, windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
-      # Bound compiler memory while loading the generated SDK packages.
-      GOFLAGS: ${{ matrix.os == 'macos-15' && '-p=1' || '' }}
-      GOMAXPROCS: ${{ matrix.os == 'macos-15' && '2' || '' }}
+      # The generated SDK compiler exceeds the 7 GB ARM runner; serialize it on 14 GB Intel.
+      GOFLAGS: ${{ matrix.os == 'macos-15-intel' && '-p=1' || '' }}
+      GOMAXPROCS: ${{ matrix.os == 'macos-15-intel' && '2' || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
