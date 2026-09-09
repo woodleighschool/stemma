@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
-	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.0
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.1
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
 	github.com/ebitengine/purego v0.10.2
