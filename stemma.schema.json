@@ -101,31 +101,6 @@
       ],
       "description": "A typed observed value from exactly one named subject. Missing facts and ambiguous selectors fail before publication."
     },
-    "Fragment": {
-      "properties": {
-        "version": {
-          "type": "integer",
-          "enum": [
-            1
-          ],
-          "description": "Configuration format version. Use 1."
-        },
-        "recipes": {
-          "additionalProperties": {
-            "$ref": "#/$defs/Recipe"
-          },
-          "type": "object",
-          "description": "Named software recipes. Use separate names for platform and architecture variants."
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "version",
-        "recipes"
-      ],
-      "description": "Software-family fragment imported by a Stemma project. Paths are relative to this file."
-    },
     "IntuneConnection": {
       "oneOf": [
         {
@@ -194,7 +169,7 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "description": "Shared Graph connection for Windows and macOS apps. Set metadata.app_id on a recipe to adopt an existing app. Requires Graph DeviceManagementApps.ReadWrite.All for apply."
+      "description": "Shared Graph connection for Windows and macOS apps. Set metadata.app_id on a Software document to adopt an existing app. Requires Graph DeviceManagementApps.ReadWrite.All for apply."
     },
     "IntuneMetadata": {
       "anyOf": [
@@ -234,13 +209,13 @@
                 {
                   "type": "string",
                   "minLength": 1,
-                  "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+                  "description": "Adopt this existing Intune app for this software. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
                 },
                 {
                   "$ref": "#/$defs/FactReference"
                 }
               ],
-              "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+              "description": "Adopt this existing Intune app for this software. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
             },
             "assignments": {
               "anyOf": [
@@ -1012,13 +987,13 @@
                 {
                   "type": "string",
                   "minLength": 1,
-                  "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+                  "description": "Adopt this existing Intune app for this software. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
                 },
                 {
                   "$ref": "#/$defs/FactReference"
                 }
               ],
-              "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+              "description": "Adopt this existing Intune app for this software. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
             },
             "assignments": {
               "anyOf": [
@@ -1658,13 +1633,13 @@
                 {
                   "type": "string",
                   "minLength": 1,
-                  "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+                  "description": "Adopt this existing Intune app for this software. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
                 },
                 {
                   "$ref": "#/$defs/FactReference"
                 }
               ],
-              "description": "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
+              "description": "Adopt this existing Intune app for this software. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."
             },
             "assignments": {
               "anyOf": [
@@ -2286,7 +2261,7 @@
           "title": "#microsoft.graph.macOSPkgApp"
         }
       ],
-      "description": "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG and PKG (beta). Sources are preserved; signing and installer authoring are separate recipe policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."
+      "description": "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG and PKG (beta). Sources are preserved; signing and installer authoring are separate software policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."
     },
     "JamfConnection": {
       "properties": {
@@ -2313,7 +2288,7 @@
         "client_id",
         "client_secret"
       ],
-      "description": "Shared Jamf Pro connection using client credentials and the v1 package API reviewed against Jamf Pro 11.31. Requires package read/write/upload privileges and a distribution configuration that supports package upload. Put package_id in recipe metadata to adopt an existing package."
+      "description": "Shared Jamf Pro connection using client credentials and the v1 package API reviewed against Jamf Pro 11.31. Requires package read/write/upload privileges and a distribution configuration that supports package upload. Put package_id in software metadata to adopt an existing package."
     },
     "JamfMetadata": {
       "properties": {
@@ -2323,13 +2298,13 @@
               "type": "string",
               "maxLength": 20,
               "pattern": "^[1-9][0-9]*$",
-              "description": "Adopt this existing Jamf package ID for this recipe. Must match any saved binding. Omit to discover by Stemma's stable filename marker or create a package."
+              "description": "Adopt this existing Jamf package ID for this software. Must match any saved binding. Omit to discover by Stemma's stable filename marker or create a package."
             },
             {
               "$ref": "#/$defs/FactReference"
             }
           ],
-          "description": "Adopt this existing Jamf package ID for this recipe. Must match any saved binding. Omit to discover by Stemma's stable filename marker or create a package."
+          "description": "Adopt this existing Jamf package ID for this software. Must match any saved binding. Omit to discover by Stemma's stable filename marker or create a package."
         },
         "categoryId": {
           "anyOf": [
@@ -2542,6 +2517,20 @@
       "type": "object",
       "description": "Native Jamf Pro v1 package metadata. Omitted fields are unmanaged; explicit false, zero and empty strings are managed. Only the documented nullable strings accept null. Policies, scope and assignments are unsupported. Content updates retain the package ID and can affect policies that already reference it."
     },
+    "Metadata": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+          "description": "Literal stable identity within the project, independent of the runner environment. Renaming a file does not rename its software or destination bindings."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ]
+    },
     "MunkiMetadata": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
@@ -2668,6 +2657,28 @@
             }
           ],
           "description": "Complete list of Munki item dependencies. Entries are native item names, optionally with version requirements; [] clears the list."
+        },
+        "update_for": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/FactReference"
+                  }
+                ]
+              },
+              "type": "array",
+              "description": "Complete list of Munki items this item updates. Entries are native item names, optionally with version requirements; [] clears the list."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
+          "description": "Complete list of Munki items this item updates. Entries are native item names, optionally with version requirements; [] clears the list."
         },
         "unattended_install": {
           "anyOf": [
@@ -3288,13 +3299,13 @@
           "anyOf": [
             {
               "type": "string",
-              "description": "Stable native Munki name. Defaults to the recipe name when creating a package."
+              "description": "Stable native Munki name. Defaults to the software name when creating a package."
             },
             {
               "$ref": "#/$defs/FactReference"
             }
           ],
-          "description": "Stable native Munki name. Defaults to the recipe name when creating a package."
+          "description": "Stable native Munki name. Defaults to the software name when creating a package."
         },
         "version": {
           "anyOf": [
@@ -3365,58 +3376,59 @@
         "image"
       ]
     },
-    "Project": {
-      "anyOf": [
-        {
-          "required": [
-            "recipes"
-          ]
-        },
-        {
-          "required": [
-            "imports"
-          ]
-        }
-      ],
+    "ProjectDocument": {
       "properties": {
-        "version": {
-          "type": "integer",
-          "enum": [
-            1
-          ],
-          "description": "Configuration format version. Use 1."
-        },
-        "project": {
+        "apiVersion": {
           "type": "string",
-          "description": "Stable project identity used to recover destination bindings. Keep it unchanged when cloning or moving the repository."
+          "enum": [
+            "stemma/v1alpha1"
+          ]
         },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "Project"
+          ]
+        },
+        "metadata": {
+          "$ref": "#/$defs/Metadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/ProjectSpec"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ]
+    },
+    "ProjectSpec": {
+      "properties": {
         "imports": {
           "items": {
             "type": "string"
           },
           "type": "array",
-          "description": "Project-relative software-family files, for example software/**/stemma.yaml. Every pattern must match."
+          "minItems": 1,
+          "description": "Project-relative Software document paths or globs, such as software/**/*.yaml. Every pattern must match."
         },
         "components": {
           "additionalProperties": {
-            "$ref": "#/$defs/Recipe"
+            "$ref": "#/$defs/Software"
           },
           "type": "object",
-          "description": "Reusable local recipe components. Resolved inherited fields retain their metadata ownership."
-        },
-        "recipes": {
-          "additionalProperties": {
-            "$ref": "#/$defs/Recipe"
-          },
-          "type": "object",
-          "description": "Named software recipes. Use separate names for platform and architecture variants."
+          "description": "Reusable software defaults. Maps merge recursively; lists and null replace inherited values."
         },
         "destinations": {
           "additionalProperties": {
             "$ref": "#/$defs/Destination"
           },
           "type": "object",
-          "description": "Named connections. Recipe destination entries own only explicitly present native metadata fields."
+          "description": "Named connections, separate from each Software document's native destination metadata."
         },
         "plugins": {
           "additionalProperties": {
@@ -3429,19 +3441,25 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "version",
-        "project"
+        "imports"
       ]
     },
-    "Recipe": {
+    "Software": {
       "properties": {
         "extends": {
           "type": "string",
           "description": "Local component name. Maps merge recursively; lists and null replace inherited values."
         },
         "source": {
-          "$ref": "#/$defs/Source",
-          "description": "Acquisition input. Its lock fingerprint excludes preparation and destination metadata."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Source"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional acquisition input. Omit when operations and destinations need no acquired artifact. Its lock fingerprint excludes preparation and destination metadata."
         },
         "platform": {
           "type": "string",
@@ -3508,6 +3526,139 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "SoftwareDocument": {
+      "properties": {
+        "apiVersion": {
+          "type": "string",
+          "enum": [
+            "stemma/v1alpha1"
+          ]
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "Software"
+          ]
+        },
+        "metadata": {
+          "$ref": "#/$defs/Metadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/Software",
+          "allOf": [
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "source": {
+                        "type": "null"
+                      }
+                    },
+                    "required": [
+                      "source"
+                    ]
+                  },
+                  {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "source"
+                          ]
+                        },
+                        {
+                          "properties": {
+                            "extends": {
+                              "minLength": 1
+                            }
+                          },
+                          "required": [
+                            "extends"
+                          ]
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "then": {
+                "properties": {
+                  "select": {
+                    "enum": [
+                      ""
+                    ]
+                  },
+                  "artifacts": {
+                    "maxProperties": 0
+                  },
+                  "steps": {
+                    "items": {
+                      "properties": {
+                        "inputs": {
+                          "additionalProperties": {
+                            "not": {
+                              "enum": [
+                                "source",
+                                "prepared"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "verification": {
+                    "properties": {
+                      "subject": {
+                        "not": {
+                          "enum": [
+                            "source",
+                            "prepared"
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "destinations": {
+                    "additionalProperties": {
+                      "properties": {
+                        "artifact": {
+                          "not": {
+                            "enum": [
+                              "source",
+                              "prepared"
+                            ]
+                          }
+                        },
+                        "inputs": {
+                          "additionalProperties": {
+                            "not": {
+                              "enum": [
+                                "source",
+                                "prepared"
+                              ]
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ]
+    },
     "Source": {
       "properties": {
         "type": {
@@ -3525,11 +3676,15 @@
             "type": "string"
           },
           "type": "array",
-          "description": "Local files and glob patterns relative to this software-family file. Matched bytes, modes and symlinks determine content identity."
+          "description": "Local files and glob patterns relative to this Software document. Matched bytes, modes and symlinks determine content identity."
         },
         "url": {
           "type": "string",
           "description": "Stable HTTP(S) URL without embedded credentials or expiring query parameters."
+        },
+        "match": {
+          "type": "string",
+          "description": "HTTP download-page regular expression matching one distinct complete artifact URL. HTML entities are decoded before matching. The resolved URL is pinned in the source lock."
         },
         "path": {
           "type": "string",
@@ -3642,7 +3797,7 @@
         },
         "certificate_sha256": {
           "type": "string",
-          "description": "Exact SHA-256 pin of the signer DER certificate. PKG support checks the signature; this does not claim CA trust or revocation assessment."
+          "description": "Exact SHA-256 pin of the authenticated PKG or supported Mach-O signer DER certificate. This does not claim CA trust or revocation assessment."
         },
         "platform": {
           "type": "boolean",
@@ -3655,12 +3810,12 @@
   },
   "oneOf": [
     {
-      "$ref": "#/$defs/Project"
+      "$ref": "#/$defs/ProjectDocument"
     },
     {
-      "$ref": "#/$defs/Fragment"
+      "$ref": "#/$defs/SoftwareDocument"
     }
   ],
-  "title": "Stemma project",
-  "description": "Reproducible source recipes and native destination metadata. String values support whole-value ${VAR} environment placeholders. Omitted metadata fields remain unmanaged; null clears only supported fields."
+  "title": "Stemma documents",
+  "description": "One Project or Software resource per file. String values under spec support whole-value ${VAR} environment placeholders. Omitted metadata fields remain unmanaged; null clears only supported fields."
 }

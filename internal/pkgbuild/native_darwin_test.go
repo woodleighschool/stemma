@@ -3,9 +3,11 @@ package pkgbuild
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -65,6 +67,37 @@ func TestNativeACLRejected(t *testing.T) {
 	native(t, "/bin/chmod", "+a", "everyone allow read", name)
 	if err := Build(t.Context(), root, filepath.Join(t.TempDir(), "out.pkg"), opts); err == nil {
 		t.Fatal("ACL silently lost")
+	}
+}
+
+func TestNativeLargeAppPayloadAndBOM(t *testing.T) {
+	root, opts := largeFixture(t)
+	output := filepath.Join(t.TempDir(), "large.pkg")
+	if err := Build(t.Context(), root, output, opts); err != nil {
+		t.Fatal(err)
+	}
+	expanded := filepath.Join(t.TempDir(), "expanded")
+	native(t, "/usr/sbin/pkgutil", "--expand-full", output, expanded)
+	source := filepath.Join(root, "Fixture.app/Contents/MacOS/large")
+	extracted := filepath.Join(expanded, "Payload/Contents/MacOS/large")
+	if fileDigest(t, source) != fileDigest(t, extracted) {
+		t.Fatal("native extraction changed large executable bytes")
+	}
+	info, err := os.Stat(extracted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 || !info.ModTime().Equal(opts.Timestamp) {
+		t.Fatalf("mode %v, modified %v", info.Mode(), info.ModTime())
+	}
+	checksum := strings.Fields(native(t, "/usr/bin/cksum", source))[0]
+	if _, err := strconv.ParseUint(checksum, 10, 32); err != nil {
+		t.Fatal(err)
+	}
+	bom := native(t, "/usr/bin/lsbom", filepath.Join(expanded, "Bom"))
+	want := fmt.Sprintf("./Contents/MacOS/large\t100755\t0/0\t%d\t%s", info.Size(), checksum)
+	if !strings.Contains(bom, want) {
+		t.Fatalf("BOM does not match independently computed large-file size/checksum: %s", bom)
 	}
 }
 

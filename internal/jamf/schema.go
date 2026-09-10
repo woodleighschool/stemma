@@ -8,12 +8,12 @@ import (
 	orderedmap "github.com/pb33f/ordered-map/v2"
 )
 
-// MetadataSchema describes supported native package fields and recipe adoption.
+// MetadataSchema describes supported native package fields and software adoption.
 func MetadataSchema() *jsonschema.Schema {
 	properties := orderedmap.New[string, *jsonschema.Schema]()
 	properties.Set("package_id", &jsonschema.Schema{
 		Type: "string", Pattern: "^[1-9][0-9]*$", MaxLength: new(uint64(20)),
-		Description: "Adopt this existing Jamf package ID for this recipe. Must match any saved binding. Omit to discover by Stemma's stable filename marker or create a package.",
+		Description: "Adopt this existing Jamf package ID for this software. Must match any saved binding. Omit to discover by Stemma's stable filename marker or create a package.",
 	})
 	for _, key := range slices.Sorted(maps.Keys(managedFields)) {
 		rule := managedFields[key]
@@ -37,11 +37,11 @@ func MetadataSchema() *jsonschema.Schema {
 	}
 }
 
-// ConnectionSchema describes shared Jamf credentials without recipe adoption.
+// ConnectionSchema describes shared Jamf credentials without software adoption.
 func ConnectionSchema() *jsonschema.Schema {
 	reflector := &jsonschema.Reflector{DoNotReference: true}
 	schema := reflector.Reflect(configuration{})
 	schema.ID, schema.Version = "", ""
-	schema.Description = "Shared Jamf Pro connection using client credentials and the v1 package API reviewed against Jamf Pro 11.31. Requires package read/write/upload privileges and a distribution configuration that supports package upload. Put package_id in recipe metadata to adopt an existing package."
+	schema.Description = "Shared Jamf Pro connection using client credentials and the v1 package API reviewed against Jamf Pro 11.31. Requires package read/write/upload privileges and a distribution configuration that supports package upload. Put package_id in software metadata to adopt an existing package."
 	return schema
 }

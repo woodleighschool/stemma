@@ -2,6 +2,7 @@ package lockfile
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +18,56 @@ import (
 	"github.com/woodleighschool/stemma/internal/source"
 	"go.yaml.in/yaml/v4"
 )
+
+func TestSourceFreeSoftwareLeavesReviewedInputsUnchanged(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "installer.pkg"), []byte("fixture bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store, err := cas.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := config.Project{Project: "test", Software: map[string]config.Software{
+		"acquired": {Source: &config.Source{Type: "file", Path: "installer.pkg"}},
+		"native":   {},
+	}}
+	manager := source.New(store, root, false)
+	first, err := Prepare(t.Context(), p, manager, Options{})
+	if err != nil || len(first.File.Software) != 1 {
+		t.Fatalf("source-free software created an input: %+v: %v", first, err)
+	}
+	filename := filepath.Join(root, "stemma.lock.yaml")
+	before, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Software["native"] = config.Software{Destinations: map[string]map[string]any{"repo": {"description": "edited"}}}
+	if result, err := Prepare(t.Context(), p, manager, Options{Frozen: true, Offline: true}); err != nil || result.Changed {
+		t.Fatalf("metadata change invalidated reviewed inputs: %+v: %v", result, err)
+	}
+	after, err := os.ReadFile(filename)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("source-free metadata rewrote source locks: %v", err)
+	}
+	p.Software["acquired"] = config.Software{}
+	if _, err := Prepare(t.Context(), p, manager, Options{Frozen: true}); err == nil {
+		t.Fatal("frozen run silently removed a stale source entry")
+	}
+	if result, err := Prepare(t.Context(), p, manager, Options{}); err != nil || !result.Changed || len(result.File.Software) != 0 {
+		t.Fatalf("removing the final source retained obsolete state: %+v: %v", result, err)
+	}
+	if _, err := os.Stat(filename); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty reviewed-input state remains on disk: %v", err)
+	}
+	if _, err := Prepare(t.Context(), p, manager, Options{Frozen: true, Offline: true}); err != nil {
+		t.Fatalf("source-free frozen run needs no lock: %v", err)
+	}
+	p.Plugins = map[string]config.Plugin{"fixture": {Image: "registry.example/plugin:v1", Trusted: true}}
+	if _, err := Prepare(t.Context(), p, manager, Options{Frozen: true}); err == nil {
+		t.Fatal("source-free software bypassed a required plugin lock")
+	}
+}
 
 func TestReleaseChangeRetainsIdenticalContentTimestamp(t *testing.T) {
 	release := "v1.2.3"
@@ -35,14 +86,14 @@ func TestReleaseChangeRetainsIdenticalContentTimestamp(t *testing.T) {
 	}
 	m := source.New(store, root, false)
 	m.Client.Transport = releaseTransport{server: server}
-	p := config.Project{Version: 1, Project: "test", Recipes: map[string]config.Recipe{"app": {Source: config.Source{Type: "github", Repository: "example/app", Release: "latest", Asset: "App.pkg"}}}}
+	p := config.Project{Project: "test", Software: map[string]config.Software{"app": {Source: &config.Source{Type: "github", Repository: "example/app", Release: "latest", Asset: "App.pkg"}}}}
 	first, err := Prepare(t.Context(), p, m, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := first.File.Recipes["app"]
+	entry := first.File.Software["app"]
 	entry.ResolvedAt = time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
-	first.File.Recipes["app"] = entry
+	first.File.Software["app"] = entry
 	data, err := yaml.Marshal(first.File)
 	if err != nil {
 		t.Fatal(err)
@@ -55,12 +106,12 @@ func TestReleaseChangeRetainsIdenticalContentTimestamp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	current := refreshed.File.Recipes["app"]
+	current := refreshed.File.Software["app"]
 	if !refreshed.Changed || current.Release != release || current.Artifact != entry.Artifact || current.ResolvedAt != entry.ResolvedAt {
 		t.Fatalf("release labels changed content identity or timestamp: %+v", current)
 	}
 	warm, err := Prepare(t.Context(), p, m, Options{Frozen: true})
-	if err != nil || warm.Changed || warm.File.Recipes["app"].Release != release {
+	if err != nil || warm.Changed || warm.File.Software["app"].Release != release {
 		t.Fatalf("release did not survive the lock round trip: %+v, %v", warm, err)
 	}
 }
@@ -89,7 +140,7 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := source.New(store, root, false)
-	p := config.Project{Version: 1, Project: "test", Recipes: map[string]config.Recipe{"app": {Source: config.Source{Type: "http", URL: server.URL + "/app.pkg"}}}}
+	p := config.Project{Project: "test", Software: map[string]config.Software{"app": {Source: &config.Source{Type: "http", URL: server.URL + "/app.pkg"}}}}
 	if _, err := Prepare(t.Context(), p, m, Options{Frozen: true}); err == nil {
 		t.Fatal("frozen run accepted missing lockfile")
 	}
@@ -100,12 +151,12 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	if !first.Changed || requests.Load() != 1 {
 		t.Fatalf("first run %#v requests=%d", first, requests.Load())
 	}
-	if first.File.Recipes["app"].ResolvedAt.IsZero() {
+	if first.File.Software["app"].ResolvedAt.IsZero() {
 		t.Fatal("source lock has no stable package timestamp")
 	}
-	entry := first.File.Recipes["app"]
+	entry := first.File.Software["app"]
 	entry.ResolvedAt = time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
-	first.File.Recipes["app"] = entry
+	first.File.Software["app"] = entry
 	data, err := yaml.Marshal(first.File)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +172,7 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 		t.Fatal("warm run downloaded or changed lock")
 	}
 	refreshed, err := Prepare(t.Context(), p, m, Options{Refresh: true})
-	if err != nil || refreshed.Changed || refreshed.File.Recipes["app"].ResolvedAt != entry.ResolvedAt {
+	if err != nil || refreshed.Changed || refreshed.File.Software["app"].ResolvedAt != entry.ResolvedAt {
 		t.Fatalf("unchanged refresh replaced source timestamp: %+v, %v", refreshed, err)
 	}
 	m.Offline = true
@@ -134,7 +185,7 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload.Store("replaced installer")
-	object, err := store.Path(first.File.Recipes["app"].Artifact)
+	object, err := store.Path(first.File.Software["app"].Artifact)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,10 +206,10 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.File.Recipes["app"].Artifact == first.File.Recipes["app"].Artifact {
+	if updated.File.Software["app"].Artifact == first.File.Software["app"].Artifact {
 		t.Fatal("refresh did not digest new bytes")
 	}
-	if !updated.File.Recipes["app"].ResolvedAt.After(entry.ResolvedAt) {
+	if !updated.File.Software["app"].ResolvedAt.After(entry.ResolvedAt) {
 		t.Fatal("changed bytes retained old source timestamp")
 	}
 	if _, err := Prepare(t.Context(), p, m, Options{Ignore: true}); err != nil {
@@ -187,8 +238,8 @@ func TestSourceTokenRotationPreservesFrozenLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := source.New(store, root, false)
-	project := config.Project{Version: 1, Project: "test", Recipes: map[string]config.Recipe{
-		"app": {Source: config.Source{Type: "http", URL: server.URL + "/app.pkg", Token: "first-token"}},
+	project := config.Project{Project: "test", Software: map[string]config.Software{
+		"app": {Source: &config.Source{Type: "http", URL: server.URL + "/app.pkg", Token: "first-token"}},
 	}}
 	first, err := Prepare(t.Context(), project, manager, Options{})
 	if err != nil {
@@ -201,7 +252,7 @@ func TestSourceTokenRotationPreservesFrozenLock(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "stemma.lock.yaml"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	object, err := store.Path(first.File.Recipes["app"].Artifact)
+	object, err := store.Path(first.File.Software["app"].Artifact)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,11 +260,11 @@ func TestSourceTokenRotationPreservesFrozenLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	token.Store("rotated-token")
-	recipe := project.Recipes["app"]
-	recipe.Source.Token = "rotated-token"
-	project.Recipes["app"] = recipe
+	software := project.Software["app"]
+	software.Source.Token = "rotated-token"
+	project.Software["app"] = software
 	second, err := Prepare(t.Context(), project, manager, Options{Frozen: true})
-	if err != nil || second.Changed || second.CacheHits["app"] || second.File.Recipes["app"].ResolvedAt != first.File.Recipes["app"].ResolvedAt {
+	if err != nil || second.Changed || second.CacheHits["app"] || second.File.Software["app"].ResolvedAt != first.File.Software["app"].ResolvedAt {
 		t.Fatalf("token rotation invalidated a frozen lock or prevented acquisition: %v", err)
 	}
 }
@@ -235,7 +286,7 @@ func TestLocalChangesRehashWarmLocks(t *testing.T) {
 			if kind == "local" {
 				s.Path, s.Include = "", []string{"postinstall"}
 			}
-			p := config.Project{Version: 1, Project: "test", Recipes: map[string]config.Recipe{"app": {Source: s}}}
+			p := config.Project{Project: "test", Software: map[string]config.Software{"app": {Source: &s}}}
 			first, err := Prepare(t.Context(), p, m, Options{})
 			if err != nil {
 				t.Fatal(err)
@@ -267,7 +318,7 @@ func TestLocalChangesRehashWarmLocks(t *testing.T) {
 			}
 			m.Offline = false
 			updated, err := Prepare(t.Context(), p, m, Options{})
-			if err != nil || !updated.Changed || updated.File.Recipes["app"].Artifact == first.File.Recipes["app"].Artifact {
+			if err != nil || !updated.Changed || updated.File.Software["app"].Artifact == first.File.Software["app"].Artifact {
 				t.Fatalf("unfrozen run did not acquire local changes: %#v, %v", updated, err)
 			}
 			warm, err := Prepare(t.Context(), p, m, Options{Frozen: true})

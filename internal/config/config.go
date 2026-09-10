@@ -1,4 +1,4 @@
-// Package config loads strict project configuration and resolves local recipe composition.
+// Package config loads project and software documents and resolves local composition.
 package config
 
 import (
@@ -25,21 +25,49 @@ import (
 	"oras.land/oras-go/v2/registry"
 )
 
-// Project is the resolved configuration of a Stemma root.
+// Project is resolved configuration, rather than an authored document.
 type Project struct {
-	Version      int                    `yaml:"version" json:"version" jsonschema:"enum=1" jsonschema_description:"Configuration format version. Use 1."`
-	Project      string                 `yaml:"project" json:"project" jsonschema_description:"Stable project identity used to recover destination bindings. Keep it unchanged when cloning or moving the repository."`
-	Imports      []string               `yaml:"imports,omitempty" json:"imports,omitempty" jsonschema_description:"Project-relative software-family files, for example software/**/stemma.yaml. Every pattern must match."`
-	Components   map[string]Recipe      `yaml:"components,omitempty" json:"components,omitempty" jsonschema_description:"Reusable local recipe components. Resolved inherited fields retain their metadata ownership."`
-	Recipes      map[string]Recipe      `yaml:"recipes" json:"recipes" jsonschema_description:"Named software recipes. Use separate names for platform and architecture variants."`
-	Destinations map[string]Destination `yaml:"destinations,omitempty" json:"destinations,omitempty" jsonschema_description:"Named connections. Recipe destination entries own only explicitly present native metadata fields."`
+	Project      string                 `json:"project"`
+	Imports      []string               `json:"imports"`
+	Components   map[string]Software    `json:"components,omitempty"`
+	Destinations map[string]Destination `json:"destinations,omitempty"`
+	Plugins      map[string]Plugin      `json:"plugins,omitempty"`
+	Software     map[string]Software    `json:"software"`
+}
+
+// Metadata identifies a document independently of its filename.
+type Metadata struct {
+	Name string `yaml:"name" json:"name" jsonschema_description:"Literal stable identity within the project, independent of the runner environment. Renaming a file does not rename its software or destination bindings."`
+}
+
+// ProjectDocument owns repository composition and destination connections.
+type ProjectDocument struct {
+	APIVersion string      `yaml:"apiVersion" json:"apiVersion" jsonschema:"enum=stemma/v1alpha1"`
+	Kind       string      `yaml:"kind" json:"kind" jsonschema:"enum=Project"`
+	Metadata   Metadata    `yaml:"metadata" json:"metadata"`
+	Spec       ProjectSpec `yaml:"spec" json:"spec"`
+}
+
+// ProjectSpec contains shared settings, without inline software definitions.
+type ProjectSpec struct {
+	Imports      []string               `yaml:"imports" json:"imports" jsonschema:"minItems=1" jsonschema_description:"Project-relative Software document paths or globs, such as software/**/*.yaml. Every pattern must match."`
+	Components   map[string]Software    `yaml:"components,omitempty" json:"components,omitempty" jsonschema_description:"Reusable software defaults. Maps merge recursively; lists and null replace inherited values."`
+	Destinations map[string]Destination `yaml:"destinations,omitempty" json:"destinations,omitempty" jsonschema_description:"Named connections, separate from each Software document's native destination metadata."`
 	Plugins      map[string]Plugin      `yaml:"plugins,omitempty" json:"plugins,omitempty" jsonschema_description:"Explicitly trusted OCI plugin images, locked by release index digest."`
 }
 
-// Recipe describes acquisition and selection independently of delivery metadata.
-type Recipe struct {
+// SoftwareDocument owns one managed item, including its acquisition and delivery.
+type SoftwareDocument struct {
+	APIVersion string   `yaml:"apiVersion" json:"apiVersion" jsonschema:"enum=stemma/v1alpha1"`
+	Kind       string   `yaml:"kind" json:"kind" jsonschema:"enum=Software"`
+	Metadata   Metadata `yaml:"metadata" json:"metadata"`
+	Spec       Software `yaml:"spec" json:"spec"`
+}
+
+// Software describes acquisition and selection independently of delivery metadata.
+type Software struct {
 	Extends      string                     `yaml:"extends,omitempty" json:"extends,omitempty" jsonschema_description:"Local component name. Maps merge recursively; lists and null replace inherited values."`
-	Source       Source                     `yaml:"source" json:"source" jsonschema_description:"Acquisition input. Its lock fingerprint excludes preparation and destination metadata."`
+	Source       *Source                    `yaml:"source,omitempty" json:"source,omitempty" jsonschema_description:"Optional acquisition input. Omit when operations and destinations need no acquired artifact. Its lock fingerprint excludes preparation and destination metadata."`
 	Platform     string                     `yaml:"platform,omitempty" json:"platform,omitempty" jsonschema_description:"Target software platform, independent of the runner operating system."`
 	Arch         string                     `yaml:"arch,omitempty" json:"arch,omitempty" jsonschema_description:"Target architecture. Universal is an explicit vendor artifact containing multiple architectures."`
 	Select       string                     `yaml:"select,omitempty" json:"select,omitempty" jsonschema_description:"Exact relative payload path within an archive. Required when several plausible payloads exist."`
@@ -47,7 +75,7 @@ type Recipe struct {
 	Subjects     map[string]SubjectSelector `yaml:"subjects,omitempty" json:"subjects,omitempty" jsonschema_description:"Named selections of observed subjects for explicit fact references. Referenced selectors must match exactly one subject in the consumer input; declarations do not change delivery or detection."`
 	Artifacts    map[string]Artifact        `yaml:"artifacts,omitempty" json:"artifacts,omitempty" jsonschema_description:"Named reproducible packages derived from the prepared source. Refer to a package as artifacts/name."`
 	Steps        []Step                     `yaml:"steps,omitempty" json:"steps,omitempty" jsonschema_description:"Sequential operation invocations with named inputs and outputs. A step may consume only original inputs, declared artifacts or outputs of preceding steps."`
-	Destinations map[string]map[string]any  `yaml:"destinations,omitempty" json:"destinations,omitempty" jsonschema_description:"Named connections. Recipe destination entries own only explicitly present native metadata fields."`
+	Destinations map[string]map[string]any  `yaml:"destinations,omitempty" json:"destinations,omitempty" jsonschema_description:"Named connections. Software destination entries own only explicitly present native metadata fields."`
 }
 
 // Step invokes an operation using named artifact inputs.
@@ -81,9 +109,10 @@ type Artifact struct {
 // Source specifies one acquisition provider.
 type Source struct {
 	Type       string   `yaml:"type" json:"type" jsonschema:"enum=http,enum=github,enum=file,enum=local" jsonschema_description:"Source provider. Unknown values are rejected."`
-	Include    []string `yaml:"include,omitempty" json:"include,omitempty" jsonschema_description:"Local files and glob patterns relative to this software-family file. Matched bytes, modes and symlinks determine content identity."`
+	Include    []string `yaml:"include,omitempty" json:"include,omitempty" jsonschema_description:"Local files and glob patterns relative to this Software document. Matched bytes, modes and symlinks determine content identity."`
 	Base       string   `yaml:"-" json:"base,omitempty"`
 	URL        string   `yaml:"url,omitempty" json:"url,omitempty" jsonschema_description:"Stable HTTP(S) URL without embedded credentials or expiring query parameters."`
+	Match      string   `yaml:"match,omitempty" json:"match,omitempty" jsonschema_description:"HTTP download-page regular expression matching one distinct complete artifact URL. HTML entities are decoded before matching. The resolved URL is pinned in the source lock."`
 	Path       string   `yaml:"path,omitempty" json:"path,omitempty" jsonschema_description:"Filesystem path. Source paths must stay within the Stemma project."`
 	Repository string   `yaml:"repository,omitempty" json:"repository,omitempty" jsonschema_description:"GitHub repository in owner/name form."`
 	Release    string   `yaml:"release,omitempty" json:"release,omitempty" jsonschema_description:"GitHub release tag or latest. New releases are resolved only during explicit updates or permitted missing lock resolution."`
@@ -100,11 +129,11 @@ type Verification struct {
 	Signature         bool   `yaml:"signature,omitempty" json:"signature,omitempty" jsonschema_description:"Require a cryptographically valid signature, separately from signer trust."`
 	Resources         bool   `yaml:"resources,omitempty" json:"resources,omitempty" jsonschema_description:"Require sealed application resources. Unsupported nested-code layouts fail closed."`
 	Identity          bool   `yaml:"identity,omitempty" json:"identity,omitempty" jsonschema_description:"Require authenticated signer identity using an implemented trust policy."`
-	CertificateSHA256 string `yaml:"certificate_sha256,omitempty" json:"certificate_sha256,omitempty" jsonschema_description:"Exact SHA-256 pin of the signer DER certificate. PKG support checks the signature; this does not claim CA trust or revocation assessment."`
+	CertificateSHA256 string `yaml:"certificate_sha256,omitempty" json:"certificate_sha256,omitempty" jsonschema_description:"Exact SHA-256 pin of the authenticated PKG or supported Mach-O signer DER certificate. This does not claim CA trust or revocation assessment."`
 	Platform          bool   `yaml:"platform,omitempty" json:"platform,omitempty" jsonschema_description:"Require native OS policy assessment. Unsupported on portable verifier implementations."`
 }
 
-// Destination keeps connection settings separate from native recipe metadata.
+// Destination keeps connection settings separate from native software metadata.
 type Destination struct {
 	Operation string         `yaml:"operation" json:"operation" jsonschema_description:"Registered destination operation, such as munki, intune or jamf. Trusted executable plugins register their own operation names."`
 	Path      string         `yaml:"path,omitempty" json:"path,omitempty" jsonschema_description:"Local Munki repository path. Other operations use config for connection settings."`
@@ -119,26 +148,6 @@ type Plugin struct {
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 var subjectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,127}$`)
-
-// Parse expands environment placeholders in string values and rejects unknown
-// fields, multiple documents, aliases and invalid composition.
-func Parse(data []byte) (Project, error) {
-	var p Project
-	document, err := parseConfig(data, &p)
-	if err != nil {
-		return p, err
-	}
-	if len(p.Imports) != 0 {
-		return p, errors.New("imports require loading a project file")
-	}
-	components, _ := document["components"].(map[string]any)
-	recipes, _ := document["recipes"].(map[string]any)
-	p.Recipes = map[string]Recipe{}
-	if err := addRecipes(&p, recipes, components, "."); err != nil {
-		return p, err
-	}
-	return p, p.Validate()
-}
 
 func parseDocument(data []byte, value any) (map[string]any, error) {
 	if len(data) > 4<<20 {
@@ -166,38 +175,36 @@ func parseDocument(data []byte, value any) (map[string]any, error) {
 	return document, nil
 }
 
-func addRecipes(p *Project, recipes, components map[string]any, base string) error {
-	for name, raw := range recipes {
-		if _, exists := p.Recipes[name]; exists {
-			return fmt.Errorf("conflicting recipe ID %q", name)
-		}
-		resolved, err := resolve(raw, components, nil)
-		if err != nil {
-			return fmt.Errorf("recipe %s: %w", name, err)
-		}
-		encoded, err := yaml.Marshal(resolved)
-		if err != nil {
-			return err
-		}
-		var recipe Recipe
-		if err := decodeStrict(encoded, &recipe); err != nil {
-			return err
-		}
-		if recipe.Source.Type == "file" {
-			filename := recipe.Source.Path
-			if filename == "" || strings.HasPrefix(filename, "/") || strings.ContainsAny(filename, "\\:\x00\r\n") {
-				return fmt.Errorf("recipe %s: file source path must be relative", name)
-			}
-			recipe.Source.Path = path.Join(base, filename)
-			if !safeRelative(recipe.Source.Path) {
-				return fmt.Errorf("recipe %s: file source path must remain within the project", name)
-			}
-		}
-		if recipe.Source.Type == "local" {
-			recipe.Source.Base = base
-		}
-		p.Recipes[name] = recipe
+func addSoftware(p *Project, name string, raw any, components map[string]any, base string) error {
+	if _, exists := p.Software[name]; exists {
+		return fmt.Errorf("conflicting software ID %q", name)
 	}
+	resolved, err := resolve(raw, components, nil)
+	if err != nil {
+		return fmt.Errorf("software %s: %w", name, err)
+	}
+	encoded, err := yaml.Marshal(resolved)
+	if err != nil {
+		return err
+	}
+	var software Software
+	if err := decodeStrict(encoded, &software); err != nil {
+		return err
+	}
+	if software.Source != nil && software.Source.Type == "file" {
+		filename := software.Source.Path
+		if filename == "" || strings.HasPrefix(filename, "/") || strings.ContainsAny(filename, "\\:\x00\r\n") {
+			return fmt.Errorf("software %s: file source path must be relative", name)
+		}
+		software.Source.Path = path.Join(base, filename)
+		if !safeRelative(software.Source.Path) {
+			return fmt.Errorf("software %s: file source path must remain within the project", name)
+		}
+	}
+	if software.Source != nil && software.Source.Type == "local" {
+		software.Source.Base = base
+	}
+	p.Software[name] = software
 	return nil
 }
 
@@ -209,7 +216,7 @@ func decodeStrict(data []byte, value any) error {
 
 func checkNode(n *yaml.Node) error {
 	if n.Kind == yaml.AliasNode || n.Anchor != "" {
-		return errors.New("YAML aliases are not supported; use recipe components")
+		return errors.New("YAML aliases are not supported; use software components")
 	}
 	if n.Kind == yaml.MappingNode {
 		seen := map[string]bool{}
@@ -235,7 +242,7 @@ func checkNode(n *yaml.Node) error {
 func resolve(raw any, components map[string]any, stack []string) (map[string]any, error) {
 	m, ok := raw.(map[string]any)
 	if !ok {
-		return nil, errors.New("recipe must be a mapping")
+		return nil, errors.New("software must be a mapping")
 	}
 	parent, _ := m["extends"].(string)
 	base := map[string]any{}
@@ -285,101 +292,102 @@ func (p Project) Validate() error {
 	if _, err := json.Marshal(p); err != nil {
 		return fmt.Errorf("configuration must contain JSON-compatible values: %w", err)
 	}
-	if p.Version != 1 {
-		return errors.New("version must be 1")
-	}
 	if !namePattern.MatchString(p.Project) {
 		return errors.New("project must be a stable name containing letters, digits, dots, underscores or hyphens")
 	}
-	if len(p.Recipes) == 0 {
-		return errors.New("recipes must not be empty")
+	if len(p.Software) == 0 {
+		return errors.New("software must not be empty")
 	}
-	for name, r := range p.Recipes {
+	for name, r := range p.Software {
 		if !namePattern.MatchString(name) {
-			return fmt.Errorf("invalid recipe name %q", name)
+			return fmt.Errorf("invalid software name %q", name)
 		}
-		if err := r.Source.Validate(); err != nil {
-			return fmt.Errorf("recipe %s: %w", name, err)
+		if r.Source != nil {
+			if err := r.Source.Validate(); err != nil {
+				return fmt.Errorf("software %s: %w", name, err)
+			}
+		} else if r.Select != "" || len(r.Artifacts) != 0 {
+			return fmt.Errorf("software %s: select and derived artifacts require a source", name)
 		}
 		if r.Platform != "" && r.Platform != "darwin" && r.Platform != "linux" && r.Platform != "windows" {
-			return fmt.Errorf("recipe %s: unsupported platform", name)
+			return fmt.Errorf("software %s: unsupported platform", name)
 		}
 		if r.Arch != "" && r.Arch != "amd64" && r.Arch != "arm64" && r.Arch != "universal" {
-			return fmt.Errorf("recipe %s: unsupported architecture", name)
+			return fmt.Errorf("software %s: unsupported architecture", name)
 		}
 		if r.Select != "" && !filepath.IsLocal(filepath.FromSlash(r.Select)) {
-			return fmt.Errorf("recipe %s: select must be a relative path", name)
+			return fmt.Errorf("software %s: select must be a relative path", name)
 		}
 		if r.Verification.CertificateSHA256 != "" && !ValidDigest(r.Verification.CertificateSHA256) {
-			return fmt.Errorf("recipe %s: invalid certificate SHA-256", name)
+			return fmt.Errorf("software %s: invalid certificate SHA-256", name)
 		}
 		for artifact, value := range r.Artifacts {
 			if !namePattern.MatchString(artifact) {
-				return fmt.Errorf("recipe %s: invalid artifact name %q", name, artifact)
+				return fmt.Errorf("software %s: invalid artifact name %q", name, artifact)
 			}
 			if err := value.Validate(); err != nil {
-				return fmt.Errorf("recipe %s artifact %s: %w", name, artifact, err)
+				return fmt.Errorf("software %s artifact %s: %w", name, artifact, err)
 			}
 		}
 		for subject, selector := range r.Subjects {
 			if !subjectNamePattern.MatchString(subject) {
-				return fmt.Errorf("recipe %s: subject name %q must contain lowercase letters, digits, underscores or hyphens", name, subject)
+				return fmt.Errorf("software %s: subject name %q must contain lowercase letters, digits, underscores or hyphens", name, subject)
 			}
 			if err := selector.Validate(); err != nil {
-				return fmt.Errorf("recipe %s subject %s: %w", name, subject, err)
+				return fmt.Errorf("software %s subject %s: %w", name, subject, err)
 			}
 		}
 		steps := make(map[string]bool, len(r.Steps))
 		for _, step := range r.Steps {
 			if !namePattern.MatchString(step.Name) || step.Name == "source" || step.Name == "prepared" || step.Name == "artifacts" {
-				return fmt.Errorf("recipe %s: invalid or reserved step name %q", name, step.Name)
+				return fmt.Errorf("software %s: invalid or reserved step name %q", name, step.Name)
 			}
 			if steps[step.Name] {
-				return fmt.Errorf("recipe %s: duplicate step name %q", name, step.Name)
+				return fmt.Errorf("software %s: duplicate step name %q", name, step.Name)
 			}
 			if err := validateOperation(step.Operation); err != nil {
-				return fmt.Errorf("recipe %s step %s: %w", name, step.Name, err)
+				return fmt.Errorf("software %s step %s: %w", name, step.Name, err)
 			}
 			for input, reference := range step.Inputs {
 				if !namePattern.MatchString(input) {
-					return fmt.Errorf("recipe %s step %s: invalid input name %q", name, step.Name, input)
+					return fmt.Errorf("software %s step %s: invalid input name %q", name, step.Name, input)
 				}
-				if err := validateArtifactReference(reference, r.Artifacts, steps); err != nil {
-					return fmt.Errorf("recipe %s step %s input %s: %w", name, step.Name, input, err)
+				if err := validateArtifactReference(reference, r.Source != nil, r.Artifacts, steps); err != nil {
+					return fmt.Errorf("software %s step %s input %s: %w", name, step.Name, input, err)
 				}
 			}
 			steps[step.Name] = true
 		}
 		if subject := r.Verification.Subject; subject != "" && subject != "payload" {
-			if err := validateArtifactReference(subject, r.Artifacts, steps); err != nil {
-				return fmt.Errorf("recipe %s verification subject: %w", name, err)
+			if err := validateArtifactReference(subject, r.Source != nil, r.Artifacts, steps); err != nil {
+				return fmt.Errorf("software %s verification subject: %w", name, err)
 			}
 		}
 		for destination, metadata := range r.Destinations {
 			if _, exists := p.Destinations[destination]; !exists {
-				return fmt.Errorf("recipe %s: unknown destination %q", name, destination)
+				return fmt.Errorf("software %s: unknown destination %q", name, destination)
 			}
 			if selected, exists := metadata["artifact"]; exists {
 				artifact, ok := selected.(string)
 				if !ok {
-					return fmt.Errorf("recipe %s destination %s: artifact must be an input reference string", name, destination)
+					return fmt.Errorf("software %s destination %s: artifact must be an input reference string", name, destination)
 				}
-				if err := validateArtifactReference(artifact, r.Artifacts, steps); err != nil {
-					return fmt.Errorf("recipe %s destination %s: %w", name, destination, err)
+				if err := validateArtifactReference(artifact, r.Source != nil, r.Artifacts, steps); err != nil {
+					return fmt.Errorf("software %s destination %s: %w", name, destination, err)
 				}
 			}
 			if value, exists := metadata["inputs"]; exists {
 				inputs, ok := value.(map[string]any)
 				if !ok {
-					return fmt.Errorf("recipe %s destination %s: inputs must map input names to artifact reference strings", name, destination)
+					return fmt.Errorf("software %s destination %s: inputs must map input names to artifact reference strings", name, destination)
 				}
 				for input, value := range inputs {
 					reference, ok := value.(string)
 					if !namePattern.MatchString(input) || !ok {
-						return fmt.Errorf("recipe %s destination %s: inputs require safe names and artifact reference strings", name, destination)
+						return fmt.Errorf("software %s destination %s: inputs require safe names and artifact reference strings", name, destination)
 					}
-					if err := validateArtifactReference(reference, r.Artifacts, steps); err != nil {
-						return fmt.Errorf("recipe %s destination %s input %s: %w", name, destination, input, err)
+					if err := validateArtifactReference(reference, r.Source != nil, r.Artifacts, steps); err != nil {
+						return fmt.Errorf("software %s destination %s input %s: %w", name, destination, input, err)
 					}
 				}
 			}
@@ -419,8 +427,11 @@ func validateOperation(operation string) error {
 	return nil
 }
 
-func validateArtifactReference(reference string, artifacts map[string]Artifact, steps map[string]bool) error {
+func validateArtifactReference(reference string, source bool, artifacts map[string]Artifact, steps map[string]bool) error {
 	if reference == "source" || reference == "prepared" {
+		if !source {
+			return fmt.Errorf("input reference %q requires a source", reference)
+		}
 		return nil
 	}
 	owner, output, ok := strings.Cut(reference, "/")
@@ -469,6 +480,14 @@ func (s Source) Validate() error {
 	}
 	if s.Type != "local" && (len(s.Include) > 0 || s.Base != "") {
 		return errors.New("include is only supported for local sources")
+	}
+	if s.Match != "" {
+		if s.Type != "http" {
+			return errors.New("match is only supported for HTTP sources")
+		}
+		if _, err := regexp.Compile(s.Match); err != nil {
+			return fmt.Errorf("source match: %w", err)
+		}
 	}
 	switch s.Type {
 	case "http":

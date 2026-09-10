@@ -6,13 +6,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"howett.net/plist"
 )
@@ -24,7 +29,9 @@ type AppFacts struct {
 	Version    string `json:"version" plist:"CFBundleShortVersionString"`
 	Build      string `json:"build" plist:"CFBundleVersion"`
 	Executable string `json:"executable" plist:"CFBundleExecutable"`
-	MinimumOS  string `json:"minimum_os" plist:"LSMinimumSystemVersion"`
+	// MinimumOS is the scalar requirement, or the highest declared architecture
+	// requirement when LSMinimumSystemVersion is absent.
+	MinimumOS string `json:"minimum_os" plist:"LSMinimumSystemVersion"`
 }
 
 // InspectApp reads XML or binary Info.plist metadata in a Contents-style bundle.
@@ -38,10 +45,10 @@ func InspectApp(appPath string) (AppFacts, error) {
 	return facts, err
 }
 
-// VerifyApp checks a strict Contents-style regular-file bundle subset. It rejects
-// symlinks, nested code and unsealed files, and never authenticates an ad-hoc seal.
-// SubjectSHA256 hashes sorted JSON records of path, mode, size and SHA-256 for all
-// files and directories; this is an apple verifier tree digest, not a CAS reference.
+// VerifyApp checks the executable and requested resource scope of a Contents-style
+// bundle. Resource sealing rejects symlinks, nested code and unsealed files.
+// SubjectSHA256 binds paths, modes, sizes, file hashes and relative symlink targets;
+// this verifier tree digest is not a CAS reference or a resource seal.
 func VerifyApp(appPath string, policy Policy) (Evidence, error) {
 	policy = policy.expanded()
 	root, err := os.OpenRoot(appPath)
@@ -59,10 +66,10 @@ func VerifyApp(appPath string, policy Policy) (Evidence, error) {
 			evidence.Resources = checkError(err, "")
 		}
 		if policy.RequireSignature {
-			evidence.Signature = Check{Status: Unsupported, Detail: "Mach-O CMS cryptographic signature verification is unsupported"}
+			evidence.Signature = Check{Status: Unsupported, Detail: "signature verification requires a supported immutable app tree"}
 		}
 		if policy.RequireIdentity || policy.CertificateSHA256 != "" {
-			evidence.Identity = Check{Status: Unsupported, Detail: "Mach-O identity verification is unsupported"}
+			evidence.Identity = Check{Status: Unsupported, Detail: "identity verification requires a supported immutable app tree"}
 		}
 		if policy.RequirePlatform {
 			evidence.Platform = Check{Status: Unsupported, Detail: "macOS platform assessment requires native OS policy"}
@@ -75,12 +82,15 @@ func VerifyApp(appPath string, policy Policy) (Evidence, error) {
 		return evidence, err
 	}
 	resources, resourcesErr := rootRead(root, "Contents/_CodeSignature/CodeResources", maxMetadata)
+	if resourcesErr != nil && !errors.Is(resourcesErr, fs.ErrNotExist) {
+		return evidence, resourcesErr
+	}
 	external := map[uint32][]byte{1: info}
 	if resourcesErr == nil {
 		external[3] = resources
 	}
 	executable := "Contents/MacOS/" + facts.Executable
-	f, err := root.Open(executable)
+	f, err := openAppFile(root, executable)
 	if err != nil {
 		return evidence, err
 	}
@@ -126,11 +136,47 @@ func ParseAppInfo(data []byte) (AppFacts, error) {
 	if facts.Executable == "." || facts.Executable == ".." || strings.ContainsAny(facts.Executable, "/\\\x00:") {
 		return facts, fmt.Errorf("unsafe CFBundleExecutable %q", facts.Executable)
 	}
+	if facts.MinimumOS == "" {
+		var requirements struct {
+			Versions map[string]string `plist:"LSMinimumSystemVersionByArchitecture"`
+		}
+		if _, err := plist.Unmarshal(data, &requirements); err != nil {
+			return facts, fmt.Errorf("app Info.plist minimum system versions: %w", err)
+		}
+		var err error
+		facts.MinimumOS, err = minimumAppOS(requirements.Versions)
+		if err != nil {
+			return facts, err
+		}
+	}
 	return facts, nil
 }
 
+func minimumAppOS(versions map[string]string) (string, error) {
+	var maximum []int
+	minimum := ""
+	for _, architecture := range slices.Sorted(maps.Keys(versions)) {
+		version := versions[architecture]
+		var numbers []int
+		for part := range strings.SplitSeq(version, ".") {
+			number, err := strconv.Atoi(part)
+			if err != nil || number < 0 || strconv.Itoa(number) != part {
+				return "", fmt.Errorf("app Info.plist has invalid minimum system version %q for %s", version, architecture)
+			}
+			numbers = append(numbers, number)
+		}
+		for len(numbers) > 1 && numbers[len(numbers)-1] == 0 {
+			numbers = numbers[:len(numbers)-1]
+		}
+		if slices.Compare(numbers, maximum) > 0 {
+			maximum, minimum = numbers, version
+		}
+	}
+	return minimum, nil
+}
+
 func rootRead(root *os.Root, name string, limit int64) ([]byte, error) {
-	f, err := root.Open(name)
+	f, err := openAppFile(root, name)
 	if err != nil {
 		return nil, err
 	}
@@ -155,12 +201,29 @@ func rootRead(root *os.Root, name string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
+func openAppFile(root *os.Root, name string) (*os.File, error) {
+	for prefix := name; prefix != "."; prefix = path.Dir(prefix) {
+		info, err := root.Lstat(prefix)
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode()&fs.ModeSymlink != 0 || prefix != name && !info.IsDir() {
+			return nil, fmt.Errorf("%w: app file %q traverses a symlink or nondirectory parent", ErrUnsupported, name)
+		}
+		if prefix == name && !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("%s is not a regular file", name)
+		}
+	}
+	return root.Open(name)
+}
+
 func appDigest(root *os.Root) (string, error) {
 	type record struct {
 		Path   string `json:"path"`
 		Mode   uint32 `json:"mode"`
 		Size   int64  `json:"size"`
 		SHA256 string `json:"sha256,omitempty"`
+		Target string `json:"target,omitempty"`
 	}
 	var records []record
 	err := fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, walkErr error) error {
@@ -177,16 +240,30 @@ func appDigest(root *os.Root) (string, error) {
 		if err != nil {
 			return err
 		}
-		if info.Mode()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("%w: app symlink %q", ErrUnsupported, name)
-		}
-		if !info.IsDir() && !info.Mode().IsRegular() {
-			return fmt.Errorf("%w: nonregular app entry %q", ErrUnsupported, name)
-		}
 		r := record{Path: name, Mode: uint32(info.Mode().Perm())}
-		if info.IsDir() {
+		switch {
+		case info.Mode()&fs.ModeSymlink != 0:
+			target, err := root.Readlink(name)
+			if err != nil {
+				return err
+			}
+			if target == "" || len(target) > 4096 || !utf8.ValidString(target) || path.IsAbs(target) || strings.ContainsAny(target, "\\:\x00\r\n") || !fs.ValidPath(path.Join(path.Dir(name), target)) {
+				return fmt.Errorf("unsafe app symlink %q", name)
+			}
+			component := false
+			for part := range strings.SplitSeq(target, "/") {
+				// A preceding named component may itself be a symlink, so lexical
+				// cleanup cannot prove a later parent traversal remains confined.
+				if part == ".." && component {
+					return fmt.Errorf("unsafe app symlink %q", name)
+				}
+				component = component || part != "" && part != "." && part != ".."
+			}
+			r.Mode |= uint32(fs.ModeSymlink)
+			r.Size, r.Target = int64(len(target)), target
+		case info.IsDir():
 			r.Mode |= uint32(fs.ModeDir)
-		} else {
+		case info.Mode().IsRegular():
 			if info.Size() > maxEntrySize {
 				return fmt.Errorf("app file %s exceeds limit", name)
 			}
@@ -200,6 +277,8 @@ func appDigest(root *os.Root) (string, error) {
 				return err
 			}
 			r.Size = info.Size()
+		default:
+			return fmt.Errorf("%w: nonregular app entry %q", ErrUnsupported, name)
 		}
 		records = append(records, r)
 		return nil

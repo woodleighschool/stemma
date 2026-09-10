@@ -16,7 +16,7 @@ import (
 
 func documentInput(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileRequest, error) {
 	installer, exists := request.Inputs["installer"]
-	if !exists {
+	if !exists && request.Artifact.Format != "json" {
 		return request, nil
 	}
 	if request.Artifact.Size < 0 || request.Artifact.Size > 4<<20 {
@@ -42,7 +42,19 @@ func documentInput(ctx context.Context, request plugin.ReconcileRequest) (plugin
 	if document == nil {
 		return request, errors.New("pkginfo JSON must be an object")
 	}
-	if document["installer_type"] != "nopkg" {
+	if document["installer_type"] == "nopkg" {
+		if exists {
+			return request, errors.New("nopkg must not include an installer input")
+		}
+		for _, key := range []string{"installer_item_location", "installer_item_hash", "installer_item_size"} {
+			if _, supplied := document[key]; supplied {
+				return request, errors.New("nopkg must not include installer content")
+			}
+		}
+	} else {
+		if !exists {
+			return request, errors.New("pkginfo requires an installer input")
+		}
 		if document["installer_item_hash"] != installer.SHA256 {
 			return request, errors.New("pkginfo installer hash does not match installer input")
 		}

@@ -20,11 +20,11 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-// File contains digest-pinned recipes and plugin release indexes.
+// File contains digest-pinned software and plugin release indexes.
 type File struct {
-	Version int                      `yaml:"version" json:"version"`
-	Recipes map[string]source.Entry  `yaml:"recipes" json:"recipes"`
-	Plugins map[string]plugins.Entry `yaml:"plugins,omitempty" json:"plugins,omitempty"`
+	Version  int                      `yaml:"version" json:"version"`
+	Software map[string]source.Entry  `yaml:"software" json:"software"`
+	Plugins  map[string]plugins.Entry `yaml:"plugins,omitempty" json:"plugins,omitempty"`
 }
 
 // Options controls lock consumption independently of cache use.
@@ -76,7 +76,7 @@ func Load(path string) (File, error) {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return f, errors.New("expected one lockfile document")
 	}
-	if f.Version != 1 || f.Recipes == nil {
+	if f.Version != 1 || f.Software == nil {
 		return f, errors.New("unsupported or incomplete lockfile; run stemma update")
 	}
 	return f, nil
@@ -85,7 +85,7 @@ func Load(path string) (File, error) {
 // Prepare obtains exactly the required inputs, then replaces the lockfile atomically.
 // A failed resolution never writes a partially updated lockfile.
 func Prepare(ctx context.Context, p config.Project, m *source.Manager, opts Options) (Result, error) {
-	result := Result{File: File{Version: 1, Recipes: map[string]source.Entry{}, Plugins: map[string]plugins.Entry{}}, CacheHits: map[string]bool{}}
+	result := Result{File: File{Version: 1, Software: map[string]source.Entry{}, Plugins: map[string]plugins.Entry{}}, CacheHits: map[string]bool{}}
 	if opts.Frozen && (opts.Refresh || opts.Ignore) {
 		return result, errors.New("frozen lockfile conflicts with refresh or no-lockfile")
 	}
@@ -94,9 +94,13 @@ func Prepare(ctx context.Context, p config.Project, m *source.Manager, opts Opti
 	}
 	filename := filepath.Join(m.Root, "stemma.lock.yaml")
 	old := File{}
+	requiresLock := len(p.Plugins) != 0
+	for _, software := range p.Software {
+		requiresLock = requiresLock || software.Source != nil
+	}
 	if !opts.Ignore {
 		loaded, err := Load(filename)
-		if err != nil && (!errors.Is(err, os.ErrNotExist) || opts.Frozen || opts.Offline) {
+		if err != nil && (!errors.Is(err, os.ErrNotExist) || requiresLock && (opts.Frozen || opts.Offline)) {
 			return result, fmt.Errorf("lockfile: %w", err)
 		}
 		old = loaded
@@ -142,20 +146,24 @@ func Prepare(ctx context.Context, p config.Project, m *source.Manager, opts Opti
 		return resolve(s, entry)
 	}
 	if opts.PluginsOnly {
-		result.File.Recipes = old.Recipes
-		if result.File.Recipes == nil {
-			result.File.Recipes = map[string]source.Entry{}
+		result.File.Software = old.Software
+		if result.File.Software == nil {
+			result.File.Software = map[string]source.Entry{}
 		}
 	}
-	for _, name := range names(p.Recipes) {
+	for _, name := range names(p.Software) {
 		if opts.PluginsOnly {
 			break
 		}
-		entry, err := acquire(name, p.Recipes[name].Source, old.Recipes[name])
+		input := p.Software[name].Source
+		if input == nil {
+			continue
+		}
+		entry, err := acquire(name, *input, old.Software[name])
 		if err != nil {
 			return result, fmt.Errorf("%s: %w", name, err)
 		}
-		result.File.Recipes[name] = entry
+		result.File.Software[name] = entry
 	}
 	pluginStore := plugins.New(m.Store, opts.Offline || m.Offline)
 	for _, name := range names(p.Plugins) {
@@ -176,11 +184,18 @@ func Prepare(ctx context.Context, p config.Project, m *source.Manager, opts Opti
 		}
 		result.File.Plugins[name] = entry
 	}
+	empty := len(result.File.Software) == 0 && len(result.File.Plugins) == 0
+	if empty && old.Version == 0 {
+		return result, nil
+	}
 	result.Changed = config.Fingerprint(result.File) != config.Fingerprint(old)
 	if opts.Frozen && result.Changed {
 		return result, errors.New("lockfile contains stale entries; run stemma update")
 	}
 	if result.Changed && !opts.Ignore {
+		if empty {
+			return result, os.Remove(filename)
+		}
 		data, err := yaml.Marshal(result.File)
 		if err != nil {
 			return result, err

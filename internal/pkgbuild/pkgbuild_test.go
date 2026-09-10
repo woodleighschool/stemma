@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -93,7 +94,7 @@ func TestBuildIntegrityReproducibilityAndInputChanges(t *testing.T) {
 	}
 }
 func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
-	for _, name := range []string{"empty", "traversal", "script-name", "bundle", "symlink", "hardlink", "oversize", "entry-limit", "output-in-root", "output-via-symlink", "script-ancestor", "existing-output", "cancelled"} {
+	for _, name := range []string{"empty", "traversal", "script-name", "bundle", "symlink", "hardlink", "oversize", "total-size", "entry-limit", "output-in-root", "output-via-symlink", "script-ancestor", "existing-output", "cancelled"} {
 		t.Run(name, func(t *testing.T) {
 			root, opts := fixture(t)
 			output := filepath.Join(t.TempDir(), "out.pkg")
@@ -118,12 +119,16 @@ func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
 				if err := os.Link(filepath.Join(root, "Payload/Library/Application Support/Fixture/message.txt"), filepath.Join(root, "Payload/link")); err != nil {
 					t.Skip(err)
 				}
-			case "oversize":
+			case "oversize", "total-size":
 				f, err := os.Create(filepath.Join(root, "Payload/large"))
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := f.Truncate(maxFileSize + 1); err != nil {
+				size := maxFileSize + 1
+				if name == "total-size" {
+					size = maxTotalSize + 1
+				}
+				if err := f.Truncate(size); err != nil {
 					t.Fatal(err)
 				}
 				_ = f.Close()
@@ -163,6 +168,73 @@ func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
 				t.Fatalf("failed build left output: %v", err)
 			}
 		})
+	}
+}
+
+func largeFixture(t *testing.T) (string, Options) {
+	t.Helper()
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "Fixture.app/Contents/Info.plist"), []byte(`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.large</string><key>CFBundleExecutable</key><string>large</string><key>CFBundleShortVersionString</key><string>1.2</string><key>CFBundleVersion</key><string>12</string></dict></plist>`), 0o644)
+	name := filepath.Join(root, "Fixture.app/Contents/MacOS/large")
+	writeFile(t, name, []byte("synthetic executable header"), 0o755)
+	f, err := os.OpenFile(name, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	const size = 65 << 20
+	if err := f.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteAt([]byte("preserve every trailing byte"), size-28); err != nil {
+		t.Fatal(err)
+	}
+	return root, Options{Identifier: "org.example.large", Version: "1.2", Payload: "Fixture.app", InstallLocation: "/Applications/Fixture.app", Timestamp: time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)}
+}
+
+func fileDigest(t *testing.T, filename string) [sha256.Size]byte {
+	t.Helper()
+	f, err := os.Open(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = f.Close() }()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, f); err != nil {
+		t.Fatal(err)
+	}
+	return [sha256.Size]byte(digest.Sum(nil))
+}
+
+func TestBuildLargeAppStreamsAndRemainsReproducible(t *testing.T) {
+	root, opts := largeFixture(t)
+	first := filepath.Join(t.TempDir(), "first.pkg")
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	if err := Build(t.Context(), root, first, opts); err != nil {
+		t.Fatal(err)
+	}
+	runtime.ReadMemStats(&after)
+	// Payload size must not become a whole-file allocation in the writer.
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 32<<20 {
+		t.Fatalf("large payload allocated %d bytes during packaging", allocated)
+	}
+	facts, err := apple.InspectPackageContents(t.Context(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts.Applications) != 1 || facts.Applications[0].App.BundleID != "org.example.large" || facts.Applications[0].InstalledPath != "/Applications/Fixture.app" {
+		t.Fatalf("wrong package app facts: %+v", facts.Applications)
+	}
+	if _, err := apple.VerifyPackage(first, apple.Policy{RequireIntegrity: true}); err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(t.TempDir(), "second.pkg")
+	if err := Build(t.Context(), root, second, opts); err != nil {
+		t.Fatal(err)
+	}
+	if fileDigest(t, first) != fileDigest(t, second) {
+		t.Fatal("large package is not reproducible")
 	}
 }
 

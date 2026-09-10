@@ -28,20 +28,20 @@ func needsInspection(native map[string]any, operation string) bool {
 	return !included && (!primaryID || !primaryVersion) || !minimum
 }
 
-func validateReferences(recipe config.Recipe) error {
+func validateReferences(software config.Software) error {
 	validate := func(value any) error {
 		_, err := mapFactReferences(value, func(reference string) (any, error) {
-			_, _, err := parseFactReference(recipe, reference)
+			_, _, err := parseFactReference(software, reference)
 			return nil, err
 		})
 		return err
 	}
-	for destination, native := range recipe.Destinations {
+	for destination, native := range software.Destinations {
 		if err := validate(native); err != nil {
 			return fmt.Errorf("destination %s: %w", destination, err)
 		}
 	}
-	for _, step := range recipe.Steps {
+	for _, step := range software.Steps {
 		if err := validate(step.Config); err != nil {
 			return fmt.Errorf("step %s: %w", step.Name, err)
 		}
@@ -49,15 +49,15 @@ func validateReferences(recipe config.Recipe) error {
 	return nil
 }
 
-func resolveMetadata(recipe config.Recipe, native map[string]any, facts plugin.Facts, operation string) (map[string]any, map[string]string, error) {
+func resolveMetadata(software config.Software, native map[string]any, facts plugin.Facts, operation string) (map[string]any, map[string]string, error) {
 	selected := map[string]plugin.Subject{}
 	resolved, err := mapFactReferences(native, func(reference string) (any, error) {
-		name, fields, err := parseFactReference(recipe, reference)
+		name, fields, err := parseFactReference(software, reference)
 		if err != nil {
 			return nil, err
 		}
 		if _, present := selected[name]; !present {
-			selector := recipe.Subjects[name]
+			selector := software.Subjects[name]
 			var matches []plugin.Subject
 			for _, subject := range facts.Subjects {
 				if selector.Kind != "" && selector.Kind != subject.Kind || selector.Path != "" && selector.Path != subject.Path || selector.InstalledPath != "" && selector.InstalledPath != subject.InstalledPath || selector.BundleID != "" && (subject.App == nil || selector.BundleID != subject.App.BundleID) {
@@ -137,12 +137,12 @@ func mapFactReferences(value any, resolve func(string) (any, error)) (any, error
 	}
 }
 
-func parseFactReference(recipe config.Recipe, reference string) (string, []string, error) {
+func parseFactReference(software config.Software, reference string) (string, []string, error) {
 	name, field, ok := strings.Cut(reference, ".")
 	if !ok || field == "" {
 		return "", nil, fmt.Errorf("invalid fact reference %q", reference)
 	}
-	if _, exists := recipe.Subjects[name]; !exists {
+	if _, exists := software.Subjects[name]; !exists {
 		return "", nil, fmt.Errorf("unknown fact subject %q", name)
 	}
 	fields := strings.Split(field, ".")

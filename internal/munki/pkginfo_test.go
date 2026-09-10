@@ -28,12 +28,23 @@ func TestPkginfoKeepsNativeSemanticsAndExactContent(t *testing.T) {
 		t.Fatal("cleared description emitted")
 	}
 	remove := result["items_to_remove"].([]any)[0].(map[string]any)
-	if remove["path"] != "/Applications/Example.app" {
+	if remove["source_item"] != "Example.app" || remove["destination_path"] != "/Applications" || len(remove) != 2 {
 		t.Fatalf("uninstall path: %#v", remove)
 	}
 	install := result["installs"].([]any)[0].(map[string]any)
 	if install["CFBundleIdentifier"] != "example.app" {
 		t.Fatalf("native key missing: %#v", install)
+	}
+}
+
+func TestRemovalPreservesRenamedCopyDestination(t *testing.T) {
+	result, err := munki.Render(munki.Input{Name: "Example", Version: "1", InstallerType: "copy_from_dmg", InstallerLocation: "Example.dmg", SHA256: strings.Repeat("b", 64), Size: 100, Metadata: json.RawMessage(`{"items_to_copy":[{"source_item":"Payload/Original.app","destination_path":"/Applications","destination_item":"Renamed.app","user":"root","mode":"o-w"}],"uninstall_method":"remove_copied_items"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remove := result["items_to_remove"].([]map[string]string)[0]
+	if len(remove) != 3 || remove["source_item"] != "Payload/Original.app" || remove["destination_path"] != "/Applications" || remove["destination_item"] != "Renamed.app" {
+		t.Fatalf("native removal lost copy destination or retained permission settings: %#v", remove)
 	}
 }
 
@@ -76,5 +87,31 @@ func TestVendorPackageIsNotReinterpretedAsCopyFromImage(t *testing.T) {
 	input.InstallerType = "nopkg"
 	if _, err := munki.Build(input); err == nil {
 		t.Fatal("nopkg accepted installer bytes")
+	}
+}
+
+func TestNoPkgPreservesUpdateRelationshipWithoutInstaller(t *testing.T) {
+	for _, value := range []string{`["Creative Suite"]`, `[]`} {
+		input := munki.Input{Name: "Browser Authentication", Version: "1.0", InstallerType: "nopkg", Metadata: json.RawMessage(`{"update_for":` + value + `,"installcheck_script":"#!/bin/sh\nexit 1","postinstall_script":"#!/bin/sh\nexit 0"}`)}
+		encoded, err := munki.Build(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result map[string]any
+		if _, err := plist.Unmarshal(encoded, &result); err != nil {
+			t.Fatal(err)
+		}
+		got, err := json.Marshal(result["update_for"])
+		if err != nil || string(got) != value || result["installer_type"] != "nopkg" {
+			t.Fatalf("native policy: %s, %v, %#v", got, err, result)
+		}
+		for _, key := range []string{"installer_item_hash", "installer_item_size", "installer_item_location", "receipts"} {
+			if _, exists := result[key]; exists {
+				t.Fatalf("nopkg has installer field %s", key)
+			}
+		}
+	}
+	if _, err := munki.DecodeMetadata(json.RawMessage(`{"update_for":null}`)); err == nil {
+		t.Fatal("accepted null relationship list")
 	}
 }

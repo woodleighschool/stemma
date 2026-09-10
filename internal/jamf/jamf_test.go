@@ -318,7 +318,7 @@ func TestStrictValidationPreservesNullFalseAndZero(t *testing.T) {
 	request.Metadata = raw(map[string]any{})
 	request.Config = raw(map[string]any{"url": "https://example.com", "client_id": "ID", "client_secret": "SECRET", "package_id": "1"})
 	if _, err := Handle(t.Context(), request); err == nil {
-		t.Fatal("accepted recipe adoption in shared destination config")
+		t.Fatal("accepted software adoption in shared destination config")
 	}
 }
 

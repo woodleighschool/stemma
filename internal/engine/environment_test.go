@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"github.com/woodleighschool/stemma/internal/testproject"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,26 +17,32 @@ func TestSecretRotationPreservesDestinationBinding(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			root := t.TempDir()
 			endpointField, secretField := "url", "client_secret"
-			credentials, metadata := "      client_id: test-client\n", "{}"
+			credentials, metadata := "        client_id: test-client\n", "{}"
 			if kind == "intune" {
 				endpointField, secretField = "graph_url", "token"
 				credentials, metadata = "", "{'@odata.type': '#microsoft.graph.win32LobApp'}"
 			}
-			manifest := `version: 1
-project: rotation
-recipes:
-  app:
-    source: {type: file, path: installer.bin}
-    destinations: {remote: ` + metadata + `}
-destinations:
-  remote:
-    operation: ` + kind + `
-    config:
-      ` + endpointField + `: ${STEMMA_TEST_ENDPOINT}
-      ` + secretField + `: ${STEMMA_TEST_SECRET}
-` + credentials
+			manifest := `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: rotation}
+spec:
+  imports: ['*.software.yaml']
+  destinations:
+    remote:
+      operation: ` + kind + `
+      config:
+        ` + endpointField + `: ${STEMMA_TEST_ENDPOINT}
+        ` + secretField + `: ${STEMMA_TEST_SECRET}
+` + credentials + `---
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata: {name: app}
+spec:
+  source: {type: file, path: installer.bin}
+  destinations: {remote: ` + metadata + `}
+`
 			configPath := filepath.Join(root, "stemma.yaml")
-			if err := os.WriteFile(configPath, []byte(manifest), 0o600); err != nil {
+			if err := testproject.Write(configPath, []byte(manifest)); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(filepath.Join(root, "installer.bin"), []byte("installer"), 0o600); err != nil {

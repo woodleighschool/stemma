@@ -17,7 +17,7 @@ func parseConfig(data []byte, value any) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := expandEnvironment(document); err != nil {
+	if _, err := expandEnvironment(document["spec"]); err != nil {
 		return nil, err
 	}
 	encoded, err := yaml.Marshal(document)
@@ -40,9 +40,6 @@ func expandEnvironment(value any) (any, error) {
 				return nil, fmt.Errorf("environment variable %s is not set", match[1])
 			}
 			return resolved, nil
-		}
-		if strings.Contains(value, "${") {
-			return nil, errors.New("environment placeholders must occupy an entire string value")
 		}
 	case map[string]any:
 		for key, child := range value {

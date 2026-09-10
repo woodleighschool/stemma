@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"github.com/woodleighschool/stemma/internal/testproject"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -24,34 +25,44 @@ func TestInspectedAppBuildDrivesMunkiWithoutReplacingInstaller(t *testing.T) {
 	}
 	digest := sha256.Sum256(installer)
 	wantDigest := hex.EncodeToString(digest[:])
-	manifest := `version: 1
-project: enrichment
-recipes:
-  example:
-    source: {type: file, path: vendor.pkg}
-    subjects:
-      main: {bundle_id: org.example.app}
-    steps:
-      - name: observed
-        operation: inspect
-        inputs: {input: source}
-    destinations:
-      derived:
-        artifact: observed/artifact
-        version: {$fact: main.app.build}
-      authored:
-        artifact: observed/artifact
-        version: {$fact: main.app.build}
-        receipts: [{packageid: org.example.authored, version: "6"}]
-        installs: [{type: file, path: /Library/Example/installed}]
-        unattended_install: true
-        description: previous
-destinations:
-  derived: {operation: munki, path: derived}
-  authored: {operation: munki, path: authored}
+	manifest := `apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: enrichment
+spec:
+  destinations:
+    derived: {operation: munki, path: derived}
+    authored: {operation: munki, path: authored}
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: example
+spec:
+  source: {type: file, path: vendor.pkg}
+  subjects:
+    main: {bundle_id: org.example.app}
+  steps:
+    - name: observed
+      operation: inspect
+      inputs: {input: source}
+  destinations:
+    derived:
+      artifact: observed/artifact
+      version: {$fact: main.app.build}
+    authored:
+      artifact: observed/artifact
+      version: {$fact: main.app.build}
+      receipts: [{packageid: org.example.authored, version: "6"}]
+      installs: [{type: file, path: /Library/Example/installed}]
+      unattended_install: true
+      description: previous
 `
 	configPath := filepath.Join(root, "stemma.yaml")
-	writeEnrichmentFile(t, configPath, []byte(manifest))
+	if err := testproject.Write(configPath, []byte(manifest)); err != nil {
+		t.Fatal(err)
+	}
 	opts := Options{ConfigPath: configPath, CacheDir: t.TempDir(), Method: "plan"}
 	plan, err := Run(t.Context(), opts)
 	if err != nil {
@@ -62,10 +73,10 @@ destinations:
 			t.Fatalf("planning wrote %s repository: %v", name, err)
 		}
 	}
-	if len(plan.Recipes) != 1 || len(plan.Recipes[0].Steps) != 1 {
+	if len(plan.Software) != 1 || len(plan.Software[0].Steps) != 1 {
 		t.Fatalf("missing inspection report: %+v", plan)
 	}
-	observed := plan.Recipes[0].Steps[0].Artifacts["artifact"]
+	observed := plan.Software[0].Steps[0].Artifacts["artifact"]
 	if observed.Format != "pkg" || observed.Tree || observed.Payload.SHA256 != wantDigest || observed.Source.Artifact.SHA256 != wantDigest {
 		t.Fatalf("inspection replaced the installer: %+v", observed)
 	}
@@ -87,7 +98,7 @@ destinations:
 	if !appSeen || !receiptSeen {
 		t.Fatalf("missing independent app and receipt facts: %+v", observed.Facts)
 	}
-	for _, destination := range plan.Recipes[0].Destinations {
+	for _, destination := range plan.Software[0].Destinations {
 		versionSeen := false
 		for _, change := range destination.Changes {
 			if change.Field == "version" {
@@ -120,12 +131,14 @@ destinations:
 	}
 	manifest = strings.Replace(manifest, "unattended_install: true", "unattended_install: false", 1)
 	manifest = strings.Replace(manifest, "description: previous", "description: null", 1)
-	writeEnrichmentFile(t, configPath, []byte(manifest))
+	if err := testproject.Write(configPath, []byte(manifest)); err != nil {
+		t.Fatal(err)
+	}
 	cleared, err := Run(t.Context(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cleared.Recipes[0].Steps[0].Cached || !reflect.DeepEqual(cleared.Recipes[0].Steps[0].Artifacts["artifact"].Facts, observed.Facts) {
+	if !cleared.Software[0].Steps[0].Cached || !reflect.DeepEqual(cleared.Software[0].Steps[0].Artifacts["artifact"].Facts, observed.Facts) {
 		t.Fatal("metadata edit changed or recomputed observed facts")
 	}
 	authored := readEnrichedPkginfo(t, filepath.Join(root, "authored"))
@@ -164,31 +177,41 @@ func TestInvalidSubjectPreventsEveryDestinationWrite(t *testing.T) {
 					writeEnrichmentApp(t, filepath.Join(root, "inputs/apps", name))
 				}
 			}
-			manifest := `version: 1
-project: readiness
-recipes:
-  example:
-    source: {type: file, path: inputs}
-    subjects:
-      main: {bundle_id: org.example.app}
-    artifacts:
-      package:
-        type: pkg
-        identifier: org.example.receipt
-        version: "9"
-        payload: Payload
-        install_location: /Applications/Example.app
-    destinations:
-      first: {artifact: artifacts/package, version: "9"}
-      second: {version: {$fact: main.app.build}}
-destinations:
-  first: {operation: munki, path: first}
-  second: {operation: munki, path: second}
+			manifest := `apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: readiness
+spec:
+  destinations:
+    first: {operation: munki, path: first}
+    second: {operation: munki, path: second}
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: example
+spec:
+  source: {type: file, path: inputs}
+  subjects:
+    main: {bundle_id: org.example.app}
+  artifacts:
+    package:
+      type: pkg
+      identifier: org.example.receipt
+      version: "9"
+      payload: Payload
+      install_location: /Applications/Example.app
+  destinations:
+    first: {artifact: artifacts/package, version: "9"}
+    second: {version: {$fact: main.app.build}}
 `
 			configPath := filepath.Join(root, "stemma.yaml")
-			writeEnrichmentFile(t, configPath, []byte(manifest))
+			if err := testproject.Write(configPath, []byte(manifest)); err != nil {
+				t.Fatal(err)
+			}
 			report, err := Run(t.Context(), Options{ConfigPath: configPath, CacheDir: t.TempDir(), Method: "apply"})
-			if err == nil || !strings.Contains(err.Error(), test.match) || len(report.Recipes) != 1 || report.Recipes[0].Error == "" {
+			if err == nil || !strings.Contains(err.Error(), test.match) || len(report.Software) != 1 || report.Software[0].Error == "" {
 				t.Fatalf("subject failure was not content-dependent: %+v, %v", report, err)
 			}
 			if strings.Contains(err.Error(), "destination first") {

@@ -1,0 +1,116 @@
+package apple
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"howett.net/plist"
+)
+
+func TestParseAppInfoMinimumSystemVersion(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		scalar  string
+		byArch  map[string]string
+		want    string
+		wantErr bool
+	}{
+		{name: "scalar-precedence", scalar: "10.15", byArch: map[string]string{"arm64": "13.0", "x86_64": "11.0"}, want: "10.15"},
+		{name: "numeric-maximum", byArch: map[string]string{"arm64": "11.0", "x86_64": "9.0"}, want: "11.0"},
+		{name: "patch-maximum", byArch: map[string]string{"arm64": "13.0.1", "x86_64": "13.0"}, want: "13.0.1"},
+		{name: "equivalent-versions", byArch: map[string]string{"arm64": "13.0", "x86_64": "13.0.0"}, want: "13.0"},
+		{name: "absent"},
+		{name: "invalid", byArch: map[string]string{"arm64": "unknown"}, wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := plist.Marshal(map[string]any{"CFBundleIdentifier": "org.example.fixture", "CFBundleExecutable": "fixture", "LSMinimumSystemVersion": tt.scalar, "LSMinimumSystemVersionByArchitecture": tt.byArch}, plist.XMLFormat)
+			if err != nil {
+				t.Fatal(err)
+			}
+			facts, err := ParseAppInfo(data)
+			if (err != nil) != tt.wantErr || (!tt.wantErr && facts.MinimumOS != tt.want) {
+				t.Fatalf("minimum OS = %q, err = %v; want %q, err = %v", facts.MinimumOS, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestAppSymlinkIdentityDoesNotClaimResourceSealing(t *testing.T) {
+	app := filepath.Join(t.TempDir(), "SignedFixture.app")
+	if err := os.CopyFS(app, os.DirFS("testdata/SignedFixture.app")); err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := VerifyApp(app, Policy{RequireIntegrity: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(app, "Contents/Resources/link")
+	var previous string
+	for _, target := range []string{"message.txt", "missing.txt"} {
+		if previous != "" {
+			if err := os.Remove(link); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		evidence, err := VerifyApp(app, Policy{RequireSignature: true})
+		if err != nil || evidence.Integrity.Status != Valid || evidence.Signature.Status != Valid || evidence.Resources.Status != NotRequested {
+			t.Fatalf("symlink changed independent verification scopes: %+v: %v", evidence, err)
+		}
+		if len(evidence.SubjectSHA256) != 64 || evidence.SubjectSHA256 == baseline.SubjectSHA256 || evidence.SubjectSHA256 == previous {
+			t.Fatalf("symlink target was not bound into tree identity: %+v", evidence)
+		}
+		previous = evidence.SubjectSHA256
+	}
+	evidence, err := VerifyApp(app, Policy{RequireResources: true})
+	if !errors.Is(err, ErrUnsupported) || evidence.Integrity.Status != Valid || evidence.Resources.Status != Unsupported {
+		t.Fatalf("symlink resource sealing was accepted: %+v: %v", evidence, err)
+	}
+	executable := filepath.Join(app, "Contents/MacOS/fixture")
+	data := readTestFile(t, executable)
+	// The first architecture's code lies before its large CMS signature region.
+	data[16384+4096] ^= 0x40
+	writeTestFile(t, executable, data, 0o755)
+	if evidence, err := VerifyApp(app, Policy{RequireIntegrity: true}); err == nil || evidence.Integrity.Status != Invalid {
+		t.Fatalf("symlink support bypassed executable verification: %+v: %v", evidence, err)
+	}
+}
+
+func TestAppDigestRejectsUnsafeSymlinkTargets(t *testing.T) {
+	for _, target := range []string{"/outside", "../../../outside", "message.txt/../../outside", `..\outside`, "C:outside", "invalid\xff"} {
+		t.Run(target, func(t *testing.T) {
+			app := copyApp(t)
+			if err := os.Symlink(target, filepath.Join(app, "Contents/Resources/link")); err != nil {
+				t.Fatal(err)
+			}
+			evidence, err := VerifyApp(app, Policy{RequireIntegrity: true})
+			if err == nil || evidence.SubjectSHA256 != "" || evidence.Integrity.Status == Valid {
+				t.Fatalf("unsafe symlink entered verified identity: %+v: %v", evidence, err)
+			}
+		})
+	}
+}
+
+func TestAppVerificationRejectsSymlinkedCriticalPaths(t *testing.T) {
+	for _, name := range []string{"Contents", "Contents/Info.plist", "Contents/MacOS", "Contents/MacOS/fixture", "Contents/_CodeSignature", "Contents/_CodeSignature/CodeResources"} {
+		t.Run(name, func(t *testing.T) {
+			app := copyApp(t)
+			original := filepath.Join(app, filepath.FromSlash(name))
+			moved := original + ".real"
+			if err := os.Rename(original, moved); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Base(moved), original); err != nil {
+				t.Fatal(err)
+			}
+			evidence, err := VerifyApp(app, Policy{RequireIntegrity: true})
+			if err == nil || evidence.Integrity.Status == Valid {
+				t.Fatalf("critical verification input traversed a symlink: %+v: %v", evidence, err)
+			}
+		})
+	}
+}

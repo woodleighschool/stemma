@@ -61,7 +61,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 		return err
 	}})
 	var resolved, validateOffline bool
-	validate := &cobra.Command{Use: "validate", Short: "Validate configuration and operation contracts before recipe acquisition", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	validate := &cobra.Command{Use: "validate", Short: "Validate configuration and operation contracts before software acquisition", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		path, err := resolve()
 		if err != nil {
 			return err
@@ -76,7 +76,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 		_, err = fmt.Fprintln(out, "Configuration is valid.")
 		return err
 	}}
-	validate.Flags().BoolVar(&resolved, "resolved", false, "Show fully resolved recipe composition")
+	validate.Flags().BoolVar(&resolved, "resolved", false, "Show fully resolved software composition")
 	validate.Flags().BoolVar(&validateOffline, "offline", false, "Require verified cached plugin bundles")
 	root.AddCommand(validate, iconCommand(out))
 	var operationsOffline bool
@@ -95,7 +95,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 	root.AddCommand(operations)
 	for _, method := range []string{"update", "prepare", "plan", "apply"} {
 		var frozen, noFrozen, refresh, ignore, offline bool
-		cmd := &cobra.Command{Use: method + " [recipe...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Acquire and inspect locked inputs without publication", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
+		cmd := &cobra.Command{Use: method + " [software...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Acquire and inspect locked inputs without publication", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
 			if output != "text" && output != "json" {
 				return errors.New("output must be text or json")
 			}
@@ -104,7 +104,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 				return err
 			}
 			if method == "update" && len(args) > 0 {
-				return errors.New("update resolves the complete project; recipe filtering applies to prepare, plan and apply")
+				return errors.New("update resolves the complete project; software filtering applies to prepare, plan and apply")
 			}
 			useFrozen := ci()
 			if noFrozen || refresh || ignore || method == "update" {
@@ -113,7 +113,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 			if cmd.Flags().Changed("frozen-lockfile") {
 				useFrozen = frozen
 			}
-			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Recipes: args, Lock: lockfile.Options{Frozen: useFrozen, Refresh: refresh || method == "update", Ignore: ignore, Offline: offline}})
+			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Software: args, Lock: lockfile.Options{Frozen: useFrozen, Refresh: refresh || method == "update", Ignore: ignore, Offline: offline}})
 			if output == "json" {
 				if err := writeJSON(out, report); err != nil {
 					return errors.Join(runErr, err)
@@ -291,24 +291,24 @@ func printReport(out io.Writer, method string, r engine.Report) error {
 		_, err := io.WriteString(out, text.String())
 		return err
 	}
-	for _, recipe := range r.Recipes {
-		if recipe.Error != "" {
-			_, _ = fmt.Fprintf(&text, "%s: failed: %s\n", recipe.Name, recipe.Error)
+	for _, software := range r.Software {
+		if software.Error != "" {
+			_, _ = fmt.Fprintf(&text, "%s: failed: %s\n", software.Name, software.Error)
 		}
-		if recipe.Prepared == nil {
+		if software.Prepared == nil {
 			continue
 		}
-		_, _ = fmt.Fprintf(&text, "%s: %s %s (source cached: %t, preparation cached: %t)\n", recipe.Name, recipe.Prepared.Filename, recipe.Prepared.Version, recipe.SourceCached, recipe.Prepared.Cached)
-		for name, artifact := range recipe.Artifacts {
+		_, _ = fmt.Fprintf(&text, "%s: %s %s (source cached: %t, preparation cached: %t)\n", software.Name, software.Prepared.Filename, software.Prepared.Version, software.SourceCached, software.Prepared.Cached)
+		for name, artifact := range software.Artifacts {
 			_, _ = fmt.Fprintf(&text, "  %s: %s %s (cached: %t)\n", name, artifact.Filename, artifact.Version, artifact.Cached)
 		}
-		for name, failure := range recipe.ArtifactErrors {
+		for name, failure := range software.ArtifactErrors {
 			_, _ = fmt.Fprintf(&text, "  %s: failed: %s\n", name, failure)
 		}
-		for _, step := range recipe.Steps {
+		for _, step := range software.Steps {
 			_, _ = fmt.Fprintf(&text, "  %s (%s): %d outputs (cached: %t)\n", step.Name, step.Operation, len(step.Artifacts), step.Cached)
 		}
-		for _, destination := range recipe.Destinations {
+		for _, destination := range software.Destinations {
 			if destination.Error != "" {
 				_, _ = fmt.Fprintf(&text, "  %s: failed: %s\n", destination.Name, destination.Error)
 			} else {

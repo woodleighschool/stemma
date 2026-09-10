@@ -26,7 +26,7 @@ import (
 )
 
 // Catalog describes built-in and installed plugin operations without acquiring
-// recipe inputs or contacting destinations. Trusted plugin discovery executes code.
+// software inputs or contacting destinations. Trusted plugin discovery executes code.
 func Catalog(ctx context.Context, opts Options) (plugin.Descriptor, error) {
 	p, err := config.Load(opts.ConfigPath)
 	if err != nil {
@@ -91,18 +91,18 @@ func projectOperations(ctx context.Context, p config.Project, opts Options) (*op
 }
 
 func checkOperations(p config.Project, ops *operations) error {
-	for name, recipe := range p.Recipes {
-		for _, step := range recipe.Steps {
+	for name, software := range p.Software {
+		for _, step := range software.Steps {
 			if err := ops.check(step.Operation, true); err != nil {
-				return fmt.Errorf("recipe %s step %s: %w", name, step.Name, err)
+				return fmt.Errorf("software %s step %s: %w", name, step.Name, err)
 			}
 			if err := ops.configuration(step.Operation, step.Config); err != nil {
-				return fmt.Errorf("recipe %s step %s: %w", name, step.Name, err)
+				return fmt.Errorf("software %s step %s: %w", name, step.Name, err)
 			}
 		}
-		for destination := range recipe.Destinations {
+		for destination := range software.Destinations {
 			if err := ops.check(p.Destinations[destination].Operation, false); err != nil {
-				return fmt.Errorf("recipe %s destination %s: %w", name, destination, err)
+				return fmt.Errorf("software %s destination %s: %w", name, destination, err)
 			}
 			settings := p.Destinations[destination].Config
 			if p.Destinations[destination].Operation == "munki" {
@@ -220,6 +220,7 @@ func builtins(handlers map[string]reconcileHandler) (*operations, error) {
 		return nil, err
 	}
 	ops.identity["pkg"] += "/" + pkgbuild.Version
+	ops.identity["munki.pkginfo"] += "/4"
 	return ops, nil
 }
 
@@ -232,14 +233,32 @@ func munkiOperation(ctx context.Context, request plugin.Request) (plugin.Respons
 		return plugin.Response{}, err
 	}
 	artifact, exists := input.Inputs["input"]
-	if !exists || len(input.Inputs) != 1 || artifact.Tree {
-		return plugin.Response{}, errors.New("munki.pkginfo requires one file named input")
-	}
 	var authored map[string]any
 	if err := json.Unmarshal(input.Config, &authored); err != nil {
 		return plugin.Response{}, err
 	}
-	effective, _, err := resolveMetadata(config.Recipe{}, authored, artifact.Facts, "munki")
+	if authored["installer_type"] == "nopkg" {
+		if len(input.Inputs) != 0 {
+			return plugin.Response{}, errors.New("munki.pkginfo nopkg requires no installer inputs")
+		}
+	} else if !exists || len(input.Inputs) != 1 || artifact.Tree || artifact.Path == "" {
+		return plugin.Response{}, errors.New("munki.pkginfo requires one file named input")
+	}
+	_, installs := authored["installs"]
+	_, receipts := authored["receipts"]
+	_, script := authored["installcheck_script"]
+	if exists && !installs && !receipts && !script && !slices.ContainsFunc(artifact.Facts.Subjects, func(subject plugin.Subject) bool { return subject.App != nil }) {
+		facts, err := inspection.Read(ctx, artifact.Path)
+		if err != nil {
+			return plugin.Response{}, fmt.Errorf("munki.pkginfo inspect installer: %w", err)
+		}
+		for _, subject := range facts.Subjects {
+			if subject.App != nil {
+				artifact.Facts.Subjects = append(artifact.Facts.Subjects, subject)
+			}
+		}
+	}
+	effective, _, err := resolveMetadata(config.Software{}, authored, artifact.Facts, "munki")
 	if err != nil {
 		return plugin.Response{}, err
 	}
@@ -247,7 +266,10 @@ func munkiOperation(ctx context.Context, request plugin.Request) (plugin.Respons
 	if err != nil {
 		return plugin.Response{}, err
 	}
-	base := munki.Input{Version: artifact.Version, SHA256: artifact.SHA256, Size: artifact.Size, InstallerLocation: "stemma/" + artifact.SHA256 + "/" + artifact.Filename}
+	base := munki.Input{}
+	if exists {
+		base = munki.Input{Version: artifact.Version, SHA256: artifact.SHA256, Size: artifact.Size, InstallerLocation: "stemma/" + artifact.SHA256 + "/" + artifact.Filename}
+	}
 	if artifact.Format == "pkg" || filepath.Ext(artifact.Filename) == ".pkg" {
 		base.InstallerType = "pkg"
 	}

@@ -7,6 +7,8 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.0
 	github.com/bmatcuk/doublestar/v4 v4.10.0
+	github.com/deploymenttheory/go-apfs-v2 v0.3.0
+	github.com/deploymenttheory/go-macos-pkg v0.5.0
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
 	github.com/ebitengine/purego v0.10.2
 	github.com/gofrs/flock v0.13.1
@@ -26,11 +28,13 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/pb33f/ordered-map/v2 v2.3.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	github.com/smallstep/pkcs7 v0.2.3
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.16
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
 	golang.org/x/sys v0.47.0
+	golang.org/x/text v0.41.0
 	howett.net/plist v1.0.1
 	oras.land/oras-go/v2 v2.6.2
 	resty.dev/v3 v3.0.0-rc.3
@@ -49,6 +53,7 @@ require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/go-compressions/lzfse v0.3.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
@@ -77,5 +82,4 @@ require (
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
 )

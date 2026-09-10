@@ -34,20 +34,13 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 	if inputErr != nil {
 		return plugin.ReconcileResponse{}, inputErr
 	}
-	var connection struct {
-		Path string `json:"path"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(request.Config))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&connection); err != nil {
+	root, err := repositoryPath(request.Config)
+	if err != nil {
 		return plugin.ReconcileResponse{}, err
-	}
-	if connection.Path == "" {
-		return plugin.ReconcileResponse{}, errors.New("munki repository path is required")
 	}
 	if request.Method == "validate" {
 		input, _, err := nativeInput(request)
-		if err == nil && request.Artifact.Path != "" {
+		if err == nil {
 			_, err = munki.Build(input)
 		}
 		return plugin.ReconcileResponse{}, err
@@ -56,10 +49,10 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 		return plugin.ReconcileResponse{}, fmt.Errorf("unsupported Munki method %q", request.Method)
 	}
 	if request.Method == "apply" {
-		if err := os.MkdirAll(connection.Path, 0o755); err != nil {
+		if err := os.MkdirAll(root, 0o755); err != nil {
 			return plugin.ReconcileResponse{}, err
 		}
-		lock := flock.New(filepath.Join(connection.Path, ".stemma.lock"))
+		lock := flock.New(filepath.Join(root, ".stemma.lock"))
 		ok, err := lock.TryLockContext(ctx, 50*time.Millisecond)
 		if err != nil {
 			return plugin.ReconcileResponse{}, err
@@ -69,7 +62,32 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 		}
 		defer func() { _ = lock.Close() }()
 	}
-	return reconcile(ctx, connection.Path, request)
+	return reconcile(ctx, root, request)
+}
+
+// Validate checks connection settings and authored metadata before artifact
+// preparation. Handle validates the complete input before publication.
+func Validate(configuration, metadata json.RawMessage) error {
+	if _, err := repositoryPath(configuration); err != nil {
+		return err
+	}
+	_, _, err := munki.Compose(munki.Input{}, metadata)
+	return err
+}
+
+func repositoryPath(configuration json.RawMessage) (string, error) {
+	var connection struct {
+		Path string `json:"path"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(configuration))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&connection); err != nil {
+		return "", err
+	}
+	if connection.Path == "" {
+		return "", errors.New("munki repository path is required")
+	}
+	return connection.Path, nil
 }
 
 func nativeInput(request plugin.ReconcileRequest) (munki.Input, map[string]any, error) {

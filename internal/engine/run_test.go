@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/woodleighschool/stemma/internal/testproject"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,17 +35,25 @@ func TestApplyBookkeepingAndBindingPresence(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
 			configPath := filepath.Join(root, "stemma.yaml")
-			manifest := `version: 1
-project: bookkeeping
-recipes:
-  app:
-    source: {type: file, path: installer.bin}
-    destinations:
-      local: {}
-destinations:
-  local: {operation: munki, path: repo}
+			manifest := `apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: bookkeeping
+spec:
+  destinations:
+    local: {operation: munki, path: repo}
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: app
+spec:
+  source: {type: file, path: installer.bin}
+  destinations:
+    local: {}
 `
-			if err := os.WriteFile(configPath, []byte(manifest), 0o600); err != nil {
+			if err := testproject.Write(configPath, []byte(manifest)); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(filepath.Join(root, "installer.bin"), []byte("new installer bytes"), 0o600); err != nil {
@@ -82,10 +91,10 @@ destinations:
 				}},
 			}
 			report, err := Run(t.Context(), options)
-			if !errors.Is(err, test.err) || !called || len(report.Recipes) != 1 || len(report.Recipes[0].Destinations) != 1 {
+			if !errors.Is(err, test.err) || !called || len(report.Software) != 1 || len(report.Software[0].Destinations) != 1 {
 				t.Fatalf("apply: report=%+v error=%v called=%v", report, err, called)
 			}
-			destination := report.Recipes[0].Destinations[0]
+			destination := report.Software[0].Destinations[0]
 			if destination.Applied != (test.err == nil) || (destination.Error != "") != (test.err != nil) || !destination.SourceChanged || !destination.PreparedChanged {
 				t.Fatalf("apply report: %+v", destination)
 			}
@@ -96,8 +105,8 @@ destinations:
 			got, exists := current.Bindings["app/local"]
 			wantSource, wantPayload := previous.Source, previous.Payload
 			if test.err == nil {
-				wantSource = report.Recipes[0].Prepared.Source.Artifact.SHA256
-				wantPayload = report.Recipes[0].Prepared.Payload.SHA256
+				wantSource = report.Software[0].Prepared.Source.Artifact.SHA256
+				wantPayload = report.Software[0].Prepared.Payload.SHA256
 			}
 			if !exists || got.Connection != previous.Connection || got.Source != wantSource || got.Payload != wantPayload || compactJSON(t, got.Binding) != test.wantBinding {
 				t.Fatalf("persisted state: %+v, want source=%s payload=%s binding=%s", got, wantSource, wantPayload, test.wantBinding)
@@ -120,7 +129,7 @@ destinations:
 			if err != nil {
 				t.Fatal(err)
 			}
-			next := plan.Recipes[0].Destinations[0]
+			next := plan.Software[0].Destinations[0]
 			if next.Applied || next.SourceChanged != (test.err != nil) || next.PreparedChanged != (test.err != nil) {
 				t.Fatalf("next plan: %+v", next)
 			}
@@ -132,24 +141,32 @@ destinations:
 	}
 }
 
-func TestRecipeReadinessAndIndependentRemoteFailures(t *testing.T) {
+func TestSoftwareReadinessAndIndependentRemoteFailures(t *testing.T) {
 	for _, remoteFailure := range []bool{false, true} {
 		t.Run(fmt.Sprint(remoteFailure), func(t *testing.T) {
 			root := t.TempDir()
 			path := filepath.Join(root, "stemma.yaml")
-			manifest := `version: 1
-project: readiness
-recipes:
-  fixture:
-    source: {type: file, path: payload.bin}
-    destinations:
-      first: {version: "1", installer_type: nopkg}
-      second: {installer_type: nopkg}
-destinations:
-  first: {operation: munki, path: first}
-  second: {operation: munki, path: second}
+			manifest := `apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: readiness
+spec:
+  destinations:
+    first: {operation: munki, path: first}
+    second: {operation: munki, path: second}
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: fixture
+spec:
+  source: {type: file, path: payload.bin}
+  destinations:
+    first: {version: "1", installer_type: nopkg}
+    second: {installer_type: nopkg}
 `
-			if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+			if err := testproject.Write(path, []byte(manifest)); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(filepath.Join(root, "payload.bin"), []byte("fixture"), 0o600); err != nil {
@@ -173,7 +190,7 @@ destinations:
 				t.Fatal("expected failing destination")
 			}
 			if remoteFailure {
-				if len(applied) != 1 || applied[0] != "second" || len(report.Recipes[0].Destinations) != 2 || !report.Recipes[0].Destinations[1].Applied {
+				if len(applied) != 1 || applied[0] != "second" || len(report.Software[0].Destinations) != 2 || !report.Software[0].Destinations[1].Applied {
 					t.Fatalf("remote failure blocked healthy destination: %+v applied=%v", report, applied)
 				}
 			} else {
@@ -201,7 +218,7 @@ func TestNativeValidationBeforeAcquisition(t *testing.T) {
 	root := t.TempDir()
 	project := config.Project{
 		Project: "validation",
-		Recipes: map[string]config.Recipe{"app": {
+		Software: map[string]config.Software{"app": {
 			Destinations: map[string]map[string]any{"local": {"unattended_install": false}},
 		}},
 		Destinations: map[string]config.Destination{"local": {Operation: "munki", Path: filepath.Join(root, "repo")}},
@@ -212,18 +229,26 @@ func TestNativeValidationBeforeAcquisition(t *testing.T) {
 	if _, err := os.Stat(project.Destinations["local"].Path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("native validation touched the destination: %v", err)
 	}
-	manifest := `version: 1
-project: validation
-recipes:
-  app:
-    source: {type: file, path: missing.pkg}
-    destinations:
-      local: {unattended_install: invalid}
-destinations:
-  local: {operation: munki, path: repo}
+	manifest := `apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: validation
+spec:
+  destinations:
+    local: {operation: munki, path: repo}
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: app
+spec:
+  source: {type: file, path: missing.pkg}
+  destinations:
+    local: {unattended_install: invalid}
 `
 	configPath := filepath.Join(root, "stemma.yaml")
-	if err := os.WriteFile(configPath, []byte(manifest), 0o600); err != nil {
+	if err := testproject.Write(configPath, []byte(manifest)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Run(t.Context(), Options{ConfigPath: configPath, CacheDir: filepath.Join(root, "cache"), Method: "apply"})
@@ -234,7 +259,7 @@ destinations:
 		t.Fatalf("invalid metadata reached acquisition: %v", err)
 	}
 	project.Destinations["local"] = config.Destination{Operation: "external", Config: map[string]any{"opaque": nil}}
-	project.Recipes["app"].Destinations["local"] = map[string]any{"plugin_owned": false}
+	project.Software["app"].Destinations["local"] = map[string]any{"plugin_owned": false}
 	if err := Validate(t.Context(), project); err != nil {
 		t.Fatalf("native validation interpreted plugin-owned input: %v", err)
 	}

@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/woodleighschool/stemma/main/stemma.schema.json
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: chrome
+spec:
+  source:
+    type: http
+    url: https://dl.google.com/dl/chrome/mac/universal/stable/gcem/GoogleChrome.pkg
+    filename: GoogleChrome.pkg
+  platform: darwin
+  arch: universal
+  verification:
+    integrity: true
+    signature: true
+  destinations:
+    munki:
+      name: Google Chrome
+      catalogs:
+        - testing

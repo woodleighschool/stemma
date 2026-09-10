@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"github.com/woodleighschool/stemma/internal/testproject"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,35 +21,43 @@ func TestSharedPkginfoDocumentPreservesPatchValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(root, "stemma.yaml")
-	manifest := `version: 1
-project: document
-recipes:
-  fixture:
-    source: {type: local, include: [Payload/**]}
-    steps:
-      - name: build
-        operation: pkg
-        inputs: {input: prepared}
-        config: {identifier: org.example.fixture, version: "1", payload: Payload}
-      - name: metadata
-        operation: munki.pkginfo
-        inputs: {input: build/artifact}
-        config:
-          name: Fixture
-          description: original
-          blocking_applications: []
-          unattended_install: false
-    destinations:
-      local:
-        artifact: metadata/artifact
-        inputs: {installer: build/artifact}
-        catalogs: [testing]
-destinations:
-  local: {operation: munki, path: repo}
+	manifest := `apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: document
+spec:
+  destinations:
+    local: {operation: munki, path: repo}
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: fixture
+spec:
+  source: {type: local, include: [Payload/**]}
+  steps:
+    - name: build
+      operation: pkg
+      inputs: {input: prepared}
+      config: {identifier: org.example.fixture, version: "1", payload: Payload}
+    - name: metadata
+      operation: munki.pkginfo
+      inputs: {input: build/artifact}
+      config:
+        name: Fixture
+        description: original
+        blocking_applications: []
+        unattended_install: false
+  destinations:
+    local:
+      artifact: metadata/artifact
+      inputs: {installer: build/artifact}
+      catalogs: [testing]
 `
 	write := func(data string) {
 		t.Helper()
-		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		if err := testproject.Write(path, []byte(data)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -63,15 +72,15 @@ destinations:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !second.Recipes[0].Steps[0].Cached || second.Recipes[0].Steps[1].Cached || first.Recipes[0].Steps[0].Artifacts["artifact"].Payload != second.Recipes[0].Steps[0].Artifacts["artifact"].Payload {
+	if !second.Software[0].Steps[0].Cached || second.Software[0].Steps[1].Cached || first.Software[0].Steps[0].Artifacts["artifact"].Payload != second.Software[0].Steps[0].Artifacts["artifact"].Payload {
 		t.Fatal("metadata document edit rebuilt installer")
 	}
-	for _, change := range second.Recipes[0].Destinations[0].Changes {
+	for _, change := range second.Software[0].Destinations[0].Changes {
 		if change.Kind == "content" {
 			t.Fatal("metadata document edit republished installer")
 		}
 	}
-	documentRef := second.Recipes[0].Steps[1].Artifacts["artifact"].Payload
+	documentRef := second.Software[0].Steps[1].Artifacts["artifact"].Payload
 	// Open via CAS rather than depending on the cache's on-disk layout.
 	store, err := cas.Open(opts.CacheDir)
 	if err != nil {
@@ -110,7 +119,7 @@ destinations:
 	if _, exists := actual["description"]; exists {
 		t.Fatal("local repository did not clear description")
 	}
-	if actual["installer_item_hash"] != first.Recipes[0].Steps[0].Artifacts["artifact"].Payload.SHA256 {
+	if actual["installer_item_hash"] != first.Software[0].Steps[0].Artifacts["artifact"].Payload.SHA256 {
 		t.Fatal("local repository published pkginfo JSON as installer")
 	}
 }

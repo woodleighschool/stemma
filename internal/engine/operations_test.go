@@ -9,6 +9,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/woodleighschool/stemma/internal/plugins"
+	"github.com/woodleighschool/stemma/internal/testproject"
 	"go.yaml.in/yaml/v4"
 	"net/http"
 	"net/http/httptest"
@@ -39,34 +40,42 @@ func TestExecutableRegistersPreparationAndReconciliation(t *testing.T) {
 		_, _ = w.Write([]byte("fixture content"))
 	}))
 	defer server.Close()
-	manifest := fmt.Sprintf(`version: 1
-project: operations
-plugins:
-  provider:
-    trusted: true
-    image: registry.example/plugins/echo:v1
-recipes:
-  fixture:
-    source: {type: http, url: %s/payload.bin}
-    steps:
-      - name: first
-        operation: echo.inspect
-        inputs: {payload: source}
-      - name: inspected
-        operation: inspect
-        inputs: {input: first/payload}
-      - name: second
-        operation: echo.inspect
-        inputs: {finished: inspected/artifact}
-    destinations:
-      remote: {artifact: second/finished, displayName: original}
-destinations:
-  remote: {operation: echo.reconcile, config: {}}
+	manifest := fmt.Sprintf(`apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: operations
+spec:
+  plugins:
+    provider:
+      trusted: true
+      image: registry.example/plugins/echo:v1
+  destinations:
+    remote: {operation: echo.reconcile, config: {}}
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: fixture
+spec:
+  source: {type: http, url: %s/payload.bin}
+  steps:
+    - name: first
+      operation: echo.inspect
+      inputs: {payload: source}
+    - name: inspected
+      operation: inspect
+      inputs: {input: first/payload}
+    - name: second
+      operation: echo.inspect
+      inputs: {finished: inspected/artifact}
+  destinations:
+    remote: {artifact: second/finished, displayName: original}
 `, server.URL)
 	path := filepath.Join(root, "stemma.yaml")
 	write := func(data string) {
 		t.Helper()
-		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		if err := testproject.Write(path, []byte(data)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -89,13 +98,13 @@ destinations:
 	}
 	catalog, err := Catalog(t.Context(), opts)
 	if err != nil || len(catalog.Operations) != 8 || downloads.Load() != 0 {
-		t.Fatalf("catalog acquired recipe or lost operations: %+v %v downloads=%d", catalog, err, downloads.Load())
+		t.Fatalf("catalog acquired software or lost operations: %+v %v downloads=%d", catalog, err, downloads.Load())
 	}
 	first, err := Run(t.Context(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Recipes) != 1 || len(first.Recipes[0].Steps) != 3 || first.Recipes[0].Steps[2].Artifacts["finished"].Payload != first.Recipes[0].Prepared.Source.Artifact {
+	if len(first.Software) != 1 || len(first.Software[0].Steps) != 3 || first.Software[0].Steps[2].Artifacts["finished"].Payload != first.Software[0].Prepared.Source.Artifact {
 		t.Fatalf("named step outputs were not preserved: %+v", first)
 	}
 	write(strings.Replace(manifest, "displayName: original", "displayName: edited", 1))
@@ -103,7 +112,7 @@ destinations:
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, step := range second.Recipes[0].Steps {
+	for _, step := range second.Software[0].Steps {
 		if !step.Cached {
 			t.Fatalf("metadata edit invalidated step %s", step.Name)
 		}
@@ -120,7 +129,7 @@ destinations:
 	}
 	installFixturePlugin(t, store, root, binary, "original resource")
 	third, err := Run(t.Context(), opts)
-	if err != nil || third.Recipes[0].Steps[2].Artifacts["finished"].Payload != first.Recipes[0].Steps[2].Artifacts["finished"].Payload {
+	if err != nil || third.Software[0].Steps[2].Artifacts["finished"].Payload != first.Software[0].Steps[2].Artifacts["finished"].Payload {
 		t.Fatalf("cold operation output changed: %+v %v", third, err)
 	}
 	installFixturePlugin(t, store, root, binary, "changed resource")
@@ -128,11 +137,11 @@ destinations:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.Recipes[0].Steps[0].Cached {
+	if changed.Software[0].Steps[0].Cached {
 		t.Fatal("resource-only bundle change reused plugin step cache")
 	}
 	// A second provider advertising the same names cannot shadow the first.
-	write(strings.Replace(manifest, "recipes:\n", "  other:\n    trusted: true\n    image: registry.example/plugins/echo:v1\nrecipes:\n", 1))
+	write(strings.Replace(manifest, "  plugins:\n", "  plugins:\n    other:\n      trusted: true\n      image: registry.example/plugins/echo:v1\n", 1))
 	project, err = config.Load(path)
 	if err != nil {
 		t.Fatal(err)
@@ -146,7 +155,7 @@ destinations:
 		t.Fatalf("provider collision: %v", err)
 	}
 	if downloads.Load() != count {
-		t.Fatal("collision discovered after recipe acquisition")
+		t.Fatal("collision discovered after software acquisition")
 	}
 }
 
@@ -207,7 +216,7 @@ func installFixturePlugin(t *testing.T, store *cas.Store, root, binary, resource
 	entry := plugins.Entry{Image: "registry.example/plugins/echo:v1", Digest: index.Digest.String(), Size: index.Size}
 	locked, err := lockfile.Load(filepath.Join(root, "stemma.lock.yaml"))
 	if err != nil {
-		locked = lockfile.File{Version: 1, Recipes: map[string]source.Entry{}}
+		locked = lockfile.File{Version: 1, Software: map[string]source.Entry{}}
 	}
 	locked.Plugins = map[string]plugins.Entry{"provider": entry, "other": entry}
 	data, err = yaml.Marshal(locked)

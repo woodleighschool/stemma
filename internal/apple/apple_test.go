@@ -72,8 +72,8 @@ func TestSignedFixtures(t *testing.T) {
 		}
 	}
 	app, err = VerifyApp("testdata/SignedFixture.app", Policy{RequireSignature: true, RequireResources: true})
-	if !errors.Is(err, ErrUnsupported) || app.Signature.Status != Unsupported || app.Integrity.Status != Valid {
-		t.Fatalf("CMS parsing was promoted to verification: %+v: %v", app, err)
+	if err != nil || app.Signature.Status != Valid || app.Integrity.Status != Valid || app.Resources.Status != Valid || app.Identity.Status != NotRequested || app.Platform.Status != NotRequested {
+		t.Fatalf("CMS authentication lost independent scopes: %+v: %v", app, err)
 	}
 	pkg, err := VerifyPackage("testdata/fixture.pkg", Policy{RequireSignature: true, CertificateSHA256: installerPin})
 	if err != nil || pkg.Signature.Status != Valid || pkg.Identity.Status != Valid || pkg.Integrity.Status != Valid {

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/munki"
@@ -71,6 +72,52 @@ func TestObservedPackageFormatDoesNotRequireFilenameExtension(t *testing.T) {
 		t.Fatal("native PKG publication should omit installer_type")
 	}
 	assertConverged(t, request)
+}
+
+func TestNoPkgDocumentWithoutInstaller(t *testing.T) {
+	root, request := repositoryRequest(t, "pkginfo.json", `{}`)
+	data := []byte(`{"name":"Browser Policy","version":"1.0","installer_type":"nopkg","update_for":["Creative Suite"],"installcheck_script":"#!/bin/sh\nexit 1","postinstall_script":"#!/bin/sh\nexit 0"}`)
+	if err := os.WriteFile(request.Artifact.Path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	request.Artifact.SHA256, request.Artifact.Size, request.Artifact.Format = hex.EncodeToString(digest[:]), int64(len(data)), "json"
+	request.Method = "validate"
+	if _, err := munkirepo.Handle(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	document := readNative[map[string]any](t, apply(t, root, request))
+	if document["installer_type"] != "nopkg" || document["version"] != "1.0" || document["name"] != "Browser Policy" {
+		t.Fatalf("native policy changed: %#v", document)
+	}
+	if _, err := os.Stat(filepath.Join(root, "pkgs")); !os.IsNotExist(err) {
+		t.Fatalf("nopkg created installer storage: %v", err)
+	}
+	assertConverged(t, request)
+
+	request.Inputs = map[string]plugin.Artifact{"installer": request.Artifact}
+	if _, err := munkirepo.Handle(t.Context(), request); err == nil {
+		t.Fatal("nopkg accepted an installer input")
+	}
+	request.Inputs = nil
+	request.Artifact.SHA256 = strings.Repeat("0", 64)
+	if _, err := munkirepo.Handle(t.Context(), request); err == nil {
+		t.Fatal("accepted tampered policy document")
+	}
+	for _, invalid := range []string{
+		`{"name":"Policy","installer_type":"nopkg"}`,
+		`{"name":"Policy","version":"1.0","installer_type":"nopkg","installer_item_size":0}`,
+		`{"name":"App","version":"1.0","installer_type":"pkg"}`,
+	} {
+		if err := os.WriteFile(request.Artifact.Path, []byte(invalid), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256([]byte(invalid))
+		request.Artifact.SHA256, request.Artifact.Size = hex.EncodeToString(digest[:]), int64(len(invalid))
+		if _, err := munkirepo.Handle(t.Context(), request); err == nil {
+			t.Fatalf("accepted invalid installer-free document: %s", invalid)
+		}
+	}
 }
 
 func TestCatalogsPreserveForeignNameAndVersionVariants(t *testing.T) {

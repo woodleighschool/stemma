@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"io/fs"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -80,6 +82,11 @@ func (m *Manager) Resolve(ctx context.Context, s config.Source) (Entry, error) {
 	}
 	if s.Type == "github" {
 		if err := m.github(ctx, s, &entry); err != nil {
+			return Entry{}, err
+		}
+	}
+	if s.Type == "http" && s.Match != "" {
+		if err := m.discover(ctx, s, &entry); err != nil {
 			return Entry{}, err
 		}
 	}
@@ -217,14 +224,29 @@ func (m *Manager) download(ctx context.Context, s config.Source, entry Entry, ex
 		return cas.Ref{}, fmt.Errorf("lockfile URL: %w", err)
 	}
 	u, _ := url.Parse(entry.URL)
-	// A lockfile may pin a release asset, but must not redirect an HTTP source to a different origin.
-	if s.Type == "http" && entry.URL != s.URL {
-		return cas.Ref{}, errors.New("locked HTTP URL does not match configuration")
+	token := s.Token
+	if s.Type == "http" {
+		if s.Match == "" && entry.URL != s.URL {
+			return cas.Ref{}, errors.New("locked HTTP URL does not match configuration")
+		}
+		if s.Match != "" {
+			pattern, err := regexp.Compile(s.Match)
+			if err != nil || pattern.FindString(entry.URL) != entry.URL {
+				return cas.Ref{}, errors.New("locked HTTP URL does not match source pattern")
+			}
+		}
+		origin, _ := url.Parse(s.URL)
+		if origin.Scheme == "https" && u.Scheme != "https" {
+			return cas.Ref{}, errors.New("refusing discovered HTTPS downgrade")
+		}
+		if origin.Scheme != u.Scheme || origin.Host != u.Host {
+			token = ""
+		}
 	}
 	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
 		return cas.Ref{}, errors.New("locked asset does not belong to the configured GitHub repository")
 	}
-	req, err := m.request(ctx, entry.URL, s.Token)
+	req, err := m.request(ctx, entry.URL, token)
 	if err != nil {
 		return cas.Ref{}, err
 	}
@@ -269,6 +291,47 @@ func (m *Manager) request(ctx context.Context, address, token string) (*http.Req
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	return req, nil
+}
+
+func (m *Manager) discover(ctx context.Context, s config.Source, entry *Entry) error {
+	req, err := m.request(ctx, s.URL, s.Token)
+	if err != nil {
+		return err
+	}
+	res, err := m.Client.Do(req)
+	if err != nil {
+		return transportError("download page", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("download page returned HTTP %d", res.StatusCode)
+	}
+	const limit = 4 << 20
+	data, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
+	if err != nil {
+		return transportError("download page", err)
+	}
+	if len(data) > limit {
+		return errors.New("download page exceeds 4 MiB")
+	}
+	pattern, err := regexp.Compile(s.Match)
+	if err != nil {
+		return err
+	}
+	matches := map[string]bool{}
+	for _, address := range pattern.FindAllString(html.UnescapeString(string(data)), -1) {
+		if err := config.ValidateHTTPURL(address); err != nil {
+			return fmt.Errorf("download page match must be a complete stable URL: %w", err)
+		}
+		matches[address] = true
+	}
+	if len(matches) != 1 {
+		return fmt.Errorf("download page matched %d distinct artifact URLs; expected one", len(matches))
+	}
+	for address := range matches {
+		entry.URL = address
+	}
+	return nil
 }
 
 func (m *Manager) github(ctx context.Context, s config.Source, entry *Entry) error {

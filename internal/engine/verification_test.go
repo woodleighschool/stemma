@@ -3,6 +3,7 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"github.com/woodleighschool/stemma/internal/testproject"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,8 +28,8 @@ func TestPreparationVerifiesAndReportsDefaultPayload(t *testing.T) {
 				t.Fatal(err)
 			}
 			path := filepath.Join(root, "stemma.yaml")
-			manifest := fmt.Sprintf("version: 1\nproject: verify-payload\nrecipes:\n  example:\n    source: {type: file, path: fixture.pkg}\n    verification: {%s}\n", policy)
-			if err := os.WriteFile(path, []byte(manifest), 0o600); err != nil {
+			manifest := fmt.Sprintf("apiVersion: stemma/v1alpha1\nkind: Project\nmetadata:\n  name: verify-payload\nspec:\n  imports: ['*.software.yaml']\n---\napiVersion: stemma/v1alpha1\nkind: Software\nmetadata:\n  name: example\nspec:\n  source: {type: file, path: fixture.pkg}\n  verification: {%s}\n", policy)
+			if err := testproject.Write(path, []byte(manifest)); err != nil {
 				t.Fatal(err)
 			}
 			opts := Options{ConfigPath: path, CacheDir: t.TempDir(), Method: "prepare"}
@@ -43,7 +44,7 @@ func TestPreparationVerifiesAndReportsDefaultPayload(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				prepared := report.Recipes[0].Prepared
+				prepared := report.Software[0].Prepared
 				if prepared.Evidence == nil || prepared.Evidence.Integrity.Status != apple.Valid || prepared.Evidence.SubjectSHA256 != prepared.Payload.SHA256 {
 					t.Fatalf("verification evidence was lost: %+v", prepared.Evidence)
 				}
@@ -62,28 +63,36 @@ func TestDocumentDeliveryVerifiesTheExplicitInstallerOutput(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "Payload", "example.txt"), []byte("synthetic package payload"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			manifest := fmt.Sprintf(`version: 1
-project: verify-document
-recipes:
-  example:
-    source: {type: file, path: Payload}
-    verification: {subject: %s, integrity: true}
-    steps:
-      - name: build
-        operation: pkg
-        inputs: {input: prepared}
-        config: {identifier: org.example.fixture, version: "1", payload: .}
-      - name: metadata
-        operation: munki.pkginfo
-        inputs: {input: build/artifact}
-        config: {name: Example}
-    destinations:
-      local: {artifact: metadata/artifact, inputs: {installer: build/artifact}}
-destinations:
-  local: {operation: munki, path: repo}
+			manifest := fmt.Sprintf(`apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: verify-document
+spec:
+  destinations:
+    local: {operation: munki, path: repo}
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: example
+spec:
+  source: {type: file, path: Payload}
+  verification: {subject: %s, integrity: true}
+  steps:
+    - name: build
+      operation: pkg
+      inputs: {input: prepared}
+      config: {identifier: org.example.fixture, version: "1", payload: .}
+    - name: metadata
+      operation: munki.pkginfo
+      inputs: {input: build/artifact}
+      config: {name: Example}
+  destinations:
+    local: {artifact: metadata/artifact, inputs: {installer: build/artifact}}
 `, subject)
 			configPath := filepath.Join(root, "stemma.yaml")
-			if err := os.WriteFile(configPath, []byte(manifest), 0o600); err != nil {
+			if err := testproject.Write(configPath, []byte(manifest)); err != nil {
 				t.Fatal(err)
 			}
 			opts := Options{ConfigPath: configPath, CacheDir: t.TempDir(), Method: "apply"}
@@ -101,8 +110,8 @@ destinations:
 				t.Fatal(err)
 			}
 			for _, report := range []Report{report, runVerifiedAgain(t, opts)} {
-				installer := report.Recipes[0].Steps[0].Artifacts["artifact"]
-				document := report.Recipes[0].Steps[1].Artifacts["artifact"]
+				installer := report.Software[0].Steps[0].Artifacts["artifact"]
+				document := report.Software[0].Steps[1].Artifacts["artifact"]
 				if installer.Evidence == nil || installer.Evidence.Integrity.Status != apple.Valid || installer.Evidence.SubjectSHA256 != installer.Payload.SHA256 {
 					t.Fatalf("evidence was not bound to the chosen installer: %+v", installer.Evidence)
 				}

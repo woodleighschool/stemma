@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/apple"
+	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/msi"
 	"github.com/woodleighschool/stemma/plugin"
@@ -24,7 +25,7 @@ import (
 const maxTreeEntries = 100000
 const maxInspectedBytes = 16 << 30
 
-// Read collects application, PKG receipt and payload application, or MSI facts.
+// Read collects application, DMG payload, PKG receipt and payload application, or MSI facts.
 // It distinguishes installers by their contents and rejects malformed files
 // claiming supported formats. Unknown regular files retain their exact identity.
 func Read(ctx context.Context, name string) (plugin.Facts, error) {
@@ -124,10 +125,16 @@ func read(ctx context.Context, name string, contents bool) (plugin.Facts, error)
 	case ext == ".pkg" || ext == ".msi" || ext == ".app":
 		return plugin.Facts{}, fmt.Errorf("inspect: malformed %s artifact", ext)
 	case ext == ".dmg" || isDMG(f, info.Size()):
-		if contents || !isDMG(f, info.Size()) {
-			return plugin.Facts{}, fmt.Errorf("inspect: %w: DMG filesystem inspection", apple.ErrUnsupported)
+		if !isDMG(f, info.Size()) {
+			return plugin.Facts{}, fmt.Errorf("inspect: malformed DMG artifact")
 		}
 		root.Kind = "container"
+		if contents {
+			facts.Subjects, err = readDMG(ctx, name)
+			if err != nil {
+				return plugin.Facts{}, fmt.Errorf("inspect dmg: %w", err)
+			}
+		}
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return plugin.Facts{}, fmt.Errorf("inspect digest: %w", err)
@@ -143,6 +150,39 @@ func read(ctx context.Context, name string, contents bool) (plugin.Facts, error)
 	root.SHA256 = hex.EncodeToString(digest.Sum(nil))
 	facts.Subjects = append([]plugin.Subject{root}, facts.Subjects...)
 	return facts, ctx.Err()
+}
+
+func readDMG(ctx context.Context, name string) ([]plugin.Subject, error) {
+	work, err := os.MkdirTemp("", "stemma-inspect-*")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.RemoveAll(work) }()
+	destination := filepath.Join(work, "payload")
+	selected, err := diskimage.Extract(ctx, name, destination, "")
+	if err != nil {
+		return nil, err
+	}
+	facts, err := Read(ctx, selected)
+	if err != nil {
+		return nil, err
+	}
+	relative, err := filepath.Rel(destination, selected)
+	if err != nil {
+		return nil, err
+	}
+	prefix := filepath.ToSlash(relative)
+	for i := range facts.Subjects {
+		subject := &facts.Subjects[i]
+		subject.ID = path.Join(prefix, subject.ID)
+		subject.Path = path.Join(prefix, subject.Path)
+		if subject.Parent == "" {
+			subject.Parent = "."
+		} else {
+			subject.Parent = path.Join(prefix, subject.Parent)
+		}
+	}
+	return facts.Subjects, nil
 }
 
 func readDirectory(ctx context.Context, name string) (plugin.Facts, error) {

@@ -7,7 +7,7 @@ import (
 	orderedmap "github.com/pb33f/ordered-map/v2"
 )
 
-// MetadataSchema describes the supported native Graph metadata and recipe adoption.
+// MetadataSchema describes the supported native Graph metadata and software adoption.
 // Creation requirements are checked after discovery, so existing apps can manage
 // only selected fields. Omission preserves a field; collections replace membership.
 func MetadataSchema() *jsonschema.Schema {
@@ -15,7 +15,7 @@ func MetadataSchema() *jsonschema.Schema {
 	for _, appType := range []string{win32Type, dmgType, pkgType} {
 		p := map[string]*jsonschema.Schema{
 			"@odata.type":           {Const: appType, Description: "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."},
-			"app_id":                {Type: "string", MinLength: new(uint64(1)), Description: "Adopt this existing Intune app for this recipe. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."},
+			"app_id":                {Type: "string", MinLength: new(uint64(1)), Description: "Adopt this existing Intune app for this software. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."},
 			"displayName":           {Type: "string", MaxLength: new(uint64(10000)), Description: "Company Portal display name. Required for creation."},
 			"description":           {Type: "string", MaxLength: new(uint64(10000)), Description: "Native app description. Required for creation."},
 			"publisher":             {Type: "string", MaxLength: new(uint64(10000)), Description: "Native publisher name. Required for creation."},
@@ -66,7 +66,7 @@ func MetadataSchema() *jsonschema.Schema {
 		variant.Title = appType
 		variants = append(variants, variant)
 	}
-	return &jsonschema.Schema{OneOf: variants, Description: "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG and PKG (beta). Sources are preserved; signing and installer authoring are separate recipe policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."}
+	return &jsonschema.Schema{OneOf: variants, Description: "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG and PKG (beta). Sources are preserved; signing and installer authoring are separate software policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."}
 }
 
 func objectSchema(properties map[string]*jsonschema.Schema, required ...string) *jsonschema.Schema {
@@ -126,7 +126,7 @@ func rulesSchema() *jsonschema.Schema {
 }
 
 // ConnectionSchema describes a shared Intune connection. App adoption belongs
-// to recipe metadata because one connection may publish many different apps.
+// to software metadata because one connection may publish many different apps.
 func ConnectionSchema() *jsonschema.Schema {
 	schema := objectSchema(map[string]*jsonschema.Schema{
 		"graph_url":     {Type: "string", Default: "https://graph.microsoft.com/v1.0", Description: "Graph base URL ending in /v1.0. macOS apps select /beta automatically. HTTPS is required."},
@@ -139,6 +139,6 @@ func ConnectionSchema() *jsonschema.Schema {
 		{Required: []string{"token"}, Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Required: []string{"tenant_id"}}, {Required: []string{"client_id"}}, {Required: []string{"client_secret"}}}}},
 		{Required: []string{"tenant_id", "client_id", "client_secret"}, Not: &jsonschema.Schema{Required: []string{"token"}}},
 	}
-	schema.Description = "Shared Graph connection for Windows and macOS apps. Set metadata.app_id on a recipe to adopt an existing app. Requires Graph DeviceManagementApps.ReadWrite.All for apply."
+	schema.Description = "Shared Graph connection for Windows and macOS apps. Set metadata.app_id on a Software document to adopt an existing app. Requires Graph DeviceManagementApps.ReadWrite.All for apply."
 	return schema
 }

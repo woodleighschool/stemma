@@ -15,6 +15,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/diskimage"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
@@ -22,7 +23,7 @@ import (
 
 // Prepared preserves the original source alongside selected payloads and verification evidence.
 type Prepared struct {
-	Source        source.Entry    `json:"source"`
+	Source        source.Entry    `json:"source,omitzero"`
 	Payload       cas.Ref         `json:"payload"`
 	Filename      string          `json:"filename"`
 	Format        string          `json:"format"`
@@ -35,14 +36,14 @@ type Prepared struct {
 	Path          string          `json:"-"`
 }
 
-func prepare(ctx context.Context, store *cas.Store, entry source.Entry, recipe config.Recipe, work string) (Prepared, error) {
+func prepare(ctx context.Context, store *cas.Store, entry source.Entry, software config.Software, work string) (Prepared, error) {
 	key := config.Fingerprint(struct {
 		Implementation                   string
 		Source                           cas.Ref
 		Filename, Select, Platform, Arch string
 		Tree                             bool
 		Verification                     config.Verification
-	}{"prepare/2", entry.Artifact, entry.Filename, recipe.Select, recipe.Platform, recipe.Arch, entry.Tree, recipe.Verification})
+	}{"prepare/3", entry.Artifact, entry.Filename, software.Select, software.Platform, software.Arch, entry.Tree, software.Verification})
 	if descriptor, ok := store.Recall(ctx, key); ok {
 		path, err := store.Path(descriptor)
 		if err != nil {
@@ -73,24 +74,30 @@ func prepare(ctx context.Context, store *cas.Store, entry source.Entry, recipe c
 		if err := archive.Extract(ctx, input, payload); err != nil {
 			return Prepared{}, err
 		}
-		if recipe.Select != "" {
-			selected, err := archive.Select(payload, recipe.Select)
+		if software.Select != "" {
+			selected, err := archive.Select(payload, software.Select)
 			if err != nil {
 				return Prepared{}, err
 			}
 			payload = selected
 		}
+	case strings.EqualFold(filepath.Ext(entry.Filename), ".dmg"):
+		selected, err := diskimage.Extract(ctx, input, filepath.Join(work, "expanded"), software.Select)
+		if err != nil {
+			return Prepared{}, err
+		}
+		payload = selected
 	case isArchive(entry.Filename):
 		extracted := filepath.Join(work, "expanded")
 		if err := archive.Extract(ctx, input, extracted); err != nil {
 			return Prepared{}, err
 		}
-		selected, err := archive.Select(extracted, recipe.Select)
+		selected, err := archive.Select(extracted, software.Select)
 		if err != nil {
 			return Prepared{}, err
 		}
 		payload = selected
-	case recipe.Select != "":
+	case software.Select != "":
 		return Prepared{}, errors.New("select requires a supported archive source")
 	}
 	prepared, err := inspect(ctx, payload)
@@ -99,14 +106,14 @@ func prepare(ctx context.Context, store *cas.Store, entry source.Entry, recipe c
 	}
 	prepared.Source = entry
 	verificationPath := payload
-	if recipe.Verification.Subject == "source" {
+	if software.Verification.Subject == "source" {
 		verificationPath = input
 		if entry.Tree {
 			verificationPath = filepath.Join(work, entry.Filename)
 		}
 	}
-	if requested(recipe.Verification) {
-		evidence, err := verify(verificationPath, recipe.Verification)
+	if requested(software.Verification) {
+		evidence, err := verify(verificationPath, software.Verification)
 		prepared.Evidence = &evidence
 		if err != nil {
 			return prepared, err

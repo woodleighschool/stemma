@@ -12,31 +12,24 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-// Fragment contains the recipes belonging to one software family. Project
-// mechanics and component defaults are declared only in the root project file.
-type Fragment struct {
-	Version int               `yaml:"version" json:"version" jsonschema:"enum=1"`
-	Recipes map[string]Recipe `yaml:"recipes" json:"recipes"`
-}
-
-// Load resolves inline recipes and imported software-family files within the
-// project directory and expands environment placeholders without using the network.
+// Load resolves one Software document per imported file. Acquisition paths remain
+// relative to the owning document; project identity survives directory moves.
 func Load(filename string) (Project, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return Project{}, err
 	}
-	var p Project
-	document, err := parseConfig(data, &p)
+	var document ProjectDocument
+	raw, err := parseConfig(data, &document)
 	if err != nil {
-		return p, err
+		return Project{}, err
 	}
-	components, _ := document["components"].(map[string]any)
-	recipes, _ := document["recipes"].(map[string]any)
-	p.Recipes = map[string]Recipe{}
-	if err := addRecipes(&p, recipes, components, "."); err != nil {
-		return p, err
+	if err := validateHeader(document.APIVersion, document.Kind, "Project", document.Metadata); err != nil {
+		return Project{}, err
 	}
+	p := Project{Project: document.Metadata.Name, Imports: document.Spec.Imports, Components: document.Spec.Components, Destinations: document.Spec.Destinations, Plugins: document.Spec.Plugins, Software: map[string]Software{}}
+	spec, _ := raw["spec"].(map[string]any)
+	components, _ := spec["components"].(map[string]any)
 	root, err := os.OpenRoot(filepath.Dir(filename))
 	if err != nil {
 		return p, err
@@ -66,16 +59,15 @@ func Load(filename string) (Project, error) {
 			if err != nil {
 				return p, fmt.Errorf("import %s: %w", name, err)
 			}
-			var fragment Fragment
-			document, err := parseConfig(data, &fragment)
+			var software SoftwareDocument
+			raw, err := parseConfig(data, &software)
 			if err != nil {
 				return p, fmt.Errorf("import %s: %w", name, err)
 			}
-			if fragment.Version != 1 || len(fragment.Recipes) == 0 {
-				return p, fmt.Errorf("import %s requires version 1 and recipes", name)
+			if err := validateHeader(software.APIVersion, software.Kind, "Software", software.Metadata); err != nil {
+				return p, fmt.Errorf("import %s: %w", name, err)
 			}
-			recipes, _ := document["recipes"].(map[string]any)
-			if err := addRecipes(&p, recipes, components, path.Dir(name)); err != nil {
+			if err := addSoftware(&p, software.Metadata.Name, raw["spec"], components, path.Dir(name)); err != nil {
 				return p, fmt.Errorf("import %s: %w", name, err)
 			}
 		}
@@ -83,8 +75,21 @@ func Load(filename string) (Project, error) {
 	return p, p.Validate()
 }
 
-// FindRoot climbs from a directory past software-family fragments to the nearest
-// project file. Malformed files are reported rather than silently skipped.
+func validateHeader(version, kind, expected string, metadata Metadata) error {
+	if version != "stemma/v1alpha1" {
+		return errors.New("apiVersion must be stemma/v1alpha1")
+	}
+	if kind != expected {
+		return fmt.Errorf("kind must be %s", expected)
+	}
+	if !namePattern.MatchString(metadata.Name) {
+		return errors.New("metadata.name must be a stable name containing letters, digits, dots, underscores or hyphens")
+	}
+	return nil
+}
+
+// FindRoot climbs past Software documents to the nearest Project stemma.yaml.
+// Discovery validates document structure without requiring credential expansion.
 func FindRoot(startDir string) (string, error) {
 	dir, err := filepath.Abs(startDir)
 	if err != nil {
@@ -94,24 +99,39 @@ func FindRoot(startDir string) (string, error) {
 		filename := filepath.Join(dir, "stemma.yaml")
 		data, err := os.ReadFile(filename)
 		if err == nil {
-			var project Project
-			document, err := parseDocument(data, &project)
-			if err != nil {
+			var header struct {
+				APIVersion string         `yaml:"apiVersion"`
+				Kind       string         `yaml:"kind"`
+				Metadata   Metadata       `yaml:"metadata"`
+				Spec       map[string]any `yaml:"spec"`
+			}
+			if _, err := parseDocument(data, &header); err != nil {
 				return "", fmt.Errorf("%s: %w", filename, err)
 			}
-			if _, present := document["project"]; present {
-				return dir, nil
+			var document any
+			switch header.Kind {
+			case "Project":
+				document = &ProjectDocument{}
+			case "Software":
+				document = &SoftwareDocument{}
+			default:
+				return "", fmt.Errorf("%s: kind must be Project or Software", filename)
 			}
-			var fragment Fragment
-			if _, err := parseDocument(data, &fragment); err != nil || fragment.Version != 1 || len(fragment.Recipes) == 0 {
-				return "", fmt.Errorf("%s is neither a project nor a valid software-family fragment", filename)
+			if err := validateHeader(header.APIVersion, header.Kind, header.Kind, header.Metadata); err != nil {
+				return "", fmt.Errorf("%s: %w", filename, err)
+			}
+			if _, err := parseDocument(data, document); err != nil {
+				return "", fmt.Errorf("%s: %w", filename, err)
+			}
+			if header.Kind == "Project" {
+				return dir, nil
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "", errors.New("no root stemma.yaml with a project identity found")
+			return "", errors.New("no root stemma.yaml with kind Project found")
 		}
 		dir = parent
 	}

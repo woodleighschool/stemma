@@ -23,30 +23,35 @@ func TestLocalPackageSharedAcrossDestinations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("stemma.yaml", `version: 1
-project: local-packages
-imports: [software/**/stemma.yaml]
-destinations:
-  first: {operation: munki, path: first}
-  second: {operation: munki, path: second}
+	write("stemma.yaml", `apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: local-packages
+spec:
+  imports: [software/**/stemma.yaml]
+  destinations:
+    first: {operation: munki, path: first}
+    second: {operation: munki, path: second}
 `)
-	fragment := `version: 1
-recipes:
-  branding:
-    source:
-      type: local
-      include: [Payload/**, Scripts/**]
-    verification: {integrity: true}
-    artifacts:
-      package:
-        type: pkg
-        identifier: au.edu.vic.woodleigh.fixture
-        version: "1.0"
-        payload: Payload
-        scripts: {postinstall: Scripts/postinstall}
-    destinations:
-      first: {artifact: artifacts/package, description: original, catalogs: [testing]}
-      second: {artifact: artifacts/package, catalogs: [testing]}
+	fragment := `apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: branding
+spec:
+  source:
+    type: local
+    include: [Payload/**, Scripts/**]
+  verification: {integrity: true}
+  artifacts:
+    package:
+      type: pkg
+      identifier: au.edu.vic.woodleigh.fixture
+      version: "1.0"
+      payload: Payload
+      scripts: {postinstall: Scripts/postinstall}
+  destinations:
+    first: {artifact: artifacts/package, description: original, catalogs: [testing]}
+    second: {artifact: artifacts/package, catalogs: [testing]}
 `
 	write("software/Branding/stemma.yaml", fragment)
 	write("software/Branding/Payload/Library/Example/message.txt", "payload")
@@ -62,8 +67,8 @@ recipes:
 		return report
 	}
 	first := run()
-	original := first.Recipes[0].Artifacts["package"]
-	if original.Payload.SHA256 == "" || original.Cached || len(first.Recipes[0].Destinations) != 2 {
+	original := first.Software[0].Artifacts["package"]
+	if original.Payload.SHA256 == "" || original.Cached || len(first.Software[0].Destinations) != 2 {
 		t.Fatalf("first build: %+v", first)
 	}
 	for _, dest := range []string{"first", "second"} {
@@ -74,7 +79,7 @@ recipes:
 	}
 	options.Lock = lockfile.Options{Frozen: true}
 	second := run()
-	if !second.Recipes[0].Artifacts["package"].Cached || len(second.Recipes[0].Destinations[0].Changes) != 0 {
+	if !second.Software[0].Artifacts["package"].Cached || len(second.Software[0].Destinations[0].Changes) != 0 {
 		t.Fatalf("unchanged run rebuilt or republished: %+v", second)
 	}
 	write("software/Branding/Scripts/postinstall", script+"# changed\n")
@@ -83,16 +88,16 @@ recipes:
 	}
 	options.Lock = lockfile.Options{}
 	changed := run()
-	current := changed.Recipes[0].Artifacts["package"]
+	current := changed.Software[0].Artifacts["package"]
 	if current.Payload == original.Payload || current.Cached || !changed.LockChanged {
 		t.Fatalf("script edit did not invalidate source and package: %+v", changed)
 	}
 	write("software/Branding/stemma.yaml", strings.Replace(fragment, "description: original", "description: edited", 1))
 	metadata := run()
-	if !metadata.Recipes[0].Artifacts["package"].Cached || metadata.LockChanged {
+	if !metadata.Software[0].Artifacts["package"].Cached || metadata.LockChanged {
 		t.Fatalf("metadata edit invalidated preparation: %+v", metadata)
 	}
-	for _, change := range metadata.Recipes[0].Destinations[0].Changes {
+	for _, change := range metadata.Software[0].Destinations[0].Changes {
 		if change.Kind == "content" {
 			t.Fatal("metadata edit uploaded content")
 		}
@@ -101,7 +106,7 @@ recipes:
 		t.Fatal(err)
 	}
 	cold := run()
-	if cold.Recipes[0].Artifacts["package"].Payload != current.Payload || len(cold.Recipes[0].Destinations[0].Changes) != 0 {
+	if cold.Software[0].Artifacts["package"].Payload != current.Payload || len(cold.Software[0].Destinations[0].Changes) != 0 {
 		t.Fatalf("cold rebuild changed deterministic package or destination: %+v", cold)
 	}
 	lockPath := filepath.Join(root, "stemma.lock.yaml")
@@ -109,9 +114,9 @@ recipes:
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := locked.Recipes["branding"]
+	entry := locked.Software["branding"]
 	entry.ResolvedAt = entry.ResolvedAt.Add(-24 * time.Hour)
-	locked.Recipes["branding"] = entry
+	locked.Software["branding"] = entry
 	lockData, err := yaml.Marshal(locked)
 	if err != nil {
 		t.Fatal(err)
@@ -120,31 +125,31 @@ recipes:
 		t.Fatal(err)
 	}
 	retimed := run()
-	if retimed.Recipes[0].Artifacts["package"].Payload == current.Payload || retimed.Recipes[0].Artifacts["package"].Cached {
+	if retimed.Software[0].Artifacts["package"].Payload == current.Payload || retimed.Software[0].Artifacts["package"].Cached {
 		t.Fatal("changed locked package timestamp reused cached package bytes")
 	}
-	broken := strings.Replace(fragment, "    destinations:\n", `      broken:
-        type: pkg
-        identifier: au.edu.vic.woodleigh.broken
-        version: "1.0"
-        scripts: {postinstall: Scripts/missing}
-    destinations:
+	broken := strings.Replace(fragment, "  destinations:\n", `    broken:
+      type: pkg
+      identifier: au.edu.vic.woodleigh.broken
+      version: "1.0"
+      scripts: {postinstall: Scripts/missing}
+  destinations:
 `, 1)
 	broken = strings.Replace(broken, "description: original", "description: independent", 1)
 	broken = strings.Replace(broken, "second: {artifact: artifacts/package", "second: {artifact: artifacts/broken", 1)
 	write("software/Branding/stemma.yaml", broken)
 	partial, err := Run(t.Context(), options)
-	if err == nil || partial.Recipes[0].Error == "" {
-		t.Fatalf("invalid required artifact did not fail recipe readiness: %+v, err=%v", partial, err)
+	if err == nil || partial.Software[0].Error == "" {
+		t.Fatalf("invalid required artifact did not fail software readiness: %+v, err=%v", partial, err)
 	}
-	for _, destination := range partial.Recipes[0].Destinations {
+	for _, destination := range partial.Software[0].Destinations {
 		if destination.Applied {
-			t.Fatal("recipe published before all required artifacts were valid")
+			t.Fatal("software published before all required artifacts were valid")
 		}
 	}
 	write("software/Branding/stemma.yaml", strings.Replace(broken, "second: {artifact: artifacts/broken", "second: {artifact: artifacts/package", 1))
 	unused := run()
-	if _, built := unused.Recipes[0].Artifacts["broken"]; built {
+	if _, built := unused.Software[0].Artifacts["broken"]; built {
 		t.Fatal("publication built an unused artifact")
 	}
 }

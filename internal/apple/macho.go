@@ -7,6 +7,7 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
@@ -90,8 +91,8 @@ func InspectMachO(filePath string) (MachOFacts, error) {
 	return facts, nil
 }
 
-// VerifyMachO verifies page and available special-slot hashes for every slice.
-// It does not authenticate CMS, evaluate trust or assess macOS acceptance.
+// VerifyMachO verifies page hashes and requested CMS signatures for every slice.
+// It does not evaluate certificate-chain trust or assess macOS acceptance.
 // Nonzero bundle slots require VerifyApp, which supplies their exact bytes.
 func VerifyMachO(filePath string, policy Policy) (Evidence, error) {
 	policy = policy.expanded()
@@ -118,8 +119,8 @@ func verifyExecutable(f *os.File, policy Policy, external map[uint32][]byte, evi
 	if policy.RequirePlatform {
 		evidence.Platform = Check{Status: Unsupported, Detail: "macOS platform assessment requires native OS policy"}
 	}
-	if policy.RequireIdentity || policy.CertificateSHA256 != "" {
-		evidence.Identity = Check{Status: Unsupported, Detail: "Mach-O CMS identity and trust verification are unsupported"}
+	if policy.RequireIdentity && policy.CertificateSHA256 == "" {
+		evidence.Identity = Check{Status: Unsupported, Detail: "identity verification requires an exact certificate SHA-256 pin"}
 	}
 	info, err := f.Stat()
 	if err != nil {
@@ -129,38 +130,47 @@ func verifyExecutable(f *os.File, policy Policy, external map[uint32][]byte, evi
 		return fmt.Errorf("Mach-O subject must be a regular file")
 	}
 	slices, parseErr := machoSlices(f, info.Size())
-	var integrityErr, signatureErr error
+	var integrityErr, signatureErr, identityErr error
 	if parseErr != nil {
 		integrityErr, signatureErr = parseErr, parseErr
 	}
 	for _, slice := range slices {
 		signature, err := slice.signature()
 		if err != nil {
-			integrityErr, signatureErr = err, err
+			integrityErr, signatureErr = errors.Join(integrityErr, err), errors.Join(signatureErr, err)
+			identityErr = errors.Join(identityErr, err)
 			break
 		}
-		if len(signature.blobs[0x10000]) > 8 {
-			signatureErr = fmt.Errorf("%w: Mach-O CMS cryptographic signature verification", ErrUnsupported)
-		} else if signatureErr == nil {
-			signatureErr = fmt.Errorf("Mach-O has no CMS signature; ad-hoc hashes do not authenticate a signer")
+		if policy.RequireSignature {
+			certificate, err := verifyCMS(signature)
+			signatureErr = errors.Join(signatureErr, err)
+			if policy.CertificateSHA256 != "" {
+				if err == nil {
+					digest := sha256.Sum256(certificate.Raw)
+					if hex.EncodeToString(digest[:]) != policy.CertificateSHA256 {
+						err = fmt.Errorf("CMS signer certificate SHA-256 does not match pin")
+					}
+				}
+				identityErr = errors.Join(identityErr, err)
+			}
 		}
 		if policy.RequireIntegrity || policy.RequireResources {
 			for _, directory := range signature.directories {
 				if err := slice.verifyCodeDirectory(directory, signature, external); err != nil {
-					integrityErr = err
+					integrityErr = errors.Join(integrityErr, err)
 					break
 				}
 			}
 		}
-		if integrityErr != nil {
-			break
-		}
 	}
 	if policy.RequireIntegrity || policy.RequireResources {
-		evidence.Integrity = checkError(integrityErr, "all architecture CodeDirectory page and special-slot hashes match; recorded hashes are not authenticated")
+		evidence.Integrity = checkError(integrityErr, "all architecture CodeDirectory page and special-slot hashes match")
 	}
 	if policy.RequireSignature {
-		evidence.Signature = checkError(signatureErr, "")
+		evidence.Signature = checkError(signatureErr, "all architecture primary CodeDirectories authenticate against their embedded CMS signer certificates; chain trust, revocation and trusted timestamps are not assessed")
+	}
+	if policy.CertificateSHA256 != "" {
+		evidence.Identity = checkError(errors.Join(parseErr, identityErr), "every architecture's authenticated CMS signer matches the exact certificate SHA-256 pin")
 	}
 	return nil
 }
@@ -305,9 +315,8 @@ func (m machoSlice) signature() (*codeSignature, error) {
 	if blobCount == 0 || blobCount > 64 || uint64(blobSize) > uint64(len(data)) || blobSize < 12+8*blobCount {
 		return nil, fmt.Errorf("invalid signature SuperBlob size")
 	}
-	if !allZero(data[blobSize:]) {
-		return nil, fmt.Errorf("nonzero bytes beyond signature SuperBlob")
-	}
+	// LC_CODE_SIGNATURE bounds an allocation; the SuperBlob length bounds the
+	// signature. Unused allocation bytes still contribute to artifact identity.
 	data = data[:blobSize]
 	sig := &codeSignature{codeOffset: offset, blobs: make(map[uint32][]byte)}
 	type span struct{ start, end uint32 }

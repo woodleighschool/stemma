@@ -29,8 +29,8 @@ func TestTreeSelectionKeepsReleaseSeparateFromArtifactVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	recipe := config.Recipe{Source: src, Select: "second.exe"}
-	first, err := prepare(t.Context(), store, entry, recipe, t.TempDir())
+	software := config.Software{Source: &src, Select: "second.exe"}
+	first, err := prepare(t.Context(), store, entry, software, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,12 +39,12 @@ func TestTreeSelectionKeepsReleaseSeparateFromArtifactVersion(t *testing.T) {
 		t.Fatalf("selected preparation: %+v, data=%q, err=%v", first, data, err)
 	}
 	entry.Release = "v2.0"
-	second, err := prepare(t.Context(), store, entry, recipe, t.TempDir())
+	second, err := prepare(t.Context(), store, entry, software, t.TempDir())
 	if err != nil || !second.Cached || second.Version != "" || second.Source.Release != "v2.0" || second.Payload != first.Payload {
 		t.Fatalf("release label changed artifact facts or rebuilt content: %+v, err=%v", second, err)
 	}
 	entry.Release = ""
-	third, err := prepare(t.Context(), store, entry, recipe, t.TempDir())
+	third, err := prepare(t.Context(), store, entry, software, t.TempDir())
 	if err != nil || !third.Cached || third.Version != "" {
 		t.Fatalf("removed release label altered artifact version: %+v, err=%v", third, err)
 	}

@@ -2,7 +2,7 @@ package config
 
 import (
 	"encoding/json"
-	"slices"
+	"maps"
 
 	"github.com/invopop/jsonschema"
 	orderedmap "github.com/pb33f/ordered-map/v2"
@@ -15,21 +15,17 @@ import (
 // Descriptions live in Go struct tags so a released binary needs no source checkout.
 func Schema() ([]byte, error) {
 	r := &jsonschema.Reflector{FieldNameTag: "yaml"}
-	s := r.Reflect(&Project{})
+	s := r.Reflect(&ProjectDocument{})
+	software := r.Reflect(&SoftwareDocument{})
+	maps.Copy(s.Definitions, software.Definitions)
 	s.ID = "https://raw.githubusercontent.com/woodleighschool/stemma/main/stemma.schema.json"
-	s.Title = "Stemma project"
-	s.Description = "Reproducible source recipes and native destination metadata. String values support whole-value ${VAR} environment placeholders. Omitted metadata fields remain unmanaged; null clears only supported fields."
-	project := s.Definitions["Project"]
-	project.Required = slices.DeleteFunc(project.Required, func(name string) bool { return name == "recipes" })
-	project.AnyOf = []*jsonschema.Schema{{Required: []string{"recipes"}}, {Required: []string{"imports"}}}
-	fragment := &jsonschema.Schema{Type: "object", Properties: orderedmap.New[string, *jsonschema.Schema](), Required: []string{"version", "recipes"}, AdditionalProperties: jsonschema.FalseSchema, Description: "Software-family fragment imported by a Stemma project. Paths are relative to this file."}
-	for _, name := range []string{"version", "recipes"} {
-		field, _ := project.Properties.Get(name)
-		fragment.Properties.Set(name, field)
-	}
-	s.Definitions["Fragment"] = fragment
+	s.Title = "Stemma documents"
+	s.Description = "One Project or Software resource per file. String values under spec support whole-value ${VAR} environment placeholders. Omitted metadata fields remain unmanaged; null clears only supported fields."
 	s.Ref = ""
-	s.OneOf = []*jsonschema.Schema{{Ref: "#/$defs/Project"}, {Ref: "#/$defs/Fragment"}}
+	s.OneOf = []*jsonschema.Schema{{Ref: "#/$defs/ProjectDocument"}, {Ref: "#/$defs/SoftwareDocument"}}
+	if name, ok := s.Definitions["Metadata"].Properties.Get("name"); ok {
+		name.Pattern = namePattern.String()
+	}
 	metadata := munki.MetadataSchema()
 	artifactSelector := &jsonschema.Schema{Type: "string", Pattern: `^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$`, Description: "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."}
 	if verification := s.Definitions["Verification"]; verification != nil {
@@ -68,18 +64,40 @@ func Schema() ([]byte, error) {
 			settings.AnyOf = []*jsonschema.Schema{{Ref: "#/$defs/IntuneConnection"}, {Ref: "#/$defs/JamfConnection"}, {Type: "object", Description: "Connection configuration validated by the named operation."}}
 		}
 	}
-	if recipe := s.Definitions["Recipe"]; recipe != nil {
-		// Components may supply only part of a recipe; required source fields
-		// are checked after inheritance by the runtime validator.
-		recipe.Required = slices.DeleteFunc(recipe.Required, func(name string) bool { return name == "source" })
-		if subjects, ok := recipe.Properties.Get("subjects"); ok {
+	if software := s.Definitions["Software"]; software != nil {
+		if source, ok := software.Properties.Get("source"); ok {
+			software.Properties.Set("source", &jsonschema.Schema{Description: source.Description, AnyOf: []*jsonschema.Schema{{Ref: "#/$defs/Source"}, {Type: "null"}}})
+		}
+		if subjects, ok := software.Properties.Get("subjects"); ok {
 			subjects.PropertyNames = &jsonschema.Schema{Pattern: subjectNamePattern.String()}
 		}
-		if destinations, ok := recipe.Properties.Get("destinations"); ok {
+		if destinations, ok := software.Properties.Get("destinations"); ok {
 			destinations.Description = "Map named destinations to native writable metadata. Explicit values may reference named subject facts with {$fact: subject_name.app.version}; references retain their native type and are validated before publication."
 			destinations.AdditionalProperties = &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Ref: "#/$defs/MunkiMetadata"}, {Ref: "#/$defs/IntuneMetadata"}, {Ref: "#/$defs/JamfMetadata"}, {Type: "object", Description: "Native metadata and typed fact references, validated by the selected operation."}}}
 		}
 	}
+	// Components remain partial. A document without inheritance or acquisition
+	// cannot select acquired inputs; inherited requirements are checked on load.
+	var acquisition jsonschema.Schema
+	if err := json.Unmarshal([]byte(`{
+		"if": {"anyOf": [
+			{"required": ["source"], "properties": {"source": {"type": "null"}}},
+			{"not": {"anyOf": [{"required": ["source"]}, {"required": ["extends"], "properties": {"extends": {"minLength": 1}}}]}}
+		]},
+		"then": {"properties": {
+			"select": {"enum": [""]},
+			"artifacts": {"maxProperties": 0},
+			"steps": {"items": {"properties": {"inputs": {"additionalProperties": {"not": {"enum": ["source", "prepared"]}}}}}},
+			"verification": {"properties": {"subject": {"not": {"enum": ["source", "prepared"]}}}},
+			"destinations": {"additionalProperties": {"properties": {
+				"artifact": {"not": {"enum": ["source", "prepared"]}},
+				"inputs": {"additionalProperties": {"not": {"enum": ["source", "prepared"]}}}
+			}}}
+		}}
+	}`), &acquisition); err != nil {
+		return nil, err
+	}
+	s.Definitions["SoftwareDocument"].Properties.Value("spec").AllOf = []*jsonschema.Schema{&acquisition}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return nil, err

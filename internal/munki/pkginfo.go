@@ -78,6 +78,7 @@ type Metadata struct {
 	Developer              *string                    `json:"developer,omitempty" jsonschema:"description=Software publisher display name. Null clears the publisher."`
 	Catalogs               *[]string                  `json:"catalogs,omitempty" jsonschema:"description=Complete catalog membership. An empty list removes all memberships."`
 	Requires               *[]string                  `json:"requires,omitempty" jsonschema_description:"Complete list of Munki item dependencies. Entries are native item names, optionally with version requirements; [] clears the list."`
+	UpdateFor              *[]string                  `json:"update_for,omitempty" jsonschema_description:"Complete list of Munki items this item updates. Entries are native item names, optionally with version requirements; [] clears the list."`
 	UnattendedInstall      *bool                      `json:"unattended_install,omitempty" jsonschema:"description=Permit installation without interaction. Explicit false disables it."`
 	UnattendedUninstall    *bool                      `json:"unattended_uninstall,omitempty" jsonschema:"description=Permit removal without interaction. Explicit false disables it."`
 	Uninstallable          *bool                      `json:"uninstallable,omitempty" jsonschema:"description=Expose supported removal using uninstall_method."`
@@ -321,11 +322,11 @@ func Render(input Input) (map[string]any, error) {
 	if metadata.UninstallMethod != nil && *metadata.UninstallMethod == "remove_copied_items" && metadata.ItemsToCopy != nil {
 		remove := make([]map[string]string, 0, len(*metadata.ItemsToCopy))
 		for _, item := range *metadata.ItemsToCopy {
-			name := item.DestinationItem
-			if name == "" {
-				name = path.Base(item.SourceItem)
+			entry := map[string]string{"source_item": item.SourceItem, "destination_path": item.DestinationPath}
+			if item.DestinationItem != "" {
+				entry["destination_item"] = item.DestinationItem
 			}
-			remove = append(remove, map[string]string{"path": path.Join(item.DestinationPath, name)})
+			remove = append(remove, entry)
 		}
 		values["items_to_remove"] = remove
 	}

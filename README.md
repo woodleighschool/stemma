@@ -21,6 +21,8 @@ A reproducible software artifact pipeline, run locally or in CI as one binary.
 
 ```sh
 cp stemma.example.yaml stemma.yaml
+mkdir -p software
+cp software.example.yaml software/chrome.yaml
 stemma validate
 stemma operations
 stemma update
@@ -39,7 +41,7 @@ Commit `stemma.yaml`, software files and `stemma.lock.yaml`.
 | `--offline`            | Require cached source inputs                  |
 | `--output json`        | Machine-readable reports                      |
 
-`validate` checks configuration and operation contracts before recipe acquisition;
+`validate` checks configuration and operation contracts before software acquisition;
 content-dependent requirements are checked after inspection. `operations` prints
 the built-in and trusted plugin catalog. Both accept `--offline` for cached plugin
 binaries. `prepare` stops before publication; `inspect` reads artifact facts.
@@ -52,49 +54,58 @@ Use `package --help` for standalone packaging and `completion` for shell setup.
 The [generated schema](stemma.schema.json) provides editor validation and hover
 descriptions.
 
-Keep shared settings in the root and import `software/**/stemma.yaml` for software
-families and their assets. Components apply defaults. Included local file changes
+Author one `apiVersion: stemma/v1alpha1`, `kind: Software` document per managed item.
+`metadata.name` is its stable identity and `spec` owns acquisition and native delivery.
+The root `kind: Project` uses `metadata.name` for project identity and keeps imports,
+connections, plugins and component defaults under `spec`. Import paths such as
+`software/**/*.yaml` select individual documents; paths to assets are relative to
+the owning document. Components apply defaults. Included local file changes
 invalidate the lock; destination metadata edits preserve acquisition and preparation
-results. Package timestamps use the source's recorded lock time.
+results. Package timestamps use the source's recorded lock time. Omit `source`
+when the managed item needs no acquisition; it then has no source lock entry or
+implicit `source` and `prepared` outputs.
 
-Sources use built-in HTTP, GitHub, file or local providers. Named steps compose
+Sources use built-in HTTP, GitHub, file or local providers. An HTTP `match`
+expression selects one distinct complete artifact URL from a download page;
+the lock pins that URL and its bytes. Frozen recovery uses the locked URL without
+resolving the page again. Named steps compose
 registered operations; each step can consume `source`, `prepared`, `artifacts/name`
 or an earlier `step/output`. The `artifacts` shorthand declares shared PKG builds;
 steps expose the operation's named outputs directly:
 
 ```yaml
-destinations:
-  munki:
-    operation: munki
-    path: ".stemma/munki"
-recipes:
-  branding:
-    source:
-      type: local
-      include:
-        - Payload/**
-        - Scripts/postinstall
-    steps:
-      - name: package
-        operation: pkg
-        inputs:
-          input: prepared
-        config:
-          identifier: org.example.branding
-          version: "1.0"
-          payload: Payload
-          scripts:
-            postinstall: Scripts/postinstall
-    destinations:
-      munki:
-        artifact: package/artifact
-        catalogs:
-          - testing
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: branding
+spec:
+  source:
+    type: local
+    include:
+      - Payload/**
+      - Scripts/postinstall
+  steps:
+    - name: package
+      operation: pkg
+      inputs:
+        input: prepared
+      config:
+        identifier: org.example.branding
+        version: "1.0"
+        payload: Payload
+        scripts:
+          postinstall: Scripts/postinstall
+  destinations:
+    munki:
+      artifact: package/artifact
+      catalogs:
+        - testing
 ```
 
+The following snippets belong under a Software document’s `spec`.
 Named subjects select observed evidence without changing the delivery artifact.
 Typed `$fact` references resolve native values, preserving their types and failing
-on missing or ambiguous subjects. For example, a recipe can choose an application's
+on missing or ambiguous subjects. For example, a Software document can choose an application's
 build for Munki while retaining its short version and package receipt version:
 
 ```yaml
@@ -143,10 +154,17 @@ accepts native fields and typed fact references. Destination `inputs` names extr
 artifacts; neither these references nor `artifact` become native metadata.
 The local Munki operation also accepts an installer directly.
 
+For a [script-only Munki item](https://github.com/munki/munki/wiki/nopkgs), omit
+the source and renderer inputs, and supply `installer_type: nopkg`, `name`,
+`version` and the native scripts in the renderer's `config`. Destinations consume
+the resulting JSON artifact without an `inputs.installer`. No installer is built
+or uploaded; scripts remain desired metadata and are never executed by Stemma.
+
 ## 🔌 Operations
 
 Plugins are trusted executable providers, separate from source acquisition and
-destination connections. Each OCI release supplies bundles for its supported runners:
+destination connections. Each OCI release supplies bundles for its supported runners. Configure plugins and
+connections under the Project document’s `spec`:
 
 ```yaml
 plugins:
@@ -209,26 +227,37 @@ uses GoReleaser archives and its ORAS publisher for this contract.
 Inspection is static and never runs payloads or installer hooks. Facts preserve
 container relationships, observed paths and each subject's original versions.
 
-| Artifact           | Supported behaviour                                                                      |
-| ------------------ | ---------------------------------------------------------------------------------------- |
-| Application bundle | Bundle identifier, short/build versions, executable and minimum OS                       |
-| PKG                | Component receipts and payload application facts with containment and installation paths |
-| MSI                | Database identities, product version and native properties                               |
-| EXE or other file  | Exact content identity; installed application behaviour requires authored native rules   |
-| DMG                | Filesystem inspection and automatic app-copy deployment are unsupported                  |
-| `.intunewin`       | Transport envelope inspection and packaging, separate from installed software facts      |
+| Artifact           | Supported behaviour                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| Application bundle | Bundle identifier, short/build versions, executable and minimum OS                         |
+| PKG                | Component receipts and payload application facts with containment and installation paths   |
+| MSI                | Database identities, product version and native properties                                 |
+| EXE or other file  | Exact content identity; installed application behaviour requires authored native rules     |
+| DMG                | Portable HFS+/HFSX inspection and selection of an app or flat PKG; original image retained |
+| `.intunewin`       | Transport envelope inspection and packaging, separate from installed software facts        |
 
 Portable PKG creation retains payloads and scripts without executing them.
+ZIP applications can become PKGs with `pkg` and an explicit installation path.
+App DMGs use the original `source` with native `copy_from_dmg`, `items_to_copy`
+and installed application detection. A selected inner PKG uses `prepared` and
+retains the vendor's installer bytes and receipts. Disk images are never mounted;
+APFS, unsupported compression and unrepresentable payload metadata are rejected.
 Required unsupported layouts or verification capabilities fail before publication.
 `verification.subject` selects `source`, `payload`, `prepared`, `artifacts/name`
 or `step/output`; evidence remains attached to that artifact. This allows an
 installer to be verified independently of a rendered metadata document.
+Application signature checks authenticate each architecture's primary SHA-256
+CodeDirectory using detached CMS. Alternate CodeDirectories and nested resource
+sealing remain unsupported. Certificate pins authenticate the exact signer;
+Apple chain trust, revocation and native platform assessment are separate checks.
 
-String values support whole-value environment placeholders, for example
+String values under `spec` support whole-value environment placeholders, for example
 `token: ${GITHUB_TOKEN}` or `client_secret: ${JAMF_CLIENT_SECRET}`. Export the
 variables before running commands. Unset variables fail configuration loading;
-values remain strings, including empty strings. Embedded interpolation and shell
-expressions are unsupported. Mapping keys remain literal. Source tokens and
+values remain strings, including empty strings. Resource headers (`apiVersion`,
+`kind` and `metadata.name`) are literal and never depend on the runner environment.
+Embedded expressions remain literal, including shell expressions inside scripts.
+Mapping keys remain literal. Source tokens and
 native destination authentication secrets do not affect lock or binding identity.
 
 ## 🧑‍💻 Development

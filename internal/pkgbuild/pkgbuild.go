@@ -19,14 +19,17 @@ import (
 	"time"
 	"unicode/utf8"
 
-	cpio "github.com/korylprince/go-cpio-odc"
+	"github.com/deploymenttheory/go-macos-pkg/pkg/bom"
+	"github.com/deploymenttheory/go-macos-pkg/pkg/cpio"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/fileio"
 )
 
 // Version identifies the package derivation, including its format and metadata policy.
-const Version = "stemma.pkgbuild/0.1.1"
-const maxFileSize = 64 << 20
+const Version = "stemma.pkgbuild/0.1.2"
+
+// BOM's 32-bit size field is narrower than ODC's 33-bit file length.
+const maxFileSize int64 = math.MaxUint32
 const maxTotalSize = 512 << 20
 
 // The adopted BOM writer uses one 4 KiB leaf (12-byte header, 8 bytes per path).
@@ -243,18 +246,15 @@ func checkedFile(source *os.Root, name string) (*os.File, os.FileInfo, error) {
 	return f, actual, nil
 }
 
-func readContents(ctx context.Context, f *os.File, info os.FileInfo, limit int64) ([]byte, error) {
-	if !info.Mode().IsRegular() || info.Size() > limit {
-		return nil, errors.New("package input is not a regular file within the size limit")
-	}
-	body, err := io.ReadAll(io.LimitReader(fileio.Reader{Context: ctx, Reader: f}, limit+1))
+func copyContents(ctx context.Context, destination io.Writer, f *os.File, info os.FileInfo) error {
+	n, err := io.Copy(destination, io.LimitReader(fileio.Reader{Context: ctx, Reader: f}, info.Size()+1))
 	if err != nil {
-		return nil, err
+		return err
 	}
-	if int64(len(body)) != info.Size() {
-		return nil, errors.New("package input changed while reading or exceeds its size limit")
+	if n != info.Size() {
+		return errors.New("package input changed size while reading")
 	}
-	return body, nil
+	return nil
 }
 
 func writePayload(ctx context.Context, source *os.Root, prefix, destination string, timestamp time.Time) ([]*bomPath, int64, error) {
@@ -264,7 +264,7 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 	}
 	defer func() { _ = f.Close() }()
 	gz := gzip.NewWriter(f)
-	writer := cpio.NewWriter(gz, 512)
+	writer := cpio.NewWriter(gz)
 	var paths []*bomPath
 	var total int64
 	var walk func(string, string, uint32) error
@@ -292,33 +292,40 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 				return fmt.Errorf("bundle installation policy is unsupported: %s", relative)
 			}
 		}
-		var body []byte
+		var size int64
 		if info.Mode().IsRegular() {
-			body, err = readContents(ctx, file, info, maxFileSize)
-			if err != nil {
-				return err
+			size = info.Size()
+			if size < 0 || size > maxFileSize {
+				return errors.New("package input exceeds BOM file size limit")
 			}
-			total += int64(len(body))
-			if total > maxTotalSize {
+			if size > maxTotalSize-total {
 				return errors.New("package exceeds total payload size limit")
 			}
+			total += size
 		}
 		id := uint32(len(paths) + 1)
-		mode := info.Mode()
+		mode := uint32(info.Mode().Perm()) | cpio.ModeRegular
+		if info.IsDir() {
+			mode = uint32(info.Mode().Perm()) | cpio.ModeDir
+		}
 		modified, err := packageTime(info.ModTime(), timestamp)
 		if err != nil {
 			return fmt.Errorf("package input %s: %w", name, err)
 		}
-		cfile := &cpio.File{Inode: uint64(id), FileMode: mode, NLink: 1, Path: "./" + relative, Body: body, ModifiedTime: modified}
+		cfile := &cpio.Header{Inode: uint64(id), Mode: mode, NLink: 1, Name: "./" + relative, Size: size, ModTime: modified}
 		if relative == "." {
-			cfile.Path = "."
+			cfile.Name = "."
 		}
-		if err := writer.WriteFile(cfile); err != nil {
+		if err := writer.WriteHeader(cfile); err != nil {
 			return err
 		}
-		item := &bomPath{id: id, parentID: parentID, name: path.Base(relative), isDir: info.IsDir(), mode: uint16(cpio.MarshalFileMode(mode)), size: uint32(len(body)), modified: uint32(modified.Unix())}
+		item := &bomPath{id: id, parentID: parentID, name: path.Base(relative), isDir: info.IsDir(), mode: uint16(mode), size: uint32(size), modified: uint32(modified.Unix())}
 		if info.Mode().IsRegular() {
-			item.checksum = bomChecksum(body)
+			digest := bom.NewCksum()
+			if err := copyContents(ctx, io.MultiWriter(writer, digest), file, info); err != nil {
+				return err
+			}
+			item.checksum = digest.Sum32()
 		}
 		paths = append(paths, item)
 		if info.IsDir() {
@@ -341,7 +348,7 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 	if err := walk(prefix, ".", 0); err != nil {
 		return nil, 0, err
 	}
-	if _, err := writer.Close(); err != nil {
+	if err := writer.Close(); err != nil {
 		return nil, 0, err
 	}
 	if err := gz.Close(); err != nil {
@@ -360,8 +367,8 @@ func writeScripts(ctx context.Context, source *os.Root, scripts map[string]strin
 	}
 	defer func() { _ = f.Close() }()
 	gz := gzip.NewWriter(f)
-	writer := cpio.NewWriter(gz, 512)
-	if err := writer.WriteFile(&cpio.File{Inode: 1, FileMode: os.ModeDir | 0o755, NLink: 1, Path: ".", ModifiedTime: generated}); err != nil {
+	writer := cpio.NewWriter(gz)
+	if err := writer.WriteHeader(&cpio.Header{Inode: 1, Mode: cpio.ModeDir | 0o755, NLink: 1, Name: ".", ModTime: generated}); err != nil {
 		return err
 	}
 	for i, name := range []string{"preinstall", "postinstall"} {
@@ -373,20 +380,22 @@ func writeScripts(ctx context.Context, source *os.Root, scripts map[string]strin
 		if err != nil {
 			return err
 		}
-		body, err := readContents(ctx, file, info, maxScriptSize)
-		_ = file.Close()
-		if err != nil {
-			return err
+		defer func() { _ = file.Close() }()
+		if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maxScriptSize {
+			return errors.New("package script is not a regular file within the size limit")
 		}
 		modified, err := packageTime(info.ModTime(), timestamp)
 		if err != nil {
 			return fmt.Errorf("package script %s: %w", name, err)
 		}
-		if err := writer.WriteFile(&cpio.File{Inode: uint64(i + 2), FileMode: 0o755, NLink: 1, Path: "./" + name, Body: body, ModifiedTime: modified}); err != nil {
+		if err := writer.WriteHeader(&cpio.Header{Inode: uint64(i + 2), Mode: cpio.ModeRegular | 0o755, NLink: 1, Name: "./" + name, Size: info.Size(), ModTime: modified}); err != nil {
+			return err
+		}
+		if err := copyContents(ctx, writer, file, info); err != nil {
 			return err
 		}
 	}
-	if _, err := writer.Close(); err != nil {
+	if err := writer.Close(); err != nil {
 		return err
 	}
 	if err := gz.Close(); err != nil {

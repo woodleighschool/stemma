@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/woodleighschool/stemma/internal/testproject"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,7 +20,7 @@ import (
 )
 
 func TestReportRetainsIndependentDestinationResults(t *testing.T) {
-	report := engine.Report{Recipes: []engine.RecipeReport{
+	report := engine.Report{Software: []engine.SoftwareReport{
 		{Name: "missing", Error: "source unavailable"},
 		{
 			Name: "Example", Error: "one destination failed", Prepared: &engine.Prepared{Filename: "Example.pkg"},
@@ -64,22 +65,30 @@ func TestCompiledProjectLifecycle(t *testing.T) {
 	defer server.Close()
 	project := t.TempDir()
 	cache := t.TempDir()
-	manifest := fmt.Sprintf(`version: 1
-project: test-apps
-recipes:
-  fixture:
-    source: {type: http, url: %s/fixture.pkg}
-    verification: {integrity: true}
-    destinations:
-      first: {description: original, unattended_install: false, catalogs: [testing]}
-      second: {catalogs: [testing]}
-destinations:
-  first: {operation: munki, path: first}
-  second: {operation: munki, path: second}
+	manifest := fmt.Sprintf(`apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: test-apps
+spec:
+  destinations:
+    first: {operation: munki, path: first}
+    second: {operation: munki, path: second}
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: fixture
+spec:
+  source: {type: http, url: %s/fixture.pkg}
+  verification: {integrity: true}
+  destinations:
+    first: {description: original, unattended_install: false, catalogs: [testing]}
+    second: {catalogs: [testing]}
 `, server.URL)
 	write := func(text string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(project, "stemma.yaml"), []byte(text), 0o600); err != nil {
+		if err := testproject.Write(filepath.Join(project, "stemma.yaml"), []byte(text)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -124,7 +133,7 @@ destinations:
 		t.Fatalf("missing operation roles: %v", operations)
 	}
 	if downloads.Load() != 0 {
-		t.Fatal("validation or catalog acquired recipe input")
+		t.Fatal("validation or catalog acquired software input")
 	}
 	var inspected engine.Prepared
 	fixture, err := filepath.Abs("../../internal/apple/testdata/fixture.pkg")
@@ -143,7 +152,7 @@ destinations:
 		t.Fatal("unexpected acquisition count")
 	}
 	plan := run(true, "plan")
-	if len(plan.Recipes) != 1 || len(plan.Recipes[0].Destinations) != 2 {
+	if len(plan.Software) != 1 || len(plan.Software[0].Destinations) != 2 {
 		t.Fatalf("incomplete plan: %#v", plan)
 	}
 	for _, name := range []string{"first", "second"} {
@@ -152,26 +161,26 @@ destinations:
 		}
 	}
 	applied := run(true, "apply")
-	for _, destination := range applied.Recipes[0].Destinations {
+	for _, destination := range applied.Software[0].Destinations {
 		if !destination.Applied {
 			t.Fatal("destination not applied")
 		}
 	}
 	warm := run(true, "apply", "--offline")
-	if !warm.Recipes[0].Prepared.Cached || downloads.Load() != 1 {
+	if !warm.Software[0].Prepared.Cached || downloads.Load() != 1 {
 		t.Fatal("warm run repeated preparation or acquisition")
 	}
-	for _, destination := range warm.Recipes[0].Destinations {
+	for _, destination := range warm.Software[0].Destinations {
 		if len(destination.Changes) != 0 {
 			t.Fatalf("unchanged run made changes: %#v", destination.Changes)
 		}
 	}
 	write(strings.Replace(manifest, "description: original", "description: edited", 1))
 	metadata := run(true, "apply")
-	if !metadata.Recipes[0].Prepared.Cached || downloads.Load() != 1 {
+	if !metadata.Software[0].Prepared.Cached || downloads.Load() != 1 {
 		t.Fatal("metadata change invalidated preparation")
 	}
-	for _, destination := range metadata.Recipes[0].Destinations {
+	for _, destination := range metadata.Software[0].Destinations {
 		for _, change := range destination.Changes {
 			if change.Kind == "content" {
 				t.Fatal("metadata edit uploaded content")
@@ -182,7 +191,7 @@ destinations:
 		t.Fatal(err)
 	}
 	cold := run(true, "apply")
-	for _, destination := range cold.Recipes[0].Destinations {
+	for _, destination := range cold.Software[0].Destinations {
 		if len(destination.Changes) != 0 {
 			t.Fatalf("cold cache replayed publication: %#v", destination.Changes)
 		}
@@ -194,7 +203,7 @@ destinations:
 		t.Fatal(err)
 	}
 	recovered := run(true, "apply")
-	for _, destination := range recovered.Recipes[0].Destinations {
+	for _, destination := range recovered.Software[0].Destinations {
 		if len(destination.Changes) != 0 {
 			t.Fatal("lost bindings duplicated/replayed destination")
 		}

@@ -2,9 +2,12 @@ package config
 
 import (
 	"encoding/json"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/plugin"
+	"go.yaml.in/yaml/v4"
 )
 
 func TestSchemaIncludesEditorDescriptions(t *testing.T) {
@@ -22,12 +25,89 @@ func TestSchemaIncludesEditorDescriptions(t *testing.T) {
 	if err := json.Unmarshal(data, &schema); err != nil {
 		t.Fatal(err)
 	}
-	for name, fields := range map[string][]string{"Project": {"project", "recipes"}, "Source": {"type", "url", "sha256", "release"}, "Destination": {"operation", "config"}, "Step": {"operation", "inputs"}, "SubjectSelector": {"kind", "installed_path", "bundle_id"}, "Verification": {"subject", "integrity"}, "MunkiMetadata": {"description", "catalogs", "unattended_install"}, "IntuneConnection": {"token", "client_id"}, "JamfMetadata": {"package_id", "categoryId"}} {
+	for name, fields := range map[string][]string{"Metadata": {"name"}, "ProjectSpec": {"imports", "components"}, "Source": {"type", "url", "sha256", "release"}, "Destination": {"operation", "config"}, "Step": {"operation", "inputs"}, "SubjectSelector": {"kind", "installed_path", "bundle_id"}, "Verification": {"subject", "integrity"}, "MunkiMetadata": {"description", "catalogs", "unattended_install"}, "IntuneConnection": {"token", "client_id"}, "JamfMetadata": {"package_id", "categoryId"}} {
 		for _, field := range fields {
 			if schema.Definitions[name].Properties[field].Description == "" {
 				t.Errorf("%s.%s lacks editor hover description", name, field)
 			}
 		}
+	}
+}
+
+func TestSoftwareDocumentSchemaAndLoaderAgree(t *testing.T) {
+	project := `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: catalog}
+spec: {imports: [software.yaml]}
+`
+	software := `apiVersion: stemma/v1alpha1
+kind: Software
+metadata: {name: app}
+spec: {source: {type: file, path: vendor.pkg}}
+`
+	schema, err := Schema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectWithDestination := strings.Replace(project, "imports: [software.yaml]", "imports: [software.yaml], destinations: {repo: {operation: munki, path: repo}}", 1)
+	projectWithSource := strings.Replace(project, "imports: [software.yaml]", "imports: [software.yaml], components: {base: {source: {type: file, path: vendor.pkg}}}", 1)
+	for name, test := range map[string]struct {
+		project, software string
+		valid             bool
+	}{
+		"documents":                   {project, software, true},
+		"source-free":                 {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "", 1), true},
+		"null-source":                 {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "source: null", 1), true},
+		"inherited-source":            {projectWithSource, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "extends: base, select: App.app", 1), true},
+		"removed-source":              {projectWithSource, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "extends: base, source: null", 1), true},
+		"empty-source":                {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "source: {}", 1), false},
+		"select-no-source":            {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "select: App.app", 1), false},
+		"empty-inheritance":           {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "extends: '', select: App.app", 1), false},
+		"artifact-no-source":          {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "artifacts: {package: {type: pkg, identifier: org.example.fixture, version: '1'}}", 1), false},
+		"step-no-source":              {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "steps: [{name: inspect, operation: inspect, inputs: {input: source}}]", 1), false},
+		"destination-no-source":       {projectWithDestination, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "destinations: {repo: {artifact: prepared}}", 1), false},
+		"destination-input-no-source": {projectWithDestination, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "destinations: {repo: {inputs: {installer: source}}}", 1), false},
+		"verify-no-source":            {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "verification: {subject: prepared}", 1), false},
+		"render-no-source":            {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "steps: [{name: render, operation: munki.pkginfo, config: {name: fixture, version: '1', installer_type: nopkg}}]", 1), true},
+		"old-root":                    {"version: 1\nproject: catalog\nrecipes: {}\n", software, false},
+		"inline-items":                {project + "recipes: {}\n", software, false},
+		"wrong-version":               {project, strings.Replace(software, "v1alpha1", "v9", 1), false},
+		"wrong-kind":                  {project, strings.Replace(software, "kind: Software", "kind: Recipe", 1), false},
+		"missing-name":                {project, strings.Replace(software, "name: app", "", 1), false},
+		"environment-name":            {project, strings.Replace(software, "name: app", "name: '${APP_NAME}'", 1), false},
+		"invalid-name":                {project, strings.Replace(software, "name: app", "name: ../app", 1), false},
+		"unknown-field":               {project, software + "unknown: true\n", false},
+		"project-as-item":             {project, project, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfig(t, root, "stemma.yaml", test.project)
+			writeConfig(t, root, "software.yaml", test.software)
+			_, err := Load(filepath.Join(root, "stemma.yaml"))
+			if (err == nil) != test.valid {
+				t.Fatalf("loader validity=%v: %v", test.valid, err)
+			}
+			// The document union validates shape; the loader also enforces which
+			// kind belongs at a root or an import boundary.
+			if name == "project-as-item" {
+				return
+			}
+			valid := true
+			for _, document := range []string{test.project, test.software} {
+				var value any
+				if err := yaml.Unmarshal([]byte(document), &value); err != nil {
+					t.Fatal(err)
+				}
+				encoded, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				valid = plugin.ValidateSchema(schema, encoded) == nil && valid
+			}
+			if valid != test.valid {
+				t.Fatalf("editor schema validity=%v, expected %v", valid, test.valid)
+			}
+		})
 	}
 }
 

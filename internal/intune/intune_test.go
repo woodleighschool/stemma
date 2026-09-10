@@ -534,7 +534,7 @@ func TestMacValidationAndAdoption(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(fake.paths) != 1 || fake.paths[0] != "/beta"+appsPath+"/app-1" {
-		t.Fatalf("adoption did not read explicit per-recipe ID: %v", fake.paths)
+		t.Fatalf("adoption did not read explicit per-software ID: %v", fake.paths)
 	}
 	req.Method = "validate"
 	if _, err := Handle(t.Context(), req); err != nil {
@@ -542,7 +542,7 @@ func TestMacValidationAndAdoption(t *testing.T) {
 	}
 	req.Config = raw(object{"token": "unused", "app_id": "app-1"})
 	if _, err := Handle(t.Context(), req); err == nil {
-		t.Fatal("accepted recipe adoption ID in shared connection")
+		t.Fatal("accepted software adoption ID in shared connection")
 	}
 }
 

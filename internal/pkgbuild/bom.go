@@ -35,38 +35,6 @@ import (
 // that lsbom and the macOS Installer read identically. Byte-identical output was
 // never a requirement -- an identical lsbom manifest is.
 
-// bomChecksumTable is the CRC-32 table for polynomial 0x04C11DB7 (MSB-first),
-// used by the POSIX cksum algorithm.
-var bomChecksumTable = func() [256]uint32 {
-	var t [256]uint32
-	for i := range t {
-		c := uint32(i) << 24
-		for range 8 {
-			if c&0x80000000 != 0 {
-				c = (c << 1) ^ 0x04C11DB7
-			} else {
-				c <<= 1
-			}
-		}
-		t[i] = c
-	}
-	return t
-}()
-
-// bomChecksum computes the POSIX cksum (CRC-32/CKSUM) of data: the CRC-32 over
-// the data followed by the little-endian minimal-byte encoding of its length,
-// finally inverted. This matches the checksum Apple's mkbom stores per file.
-func bomChecksum(data []byte) uint32 {
-	var crc uint32
-	for _, b := range data {
-		crc = (crc << 8) ^ bomChecksumTable[byte(crc>>24)^b]
-	}
-	for n := len(data); n != 0; n >>= 8 {
-		crc = (crc << 8) ^ bomChecksumTable[byte(crc>>24)^byte(n)]
-	}
-	return ^crc
-}
-
 // bomPath is one entry in the BOM path tree.
 type bomPath struct {
 	id       uint32

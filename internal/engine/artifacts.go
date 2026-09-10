@@ -9,6 +9,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/source"
 )
 
 func derivePackage(ctx context.Context, store *cas.Store, ops *operations, input Prepared, spec config.Artifact, work string) (Prepared, error) {
@@ -39,24 +40,28 @@ func destinationMetadata(input map[string]any) map[string]any {
 	return result
 }
 
-func prepareRecipe(ctx context.Context, store *cas.Store, ops *operations, recipe config.Recipe, prepared Prepared, work string, all bool, report *RecipeReport) (map[string]Prepared, error) {
-	outputs := map[string]Prepared{"prepared": prepared}
-	original := Prepared{Source: prepared.Source, Payload: prepared.Source.Artifact, Filename: prepared.Source.Filename, Tree: prepared.Source.Tree}
-	original, err := materialize(ctx, store, original, filepath.Join(work, "original"))
-	if err != nil {
-		return outputs, err
+func prepareSoftware(ctx context.Context, store *cas.Store, ops *operations, software config.Software, prepared *Prepared, work string, all bool, report *SoftwareReport) (map[string]Prepared, error) {
+	outputs := map[string]Prepared{}
+	var entry source.Entry
+	if prepared != nil {
+		outputs["prepared"], entry = *prepared, prepared.Source
+		original := Prepared{Source: entry, Payload: entry.Artifact, Filename: entry.Filename, Tree: entry.Tree}
+		original, err := materialize(ctx, store, original, filepath.Join(work, "original"))
+		if err != nil {
+			return outputs, err
+		}
+		facts, err := inspect(ctx, original.Path)
+		if err != nil {
+			return outputs, err
+		}
+		original.Format, original.Version, original.Facts = facts.Format, facts.Version, facts.Facts
+		original.Evidence = prepared.Evidence
+		outputs["source"] = original
 	}
-	facts, err := inspect(ctx, original.Path)
-	if err != nil {
-		return outputs, err
-	}
-	original.Format, original.Version, original.Facts = facts.Format, facts.Version, facts.Facts
-	original.Evidence = prepared.Evidence
-	outputs["source"] = original
 	report.Artifacts = map[string]Prepared{}
-	for _, name := range sortedKeys(recipe.Artifacts) {
-		used := all || recipe.Verification.Subject == "artifacts/"+name
-		for _, metadata := range recipe.Destinations {
+	for _, name := range sortedKeys(software.Artifacts) {
+		used := all || software.Verification.Subject == "artifacts/"+name
+		for _, metadata := range software.Destinations {
 			if metadata["artifact"] == "artifacts/"+name {
 				used = true
 			}
@@ -66,7 +71,7 @@ func prepareRecipe(ctx context.Context, store *cas.Store, ops *operations, recip
 				}
 			}
 		}
-		for _, step := range recipe.Steps {
+		for _, step := range software.Steps {
 			for _, ref := range step.Inputs {
 				if ref == "artifacts/"+name {
 					used = true
@@ -76,14 +81,17 @@ func prepareRecipe(ctx context.Context, store *cas.Store, ops *operations, recip
 		if !used {
 			continue
 		}
-		artifact, err := derivePackage(ctx, store, ops, prepared, recipe.Artifacts[name], filepath.Join(work, "artifacts", name))
+		if prepared == nil {
+			return outputs, fmt.Errorf("artifact %s requires a prepared source", name)
+		}
+		artifact, err := derivePackage(ctx, store, ops, *prepared, software.Artifacts[name], filepath.Join(work, "artifacts", name))
 		if err != nil {
 			report.ArtifactErrors = map[string]string{name: err.Error()}
 			return outputs, fmt.Errorf("artifact %s: %w", name, err)
 		}
 		outputs["artifacts/"+name], report.Artifacts[name] = artifact, artifact
 	}
-	for _, step := range recipe.Steps {
+	for _, step := range software.Steps {
 		inputs := map[string]Prepared{}
 		for name, reference := range step.Inputs {
 			input, exists := outputs[reference]
@@ -105,14 +113,14 @@ func prepareRecipe(ctx context.Context, store *cas.Store, ops *operations, recip
 					input.Facts = facts.Facts
 					inputs[name] = input
 				}
-				resolved, _, err := resolveMetadata(recipe, step.Config, input.Facts, "")
+				resolved, _, err := resolveMetadata(software, step.Config, input.Facts, "")
 				if err != nil {
 					return outputs, fmt.Errorf("step %s: %w", step.Name, err)
 				}
 				step.Config = resolved
 			}
 		}
-		result, err := runStep(ctx, store, ops, step, inputs, prepared.Source, filepath.Join(work, "steps", step.Name))
+		result, err := runStep(ctx, store, ops, step, inputs, entry, filepath.Join(work, "steps", step.Name))
 		report.Steps = append(report.Steps, result)
 		if err != nil {
 			return outputs, fmt.Errorf("step %s: %w", step.Name, err)
@@ -121,9 +129,12 @@ func prepareRecipe(ctx context.Context, store *cas.Store, ops *operations, recip
 			outputs[step.Name+"/"+name] = artifact
 		}
 	}
+	if !requested(software.Verification) && software.Verification.Subject == "" {
+		return outputs, nil
+	}
 	subjects := map[string]bool{}
-	if subject := recipe.Verification.Subject; subject == "" || subject == "payload" {
-		for _, metadata := range recipe.Destinations {
+	if subject := software.Verification.Subject; subject == "" || subject == "payload" {
+		for _, metadata := range software.Destinations {
 			subject, _ := metadata["artifact"].(string)
 			if subject == "" {
 				subject = "prepared"
@@ -141,8 +152,8 @@ func prepareRecipe(ctx context.Context, store *cas.Store, ops *operations, recip
 		if !exists {
 			return outputs, fmt.Errorf("verification subject references missing output %s", subject)
 		}
-		if requested(recipe.Verification) {
-			evidence, err := verify(artifact.Path, recipe.Verification)
+		if requested(software.Verification) {
+			evidence, err := verify(artifact.Path, software.Verification)
 			artifact.Evidence = &evidence
 			outputs[subject] = artifact
 			if subject == "prepared" {
