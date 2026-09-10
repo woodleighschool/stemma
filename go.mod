@@ -33,7 +33,7 @@ require (
 	github.com/ulikunitz/xz v0.5.16
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.41.0
 	howett.net/plist v1.0.1
 	oras.land/oras-go/v2 v2.6.2
