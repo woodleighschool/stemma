@@ -37,7 +37,7 @@ require (
 	golang.org/x/text v0.41.0
 	howett.net/plist v1.0.1
 	oras.land/oras-go/v2 v2.6.2
-	resty.dev/v3 v3.0.0-rc.3
+	resty.dev/v3 v3.0.0-rc.4
 )
 
 require (
