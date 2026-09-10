@@ -2,6 +2,7 @@ package intune
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,6 +56,11 @@ func validateMetadata(data []byte) (object, error) {
 	for key, value := range m {
 		switch {
 		case key == "@odata.type":
+		case key == "retention" || key == "dependencies" || key == "supersedes":
+		case appType == win32Type && key == "msiInformation":
+			if err := validateMSIInformation(value); err != nil {
+				return nil, err
+			}
 		case key == "app_id":
 			if text(value) == "" {
 				return nil, errors.New("app_id must be a nonempty adopted app ID")
@@ -143,7 +149,41 @@ func validateMetadata(data []byte) (object, error) {
 			return nil, fmt.Errorf("unsupported writable %s field %q", strings.TrimPrefix(appType, "#microsoft.graph."), key)
 		}
 	}
+	if _, err := lifecycleMetadata(m); err != nil {
+		return nil, err
+	}
 	return m, nil
+}
+
+func validateMSIInformation(value any) error {
+	info, ok := value.(object)
+	if !ok {
+		return errors.New("msiInformation must be an object")
+	}
+	if err := fields(info, "@odata.type", "productCode", "productVersion", "upgradeCode", "productName", "publisher", "requiresReboot", "packageType"); err != nil {
+		return err
+	}
+	for key, value := range info {
+		switch key {
+		case "@odata.type":
+			if value != "#microsoft.graph.win32LobAppMsiInformation" {
+				return errors.New("invalid msiInformation type")
+			}
+		case "requiresReboot":
+			if _, ok := value.(bool); !ok {
+				return errors.New("msiInformation.requiresReboot must be boolean")
+			}
+		case "packageType":
+			if !enum(value, "perMachine", "perUser", "dualPurpose") {
+				return errors.New("invalid MSI packageType")
+			}
+		default:
+			if value, ok := value.(string); !ok || len(value) > 10000 {
+				return fmt.Errorf("msiInformation.%s must be a string of at most 10000 bytes", key)
+			}
+		}
+	}
+	return nil
 }
 
 func minimumOSFields() []string {
@@ -261,13 +301,39 @@ func validateRules(value any) error {
 			if !enum(rule["operator"], "notConfigured", "equal", "notEqual", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual") {
 				return errors.New("invalid file-system operator")
 			}
+		case "#microsoft.graph.win32LobAppRegistryRule":
+			if err := fields(rule, "@odata.type", "ruleType", "keyPath", "valueName", "check32BitOn64System", "operationType", "operator", "comparisonValue"); err != nil {
+				return err
+			}
+			if text(rule["keyPath"]) == "" || !enum(rule["operationType"], "exists", "doesNotExist", "string", "integer", "version") {
+				return errors.New("invalid registry detection")
+			}
+			if !enum(rule["operator"], "notConfigured", "equal", "notEqual", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual") {
+				return errors.New("invalid registry operator")
+			}
+		case "#microsoft.graph.win32LobAppPowerShellScriptRule":
+			if len(list) != 1 {
+				return errors.New("PowerShell detection must be the only detection rule")
+			}
+			if err := fields(rule, "@odata.type", "ruleType", "enforceSignatureCheck", "runAs32Bit", "scriptContent", "operationType", "operator"); err != nil {
+				return err
+			}
+			content, err := base64.StdEncoding.DecodeString(text(rule["scriptContent"]))
+			if err != nil || len(content) == 0 || len(content) > 200000 {
+				return errors.New("scriptContent must be a base64 script of at most 200000 bytes")
+			}
+			for _, key := range []string{"operationType", "operator"} {
+				if value, exists := rule[key]; exists && value != "notConfigured" {
+					return fmt.Errorf("script detection %s must be notConfigured", key)
+				}
+			}
 		default:
-			return errors.New("only product-code and file-system detection rules are supported")
+			return errors.New("unsupported detection rule type")
 		}
 		for key, value := range rule {
-			if key == "check32BitOn64System" {
+			if key == "check32BitOn64System" || key == "enforceSignatureCheck" || key == "runAs32Bit" {
 				if _, ok := value.(bool); !ok {
-					return errors.New("check32BitOn64System must be boolean")
+					return fmt.Errorf("%s must be boolean", key)
 				}
 			} else if _, ok := value.(string); !ok {
 				return fmt.Errorf("rule %s must be a string", key)
@@ -402,7 +468,7 @@ func mergeItems(field string, current, desired []any) []any {
 		if field == "returnCodes" {
 			return string(raw(item["returnCode"]))
 		}
-		return string(raw([]any{item["@odata.type"], item["ruleType"], item["productCode"], item["path"], item["fileOrFolderName"]}))
+		return string(raw([]any{item["@odata.type"], item["ruleType"], item["productCode"], item["path"], item["fileOrFolderName"], item["keyPath"], item["valueName"]}))
 	}
 	previous := map[string]object{}
 	for _, item := range current {

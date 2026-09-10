@@ -60,12 +60,11 @@
           "type": "string",
           "description": "Registered destination operation, such as munki, intune or jamf. Trusted executable plugins register their own operation names."
         },
-        "path": {
-          "type": "string",
-          "description": "Local Munki repository path. Other operations use config for connection settings."
-        },
         "config": {
           "anyOf": [
+            {
+              "$ref": "#/$defs/MunkiConnection"
+            },
             {
               "$ref": "#/$defs/IntuneConnection"
             },
@@ -149,7 +148,8 @@
         "client_secret": {
           "type": "string",
           "minLength": 1,
-          "description": "App registration secret. Use ${VAR} to supply it from the environment."
+          "description": "App registration secret. Use ${VAR} to supply it from the environment.",
+          "writeOnly": true
         },
         "graph_url": {
           "type": "string",
@@ -164,7 +164,8 @@
         "token": {
           "type": "string",
           "minLength": 1,
-          "description": "Existing Graph bearer token. Choose this or all three client credentials. Use ${VAR} to supply it from the environment."
+          "description": "Existing Graph bearer token. Choose this or all three client credentials. Use ${VAR} to supply it from the environment.",
+          "writeOnly": true
         }
       },
       "additionalProperties": false,
@@ -174,6 +175,23 @@
     "IntuneMetadata": {
       "anyOf": [
         {
+          "anyOf": [
+            {
+              "required": [
+                "@odata.type"
+              ]
+            },
+            {
+              "required": [
+                "type"
+              ]
+            },
+            {
+              "required": [
+                "derive"
+              ]
+            }
+          ],
           "properties": {
             "@odata.type": {
               "anyOf": [
@@ -386,6 +404,86 @@
               ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
+            "dependencies": {
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "auto_install": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
+                          },
+                          "software": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "software",
+                          "auto_install"
+                        ]
+                      },
+                      {
+                        "$ref": "#/$defs/FactReference"
+                      }
+                    ]
+                  },
+                  "type": "array",
+                  "maxItems": 99,
+                  "description": "Own this outgoing relationship category. Omission preserves its relationships; [] clears it. Referenced software must use the same Intune connection and be published first."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
+              "description": "Own this outgoing relationship category. Omission preserves its relationships; [] clears it. Referenced software must use the same Intune connection and be published first."
+            },
+            "derive": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "msi": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "Named subject supplying MSI descriptive and identity facts. Commands, install context and detection stay explicit."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Named subject supplying MSI descriptive and identity facts. Commands, install context and detection stay explicit."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "msi"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ]
+            },
             "description": {
               "anyOf": [
                 {
@@ -589,6 +687,111 @@
               ],
               "description": "Native minimum Windows release, such as Windows11_23H2. Required for creation."
             },
+            "msiInformation": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "@odata.type": {
+                      "anyOf": [
+                        {
+                          "const": "#microsoft.graph.win32LobAppMsiInformation"
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ]
+                    },
+                    "packageType": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "perMachine",
+                            "perUser",
+                            "dualPurpose"
+                          ],
+                          "description": "MSI installation scope."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "MSI installation scope."
+                    },
+                    "productCode": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 10000
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ]
+                    },
+                    "productName": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 10000
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ]
+                    },
+                    "productVersion": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 10000
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ]
+                    },
+                    "publisher": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 10000
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ]
+                    },
+                    "requiresReboot": {
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ]
+                    },
+                    "upgradeCode": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 10000
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ]
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object"
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ]
+            },
             "notes": {
               "anyOf": [
                 {
@@ -640,6 +843,35 @@
                 }
               ],
               "description": "Native publisher name. Required for creation."
+            },
+            "retention": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "keep": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1,
+                          "description": "Keep the current and N-1 most recently published distinct payloads in this app. Unknown content ownership or publication order is always protected."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Keep the current and N-1 most recently published distinct payloads in this app. Unknown content ownership or publication order is always protected."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "keep"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ]
             },
             "returnCodes": {
               "anyOf": [
@@ -915,6 +1147,206 @@
                               "operationType",
                               "operator"
                             ]
+                          },
+                          {
+                            "properties": {
+                              "@odata.type": {
+                                "anyOf": [
+                                  {
+                                    "const": "#microsoft.graph.win32LobAppRegistryRule"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "check32BitOn64System": {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "comparisonValue": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "keyPath": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "operationType": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "exists",
+                                      "doesNotExist",
+                                      "string",
+                                      "integer",
+                                      "version"
+                                    ],
+                                    "description": "Registry comparison."
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ],
+                                "description": "Registry comparison."
+                              },
+                              "operator": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "enum": [
+                                      "notConfigured",
+                                      "equal",
+                                      "notEqual",
+                                      "greaterThan",
+                                      "greaterThanOrEqual",
+                                      "lessThan",
+                                      "lessThanOrEqual"
+                                    ],
+                                    "description": "Native comparison operator."
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ],
+                                "description": "Native comparison operator."
+                              },
+                              "ruleType": {
+                                "anyOf": [
+                                  {
+                                    "const": "detection"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "valueName": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "@odata.type",
+                              "ruleType",
+                              "keyPath",
+                              "operationType",
+                              "operator"
+                            ]
+                          },
+                          {
+                            "properties": {
+                              "@odata.type": {
+                                "anyOf": [
+                                  {
+                                    "const": "#microsoft.graph.win32LobAppPowerShellScriptRule"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "enforceSignatureCheck": {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "operationType": {
+                                "anyOf": [
+                                  {
+                                    "const": "notConfigured"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "operator": {
+                                "anyOf": [
+                                  {
+                                    "const": "notConfigured"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "ruleType": {
+                                "anyOf": [
+                                  {
+                                    "const": "detection"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "runAs32Bit": {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "scriptContent": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "maxLength": 266668,
+                                    "minLength": 1,
+                                    "contentEncoding": "base64",
+                                    "description": "Base64 PowerShell detection script, at most 200000 decoded bytes. Runs in the app install context."
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ],
+                                "description": "Base64 PowerShell detection script, at most 200000 decoded bytes. Runs in the app install context."
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object",
+                            "required": [
+                              "@odata.type",
+                              "ruleType",
+                              "scriptContent"
+                            ]
                           }
                         ]
                       },
@@ -925,13 +1357,76 @@
                   },
                   "type": "array",
                   "maxItems": 100,
-                  "description": "Complete detection-rule collection. Creation requires at least one rule. Product-code and file-system detection are supported; requirement and script rules are unsupported."
+                  "description": "Complete detection-rule collection. Creation requires at least one rule. Product-code, file-system, registry and PowerShell detection are supported; requirement rules are unsupported."
                 },
                 {
                   "$ref": "#/$defs/FactReference"
                 }
               ],
-              "description": "Complete detection-rule collection. Creation requires at least one rule. Product-code and file-system detection are supported; requirement and script rules are unsupported."
+              "description": "Complete detection-rule collection. Creation requires at least one rule. Product-code, file-system, registry and PowerShell detection are supported; requirement rules are unsupported."
+            },
+            "supersedes": {
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "properties": {
+                          "software": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
+                          },
+                          "uninstall_previous": {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "$ref": "#/$defs/FactReference"
+                              }
+                            ]
+                          }
+                        },
+                        "additionalProperties": false,
+                        "type": "object",
+                        "required": [
+                          "software",
+                          "uninstall_previous"
+                        ]
+                      },
+                      {
+                        "$ref": "#/$defs/FactReference"
+                      }
+                    ]
+                  },
+                  "type": "array",
+                  "maxItems": 9,
+                  "description": "Own this outgoing relationship category. Omission preserves its relationships; [] clears it. Referenced software must use the same Intune connection and be published first."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
+              "description": "Own this outgoing relationship category. Omission preserves its relationships; [] clears it. Referenced software must use the same Intune connection and be published first."
+            },
+            "type": {
+              "anyOf": [
+                {
+                  "const": "win32",
+                  "description": "Short name for the native app subtype. Must agree with @odata.type if both are supplied."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
+              "description": "Short name for the native app subtype. Must agree with @odata.type if both are supplied."
             },
             "uninstallCommandLine": {
               "anyOf": [
@@ -946,7 +1441,32 @@
               ],
               "description": "Windows uninstall command line. Required for creation."
             },
-            "artifact": {
+            "unmanaged": {
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 256,
+                        "minLength": 1
+                      },
+                      {
+                        "$ref": "#/$defs/FactReference"
+                      }
+                    ]
+                  },
+                  "type": "array",
+                  "maxItems": 100,
+                  "description": "Native field paths excluded from derivation and relinquished from previous derived ownership. Must not overlap authored native values. Removing derive relinquishes all derived ownership."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
+              "description": "Native field paths excluded from derivation and relinquished from previous derived ownership. Must not overlap authored native values. Removing derive relinquishes all derived ownership."
+            },
+            "installer": {
               "type": "string",
               "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
               "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
@@ -969,6 +1489,18 @@
           "title": "#microsoft.graph.win32LobApp"
         },
         {
+          "anyOf": [
+            {
+              "required": [
+                "@odata.type"
+              ]
+            },
+            {
+              "required": [
+                "type"
+              ]
+            }
+          ],
           "properties": {
             "@odata.type": {
               "anyOf": [
@@ -1164,6 +1696,35 @@
               ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
+            "derive": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "app": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "Named application subject supplying bundle identity, short version, display name and exact minimum OS."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Named application subject supplying bundle identity, short version, display name and exact minimum OS."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "app"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ]
+            },
             "description": {
               "anyOf": [
                 {
@@ -1592,7 +2153,73 @@
               ],
               "description": "Native publisher name. Required for creation."
             },
-            "artifact": {
+            "retention": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "keep": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1,
+                          "description": "Keep the current and N-1 most recently published distinct payloads in this app. Unknown content ownership or publication order is always protected."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Keep the current and N-1 most recently published distinct payloads in this app. Unknown content ownership or publication order is always protected."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "keep"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ]
+            },
+            "type": {
+              "anyOf": [
+                {
+                  "const": "dmg",
+                  "description": "Short name for the native app subtype. Must agree with @odata.type if both are supplied."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
+              "description": "Short name for the native app subtype. Must agree with @odata.type if both are supplied."
+            },
+            "unmanaged": {
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 256,
+                        "minLength": 1
+                      },
+                      {
+                        "$ref": "#/$defs/FactReference"
+                      }
+                    ]
+                  },
+                  "type": "array",
+                  "maxItems": 100,
+                  "description": "Native field paths excluded from derivation and relinquished from previous derived ownership. Must not overlap authored native values. Removing derive relinquishes all derived ownership."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
+              "description": "Native field paths excluded from derivation and relinquished from previous derived ownership. Must not overlap authored native values. Removing derive relinquishes all derived ownership."
+            },
+            "installer": {
               "type": "string",
               "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
               "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
@@ -1615,6 +2242,18 @@
           "title": "#microsoft.graph.macOSDmgApp"
         },
         {
+          "anyOf": [
+            {
+              "required": [
+                "@odata.type"
+              ]
+            },
+            {
+              "required": [
+                "type"
+              ]
+            }
+          ],
           "properties": {
             "@odata.type": {
               "anyOf": [
@@ -1810,6 +2449,35 @@
               ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
+            "derive": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "app": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1,
+                          "description": "Named application subject supplying bundle identity, short version, display name and exact minimum OS."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Named application subject supplying bundle identity, short version, display name and exact minimum OS."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "app"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ]
+            },
             "description": {
               "anyOf": [
                 {
@@ -2238,7 +2906,73 @@
               ],
               "description": "Native publisher name. Required for creation."
             },
-            "artifact": {
+            "retention": {
+              "anyOf": [
+                {
+                  "properties": {
+                    "keep": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1,
+                          "description": "Keep the current and N-1 most recently published distinct payloads in this app. Unknown content ownership or publication order is always protected."
+                        },
+                        {
+                          "$ref": "#/$defs/FactReference"
+                        }
+                      ],
+                      "description": "Keep the current and N-1 most recently published distinct payloads in this app. Unknown content ownership or publication order is always protected."
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "keep"
+                  ]
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ]
+            },
+            "type": {
+              "anyOf": [
+                {
+                  "const": "pkg",
+                  "description": "Short name for the native app subtype. Must agree with @odata.type if both are supplied."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
+              "description": "Short name for the native app subtype. Must agree with @odata.type if both are supplied."
+            },
+            "unmanaged": {
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 256,
+                        "minLength": 1
+                      },
+                      {
+                        "$ref": "#/$defs/FactReference"
+                      }
+                    ]
+                  },
+                  "type": "array",
+                  "maxItems": 100,
+                  "description": "Native field paths excluded from derivation and relinquished from previous derived ownership. Must not overlap authored native values. Removing derive relinquishes all derived ownership."
+                },
+                {
+                  "$ref": "#/$defs/FactReference"
+                }
+              ],
+              "description": "Native field paths excluded from derivation and relinquished from previous derived ownership. Must not overlap authored native values. Removing derive relinquishes all derived ownership."
+            },
+            "installer": {
               "type": "string",
               "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
               "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
@@ -2278,7 +3012,8 @@
         "client_secret": {
           "type": "string",
           "minLength": 1,
-          "description": "Jamf API client secret. Use ${VAR} to supply it from the environment."
+          "description": "Jamf API client secret. Use ${VAR} to supply it from the environment.",
+          "writeOnly": true
         }
       },
       "additionalProperties": false,
@@ -2298,13 +3033,13 @@
               "type": "string",
               "maxLength": 20,
               "pattern": "^[1-9][0-9]*$",
-              "description": "Adopt this existing Jamf package ID for this software. Must match any saved binding. Omit to discover by Stemma's stable filename marker or create a package."
+              "description": "Adopt this existing Jamf package ID for the selected immutable payload. Existing content must match. Omit to discover by the artifact filename marker or create a package."
             },
             {
               "$ref": "#/$defs/FactReference"
             }
           ],
-          "description": "Adopt this existing Jamf package ID for this software. Must match any saved binding. Omit to discover by Stemma's stable filename marker or create a package."
+          "description": "Adopt this existing Jamf package ID for the selected immutable payload. Existing content must match. Omit to discover by the artifact filename marker or create a package."
         },
         "categoryId": {
           "anyOf": [
@@ -2495,7 +3230,799 @@
           ],
           "description": "Native suppressUpdates package option. Explicit false is managed."
         },
-        "artifact": {
+        "patch": {
+          "anyOf": [
+            {
+              "properties": {
+                "title_configuration_id": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]*$"
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ]
+                },
+                "version": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ]
+                },
+                "policy": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^[1-9][0-9]*$"
+                            },
+                            {
+                              "$ref": "#/$defs/FactReference"
+                            }
+                          ]
+                        },
+                        "name": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "$ref": "#/$defs/FactReference"
+                            }
+                          ]
+                        },
+                        "enabled": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "$ref": "#/$defs/FactReference"
+                            }
+                          ]
+                        },
+                        "distribution_method": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "automatically",
+                                "selfservice"
+                              ]
+                            },
+                            {
+                              "$ref": "#/$defs/FactReference"
+                            }
+                          ]
+                        },
+                        "allow_downgrade": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "$ref": "#/$defs/FactReference"
+                            }
+                          ]
+                        },
+                        "patch_unknown": {
+                          "anyOf": [
+                            {
+                              "type": "boolean"
+                            },
+                            {
+                              "$ref": "#/$defs/FactReference"
+                            }
+                          ]
+                        },
+                        "scope": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "all_computers": {
+                                  "anyOf": [
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                },
+                                "computers": {
+                                  "anyOf": [
+                                    {
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "properties": {
+                                              "id": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "integer",
+                                                    "minimum": 1
+                                                  },
+                                                  {
+                                                    "$ref": "#/$defs/FactReference"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "additionalProperties": false,
+                                            "type": "object",
+                                            "required": [
+                                              "id"
+                                            ]
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      },
+                                      "type": "array"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                },
+                                "computer_groups": {
+                                  "anyOf": [
+                                    {
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "properties": {
+                                              "id": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "integer",
+                                                    "minimum": 1
+                                                  },
+                                                  {
+                                                    "$ref": "#/$defs/FactReference"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "additionalProperties": false,
+                                            "type": "object",
+                                            "required": [
+                                              "id"
+                                            ]
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      },
+                                      "type": "array"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                },
+                                "buildings": {
+                                  "anyOf": [
+                                    {
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "properties": {
+                                              "id": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "integer",
+                                                    "minimum": 1
+                                                  },
+                                                  {
+                                                    "$ref": "#/$defs/FactReference"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "additionalProperties": false,
+                                            "type": "object",
+                                            "required": [
+                                              "id"
+                                            ]
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      },
+                                      "type": "array"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                },
+                                "departments": {
+                                  "anyOf": [
+                                    {
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "properties": {
+                                              "id": {
+                                                "anyOf": [
+                                                  {
+                                                    "type": "integer",
+                                                    "minimum": 1
+                                                  },
+                                                  {
+                                                    "$ref": "#/$defs/FactReference"
+                                                  }
+                                                ]
+                                              }
+                                            },
+                                            "additionalProperties": false,
+                                            "type": "object",
+                                            "required": [
+                                              "id"
+                                            ]
+                                          },
+                                          {
+                                            "$ref": "#/$defs/FactReference"
+                                          }
+                                        ]
+                                      },
+                                      "type": "array"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                },
+                                "limitations": {
+                                  "anyOf": [
+                                    {
+                                      "properties": {
+                                        "network_segments": {
+                                          "anyOf": [
+                                            {
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "properties": {
+                                                      "id": {
+                                                        "anyOf": [
+                                                          {
+                                                            "type": "integer",
+                                                            "minimum": 1
+                                                          },
+                                                          {
+                                                            "$ref": "#/$defs/FactReference"
+                                                          }
+                                                        ]
+                                                      }
+                                                    },
+                                                    "additionalProperties": false,
+                                                    "type": "object",
+                                                    "required": [
+                                                      "id"
+                                                    ]
+                                                  },
+                                                  {
+                                                    "$ref": "#/$defs/FactReference"
+                                                  }
+                                                ]
+                                              },
+                                              "type": "array"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "additionalProperties": false,
+                                      "type": "object"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                },
+                                "exclusions": {
+                                  "anyOf": [
+                                    {
+                                      "properties": {
+                                        "computers": {
+                                          "anyOf": [
+                                            {
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "properties": {
+                                                      "id": {
+                                                        "anyOf": [
+                                                          {
+                                                            "type": "integer",
+                                                            "minimum": 1
+                                                          },
+                                                          {
+                                                            "$ref": "#/$defs/FactReference"
+                                                          }
+                                                        ]
+                                                      }
+                                                    },
+                                                    "additionalProperties": false,
+                                                    "type": "object",
+                                                    "required": [
+                                                      "id"
+                                                    ]
+                                                  },
+                                                  {
+                                                    "$ref": "#/$defs/FactReference"
+                                                  }
+                                                ]
+                                              },
+                                              "type": "array"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        },
+                                        "computer_groups": {
+                                          "anyOf": [
+                                            {
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "properties": {
+                                                      "id": {
+                                                        "anyOf": [
+                                                          {
+                                                            "type": "integer",
+                                                            "minimum": 1
+                                                          },
+                                                          {
+                                                            "$ref": "#/$defs/FactReference"
+                                                          }
+                                                        ]
+                                                      }
+                                                    },
+                                                    "additionalProperties": false,
+                                                    "type": "object",
+                                                    "required": [
+                                                      "id"
+                                                    ]
+                                                  },
+                                                  {
+                                                    "$ref": "#/$defs/FactReference"
+                                                  }
+                                                ]
+                                              },
+                                              "type": "array"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        },
+                                        "buildings": {
+                                          "anyOf": [
+                                            {
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "properties": {
+                                                      "id": {
+                                                        "anyOf": [
+                                                          {
+                                                            "type": "integer",
+                                                            "minimum": 1
+                                                          },
+                                                          {
+                                                            "$ref": "#/$defs/FactReference"
+                                                          }
+                                                        ]
+                                                      }
+                                                    },
+                                                    "additionalProperties": false,
+                                                    "type": "object",
+                                                    "required": [
+                                                      "id"
+                                                    ]
+                                                  },
+                                                  {
+                                                    "$ref": "#/$defs/FactReference"
+                                                  }
+                                                ]
+                                              },
+                                              "type": "array"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        },
+                                        "departments": {
+                                          "anyOf": [
+                                            {
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "properties": {
+                                                      "id": {
+                                                        "anyOf": [
+                                                          {
+                                                            "type": "integer",
+                                                            "minimum": 1
+                                                          },
+                                                          {
+                                                            "$ref": "#/$defs/FactReference"
+                                                          }
+                                                        ]
+                                                      }
+                                                    },
+                                                    "additionalProperties": false,
+                                                    "type": "object",
+                                                    "required": [
+                                                      "id"
+                                                    ]
+                                                  },
+                                                  {
+                                                    "$ref": "#/$defs/FactReference"
+                                                  }
+                                                ]
+                                              },
+                                              "type": "array"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        },
+                                        "network_segments": {
+                                          "anyOf": [
+                                            {
+                                              "items": {
+                                                "anyOf": [
+                                                  {
+                                                    "properties": {
+                                                      "id": {
+                                                        "anyOf": [
+                                                          {
+                                                            "type": "integer",
+                                                            "minimum": 1
+                                                          },
+                                                          {
+                                                            "$ref": "#/$defs/FactReference"
+                                                          }
+                                                        ]
+                                                      }
+                                                    },
+                                                    "additionalProperties": false,
+                                                    "type": "object",
+                                                    "required": [
+                                                      "id"
+                                                    ]
+                                                  },
+                                                  {
+                                                    "$ref": "#/$defs/FactReference"
+                                                  }
+                                                ]
+                                              },
+                                              "type": "array"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "additionalProperties": false,
+                                      "type": "object"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
+                            {
+                              "$ref": "#/$defs/FactReference"
+                            }
+                          ]
+                        },
+                        "user_interaction": {
+                          "anyOf": [
+                            {
+                              "properties": {
+                                "install_button_text": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                },
+                                "self_service_description": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                },
+                                "self_service_icon": {
+                                  "anyOf": [
+                                    {
+                                      "properties": {
+                                        "id": {
+                                          "anyOf": [
+                                            {
+                                              "type": "integer",
+                                              "minimum": 1
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "additionalProperties": false,
+                                      "type": "object",
+                                      "required": [
+                                        "id"
+                                      ]
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                },
+                                "notifications": {
+                                  "anyOf": [
+                                    {
+                                      "properties": {
+                                        "notification_enabled": {
+                                          "anyOf": [
+                                            {
+                                              "type": "boolean"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        },
+                                        "notification_type": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        },
+                                        "notification_subject": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        },
+                                        "notification_message": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        },
+                                        "reminders": {
+                                          "anyOf": [
+                                            {
+                                              "properties": {
+                                                "notification_reminders_enabled": {
+                                                  "anyOf": [
+                                                    {
+                                                      "type": "boolean"
+                                                    },
+                                                    {
+                                                      "$ref": "#/$defs/FactReference"
+                                                    }
+                                                  ]
+                                                },
+                                                "notification_reminder_frequency": {
+                                                  "anyOf": [
+                                                    {
+                                                      "type": "integer",
+                                                      "minimum": 0
+                                                    },
+                                                    {
+                                                      "$ref": "#/$defs/FactReference"
+                                                    }
+                                                  ]
+                                                }
+                                              },
+                                              "additionalProperties": false,
+                                              "type": "object"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "additionalProperties": false,
+                                      "type": "object"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                },
+                                "deadlines": {
+                                  "anyOf": [
+                                    {
+                                      "properties": {
+                                        "deadline_enabled": {
+                                          "anyOf": [
+                                            {
+                                              "type": "boolean"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        },
+                                        "deadline_period": {
+                                          "anyOf": [
+                                            {
+                                              "type": "integer",
+                                              "minimum": 0
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "additionalProperties": false,
+                                      "type": "object"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                },
+                                "grace_period": {
+                                  "anyOf": [
+                                    {
+                                      "properties": {
+                                        "grace_period_duration": {
+                                          "anyOf": [
+                                            {
+                                              "type": "integer",
+                                              "minimum": 0
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        },
+                                        "notification_center_subject": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        },
+                                        "message": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "$ref": "#/$defs/FactReference"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "additionalProperties": false,
+                                      "type": "object"
+                                    },
+                                    {
+                                      "$ref": "#/$defs/FactReference"
+                                    }
+                                  ]
+                                }
+                              },
+                              "additionalProperties": false,
+                              "type": "object"
+                            },
+                            {
+                              "$ref": "#/$defs/FactReference"
+                            }
+                          ]
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object"
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "title_configuration_id",
+                "version"
+              ],
+              "description": "Associate the immutable package with an exact version in an existing patch title. An optional native patch policy retains its ID across versions; new policies start disabled and unscoped before supplied settings are applied. Omitted fields remain unmanaged and supplied scope lists replace their collections."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
+          "description": "Associate the immutable package with an exact version in an existing patch title. An optional native patch policy retains its ID across versions; new policies start disabled and unscoped before supplied settings are applied. Omitted fields remain unmanaged and supplied scope lists replace their collections."
+        },
+        "retention": {
+          "anyOf": [
+            {
+              "properties": {
+                "keep": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "type": "object",
+              "required": [
+                "keep"
+              ],
+              "description": "Keep the current payload and the N-1 most recently published distinct payloads, plus referenced packages. Only owned packages with known publication order can be deleted. Unchanged owned title-version associations outside retention are retired only when no patch policy targets that version."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
+          "description": "Keep the current payload and the N-1 most recently published distinct payloads, plus referenced packages. Only owned packages with known publication order can be deleted. Unchanged owned title-version associations outside retention are retired only when no patch policy targets that version."
+        },
+        "installer": {
           "type": "string",
           "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
           "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
@@ -2515,7 +4042,7 @@
       },
       "additionalProperties": false,
       "type": "object",
-      "description": "Native Jamf Pro v1 package metadata. Omitted fields are unmanaged; explicit false, zero and empty strings are managed. Only the documented nullable strings accept null. Policies, scope and assignments are unsupported. Content updates retain the package ID and can affect policies that already reference it."
+      "description": "Native Jamf Pro v1 package metadata. Omitted fields are unmanaged; explicit false, zero and empty strings are managed. Only the documented nullable strings accept null. Each distinct payload has an immutable package ID. Patch deployment and retention are opt-in."
     },
     "Metadata": {
       "properties": {
@@ -2531,812 +4058,950 @@
         "name"
       ]
     },
+    "MunkiConnection": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repository path relative to the project root or an absolute path."
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path"
+      ]
+    },
     "MunkiMetadata": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
-        "display_name": {
+        "unmanaged": {
           "anyOf": [
             {
-              "anyOf": [
-                {
-                  "type": "string",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/FactReference"
+                  }
+                ]
+              },
+              "type": "array",
+              "description": "Native pkginfo fields whose existing values remain unmanaged and are not derived."
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ],
+          "description": "Native pkginfo fields whose existing values remain unmanaged and are not derived."
+        },
+        "derive": {
+          "anyOf": [
+            {
+              "properties": {
+                "app": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "subject": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            {
+                              "$ref": "#/$defs/FactReference"
+                            }
+                          ]
+                        },
+                        "installed_path": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "$ref": "#/$defs/FactReference"
+                            }
+                          ]
+                        },
+                        "version_key": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "enum": [
+                                "CFBundleShortVersionString",
+                                "CFBundleVersion"
+                              ]
+                            },
+                            {
+                              "$ref": "#/$defs/FactReference"
+                            }
+                          ]
+                        }
+                      },
+                      "additionalProperties": false,
+                      "type": "object"
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ]
+                }
+              },
+              "additionalProperties": false,
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/FactReference"
+            }
+          ]
+        },
+        "pkginfo": {
+          "anyOf": [
+            {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "properties": {
+                "display_name": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Optional display title. Omission preserves the remote title; null clears it."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Optional display title. Omission preserves the remote title; null clears it."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
                   "description": "Optional display title. Omission preserves the remote title; null clears it."
                 },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Optional display title. Omission preserves the remote title; null clears it."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Optional display title. Omission preserves the remote title; null clears it."
-        },
-        "description": {
-          "anyOf": [
-            {
-              "anyOf": [
-                {
-                  "type": "string",
+                "description": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Application description. Omission preserves the remote value; null clears it."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Application description. Omission preserves the remote value; null clears it."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
                   "description": "Application description. Omission preserves the remote value; null clears it."
                 },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Application description. Omission preserves the remote value; null clears it."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Application description. Omission preserves the remote value; null clears it."
-        },
-        "category": {
-          "anyOf": [
-            {
-              "anyOf": [
-                {
-                  "type": "string",
+                "category": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Managed Software Center category. Null clears the category."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Managed Software Center category. Null clears the category."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
                   "description": "Managed Software Center category. Null clears the category."
                 },
-                {
-                  "type": "null"
-                }
-              ],
-              "description": "Managed Software Center category. Null clears the category."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Managed Software Center category. Null clears the category."
-        },
-        "developer": {
-          "anyOf": [
-            {
-              "anyOf": [
-                {
-                  "type": "string",
+                "developer": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "description": "Software publisher display name. Null clears the publisher."
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "description": "Software publisher display name. Null clears the publisher."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
                   "description": "Software publisher display name. Null clears the publisher."
                 },
-                {
-                  "type": "null"
+                "catalogs": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "type": "array",
+                      "description": "Complete catalog membership. An empty list removes all memberships."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Complete catalog membership. An empty list removes all memberships."
+                },
+                "requires": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "type": "array",
+                      "description": "Complete list of Munki item dependencies. Entries are native item names, optionally with version requirements; [] clears the list."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Complete list of Munki item dependencies. Entries are native item names, optionally with version requirements; [] clears the list."
+                },
+                "update_for": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "type": "array",
+                      "description": "Complete list of Munki items this item updates. Entries are native item names, optionally with version requirements; [] clears the list."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Complete list of Munki items this item updates. Entries are native item names, optionally with version requirements; [] clears the list."
+                },
+                "unattended_install": {
+                  "anyOf": [
+                    {
+                      "type": "boolean",
+                      "description": "Permit installation without interaction. Explicit false disables it."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Permit installation without interaction. Explicit false disables it."
+                },
+                "unattended_uninstall": {
+                  "anyOf": [
+                    {
+                      "type": "boolean",
+                      "description": "Permit removal without interaction. Explicit false disables it."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Permit removal without interaction. Explicit false disables it."
+                },
+                "uninstallable": {
+                  "anyOf": [
+                    {
+                      "type": "boolean",
+                      "description": "Expose supported removal using uninstall_method."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Expose supported removal using uninstall_method."
+                },
+                "uninstall_method": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Supported native removal method; requires its corresponding receipts or copy entries or script."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Supported native removal method; requires its corresponding receipts or copy entries or script."
+                },
+                "RestartAction": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Munki restart or logout requirement after installation."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Munki restart or logout requirement after installation."
+                },
+                "minimum_os_version": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Lowest macOS version eligible for this package."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Lowest macOS version eligible for this package."
+                },
+                "maximum_os_version": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Highest macOS version eligible for this package."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Highest macOS version eligible for this package."
+                },
+                "minimum_munki_version": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Lowest Munki client version eligible for this package."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Lowest Munki client version eligible for this package."
+                },
+                "supported_architectures": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "type": "array",
+                      "description": "Complete architecture list using arm64 or x86_64."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Complete architecture list using arm64 or x86_64."
+                },
+                "blocking_applications": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "type": "array",
+                      "description": "Applications that block installation. Empty list disables inferred blocking."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Applications that block installation. Empty list disables inferred blocking."
+                },
+                "installable_condition": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Munki predicate controlling installation eligibility."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Munki predicate controlling installation eligibility."
+                },
+                "installed_size": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "description": "Installed size in KiB; independent of downloaded installer size."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Installed size in KiB; independent of downloaded installer size."
+                },
+                "OnDemand": {
+                  "anyOf": [
+                    {
+                      "type": "boolean",
+                      "description": "Allow repeated optional installation even when the item is already installed."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Allow repeated optional installation even when the item is already installed."
+                },
+                "precache": {
+                  "anyOf": [
+                    {
+                      "type": "boolean",
+                      "description": "Cache the installer before it is requested for installation."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Cache the installer before it is requested for installation."
+                },
+                "autoremove": {
+                  "anyOf": [
+                    {
+                      "type": "boolean",
+                      "description": "Remove installed software when no applicable manifest requests it."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Remove installed software when no applicable manifest requests it."
+                },
+                "installs": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "type": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "path": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "CFBundleIdentifier": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "CFBundleName": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "CFBundleShortVersionString": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "CFBundleVersion": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "version_comparison_key": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "minimum_update_version": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "installer_item_location": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "minimum_os_version": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "md5checksum": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "type": "array",
+                      "description": "Complete native detection list using application or bundle or plist or file entries."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Complete native detection list using application or bundle or plist or file entries."
+                },
+                "receipts": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "packageid": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "name": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "version": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "installed_size": {
+                                "anyOf": [
+                                  {
+                                    "type": "integer"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "optional": {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "type": "array",
+                      "description": "Complete Apple package receipt list used for detection and removal."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Complete Apple package receipt list used for detection and removal."
+                },
+                "items_to_copy": {
+                  "anyOf": [
+                    {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "properties": {
+                              "source_item": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "destination_path": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "destination_item": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "user": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "group": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              },
+                              "mode": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "$ref": "#/$defs/FactReference"
+                                  }
+                                ]
+                              }
+                            },
+                            "additionalProperties": false,
+                            "type": "object"
+                          },
+                          {
+                            "$ref": "#/$defs/FactReference"
+                          }
+                        ]
+                      },
+                      "type": "array",
+                      "description": "Payload selections and destination paths for copy_from_dmg."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Payload selections and destination paths for copy_from_dmg."
+                },
+                "package_path": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Relative package path within the original installer image."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Relative package path within the original installer image."
+                },
+                "notes": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Administrator notes retained in pkginfo."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Administrator notes retained in pkginfo."
+                },
+                "installcheck_script": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Deployment-time installation check script. Never executed by Stemma."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Deployment-time installation check script. Never executed by Stemma."
+                },
+                "uninstallcheck_script": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Deployment-time removal check script. Never executed by Stemma."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Deployment-time removal check script. Never executed by Stemma."
+                },
+                "preinstall_script": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Deployment-time script before installation. Never executed by Stemma."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Deployment-time script before installation. Never executed by Stemma."
+                },
+                "postinstall_script": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Deployment-time script after installation. Never executed by Stemma."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Deployment-time script after installation. Never executed by Stemma."
+                },
+                "preuninstall_script": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Deployment-time script before removal. Never executed by Stemma."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Deployment-time script before removal. Never executed by Stemma."
+                },
+                "postuninstall_script": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Deployment-time script after removal. Never executed by Stemma."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Deployment-time script after removal. Never executed by Stemma."
+                },
+                "uninstall_script": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Deployment-time removal script. Never executed by Stemma."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Deployment-time removal script. Never executed by Stemma."
+                },
+                "version_script": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Deployment-time installed-version script. Never executed by Stemma."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Deployment-time installed-version script. Never executed by Stemma."
+                },
+                "name": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Stable native Munki name. Defaults to the software name when creating a package."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Stable native Munki name. Defaults to the software name when creating a package."
+                },
+                "version": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "description": "Explicit native content version. Omit to derive a version from the inspected artifact."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Explicit native content version. Omit to derive a version from the inspected artifact."
+                },
+                "installer_type": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "pkg",
+                        "copy_from_dmg",
+                        "nopkg"
+                      ],
+                      "description": "Preserve a vendor PKG, select items in an existing DMG, or publish a script-only item. PKG is inferred only from a .pkg payload."
+                    },
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ],
+                  "description": "Preserve a vendor PKG, select items in an existing DMG, or publish a script-only item. PKG is inferred only from a .pkg payload."
                 }
-              ],
-              "description": "Software publisher display name. Null clears the publisher."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Software publisher display name. Null clears the publisher."
-        },
-        "catalogs": {
-          "anyOf": [
-            {
-              "items": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "$ref": "#/$defs/FactReference"
-                  }
-                ]
               },
-              "type": "array",
-              "description": "Complete catalog membership. An empty list removes all memberships."
+              "additionalProperties": false,
+              "type": "object",
+              "description": "Native Munki metadata. Omitted fields remain unmanaged; explicit lists own the whole collection."
             },
             {
               "$ref": "#/$defs/FactReference"
             }
           ],
-          "description": "Complete catalog membership. An empty list removes all memberships."
+          "description": "Native Munki metadata. Omitted fields remain unmanaged; explicit lists own the whole collection."
         },
-        "requires": {
+        "retention": {
           "anyOf": [
             {
-              "items": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "$ref": "#/$defs/FactReference"
-                  }
-                ]
-              },
-              "type": "array",
-              "description": "Complete list of Munki item dependencies. Entries are native item names, optionally with version requirements; [] clears the list."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Complete list of Munki item dependencies. Entries are native item names, optionally with version requirements; [] clears the list."
-        },
-        "update_for": {
-          "anyOf": [
-            {
-              "items": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "$ref": "#/$defs/FactReference"
-                  }
-                ]
-              },
-              "type": "array",
-              "description": "Complete list of Munki items this item updates. Entries are native item names, optionally with version requirements; [] clears the list."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Complete list of Munki items this item updates. Entries are native item names, optionally with version requirements; [] clears the list."
-        },
-        "unattended_install": {
-          "anyOf": [
-            {
-              "type": "boolean",
-              "description": "Permit installation without interaction. Explicit false disables it."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Permit installation without interaction. Explicit false disables it."
-        },
-        "unattended_uninstall": {
-          "anyOf": [
-            {
-              "type": "boolean",
-              "description": "Permit removal without interaction. Explicit false disables it."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Permit removal without interaction. Explicit false disables it."
-        },
-        "uninstallable": {
-          "anyOf": [
-            {
-              "type": "boolean",
-              "description": "Expose supported removal using uninstall_method."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Expose supported removal using uninstall_method."
-        },
-        "uninstall_method": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Supported native removal method; requires its corresponding receipts or copy entries or script."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Supported native removal method; requires its corresponding receipts or copy entries or script."
-        },
-        "RestartAction": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Munki restart or logout requirement after installation."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Munki restart or logout requirement after installation."
-        },
-        "minimum_os_version": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Lowest macOS version eligible for this package."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Lowest macOS version eligible for this package."
-        },
-        "maximum_os_version": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Highest macOS version eligible for this package."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Highest macOS version eligible for this package."
-        },
-        "minimum_munki_version": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Lowest Munki client version eligible for this package."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Lowest Munki client version eligible for this package."
-        },
-        "supported_architectures": {
-          "anyOf": [
-            {
-              "items": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "$ref": "#/$defs/FactReference"
-                  }
-                ]
-              },
-              "type": "array",
-              "description": "Complete architecture list using arm64 or x86_64."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Complete architecture list using arm64 or x86_64."
-        },
-        "blocking_applications": {
-          "anyOf": [
-            {
-              "items": {
-                "anyOf": [
-                  {
-                    "type": "string"
-                  },
-                  {
-                    "$ref": "#/$defs/FactReference"
-                  }
-                ]
-              },
-              "type": "array",
-              "description": "Applications that block installation. Empty list disables inferred blocking."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Applications that block installation. Empty list disables inferred blocking."
-        },
-        "installable_condition": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Munki predicate controlling installation eligibility."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Munki predicate controlling installation eligibility."
-        },
-        "installed_size": {
-          "anyOf": [
-            {
-              "type": "integer",
-              "description": "Installed size in KiB; independent of downloaded installer size."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Installed size in KiB; independent of downloaded installer size."
-        },
-        "OnDemand": {
-          "anyOf": [
-            {
-              "type": "boolean",
-              "description": "Allow repeated optional installation even when the item is already installed."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Allow repeated optional installation even when the item is already installed."
-        },
-        "precache": {
-          "anyOf": [
-            {
-              "type": "boolean",
-              "description": "Cache the installer before it is requested for installation."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Cache the installer before it is requested for installation."
-        },
-        "autoremove": {
-          "anyOf": [
-            {
-              "type": "boolean",
-              "description": "Remove installed software when no applicable manifest requests it."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Remove installed software when no applicable manifest requests it."
-        },
-        "installs": {
-          "anyOf": [
-            {
-              "items": {
-                "anyOf": [
-                  {
-                    "properties": {
-                      "type": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "path": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "CFBundleIdentifier": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "CFBundleName": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "CFBundleShortVersionString": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "CFBundleVersion": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "version_comparison_key": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "minimum_update_version": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "installer_item_location": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "minimum_os_version": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "md5checksum": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      }
+              "properties": {
+                "keep": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 1
                     },
-                    "additionalProperties": false,
-                    "type": "object"
-                  },
-                  {
-                    "$ref": "#/$defs/FactReference"
-                  }
-                ]
+                    {
+                      "$ref": "#/$defs/FactReference"
+                    }
+                  ]
+                }
               },
-              "type": "array",
-              "description": "Complete native detection list using application or bundle or plist or file entries."
+              "additionalProperties": false,
+              "type": "object"
             },
             {
               "$ref": "#/$defs/FactReference"
             }
-          ],
-          "description": "Complete native detection list using application or bundle or plist or file entries."
+          ]
         },
-        "receipts": {
-          "anyOf": [
-            {
-              "items": {
-                "anyOf": [
-                  {
-                    "properties": {
-                      "packageid": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "name": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "version": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "installed_size": {
-                        "anyOf": [
-                          {
-                            "type": "integer"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "optional": {
-                        "anyOf": [
-                          {
-                            "type": "boolean"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object"
-                  },
-                  {
-                    "$ref": "#/$defs/FactReference"
-                  }
-                ]
-              },
-              "type": "array",
-              "description": "Complete Apple package receipt list used for detection and removal."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Complete Apple package receipt list used for detection and removal."
-        },
-        "items_to_copy": {
-          "anyOf": [
-            {
-              "items": {
-                "anyOf": [
-                  {
-                    "properties": {
-                      "source_item": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "destination_path": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "destination_item": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "user": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "group": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      },
-                      "mode": {
-                        "anyOf": [
-                          {
-                            "type": "string"
-                          },
-                          {
-                            "$ref": "#/$defs/FactReference"
-                          }
-                        ]
-                      }
-                    },
-                    "additionalProperties": false,
-                    "type": "object"
-                  },
-                  {
-                    "$ref": "#/$defs/FactReference"
-                  }
-                ]
-              },
-              "type": "array",
-              "description": "Payload selections and destination paths for copy_from_dmg."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Payload selections and destination paths for copy_from_dmg."
-        },
-        "package_path": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Relative package path within the original installer image."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Relative package path within the original installer image."
-        },
-        "notes": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Administrator notes retained in pkginfo."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Administrator notes retained in pkginfo."
-        },
-        "installcheck_script": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Deployment-time installation check script. Never executed by Stemma."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Deployment-time installation check script. Never executed by Stemma."
-        },
-        "uninstallcheck_script": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Deployment-time removal check script. Never executed by Stemma."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Deployment-time removal check script. Never executed by Stemma."
-        },
-        "preinstall_script": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Deployment-time script before installation. Never executed by Stemma."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Deployment-time script before installation. Never executed by Stemma."
-        },
-        "postinstall_script": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Deployment-time script after installation. Never executed by Stemma."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Deployment-time script after installation. Never executed by Stemma."
-        },
-        "preuninstall_script": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Deployment-time script before removal. Never executed by Stemma."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Deployment-time script before removal. Never executed by Stemma."
-        },
-        "postuninstall_script": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Deployment-time script after removal. Never executed by Stemma."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Deployment-time script after removal. Never executed by Stemma."
-        },
-        "uninstall_script": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Deployment-time removal script. Never executed by Stemma."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Deployment-time removal script. Never executed by Stemma."
-        },
-        "version_script": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Deployment-time installed-version script. Never executed by Stemma."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Deployment-time installed-version script. Never executed by Stemma."
-        },
-        "name": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Stable native Munki name. Defaults to the software name when creating a package."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Stable native Munki name. Defaults to the software name when creating a package."
-        },
-        "version": {
-          "anyOf": [
-            {
-              "type": "string",
-              "description": "Explicit native content version. Omit to derive a version from the inspected artifact."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Explicit native content version. Omit to derive a version from the inspected artifact."
-        },
-        "installer_type": {
-          "anyOf": [
-            {
-              "type": "string",
-              "enum": [
-                "pkg",
-                "copy_from_dmg",
-                "nopkg"
-              ],
-              "description": "Preserve a vendor PKG, select items in an existing DMG, or publish a script-only item. PKG is inferred only from a .pkg payload."
-            },
-            {
-              "$ref": "#/$defs/FactReference"
-            }
-          ],
-          "description": "Preserve a vendor PKG, select items in an existing DMG, or publish a script-only item. PKG is inferred only from a .pkg payload."
-        },
-        "artifact": {
+        "installer": {
           "type": "string",
           "pattern": "^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$",
           "description": "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."
@@ -3355,8 +5020,7 @@
         }
       },
       "additionalProperties": false,
-      "type": "object",
-      "description": "Native Munki metadata. Omitted fields remain unmanaged; explicit lists own the whole collection."
+      "type": "object"
     },
     "Plugin": {
       "properties": {
@@ -3366,7 +5030,7 @@
         },
         "image": {
           "type": "string",
-          "description": "OCI registry reference with a tag or digest, for example ghcr.io/woodleighschool/woodstar/stemma:v1.0.0."
+          "description": "OCI registry reference with a tag or digest, for example ghcr.io/example/inventory:v1.0.0."
         }
       },
       "additionalProperties": false,
@@ -3623,7 +5287,7 @@
                   "destinations": {
                     "additionalProperties": {
                       "properties": {
-                        "artifact": {
+                        "installer": {
                           "not": {
                             "enum": [
                               "source",
@@ -3754,19 +5418,19 @@
       "properties": {
         "kind": {
           "type": "string",
-          "description": "Observed subject kind. All supplied criteria must match the same subject."
+          "description": "Observed subject kind: app, package or msi."
         },
         "path": {
           "type": "string",
-          "description": "Exact relative path in the inspected input, independent of the runner filesystem."
+          "description": "Exact path within the inspected artifact."
         },
         "installed_path": {
           "type": "string",
-          "description": "Exact observed absolute installation path. This selects evidence; it does not author an installation mapping."
+          "description": "Observed absolute installation path, when the installer declares one."
         },
         "bundle_id": {
           "type": "string",
-          "description": "Exact observed application bundle identifier."
+          "description": "Application bundle identifier, combined with any supplied path selectors."
         }
       },
       "additionalProperties": false,
@@ -3817,5 +5481,5 @@
     }
   ],
   "title": "Stemma documents",
-  "description": "One Project or Software resource per file. String values under spec support whole-value ${VAR} environment placeholders. Omitted metadata fields remain unmanaged; null clears only supported fields."
+  "description": "One Project document at the root; imported family files contain Software documents separated by ---. String values under spec support whole-value ${VAR} environment placeholders. Omitted metadata fields remain unmanaged; null clears only supported fields."
 }

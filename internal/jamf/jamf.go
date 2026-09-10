@@ -1,4 +1,4 @@
-// Package jamf reconciles package records and content using the Jamf Pro v1 API.
+// Package jamf reconciles immutable packages and their native Jamf deployment links.
 package jamf
 
 import (
@@ -42,11 +42,25 @@ type configuration struct {
 }
 
 type binding struct {
-	Server         string `json:"server"`
-	IdentitySHA256 string `json:"identity_sha256"`
-	PackageID      string `json:"package_id"`
-	PayloadSHA256  string `json:"payload_sha256,omitempty"`
-	PendingCreate  bool   `json:"pending_create,omitempty"`
+	Server         string              `json:"server"`
+	IdentitySHA256 string              `json:"identity_sha256"`
+	PackageID      string              `json:"package_id"`
+	PayloadSHA256  string              `json:"payload_sha256,omitempty"`
+	PendingCreate  bool                `json:"pending_create,omitempty"`
+	PendingPayload string              `json:"pending_payload,omitempty"`
+	Revisions      map[string]revision `json:"revisions,omitempty"`
+	Publications   plugin.Publications `json:"publications,omitzero"`
+	Associations   []association       `json:"associations,omitempty"`
+	PolicyID       string              `json:"policy_id,omitempty"`
+	PolicyTitleID  string              `json:"policy_title_id,omitempty"`
+	PolicyName     string              `json:"policy_name,omitempty"`
+	PendingPolicy  bool                `json:"pending_policy,omitempty"`
+}
+
+type revision struct {
+	PackageID string `json:"package_id"`
+	Owned     bool   `json:"owned"`
+	SHA3512   string `json:"sha3512,omitempty"`
 }
 
 type client struct {
@@ -67,21 +81,27 @@ type payload struct {
 	size     int64
 }
 
-// Handle validates, plans or applies package-only reconciliation. Metadata uses
-// supported native writable names; package_id is an explicit adoption control.
-// It never creates, reads or changes policies, scope, assignments or prestages.
-func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
-	response := plugin.ReconcileResponse{}
+// Handle reconciles immutable package revisions before advancing deployment links.
+func Handle(ctx context.Context, request plugin.ReconcileRequest) (response plugin.ReconcileResponse, err error) {
 	config, metadata, adopt, err := validate(request)
 	if err != nil {
 		return response, err
 	}
+	retention, err := decodeRetention(metadata)
+	if err != nil {
+		return response, err
+	}
+	delete(metadata, "retention")
+	patch, err := decodePatch(metadata)
+	if err != nil {
+		return response, err
+	}
+	delete(metadata, "patch")
 	if request.Method == "validate" {
 		if request.Artifact.Path != "" {
-			_, err := inspectPayload(ctx, request.Identity, request.Artifact)
-			return response, err
+			_, err = inspectPayload(ctx, request.Identity, request.Artifact)
 		}
-		return response, nil
+		return response, err
 	}
 	if request.Method != "plan" && request.Method != "apply" {
 		return response, fmt.Errorf("unsupported Jamf method %q", request.Method)
@@ -92,27 +112,42 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	c, err := newClient(ctx, config)
-	if err != nil {
-		return response, err
-	}
 	identity := identityDigest(request.Identity)
 	state := binding{Server: config.URL, IdentitySHA256: identity}
 	if len(request.Binding) > 0 && string(request.Binding) != "null" {
 		if err := strictDecode(request.Binding, &state); err != nil {
 			return response, fmt.Errorf("jamf binding: %w", err)
 		}
-		if state.Server != config.URL || state.IdentitySHA256 != identity || !validID(state.PackageID) && (state.PackageID != "" || !state.PendingCreate) {
+		if state.Server != config.URL || state.IdentitySHA256 != identity {
 			return response, errors.New("jamf binding does not match this server and logical identity")
 		}
 	}
+	if state.Revisions == nil {
+		state.Revisions = make(map[string]revision)
+	}
+	// Older or recovered bindings identify records but cannot establish creation ownership.
+	if state.PackageID != "" && state.PayloadSHA256 != "" {
+		if _, ok := state.Revisions[state.PayloadSHA256]; !ok {
+			state.Revisions[state.PayloadSHA256] = revision{PackageID: state.PackageID}
+		}
+	}
+	defer func() { response.Binding = raw(state) }()
+	rev := state.Revisions[content.sha256]
+	rev.SHA3512 = content.sha3512
 	if adopt != "" {
-		if state.PackageID != "" && state.PackageID != adopt {
+		if rev.PackageID != "" && rev.PackageID != adopt {
 			return response, errors.New("package_id conflicts with the durable Jamf binding")
 		}
-		state.PackageID = adopt
+		rev.PackageID = adopt
 	}
-	current, err := c.observe(ctx, state.PackageID, content.prefix)
+	if state.PendingCreate && state.PendingPayload != content.sha256 {
+		return response, errors.New("previous Jamf package creation must be resolved before publishing another payload")
+	}
+	c, err := newClient(ctx, config)
+	if err != nil {
+		return response, err
+	}
+	current, err := c.observe(ctx, rev.PackageID, content.filename)
 	if err != nil {
 		return response, err
 	}
@@ -120,68 +155,81 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 		return response, fmt.Errorf("adopted Jamf package %s does not exist", adopt)
 	}
 	if current != nil {
-		state.PackageID = stringField(current.Fields, "id")
-		state.PendingCreate = false
+		rev.PackageID = stringField(current.Fields, "id")
+		state.PendingCreate, state.PendingPayload = false, ""
+		state.Revisions[content.sha256] = rev
+		// Published package IDs are immutable, including explicitly adopted records.
+		if !contentDigestMatches(current, content) && stringField(current.Fields, "cloudTransferStatus") == "READY" {
+			return response, errors.New("jamf package content conflicts with this immutable revision")
+		}
 	}
-	changes := plan(current, metadata, content, request.Artifact.Filename)
-	response.Changes = changes
-	response.Binding = raw(state)
+	state.PackageID = rev.PackageID
+	response.Changes = plan(current, metadata, content, request.Artifact.Filename)
+	if patch != nil {
+		if err := c.checkPatch(ctx, patch, &state, &response); err != nil {
+			return response, err
+		}
+	}
 	if request.Method == "plan" {
-		return response, nil
+		if retention.Keep > 0 {
+			err = c.prune(ctx, &state, content, retention.Keep, false, &response)
+		}
+		return response, err
 	}
 	createdRecord := false
 	if current == nil {
 		if state.PendingCreate {
 			return response, errors.New("previous jamf create outcome is still unresolved; restore visibility or set package_id for explicit adoption")
 		}
-		state.PendingCreate = true
-		response.Binding = raw(state)
-		body := defaults(content.filename, request.Artifact.Filename)
-		// Jamf requires a package record before upload. Managed metadata is applied
-		// after content verification, so publication cannot activate it early.
-		created, createErr := c.create(ctx, body)
+		state.PendingCreate, state.PendingPayload = true, content.sha256
+		created, createErr := c.create(ctx, defaults(content.filename, request.Artifact.Filename))
 		if createErr != nil {
-			current, err = c.discover(ctx, content.prefix)
+			current, err = c.discover(ctx, content.filename)
 			if err != nil || current == nil {
 				return response, fmt.Errorf("jamf create outcome unresolved; no create retry was sent: %w", createErr)
 			}
 		} else {
 			createdRecord = true
-			state.PackageID, state.PendingCreate = created, false
-			response.Binding = raw(state)
+			rev.PackageID, rev.Owned = created, true
+			state.Revisions[content.sha256] = rev
+			state.PackageID = created
+			state.PendingCreate, state.PendingPayload = false, ""
 			current, err = c.get(ctx, created)
 			if err != nil || current == nil {
 				return response, errors.New("created Jamf package could not be read back")
 			}
 		}
-		state.PackageID = stringField(current.Fields, "id")
-		state.PendingCreate = false
-		response.Binding = raw(state)
+		rev.PackageID = stringField(current.Fields, "id")
+		state.Revisions[content.sha256] = rev
+		state.PendingCreate, state.PendingPayload = false, ""
 	}
+	state.PackageID = rev.PackageID
 	if !contentMatches(current, content) {
 		if stringField(current.Fields, "fileName") != content.filename {
-			current, err = c.merge(ctx, current, map[string]json.RawMessage{"fileName": raw(content.filename), "md5": raw(nil), "sha256": raw(nil), "sha3512": raw(nil), "hashType": raw(nil), "hashValue": raw(nil)}, nil)
+			// Renaming a matching adopted artifact does not replace its content.
+			current, err = c.merge(ctx, current, map[string]json.RawMessage{"fileName": raw(content.filename)}, nil)
 			if err != nil {
 				return response, err
 			}
 		}
-		status := stringField(current.Fields, "cloudTransferStatus")
-		if createdRecord || status != "PENDING" && status != "IN_PROGRESS" && status != "UPLOADING" {
-			uploadErr := c.upload(ctx, state.PackageID, request.Artifact.Path, content)
-			if uploadErr != nil {
-				current, err = c.get(ctx, state.PackageID)
-				if err != nil || current == nil {
-					return response, fmt.Errorf("jamf upload outcome unresolved; no upload retry was sent: %w", uploadErr)
-				}
-				status = stringField(current.Fields, "cloudTransferStatus")
-				if !contentMatches(current, content) && status != "PENDING" && status != "IN_PROGRESS" && status != "UPLOADING" {
-					return response, fmt.Errorf("jamf upload failed or remains unverified; no upload retry was sent: %w", uploadErr)
+		if !contentDigestMatches(current, content) {
+			status := stringField(current.Fields, "cloudTransferStatus")
+			if createdRecord || status != "PENDING" && status != "IN_PROGRESS" && status != "UPLOADING" {
+				if uploadErr := c.upload(ctx, rev.PackageID, request.Artifact.Path, content); uploadErr != nil {
+					current, err = c.get(ctx, rev.PackageID)
+					if err != nil || current == nil {
+						return response, c.uploadFailure(ctx, &state, content, adopt, nil, fmt.Errorf("jamf upload outcome unresolved; no upload retry was sent: %w", uploadErr))
+					}
+					status = stringField(current.Fields, "cloudTransferStatus")
+					if !contentMatches(current, content) && status != "PENDING" && status != "IN_PROGRESS" && status != "UPLOADING" {
+						return response, c.uploadFailure(ctx, &state, content, adopt, current, fmt.Errorf("jamf upload failed or remains unverified; no upload retry was sent: %w", uploadErr))
+					}
 				}
 			}
 		}
-		current, err = c.awaitContent(ctx, state.PackageID, content)
+		current, err = c.awaitContent(ctx, rev.PackageID, content)
 		if err != nil {
-			return response, err
+			return response, c.uploadFailure(ctx, &state, content, adopt, current, err)
 		}
 	}
 	current, err = c.merge(ctx, current, metadata, &content)
@@ -191,9 +239,17 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 	if !contentMatches(current, content) {
 		return response, errors.New("jamf content changed during metadata reconciliation")
 	}
+	if patch != nil {
+		if err := c.applyPatch(ctx, patch, &state); err != nil {
+			return response, err
+		}
+	}
 	state.PayloadSHA256 = content.sha256
-	response.Binding = raw(state)
-	return response, nil
+	state.Publications.Record(content.sha256)
+	if retention.Keep > 0 {
+		err = c.prune(ctx, &state, content, retention.Keep, true, &response)
+	}
+	return response, err
 }
 
 func validate(request plugin.ReconcileRequest) (configuration, map[string]json.RawMessage, string, error) {
@@ -228,9 +284,21 @@ func validate(request plugin.ReconcileRequest) (configuration, map[string]json.R
 		delete(metadata, "package_id")
 	}
 	for key, value := range metadata {
+		if key == "retention" {
+			if _, err := decodeRetention(metadata); err != nil {
+				return config, nil, "", err
+			}
+			continue
+		}
+		if key == "patch" {
+			if _, err := decodePatch(metadata); err != nil {
+				return config, nil, "", err
+			}
+			continue
+		}
 		rule, ok := managedFields[key]
 		if !ok {
-			return config, nil, "", fmt.Errorf("unsupported Jamf package metadata %q; policies and scope are not supported", key)
+			return config, nil, "", fmt.Errorf("unsupported Jamf package metadata %q", key)
 		}
 		if err := rule.validate(value); err != nil {
 			return config, nil, "", fmt.Errorf("jamf %s: %w", key, err)
@@ -312,7 +380,7 @@ func plan(current *observed, metadata map[string]json.RawMessage, content payloa
 }
 
 func inspectPayload(ctx context.Context, identity plugin.Identity, artifact plugin.Artifact) (payload, error) {
-	if identity.Project == "" || identity.Recipe == "" || identity.Destination == "" {
+	if identity.Project == "" || identity.Software == "" || identity.Destination == "" {
 		return payload{}, errors.New("jamf requires a complete logical identity")
 	}
 	if strings.ToLower(filepath.Ext(artifact.Filename)) != ".pkg" {
@@ -349,7 +417,11 @@ func identityDigest(identity plugin.Identity) string {
 }
 
 func contentMatches(current *observed, content payload) bool {
-	if current == nil || stringField(current.Fields, "fileName") != content.filename || stringField(current.Fields, "cloudTransferStatus") != "READY" {
+	return current != nil && stringField(current.Fields, "fileName") == content.filename && contentDigestMatches(current, content)
+}
+
+func contentDigestMatches(current *observed, content payload) bool {
+	if current == nil || stringField(current.Fields, "cloudTransferStatus") != "READY" {
 		return false
 	}
 	if digest := stringField(current.Fields, "sha3512"); digest != "" {
@@ -453,24 +525,21 @@ func (c *client) observe(ctx context.Context, id, prefix string) (*observed, err
 	return c.discover(ctx, prefix)
 }
 
-func (c *client) discover(ctx context.Context, prefix string) (*observed, error) {
-	result, response, err := c.packages.ListV1(ctx, map[string]string{
-		"page-size": "100", "sort": "id:asc", "filter": `fileName=="` + prefix + `*"`,
-	})
+func (c *client) discover(ctx context.Context, filename string) (*observed, error) {
+	result, response, err := c.packages.ListV1(ctx, map[string]string{"page-size": "100", "sort": "id:asc", "filter": `fileName=="` + filename + `"`})
 	if err := requestError(ctx, response, err); err != nil {
 		return nil, err
 	}
+	if result == nil {
+		return nil, errors.New("jamf package discovery returned no result")
+	}
 	var found string
 	for _, entry := range result.Results {
-		if !strings.HasPrefix(entry.FileName, prefix) || !strings.HasSuffix(entry.FileName, ".pkg") {
-			continue
-		}
-		digest := strings.TrimSuffix(strings.TrimPrefix(entry.FileName, prefix), ".pkg")
-		if decoded, err := hex.DecodeString(digest); err != nil || len(decoded) != sha256.Size {
+		if entry.FileName != filename {
 			continue
 		}
 		if found != "" {
-			return nil, errors.New("multiple Jamf packages have this logical identity; specify package_id for explicit adoption")
+			return nil, errors.New("multiple Jamf packages have this immutable identity; specify package_id for explicit adoption")
 		}
 		if !validID(entry.ID) {
 			return nil, errors.New("jamf discovery returned an invalid package ID")
@@ -583,7 +652,7 @@ func (c *client) awaitContent(ctx context.Context, id string, content payload) (
 		}
 		status := stringField(current.Fields, "cloudTransferStatus")
 		if status == "FAILED" || status == "ERROR" {
-			return nil, fmt.Errorf("jamf package cloud transfer %s", status)
+			return current, fmt.Errorf("jamf package cloud transfer %s", status)
 		}
 		if attempt == 30 {
 			break

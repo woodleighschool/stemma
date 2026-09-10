@@ -38,9 +38,9 @@ spec:
     base:
       source: {type: http, url: 'https://example.test/a.pkg'}
       destinations:
-        repo: {description: inherited, unattended_install: true, catalogs: [testing]}
+        repo: {pkginfo: {description: inherited, unattended_install: true, catalogs: [testing]}}
   destinations:
-    repo: {operation: munki, path: repo}
+    repo: {operation: munki, config: {path: repo}}
   imports: ['*.software.yaml']
 ---
 apiVersion: stemma/v1alpha1
@@ -50,12 +50,12 @@ metadata:
 spec:
   extends: base
   destinations:
-    repo: {description: null, unattended_install: false, catalogs: []}
+    repo: {pkginfo: {description: null, unattended_install: false, catalogs: []}}
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata := p.Software["app"].Destinations["repo"]
+	metadata := p.Software["app"].Destinations["repo"]["pkginfo"].(map[string]any)
 	if value, present := metadata["description"]; !present || value != nil {
 		t.Fatalf("null collapsed: %#v", metadata)
 	}
@@ -121,7 +121,7 @@ spec:
       inputs: {original: prepared, package: artifacts/package, extra: inspect/payload}
       config: {keep: false, omit: null, list: []}
   destinations:
-    external: {artifact: transform/package, inputs: {installer: source, package: artifacts/package},
+    external: {installer: transform/package, inputs: {installer: source, package: artifacts/package},
       version: {$fact: main.app.version}}
 `
 	p, err := parseTest(t, []byte(base))
@@ -142,7 +142,7 @@ spec:
 		"unknown-step":             {"extra: inspect/payload", "extra: missing/payload"},
 		"unknown-artifact":         {"package: artifacts/package", "package: artifacts/missing"},
 		"extra-segment":            {"extra: inspect/payload", "extra: inspect/payload/child"},
-		"bare-artifact":            {"artifact: transform/package", "artifact: package"},
+		"bare-artifact":            {"installer: transform/package", "installer: package"},
 		"non-object-inputs":        {"inputs: {installer: source, package: artifacts/package}", "inputs: [source]"},
 		"non-string-input":         {"installer: source", "installer: 4"},
 		"unknown-input-output":     {"installer: source", "installer: missing/output"},
@@ -170,7 +170,7 @@ spec:
 	}
 	for _, selector := range []string{"source", "prepared", "artifacts/package", "inspect/payload", "transform/package"} {
 		t.Run(selector, func(t *testing.T) {
-			if _, err := parseTest(t, []byte(strings.Replace(base, "artifact: transform/package", "artifact: "+selector, 1))); err != nil {
+			if _, err := parseTest(t, []byte(strings.Replace(base, "installer: transform/package", "installer: "+selector, 1))); err != nil {
 				t.Fatal(err)
 			}
 		})

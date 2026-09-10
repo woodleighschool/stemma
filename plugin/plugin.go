@@ -32,7 +32,7 @@ type Handler func(context.Context, Request) (Response, error)
 // Identity identifies a logical destination independently of its display metadata.
 type Identity struct {
 	Project     string `json:"project"`
-	Recipe      string `json:"recipe"`
+	Software    string `json:"software"`
 	Destination string `json:"destination"`
 }
 
@@ -67,21 +67,27 @@ type StepResponse struct {
 // ReconcileRequest carries native desired state. Raw JSON retains absent, null,
 // false and empty collections; Config contains provider-owned connection settings.
 type ReconcileRequest struct {
-	Method   string              `json:"method"`
-	Identity Identity            `json:"identity"`
-	Config   json.RawMessage     `json:"config,omitempty"`
-	Metadata json.RawMessage     `json:"metadata,omitempty"`
-	Binding  json.RawMessage     `json:"binding,omitempty"`
-	Artifact Artifact            `json:"artifact"`
-	Inputs   map[string]Artifact `json:"inputs,omitempty"`
-	Facts    Facts               `json:"facts,omitzero"`
+	Method   string                     `json:"method"`
+	Identity Identity                   `json:"identity"`
+	Config   json.RawMessage            `json:"config,omitempty"`
+	Metadata json.RawMessage            `json:"metadata,omitempty"`
+	Binding  json.RawMessage            `json:"binding,omitempty"`
+	Artifact Artifact                   `json:"artifact"`
+	Inputs   map[string]Artifact        `json:"inputs,omitempty"`
+	Facts    Facts                      `json:"facts,omitzero"`
+	Subjects map[string]SubjectSelector `json:"subjects,omitempty"`
+	Bindings map[string]json.RawMessage `json:"bindings,omitempty"`
+	Prepared bool                       `json:"prepared,omitempty"`
+	Root     string                     `json:"root,omitempty"`
 }
 
 // ReconcileResponse carries changes and recovered durable bindings. An omitted
 // Binding preserves it, null clears it, and a value replaces it, including on error.
 type ReconcileResponse struct {
-	Changes []Change        `json:"changes,omitempty"`
-	Binding json.RawMessage `json:"binding,omitempty"`
+	Changes  []Change          `json:"changes,omitempty"`
+	Binding  json.RawMessage   `json:"binding,omitempty"`
+	Origins  map[string]string `json:"origins,omitempty"`
+	Requires []string          `json:"requires,omitempty"`
 }
 
 // Change is a semantic destination change; an empty Changes list needs no write.

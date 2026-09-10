@@ -35,7 +35,7 @@ func derivePackage(ctx context.Context, store *cas.Store, ops *operations, input
 
 func destinationMetadata(input map[string]any) map[string]any {
 	result := config.Merge(input, nil)
-	delete(result, "artifact")
+	delete(result, "installer")
 	delete(result, "inputs")
 	return result
 }
@@ -62,7 +62,7 @@ func prepareSoftware(ctx context.Context, store *cas.Store, ops *operations, sof
 	for _, name := range sortedKeys(software.Artifacts) {
 		used := all || software.Verification.Subject == "artifacts/"+name
 		for _, metadata := range software.Destinations {
-			if metadata["artifact"] == "artifacts/"+name {
+			if metadata["installer"] == "artifacts/"+name {
 				used = true
 			}
 			for _, reference := range destinationReferences(metadata) {
@@ -113,7 +113,7 @@ func prepareSoftware(ctx context.Context, store *cas.Store, ops *operations, sof
 					input.Facts = facts.Facts
 					inputs[name] = input
 				}
-				resolved, _, err := resolveMetadata(software, step.Config, input.Facts, "")
+				resolved, _, err := resolveMetadata(software, step.Config, input.Facts)
 				if err != nil {
 					return outputs, fmt.Errorf("step %s: %w", step.Name, err)
 				}
@@ -135,7 +135,7 @@ func prepareSoftware(ctx context.Context, store *cas.Store, ops *operations, sof
 	subjects := map[string]bool{}
 	if subject := software.Verification.Subject; subject == "" || subject == "payload" {
 		for _, metadata := range software.Destinations {
-			subject, _ := metadata["artifact"].(string)
+			subject, _ := metadata["installer"].(string)
 			if subject == "" {
 				subject = "prepared"
 			}

@@ -4,10 +4,11 @@
 package deviceappmanagement
 
 import (
+	"context"
 	i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f "github.com/microsoft/kiota-abstractions-go"
 )
 
-// MobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder builds and executes requests for operations under \deviceAppManagement\mobileApps\{mobileApp-id}\graph.macOSPkgApp\contentVersions\{mobileAppContent-id}
+// MobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder provides operations to manage the contentVersions property of the microsoft.graph.mobileLobApp entity.
 type MobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder struct {
 	i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.BaseRequestBuilder
 }
@@ -27,8 +28,35 @@ func NewMobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequest
 	return NewMobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilderInternal(urlParams, requestAdapter)
 }
 
+// Delete delete navigation property contentVersions for deviceAppManagement
+func (m *MobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder) Delete(ctx context.Context, requestConfiguration *i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.RequestConfiguration[i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.DefaultQueryParameters]) error {
+	requestInfo, err := m.ToDeleteRequestInformation(ctx, requestConfiguration)
+	if err != nil {
+		return err
+	}
+	err = m.BaseRequestBuilder.RequestAdapter.SendNoContent(ctx, requestInfo, nil)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // Files provides operations to manage the files property of the microsoft.graph.mobileAppContent entity.
 // returns a *MobileAppsItemGraphMacOSPkgAppContentVersionsItemFilesRequestBuilder when successful
 func (m *MobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder) Files() *MobileAppsItemGraphMacOSPkgAppContentVersionsItemFilesRequestBuilder {
 	return NewMobileAppsItemGraphMacOSPkgAppContentVersionsItemFilesRequestBuilderInternal(m.BaseRequestBuilder.PathParameters, m.BaseRequestBuilder.RequestAdapter)
+}
+
+// ToDeleteRequestInformation delete navigation property contentVersions for deviceAppManagement
+// returns a *RequestInformation when successful
+func (m *MobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder) ToDeleteRequestInformation(ctx context.Context, requestConfiguration *i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.RequestConfiguration[i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.DefaultQueryParameters]) (*i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.RequestInformation, error) {
+	requestInfo := i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.NewRequestInformationWithMethodAndUrlTemplateAndPathParameters(i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.DELETE, m.BaseRequestBuilder.UrlTemplate, m.BaseRequestBuilder.PathParameters)
+	i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.ConfigureRequestInformation(requestInfo, requestConfiguration)
+	return requestInfo, nil
+}
+
+// WithUrl returns a request builder with the provided arbitrary URL. Using this method means any other path or query parameters are ignored.
+// returns a *MobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder when successful
+func (m *MobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder) WithUrl(rawUrl string) *MobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder {
+	return NewMobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder(rawUrl, m.BaseRequestBuilder.RequestAdapter)
 }

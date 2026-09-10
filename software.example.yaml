@@ -15,6 +15,9 @@ spec:
     signature: true
   destinations:
     munki:
-      name: Google Chrome
-      catalogs:
-        - testing
+      retention:
+        keep: 1
+      pkginfo:
+        name: Google Chrome
+        catalogs:
+          - testing

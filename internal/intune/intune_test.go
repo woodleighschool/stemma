@@ -216,7 +216,7 @@ func fixtureRequest(t *testing.T) plugin.ReconcileRequest {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(data)
-	return plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "example", Recipe: "test", Destination: "intune"}, Artifact: plugin.Artifact{Path: path, Filename: "setup.cmd", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}, Metadata: raw(object{
+	return plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "example", Software: "test", Destination: "intune"}, Artifact: plugin.Artifact{Path: path, Filename: "setup.cmd", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}, Metadata: raw(object{
 		"@odata.type": win32Type, "displayName": "Fixture", "description": "Test app", "publisher": "Fixture Publisher",
 		"installCommandLine": "setup.cmd", "uninstallCommandLine": "setup.cmd /remove", "minimumSupportedWindowsRelease": "Windows11_23H2", "allowedArchitectures": "x64",
 		"installExperience": object{"runAsAccount": "system"},
@@ -239,11 +239,17 @@ type graphFixture struct {
 	expectedAPI                                    string
 	contentTypes                                   []string
 	paths                                          []string
+	contentVersions                                map[string]bool
+	deletedVersions                                []string
+	relations                                      map[string][]object
+	relatedApps                                    map[string]object
+	relationshipWrites                             int
+	failRelationships                              bool
 }
 
 func newGraphFixture(t *testing.T) (*graphFixture, *client) {
 	t.Helper()
-	fake := &graphFixture{blocks: map[string][]byte{}}
+	fake := &graphFixture{blocks: map[string][]byte{}, contentVersions: map[string]bool{}, relations: map[string][]object{}, relatedApps: map[string]object{}}
 	server := httptest.NewTLSServer(http.HandlerFunc(fake.serve))
 	t.Cleanup(server.Close)
 	fake.url = server.URL
@@ -323,6 +329,9 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 	if api == "" {
 		api = "v1.0"
 	}
+	if strings.Contains(r.URL.Path, "/relationships") || strings.HasSuffix(r.URL.Path, "/updateRelationships") {
+		api = "beta"
+	}
 	if !strings.HasPrefix(r.URL.Path, "/"+api+"/") {
 		http.Error(w, "wrong API version", http.StatusBadRequest)
 		return
@@ -330,6 +339,37 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 	f.paths = append(f.paths, r.URL.Path)
 	path := strings.TrimPrefix(r.URL.Path, "/"+api)
 	switch {
+	case strings.HasSuffix(path, "/relationships") && r.Method == http.MethodGet:
+		id := strings.TrimSuffix(strings.TrimPrefix(path, appsPath+"/"), "/relationships")
+		items := f.relations[id]
+		if items == nil {
+			items = []object{}
+		}
+		write(object{"value": items})
+	case strings.HasSuffix(path, "/updateRelationships") && r.Method == http.MethodPost:
+		f.relationshipWrites++
+		if f.failRelationships {
+			http.Error(w, "relationship failure", 400)
+			return
+		}
+		if f.app["publishingState"] != "published" {
+			http.Error(w, "references precede publication", 400)
+			return
+		}
+		id := strings.TrimSuffix(strings.TrimPrefix(path, appsPath+"/"), "/updateRelationships")
+		var relationships []object
+		for _, item := range f.relations[id] {
+			if item["targetType"] == "parent" {
+				relationships = append(relationships, item)
+			}
+		}
+		for _, item := range body["relationships"].([]any) {
+			relationships = append(relationships, item.(object))
+		}
+		f.relations[id] = relationships
+		w.WriteHeader(204)
+	case strings.HasPrefix(path, appsPath+"/") && f.relatedApps[strings.TrimPrefix(path, appsPath+"/")] != nil && r.Method == http.MethodGet:
+		write(f.relatedApps[strings.TrimPrefix(path, appsPath+"/")])
 	case path == appsPath && r.Method == http.MethodGet:
 		apps := []any{}
 		if f.app != nil {
@@ -357,7 +397,23 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.contentTypes = append(f.contentTypes, text(f.app["@odata.type"]))
 		f.versions++
+		f.contentVersions[fmt.Sprint(f.versions)] = true
 		write(object{"id": fmt.Sprint(f.versions)})
+	case strings.HasSuffix(path, "/contentVersions") && r.Method == http.MethodGet:
+		items := []object{}
+		for id := range f.contentVersions {
+			items = append(items, object{"id": id})
+		}
+		write(object{"value": items})
+	case strings.Contains(path, "/contentVersions/") && r.Method == http.MethodDelete:
+		id := path[strings.LastIndex(path, "/")+1:]
+		if id == f.app["committedContentVersion"] {
+			http.Error(w, "cannot delete active content", 400)
+			return
+		}
+		delete(f.contentVersions, id)
+		f.deletedVersions = append(f.deletedVersions, id)
+		w.WriteHeader(204)
 	case strings.HasSuffix(path, "/files") && r.Method == http.MethodPost:
 		f.file = body
 		f.file["id"] = "file-1"

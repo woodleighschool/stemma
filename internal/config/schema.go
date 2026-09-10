@@ -9,6 +9,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/intune"
 	"github.com/woodleighschool/stemma/internal/jamf"
 	"github.com/woodleighschool/stemma/internal/munki"
+	"github.com/woodleighschool/stemma/internal/munkirepo"
 )
 
 // Schema generates editor documentation from the same typed fields used at runtime.
@@ -20,13 +21,13 @@ func Schema() ([]byte, error) {
 	maps.Copy(s.Definitions, software.Definitions)
 	s.ID = "https://raw.githubusercontent.com/woodleighschool/stemma/main/stemma.schema.json"
 	s.Title = "Stemma documents"
-	s.Description = "One Project or Software resource per file. String values under spec support whole-value ${VAR} environment placeholders. Omitted metadata fields remain unmanaged; null clears only supported fields."
+	s.Description = "One Project document at the root; imported family files contain Software documents separated by ---. String values under spec support whole-value ${VAR} environment placeholders. Omitted metadata fields remain unmanaged; null clears only supported fields."
 	s.Ref = ""
 	s.OneOf = []*jsonschema.Schema{{Ref: "#/$defs/ProjectDocument"}, {Ref: "#/$defs/SoftwareDocument"}}
 	if name, ok := s.Definitions["Metadata"].Properties.Get("name"); ok {
 		name.Pattern = namePattern.String()
 	}
-	metadata := munki.MetadataSchema()
+	metadata := munki.DestinationSchema()
 	artifactSelector := &jsonschema.Schema{Type: "string", Pattern: `^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$`, Description: "Input to publish: source, prepared, artifacts/name or stepName/outputName. Omit to use the prepared source payload."}
 	if verification := s.Definitions["Verification"]; verification != nil {
 		if subject, ok := verification.Properties.Get("subject"); ok {
@@ -34,19 +35,20 @@ func Schema() ([]byte, error) {
 		}
 	}
 	additionalInputs := &jsonschema.Schema{Type: "object", PropertyNames: &jsonschema.Schema{Pattern: namePattern.String()}, AdditionalProperties: artifactSelector, Description: "Additional named immutable inputs supplied to the destination operation, using the same artifact reference syntax."}
-	metadata.Properties.Set("artifact", artifactSelector)
+	metadata.Properties.Set("installer", artifactSelector)
 	metadata.Properties.Set("inputs", additionalInputs)
 	// A destination's operation is declared separately. Native schemas are reusable editor
 	// definitions; adapters validate the selected contract rather than a union at runtime.
 	s.Definitions["MunkiMetadata"] = metadata
 	s.Definitions["IntuneMetadata"] = intune.MetadataSchema()
 	s.Definitions["IntuneConnection"] = intune.ConnectionSchema()
+	s.Definitions["MunkiConnection"] = munkirepo.ConnectionSchema()
 	s.Definitions["JamfMetadata"] = jamf.MetadataSchema()
 	s.Definitions["JamfConnection"] = jamf.ConnectionSchema()
-	s.Definitions["JamfMetadata"].Properties.Set("artifact", artifactSelector)
+	s.Definitions["JamfMetadata"].Properties.Set("installer", artifactSelector)
 	s.Definitions["JamfMetadata"].Properties.Set("inputs", additionalInputs)
 	for _, variant := range s.Definitions["IntuneMetadata"].OneOf {
-		variant.Properties.Set("artifact", artifactSelector)
+		variant.Properties.Set("installer", artifactSelector)
 		variant.Properties.Set("inputs", additionalInputs)
 		variant.Required = nil
 	}
@@ -61,7 +63,7 @@ func Schema() ([]byte, error) {
 	}
 	if destination := s.Definitions["Destination"]; destination != nil {
 		if settings, ok := destination.Properties.Get("config"); ok {
-			settings.AnyOf = []*jsonschema.Schema{{Ref: "#/$defs/IntuneConnection"}, {Ref: "#/$defs/JamfConnection"}, {Type: "object", Description: "Connection configuration validated by the named operation."}}
+			settings.AnyOf = []*jsonschema.Schema{{Ref: "#/$defs/MunkiConnection"}, {Ref: "#/$defs/IntuneConnection"}, {Ref: "#/$defs/JamfConnection"}, {Type: "object", Description: "Connection configuration validated by the named operation."}}
 		}
 	}
 	if software := s.Definitions["Software"]; software != nil {
@@ -90,7 +92,7 @@ func Schema() ([]byte, error) {
 			"steps": {"items": {"properties": {"inputs": {"additionalProperties": {"not": {"enum": ["source", "prepared"]}}}}}},
 			"verification": {"properties": {"subject": {"not": {"enum": ["source", "prepared"]}}}},
 			"destinations": {"additionalProperties": {"properties": {
-				"artifact": {"not": {"enum": ["source", "prepared"]}},
+				"installer": {"not": {"enum": ["source", "prepared"]}},
 				"inputs": {"additionalProperties": {"not": {"enum": ["source", "prepared"]}}}
 			}}}
 		}}
@@ -108,7 +110,7 @@ func Schema() ([]byte, error) {
 func allowFactReferences(schema *jsonschema.Schema) {
 	if schema.Properties != nil {
 		for field := schema.Properties.Oldest(); field != nil; field = field.Next() {
-			if field.Key == "artifact" || field.Key == "inputs" {
+			if field.Key == "installer" || field.Key == "inputs" {
 				continue
 			}
 			allowFactReferences(field.Value)

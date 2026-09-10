@@ -26,7 +26,7 @@ func TestOmittedNativeMetadataSurvivesReconciliation(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root, request := repositoryRequest(t, test.filename, test.metadata)
-			pkginfo := apply(t, root, request)
+			pkginfo := apply(t, root, &request)
 			old := readNative[map[string]any](t, pkginfo)
 			old["vendor_extension"] = "keep"
 			old["_metadata"].(map[string]any)["created_by"] = "operator"
@@ -35,8 +35,8 @@ func TestOmittedNativeMetadataSurvivesReconciliation(t *testing.T) {
 			}
 			writeNative(t, pkginfo, old)
 
-			request.Metadata = json.RawMessage(`{"uninstallable":true,"description":"Updated description"}`)
-			apply(t, root, request)
+			request.Metadata = nativeMetadata(`{"uninstallable":true,"description":"Updated description"}`)
+			apply(t, root, &request)
 			got := readNative[map[string]any](t, pkginfo)
 			for _, key := range test.preserved {
 				if !reflect.DeepEqual(got[key], old[key]) {
@@ -48,7 +48,7 @@ func TestOmittedNativeMetadataSurvivesReconciliation(t *testing.T) {
 			}
 			assertConverged(t, request)
 			if test.name == "package" {
-				request.Metadata = json.RawMessage(`{"receipts":[]}`)
+				request.Metadata = nativeMetadata(`{"receipts":[]}`)
 				if _, err := munkirepo.Handle(t.Context(), request); err == nil {
 					t.Fatal("cleared receipts required by the preserved removal method")
 				}
@@ -63,7 +63,7 @@ func TestOmittedNativeMetadataSurvivesReconciliation(t *testing.T) {
 func TestObservedPackageFormatDoesNotRequireFilenameExtension(t *testing.T) {
 	root, request := repositoryRequest(t, "vendor-download", `{}`)
 	request.Artifact.Format = "pkg"
-	pkginfo := apply(t, root, request)
+	pkginfo := apply(t, root, &request)
 	document := readNative[map[string]any](t, pkginfo)
 	if document["installer_item_hash"] != request.Artifact.SHA256 {
 		t.Fatal("the observed package did not retain its installer identity")
@@ -86,7 +86,7 @@ func TestNoPkgDocumentWithoutInstaller(t *testing.T) {
 	if _, err := munkirepo.Handle(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
-	document := readNative[map[string]any](t, apply(t, root, request))
+	document := readNative[map[string]any](t, apply(t, root, &request))
 	if document["installer_type"] != "nopkg" || document["version"] != "1.0" || document["name"] != "Browser Policy" {
 		t.Fatalf("native policy changed: %#v", document)
 	}
@@ -129,9 +129,9 @@ func TestCatalogsPreserveForeignNameAndVersionVariants(t *testing.T) {
 	for _, name := range []string{"all", "testing"} {
 		writeNative(t, filepath.Join(root, "catalogs", name), foreign)
 	}
-	apply(t, root, request)
-	request.Metadata = json.RawMessage(`{"name":"App","description":"Second"}`)
-	apply(t, root, request)
+	apply(t, root, &request)
+	request.Metadata = nativeMetadata(`{"name":"App","description":"Second"}`)
+	apply(t, root, &request)
 	for _, name := range []string{"all", "testing"} {
 		entries := readNative[[]map[string]any](t, filepath.Join(root, "catalogs", name))
 		if len(entries) != 3 {
@@ -184,7 +184,7 @@ func TestRejectForeignPkginfoAtOwnedPath(t *testing.T) {
 
 func TestInterruptedCatalogMembershipChangeConvergesOnRetry(t *testing.T) {
 	root, request := repositoryRequest(t, "App.pkg", `{"catalogs":["testing"]}`)
-	pkginfo := apply(t, root, request)
+	pkginfo := apply(t, root, &request)
 	old := readNative[map[string]any](t, pkginfo)
 	// Model an interrupted publication with the new catalog already present while
 	// the old pkginfo still records every catalog that needs reconciliation.
@@ -202,7 +202,7 @@ func TestInterruptedCatalogMembershipChangeConvergesOnRetry(t *testing.T) {
 		_ = os.Remove(probe.Name())
 		t.Skip("host does not enforce directory write permissions")
 	}
-	request.Metadata = json.RawMessage(`{"catalogs":["production"]}`)
+	request.Metadata = nativeMetadata(`{"catalogs":["production"]}`)
 	if _, err := munkirepo.Handle(t.Context(), request); err == nil {
 		t.Fatal("publication succeeded with unwritable catalogs")
 	}
@@ -212,7 +212,7 @@ func TestInterruptedCatalogMembershipChangeConvergesOnRetry(t *testing.T) {
 	if err := os.Chmod(catalogDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	apply(t, root, request)
+	apply(t, root, &request)
 	if entries := readNative[[]map[string]any](t, filepath.Join(catalogDir, "testing")); len(entries) != 0 {
 		t.Fatalf("retry retained stale testing membership: %#v", entries)
 	}
@@ -238,19 +238,20 @@ func repositoryRequest(t *testing.T, filename, metadata string) (string, plugin.
 		t.Fatal(err)
 	}
 	return root, plugin.ReconcileRequest{
-		Method: "apply", Identity: plugin.Identity{Project: "test", Recipe: "App", Destination: "munki"},
-		Config: connection, Metadata: json.RawMessage(metadata),
+		Method: "apply", Identity: plugin.Identity{Project: "test", Software: "App", Destination: "munki"},
+		Config: connection, Metadata: nativeMetadata(metadata),
 		Artifact: plugin.Artifact{Path: artifactPath, Filename: filename, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(content)), Version: "1"},
 	}
 }
 
-func apply(t *testing.T, root string, request plugin.ReconcileRequest) string {
+func apply(t *testing.T, root string, request *plugin.ReconcileRequest) string {
 	t.Helper()
 	request.Method = "apply"
-	response, err := munkirepo.Handle(t.Context(), request)
+	response, err := munkirepo.Handle(t.Context(), *request)
 	if err != nil {
 		t.Fatal(err)
 	}
+	request.Binding = response.Binding
 	return bindingPath(t, root, response)
 }
 
@@ -303,3 +304,5 @@ func writeNative(t *testing.T, filename string, value any) {
 		t.Fatal(err)
 	}
 }
+
+func nativeMetadata(data string) json.RawMessage { return json.RawMessage(`{"pkginfo":` + data + `}`) }

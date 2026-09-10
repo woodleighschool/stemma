@@ -25,7 +25,7 @@ func TestSchemaIncludesEditorDescriptions(t *testing.T) {
 	if err := json.Unmarshal(data, &schema); err != nil {
 		t.Fatal(err)
 	}
-	for name, fields := range map[string][]string{"Metadata": {"name"}, "ProjectSpec": {"imports", "components"}, "Source": {"type", "url", "sha256", "release"}, "Destination": {"operation", "config"}, "Step": {"operation", "inputs"}, "SubjectSelector": {"kind", "installed_path", "bundle_id"}, "Verification": {"subject", "integrity"}, "MunkiMetadata": {"description", "catalogs", "unattended_install"}, "IntuneConnection": {"token", "client_id"}, "JamfMetadata": {"package_id", "categoryId"}} {
+	for name, fields := range map[string][]string{"Metadata": {"name"}, "ProjectSpec": {"imports", "components"}, "Source": {"type", "url", "sha256", "release"}, "Destination": {"operation", "config"}, "Step": {"operation", "inputs"}, "SubjectSelector": {"kind", "installed_path", "bundle_id"}, "Verification": {"subject", "integrity"}, "MunkiMetadata": {"pkginfo"}, "IntuneConnection": {"token", "client_id"}, "JamfMetadata": {"package_id", "categoryId"}} {
 		for _, field := range fields {
 			if schema.Definitions[name].Properties[field].Description == "" {
 				t.Errorf("%s.%s lacks editor hover description", name, field)
@@ -49,7 +49,7 @@ spec: {source: {type: file, path: vendor.pkg}}
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectWithDestination := strings.Replace(project, "imports: [software.yaml]", "imports: [software.yaml], destinations: {repo: {operation: munki, path: repo}}", 1)
+	projectWithDestination := strings.Replace(project, "imports: [software.yaml]", "imports: [software.yaml], destinations: {repo: {operation: munki, config: {path: repo}}}", 1)
 	projectWithSource := strings.Replace(project, "imports: [software.yaml]", "imports: [software.yaml], components: {base: {source: {type: file, path: vendor.pkg}}}", 1)
 	for name, test := range map[string]struct {
 		project, software string
@@ -65,7 +65,7 @@ spec: {source: {type: file, path: vendor.pkg}}
 		"empty-inheritance":           {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "extends: '', select: App.app", 1), false},
 		"artifact-no-source":          {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "artifacts: {package: {type: pkg, identifier: org.example.fixture, version: '1'}}", 1), false},
 		"step-no-source":              {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "steps: [{name: inspect, operation: inspect, inputs: {input: source}}]", 1), false},
-		"destination-no-source":       {projectWithDestination, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "destinations: {repo: {artifact: prepared}}", 1), false},
+		"destination-no-source":       {projectWithDestination, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "destinations: {repo: {installer: prepared}}", 1), false},
 		"destination-input-no-source": {projectWithDestination, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "destinations: {repo: {inputs: {installer: source}}}", 1), false},
 		"verify-no-source":            {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "verification: {subject: prepared}", 1), false},
 		"render-no-source":            {project, strings.Replace(software, "source: {type: file, path: vendor.pkg}", "steps: [{name: render, operation: munki.pkginfo, config: {name: fixture, version: '1', installer_type: nopkg}}]", 1), true},
@@ -126,18 +126,18 @@ func TestNativeSchemaAcceptsTypedReferencesAndRejectsUnknownFields(t *testing.T)
 		data       string
 		valid      bool
 	}{
-		"munki-values":          {"MunkiMetadata", `{"version":{"$fact":"app.app.version"},"unattended_install":{"$fact":"pkg.package.has_payload"},"minimum_os_version":{"$fact":"app.app.minimum_os"}}`, true},
-		"munki-presence":        {"MunkiMetadata", `{"description":null,"unattended_install":false,"installs":[]}`, true},
-		"additional-inputs":     {"MunkiMetadata", `{"artifact":"pkginfo/artifact","inputs":{"installer":"contents/artifact"}}`, true},
+		"munki-values":          {"MunkiMetadata", `{"pkginfo":{"version":{"$fact":"app.app.version"},"unattended_install":{"$fact":"pkg.package.has_payload"},"minimum_os_version":{"$fact":"app.app.minimum_os"}}}`, true},
+		"munki-presence":        {"MunkiMetadata", `{"pkginfo":{"description":null,"unattended_install":false,"installs":[]}}`, true},
+		"additional-inputs":     {"MunkiMetadata", `{"installer":"pkginfo/artifact","inputs":{"installer":"contents/artifact"}}`, true},
 		"invalid-input-type":    {"MunkiMetadata", `{"inputs":{"installer":{"$fact":"app.path"}}}`, false},
 		"intune-apps":           {"IntuneMetadata", `{"@odata.type":"#microsoft.graph.macOSPkgApp","includedApps":[{"bundleId":{"$fact":"app.app.bundle_id"},"bundleVersion":{"$fact":"app.app.version"}}],"ignoreVersionDetection":{"$fact":"pkg.package.has_payload"},"minimumSupportedOperatingSystem":{"v13_0":{"$fact":"pkg.package.has_payload"}}}`, true},
-		"intune-derived-type":   {"IntuneMetadata", `{"includedApps":{"$fact":"app.msi.properties"},"minimumSupportedOperatingSystem":{"$fact":"app.msi.properties"}}`, true},
+		"intune-derived-type":   {"IntuneMetadata", `{"derive":{"msi":"installer"},"msiInformation":{"$fact":"installer.msi.properties"}}`, true},
 		"intune-type-reference": {"IntuneMetadata", `{"@odata.type":{"$fact":"app.kind"},"includedApps":[]}`, false},
 		"unknown-native-field":  {"MunkiMetadata", `{"unknown":{"$fact":"app.app.version"}}`, false},
 		"unknown-nested-field":  {"IntuneMetadata", `{"@odata.type":"#microsoft.graph.macOSPkgApp","includedApps":[{"bundleId":"org.example.app","bundleVersion":"1","typo":true}]}`, false},
-		"mixed-reference":       {"MunkiMetadata", `{"version":{"$fact":"app.app.version","fallback":"1"}}`, false},
-		"invalid-reference":     {"MunkiMetadata", `{"version":{"$fact":"app..version"}}`, false},
-		"literal-boolean-type":  {"MunkiMetadata", `{"unattended_install":"false"}`, false},
+		"mixed-reference":       {"MunkiMetadata", `{"pkginfo":{"version":{"$fact":"app.app.version","fallback":"1"}}}`, false},
+		"invalid-reference":     {"MunkiMetadata", `{"pkginfo":{"version":{"$fact":"app..version"}}}`, false},
+		"literal-boolean-type":  {"MunkiMetadata", `{"pkginfo":{"unattended_install":"false"}}`, false},
 		"verification-output":   {"Verification", `{"subject":"build/artifact","integrity":true}`, true},
 		"verification-payload":  {"Verification", `{"subject":"payload","integrity":true}`, true},
 		"verification-bad-path": {"Verification", `{"subject":"build/artifact/child"}`, false},

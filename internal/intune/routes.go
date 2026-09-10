@@ -27,6 +27,25 @@ func (c *client) assign(id string) *abs.BaseRequestBuilder {
 	return &c.stable.MobileApps().ByMobileAppId(id).Assign().BaseRequestBuilder
 }
 
+func (c *client) relationships(id string) *abs.BaseRequestBuilder {
+	return &c.beta.MobileApps().ByMobileAppId(id).Relationships().BaseRequestBuilder
+}
+
+func (c *client) updateRelationships(id string) *abs.BaseRequestBuilder {
+	return &c.beta.MobileApps().ByMobileAppId(id).UpdateRelationships().BaseRequestBuilder
+}
+
+func (c *client) contentVersion(appID, versionID string) *abs.BaseRequestBuilder {
+	switch c.appType {
+	case pkgType:
+		return &c.beta.MobileApps().ByMobileAppId(appID).GraphMacOSPkgApp().ContentVersions().ByMobileAppContentId(versionID).BaseRequestBuilder
+	case dmgType:
+		return &c.beta.MobileApps().ByMobileAppId(appID).GraphMacOSDmgApp().ContentVersions().ByMobileAppContentId(versionID).BaseRequestBuilder
+	default:
+		return &c.stable.MobileApps().ByMobileAppId(appID).GraphWin32LobApp().ContentVersions().ByMobileAppContentId(versionID).BaseRequestBuilder
+	}
+}
+
 // All three app types share the content protocol; the generated SDK builders
 // select their supported endpoint, including beta for current macOS requirements.
 func (c *client) content(appID, versionID, fileID, action string) *abs.BaseRequestBuilder {

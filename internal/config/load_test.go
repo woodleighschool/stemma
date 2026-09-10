@@ -15,49 +15,67 @@ kind: Project
 metadata:
   name: software
 spec:
-  imports: [software/**/*.yaml]
+  imports:
+    - software/**/*.yaml
   components:
-    mac: {platform: darwin, arch: universal}
+    mac:
+      platform: darwin
+      arch: universal
   destinations:
-    repo: {operation: munki, path: repo}
+    repo:
+      operation: munki
+      config:
+        path: repo
 `)
-	writeConfig(t, root, "software/Branding/stemma.yaml", `apiVersion: stemma/v1alpha1
+	writeConfigStream(t, root, "software/Branding/stemma.yaml", `apiVersion: stemma/v1alpha1
 kind: Software
 metadata:
   name: branding
 spec:
   extends: mac
-  source: {type: local, include: [Payload/**, Scripts/**]}
+  source:
+    type: local
+    include:
+      - Payload/**
+      - Scripts/**
   artifacts:
     package:
       type: pkg
       identifier: org.example.branding
       version: "1.0"
       payload: Payload
-      scripts: {postinstall: Scripts/postinstall}
+      scripts:
+        postinstall: Scripts/postinstall
   destinations:
-    repo: {artifact: artifacts/package, catalogs: [testing]}
+    repo:
+      installer: artifacts/package
+      catalogs:
+        - testing
 ---
 apiVersion: stemma/v1alpha1
 kind: Software
 metadata:
   name: portal
 spec:
-  source: {type: http, url: "https://go.microsoft.com/fwlink/?linkid=853070", filename: CompanyPortal.pkg}
+  source:
+    type: file
+    path: ../Shared/portal.pkg
 `)
 	writeConfig(t, root, "software/Other/stemma.yaml", `apiVersion: stemma/v1alpha1
 kind: Software
 metadata:
   name: other
 spec:
-  source: {type: file, path: ../Shared/vendor.pkg}
+  source:
+    type: file
+    path: ../Shared/vendor.pkg
 `)
 	p, err := Load(filepath.Join(root, "stemma.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	branding := p.Software["branding"]
-	if len(p.Software) != 3 || branding.Platform != "darwin" || branding.Source.Base != "software/Branding" || p.Software["other"].Source.Path != "software/Shared/vendor.pkg" {
+	if len(p.Software) != 3 || branding.Platform != "darwin" || branding.Source.Base != "software/Branding" || p.Software["other"].Source.Path != "software/Shared/vendor.pkg" || p.Software["portal"].Source.Path != "software/Shared/portal.pkg" {
 		t.Fatalf("families or relative paths did not resolve: %#v", p.Software)
 	}
 	if branding.Artifacts["package"].Scripts["postinstall"] != "Scripts/postinstall" {
@@ -117,7 +135,7 @@ kind: Project
 metadata:
   name: test
 spec:
-  destinations: {repo: {operation: munki, path: repo}}
+  destinations: {repo: {operation: munki, config: {path: repo}}}
   imports: ['*.software.yaml']
 ---
 apiVersion: stemma/v1alpha1
@@ -128,9 +146,9 @@ spec:
   source: {type: local, include: [Payload/**]}
   artifacts:
     package: {type: pkg, identifier: org.example.app, version: "1.0", payload: Payload}
-  destinations: {repo: {artifact: artifacts/package}}
+  destinations: {repo: {installer: artifacts/package}}
 `
-	for _, change := range [][2]string{{"type: pkg", "type: app"}, {"payload: Payload", "payload: ../outside"}, {"artifact: artifacts/package", "artifact: artifacts/missing"}, {"identifier: org.example.app", "identifier: bad/id"}, {"version: \"1.0\"", "version: \"\""}, {"payload: Payload", "scripts: {uninstall: Scripts/postinstall}"}, {"payload: Payload", "payload: Payload, filename: ../app.pkg"}, {"payload: Payload", "payload: Payload, from: source"}} {
+	for _, change := range [][2]string{{"type: pkg", "type: app"}, {"payload: Payload", "payload: ../outside"}, {"installer: artifacts/package", "installer: artifacts/missing"}, {"identifier: org.example.app", "identifier: bad/id"}, {"version: \"1.0\"", "version: \"\""}, {"payload: Payload", "scripts: {uninstall: Scripts/postinstall}"}, {"payload: Payload", "payload: Payload, filename: ../app.pkg"}, {"payload: Payload", "payload: Payload, from: source"}} {
 		if _, err := parseTest(t, []byte(strings.Replace(base, change[0], change[1], 1))); err == nil {
 			t.Fatalf("accepted invalid artifact change %v", change)
 		}
@@ -175,8 +193,8 @@ func TestSoftwareIdentitySurvivesFileRename(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "renamed.software.yaml"), []byte(document+"---\n"+document), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(filepath.Join(root, "stemma.yaml")); err == nil || !strings.Contains(err.Error(), "one YAML document") {
-		t.Fatalf("accepted multiple resources in one imported file: %v", err)
+	if _, err := Load(filepath.Join(root, "stemma.yaml")); err == nil || !strings.Contains(err.Error(), "conflicting software ID") {
+		t.Fatalf("accepted duplicate software identities in one imported file: %v", err)
 	}
 }
 
@@ -198,4 +216,70 @@ func parseTest(t *testing.T, data []byte) (Project, error) {
 		return Project{}, err
 	}
 	return Load(filename)
+}
+
+func TestRejectMalformedFamilyStreams(t *testing.T) {
+	project := `apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: catalog
+spec:
+  imports:
+    - software/stemma.yaml
+`
+	software := `apiVersion: stemma/v1alpha1
+kind: Software
+metadata:
+  name: app
+spec:
+  source:
+    type: file
+    path: app.pkg
+`
+	for name, stream := range map[string]string{
+		"empty":          "",
+		"comments-only":  "# no resources\n",
+		"null":           "null\n",
+		"empty-first":    "---\n---\n" + software,
+		"empty-last":     software + "---\n",
+		"empty-middle":   software + "---\n---\n" + strings.Replace(software, "name: app", "name: other", 1),
+		"null-last":      software + "---\nnull\n",
+		"malformed-last": software + "---\nspec:\n  source: [\n",
+		"unknown-last":   software + "---\n" + strings.Replace(software, "name: app", "name: other", 1) + "unknown: true\n",
+		"project-last":   software + "---\n" + project,
+		"duplicate":      software + "---\n" + software,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfigStream(t, root, "stemma.yaml", project)
+			writeConfigStream(t, root, "software/stemma.yaml", stream)
+			if _, err := Load(filepath.Join(root, "stemma.yaml")); err == nil {
+				t.Fatal("loaded invalid family stream")
+			}
+			if _, err := FindRoot(filepath.Join(root, "software")); err == nil {
+				t.Fatal("discovery skipped invalid family stream")
+			}
+		})
+	}
+	t.Run("project-stream", func(t *testing.T) {
+		root := t.TempDir()
+		writeConfigStream(t, root, "stemma.yaml", project+"---\n"+software)
+		if _, err := Load(filepath.Join(root, "stemma.yaml")); err == nil {
+			t.Fatal("loaded a multi-document Project file")
+		}
+		if _, err := FindRoot(root); err == nil {
+			t.Fatal("discovered a multi-document Project file")
+		}
+	})
+}
+
+func writeConfigStream(t *testing.T, root, name, documents string) {
+	t.Helper()
+	filename := filepath.Join(root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(filename), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filename, []byte(documents), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }

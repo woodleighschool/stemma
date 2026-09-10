@@ -30,8 +30,8 @@ metadata:
 spec:
   imports: [software/**/stemma.yaml]
   destinations:
-    first: {operation: munki, path: first}
-    second: {operation: munki, path: second}
+    first: {operation: munki, config: {path: first}}
+    second: {operation: munki, config: {path: second}}
 `)
 	fragment := `apiVersion: stemma/v1alpha1
 kind: Software
@@ -50,8 +50,8 @@ spec:
       payload: Payload
       scripts: {postinstall: Scripts/postinstall}
   destinations:
-    first: {artifact: artifacts/package, description: original, catalogs: [testing]}
-    second: {artifact: artifacts/package, catalogs: [testing]}
+    first: {installer: artifacts/package, pkginfo: {description: original, catalogs: [testing]}}
+    second: {installer: artifacts/package, pkginfo: {catalogs: [testing]}}
 `
 	write("software/Branding/stemma.yaml", fragment)
 	write("software/Branding/Payload/Library/Example/message.txt", "payload")
@@ -136,7 +136,7 @@ spec:
   destinations:
 `, 1)
 	broken = strings.Replace(broken, "description: original", "description: independent", 1)
-	broken = strings.Replace(broken, "second: {artifact: artifacts/package", "second: {artifact: artifacts/broken", 1)
+	broken = strings.Replace(broken, "second: {installer: artifacts/package", "second: {installer: artifacts/broken", 1)
 	write("software/Branding/stemma.yaml", broken)
 	partial, err := Run(t.Context(), options)
 	if err == nil || partial.Software[0].Error == "" {
@@ -147,7 +147,7 @@ spec:
 			t.Fatal("software published before all required artifacts were valid")
 		}
 	}
-	write("software/Branding/stemma.yaml", strings.Replace(broken, "second: {artifact: artifacts/broken", "second: {artifact: artifacts/package", 1))
+	write("software/Branding/stemma.yaml", strings.Replace(broken, "second: {installer: artifacts/broken", "second: {installer: artifacts/package", 1))
 	unused := run()
 	if _, built := unused.Software[0].Artifacts["broken"]; built {
 		t.Fatal("publication built an unused artifact")

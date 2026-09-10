@@ -31,8 +31,8 @@ metadata:
   name: enrichment
 spec:
   destinations:
-    derived: {operation: munki, path: derived}
-    authored: {operation: munki, path: authored}
+    derived: {operation: munki, config: {path: derived}}
+    authored: {operation: munki, config: {path: authored}}
   imports: ['*.software.yaml']
 ---
 apiVersion: stemma/v1alpha1
@@ -49,15 +49,17 @@ spec:
       inputs: {input: source}
   destinations:
     derived:
-      artifact: observed/artifact
-      version: {$fact: main.app.build}
+      installer: observed/artifact
+      pkginfo:
+        version: {$fact: main.app.build}
     authored:
-      artifact: observed/artifact
-      version: {$fact: main.app.build}
-      receipts: [{packageid: org.example.authored, version: "6"}]
-      installs: [{type: file, path: /Library/Example/installed}]
-      unattended_install: true
-      description: previous
+      installer: observed/artifact
+      pkginfo:
+        version: {$fact: main.app.build}
+        receipts: [{packageid: org.example.authored, version: "6"}]
+        installs: [{type: file, path: /Library/Example/installed}]
+        unattended_install: true
+        description: previous
 `
 	configPath := filepath.Join(root, "stemma.yaml")
 	if err := testproject.Write(configPath, []byte(manifest)); err != nil {
@@ -162,7 +164,7 @@ spec:
 	}
 }
 
-func TestInvalidSubjectPreventsEveryDestinationWrite(t *testing.T) {
+func TestInvalidSubjectBlocksOnlyItsDestination(t *testing.T) {
 	for _, test := range []struct {
 		name, match string
 	}{
@@ -183,8 +185,8 @@ metadata:
   name: readiness
 spec:
   destinations:
-    first: {operation: munki, path: first}
-    second: {operation: munki, path: second}
+    first: {operation: munki, config: {path: first}}
+    second: {operation: munki, config: {path: second}}
   imports: ['*.software.yaml']
 ---
 apiVersion: stemma/v1alpha1
@@ -203,8 +205,8 @@ spec:
       payload: Payload
       install_location: /Applications/Example.app
   destinations:
-    first: {artifact: artifacts/package, version: "9"}
-    second: {version: {$fact: main.app.build}}
+    first: {installer: artifacts/package, pkginfo: {version: "9"}}
+    second: {pkginfo: {version: {$fact: main.app.build}}}
 `
 			configPath := filepath.Join(root, "stemma.yaml")
 			if err := testproject.Write(configPath, []byte(manifest)); err != nil {
@@ -217,10 +219,11 @@ spec:
 			if strings.Contains(err.Error(), "destination first") {
 				t.Fatalf("first destination was not independently ready: %v", err)
 			}
-			for _, name := range []string{"first", "second"} {
-				if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
-					t.Fatalf("invalid subject allowed a write to %s: %v", name, err)
-				}
+			if _, err := os.Stat(filepath.Join(root, "second")); !os.IsNotExist(err) {
+				t.Fatalf("invalid subject allowed publication: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(root, "first")); err != nil {
+				t.Fatalf("unrelated destination failed to publish: %v", err)
 			}
 		})
 	}
@@ -265,7 +268,7 @@ func writeEnrichmentFile(t *testing.T, name string, data []byte) {
 
 func readEnrichedPkginfo(t *testing.T, root string) map[string]any {
 	t.Helper()
-	paths, err := filepath.Glob(filepath.Join(root, "pkgsinfo/stemma/*.plist"))
+	paths, err := filepath.Glob(filepath.Join(root, "pkgsinfo/stemma/*/*.plist"))
 	if err != nil || len(paths) != 1 {
 		t.Fatalf("expected one published pkginfo: %v, %v", paths, err)
 	}

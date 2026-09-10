@@ -79,32 +79,45 @@ func TestPackageFirstPublicationUnchangedAndMetadataOnly(t *testing.T) {
 	}
 }
 
-func TestRecoverMissingBindingAndStablePackageContentUpdate(t *testing.T) {
+func TestRecoverMissingBindingAndImmutablePackageRevisions(t *testing.T) {
 	server, request := newFixture(t)
+	first := request.Artifact
 	_, err := Handle(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
 	request.Binding = nil
+	if _, err := Handle(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if server.count("POST "+packagePath) != 1 || server.count("POST "+packagePath+"/1/upload") != 1 {
+		t.Fatal("binding recovery duplicated publication")
+	}
 	request.Artifact = fixtureArtifact(t, "second immutable package bytes")
-	request.Metadata = raw(map[string]any{"packageName": "New version"})
 	response, err := Handle(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if server.count("POST "+packagePath) != 1 || server.count("POST "+packagePath+"/1/upload") != 2 {
-		t.Fatal("binding loss created a duplicate or failed content replacement")
+	if server.count("POST "+packagePath) != 2 || server.count("POST "+packagePath+"/1/upload") != 1 || server.count("POST "+packagePath+"/2/upload") != 1 {
+		t.Fatal("new revision replaced previous package content")
 	}
 	var state binding
 	if err := json.Unmarshal(response.Binding, &state); err != nil {
 		t.Fatal(err)
 	}
-	if state.PackageID != "1" || state.PayloadSHA256 != request.Artifact.SHA256 {
-		t.Fatalf("wrong replacement binding: %+v", state)
+	if state.PackageID != "2" || state.PayloadSHA256 != request.Artifact.SHA256 {
+		t.Fatalf("wrong revision binding: %+v", state)
 	}
-	current := server.record()
-	if stringField(current, "sha256") != request.Artifact.SHA256 || stringField(current, "packageName") != "New version" {
-		t.Fatalf("replacement not read back: %s", raw(current))
+	if stringField(server.record(), "sha256") != first.SHA256 {
+		t.Fatal("historical package bytes changed")
+	}
+	request.Binding = response.Binding
+	request.Artifact = first
+	if _, err := Handle(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if server.count("POST "+packagePath) != 2 || server.count("POST "+packagePath+"/1/upload") != 1 {
+		t.Fatal("rollback replayed a completed upload")
 	}
 }
 
@@ -127,6 +140,7 @@ func TestAmbiguousCreateAndUploadAreReobserved(t *testing.T) {
 
 func TestFailedUploadRetainsBindingForRetry(t *testing.T) {
 	server, request := newFixture(t)
+	server.native = &nativeServer{denyPolicies: true}
 	server.failBeforeUpload = true
 	response, err := Handle(t.Context(), request)
 	if err == nil || len(response.Binding) == 0 {
@@ -136,8 +150,11 @@ func TestFailedUploadRetainsBindingForRetry(t *testing.T) {
 		t.Fatal("credential leaked in HTTP error")
 	}
 	var state binding
-	if err := json.Unmarshal(response.Binding, &state); err != nil || state.PackageID != "1" || state.PendingCreate {
+	if err := json.Unmarshal(response.Binding, &state); err != nil || state.PackageID != "" || state.Revisions[request.Artifact.SHA256].PackageID != "1" || state.PendingCreate {
 		t.Fatalf("failed upload did not retain the created package ID: %s: %v", response.Binding, err)
+	}
+	if !strings.Contains(err.Error(), "staging package 1 retained: reference visibility is incomplete") {
+		t.Fatalf("staging cleanup refusal was not reported: %v", err)
 	}
 	request.Binding = response.Binding
 	server.failBeforeUpload = false
@@ -166,11 +183,17 @@ func TestUnresolvedCreationCannotBeBlindlyRepeated(t *testing.T) {
 		t.Fatal("unresolved create was blindly replayed")
 	}
 	server.hideDiscovery = false
-	if _, err := Handle(t.Context(), request); err != nil {
+	response, err = Handle(t.Context(), request)
+	if err != nil {
 		t.Fatalf("visible committed record was not recovered: %v", err)
 	}
 	if server.count("POST "+packagePath) != 1 {
 		t.Fatal("recovery duplicated a committed package")
+	}
+	var state binding
+	decodeBinding(t, response.Binding, &state)
+	if state.Revisions[request.Artifact.SHA256].Owned {
+		t.Fatal("pending creation established deletion ownership from a filename")
 	}
 }
 
@@ -357,10 +380,14 @@ type fakeServer struct {
 	t                *testing.T
 	mu               sync.Mutex
 	packages         map[string]map[string]json.RawMessage
+	nextPackage      int
+	native           *nativeServer
 	requests         []string
 	version          int
 	failAfter        string
 	failBeforeUpload bool
+	uploadStatus     string
+	denyDelete       bool
 	hideDiscovery    bool
 	tokenLifetime    int
 	tokens           int
@@ -372,7 +399,7 @@ func newFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest) {
 	fake := &fakeServer{t: t, packages: make(map[string]map[string]json.RawMessage), version: 1, tokenLifetime: 1800}
 	server := httptest.NewServer(http.HandlerFunc(fake.handle))
 	t.Cleanup(server.Close)
-	request := plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "school", Recipe: "vendor", Destination: "jamf"}, Config: raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}), Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
+	request := plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "school", Software: "vendor", Destination: "jamf"}, Config: raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}), Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
 	return fake, request
 }
 
@@ -407,6 +434,9 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
+	if s.native != nil && s.native.handle(s, w, r) {
+		return
+	}
 	if r.URL.Path == packagePath {
 		switch r.Method {
 		case http.MethodGet:
@@ -418,7 +448,7 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 			if !strings.HasPrefix(r.URL.Query().Get("filter"), `fileName=="stemma-`) {
 				s.t.Error("discovery did not use deterministic filename identity")
 			}
-			var results []map[string]json.RawMessage
+			results := []map[string]json.RawMessage{}
 			for _, pkg := range s.packages {
 				if !s.hideDiscovery {
 					results = append(results, pkg)
@@ -428,7 +458,8 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		case http.MethodPost:
 			fields := s.readObject(r)
-			id := strconv.Itoa(len(s.packages) + 1)
+			s.nextPackage++
+			id := strconv.Itoa(s.nextPackage)
 			fields["id"] = raw(id)
 			fields["cloudTransferStatus"] = raw("AWAITING_UPLOAD")
 			s.packages[id] = fields
@@ -474,8 +505,16 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 			s.t.Error(err)
 		}
 		if s.failBeforeUpload {
-			pkg["cloudTransferStatus"] = raw("FAILED")
-			w.WriteHeader(http.StatusInternalServerError)
+			status := s.uploadStatus
+			if status == "" {
+				status = "FAILED"
+			}
+			pkg["cloudTransferStatus"] = raw(status)
+			if s.failAfter == "transfer" {
+				w.WriteHeader(http.StatusCreated)
+			} else {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
 			writeJSON(s.t, w, map[string]any{"error": "test-client-secret"})
 			return
 		}
@@ -492,6 +531,13 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch r.Method {
+	case http.MethodDelete:
+		if s.denyDelete {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		delete(s.packages, id)
+		w.WriteHeader(http.StatusNoContent)
 	case http.MethodGet:
 		w.Header().Set("ETag", strconv.Quote(strconv.Itoa(s.version)))
 		writeJSON(s.t, w, pkg)

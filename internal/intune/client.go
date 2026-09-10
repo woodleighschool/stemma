@@ -36,6 +36,7 @@ type client struct {
 	stable       *dam.DeviceAppManagementRequestBuilder
 	beta         *betadam.DeviceAppManagementRequestBuilder
 	appType      string
+	derivation   *derivedOwnership
 	http         *http.Client
 	pollInterval time.Duration
 }

@@ -69,7 +69,7 @@ metadata:
   name: verify-document
 spec:
   destinations:
-    local: {operation: munki, path: repo}
+    local: {operation: munki, config: {path: repo}}
   imports: ['*.software.yaml']
 ---
 apiVersion: stemma/v1alpha1
@@ -89,7 +89,7 @@ spec:
       inputs: {input: build/artifact}
       config: {name: Example}
   destinations:
-    local: {artifact: metadata/artifact, inputs: {installer: build/artifact}}
+    local: {installer: metadata/artifact, inputs: {installer: build/artifact}}
 `, subject)
 			configPath := filepath.Join(root, "stemma.yaml")
 			if err := testproject.Write(configPath, []byte(manifest)); err != nil {

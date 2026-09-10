@@ -52,14 +52,28 @@ func command(out, errOut io.Writer) *cobra.Command {
 	root.AddCommand(&cobra.Command{Use: "version", Short: "Print build information", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
 		return writeJSON(out, map[string]string{"version": version, "commit": commit, "date": date})
 	}})
-	root.AddCommand(&cobra.Command{Use: "schema", Short: "Print the generated JSON schema with editor descriptions", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
-		data, err := config.Schema()
+	var projectSchema, schemaOffline bool
+	schema := &cobra.Command{Use: "schema", Short: "Print the generated JSON schema with editor descriptions", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		var data []byte
+		var err error
+		if projectSchema {
+			path, resolveErr := resolve()
+			if resolveErr != nil {
+				return resolveErr
+			}
+			data, err = engine.ProjectSchema(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Lock: lockfile.Options{Offline: schemaOffline}})
+		} else {
+			data, err = config.Schema()
+		}
 		if err != nil {
 			return err
 		}
 		_, err = out.Write(data)
 		return err
-	}})
+	}}
+	schema.Flags().BoolVar(&projectSchema, "project", false, "Bind named connections to built-in and trusted plugin contracts")
+	schema.Flags().BoolVar(&schemaOffline, "offline", false, "Require verified cached plugin bundles")
+	root.AddCommand(schema)
 	var resolved, validateOffline bool
 	validate := &cobra.Command{Use: "validate", Short: "Validate configuration and operation contracts before software acquisition", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		path, err := resolve()

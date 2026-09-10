@@ -52,13 +52,16 @@ Use `package --help` for standalone packaging and `completion` for shell setup.
 ## ⚙️ Configuration
 
 The [generated schema](stemma.schema.json) provides editor validation and hover
-descriptions.
+descriptions. `stemma schema --project --offline` includes the configured plugins'
+schemas from verified cached bundles. Save its output for the editor; it needs no
+destination credentials or software downloads.
 
 Author one `apiVersion: stemma/v1alpha1`, `kind: Software` document per managed item.
+A family file can contain several platform documents separated by `---`.
 `metadata.name` is its stable identity and `spec` owns acquisition and native delivery.
 The root `kind: Project` uses `metadata.name` for project identity and keeps imports,
 connections, plugins and component defaults under `spec`. Import paths such as
-`software/**/*.yaml` select individual documents; paths to assets are relative to
+`software/**/*.yaml` select family document streams; paths to assets are relative to
 the owning document. Components apply defaults. Included local file changes
 invalidate the lock; destination metadata edits preserve acquisition and preparation
 results. Package timestamps use the source's recorded lock time. Omit `source`
@@ -97,68 +100,106 @@ spec:
           postinstall: Scripts/postinstall
   destinations:
     munki:
-      artifact: package/artifact
+      installer: package/artifact
+      retention:
+        keep: 1
+      pkginfo:
+        catalogs:
+          - testing
+```
+
+Named subjects select observed evidence without changing the delivered artifact.
+Selectors accept an exact artifact `path`, observed `installed_path`, `bundle_id`,
+or a combination; they must match exactly one subject. Providers derive native
+metadata from that evidence, with explicit native fields taking precedence:
+
+```yaml
+subjects:
+  app:
+    kind: app
+    path: Example.app
+destinations:
+  munki:
+    installer: source
+    derive:
+      app:
+        subject: app
+        installed_path: /Applications/Example.app
+    pkginfo:
+      name: Example
       catalogs:
         - testing
 ```
 
-The following snippets belong under a Software document’s `spec`.
-Named subjects select observed evidence without changing the delivery artifact.
-Typed `$fact` references resolve native values, preserving their types and failing
-on missing or ambiguous subjects. For example, a Software document can choose an application's
-build for Munki while retaining its short version and package receipt version:
+The Munki provider owns `pkginfo` and `derive`. Derivation builds
+complete application detection entries, including both observed version strings.
+`version_key: CFBundleVersion` chooses the build for the native version comparison.
+Local Munki catalogs use `pkginfo.catalogs`. Copying one app from a DMG defaults to `/Applications`; package
+payload detection uses the observed installation path or an authored override.
+
+Typed `$fact` references select individual native values, for example
+`version: {$fact: app.app.build}` inside `pkginfo`. Objects merge recursively;
+provided lists replace their collections. Explicit `false`, `[]` and supported
+`null` retain their meaning. Omitted fields outside derivation remain unmanaged.
+`unmanaged` lists native field paths to exclude from derivation, such as
+`pkginfo.minimum_os_version`. Removing `derive` relinquishes its ownership.
+Disappearing optional facts clear prior generated Munki fields; Intune requires an
+explicit replacement or `unmanaged` when the native clear is not established.
+
+A source-free Munki item directly supplies `pkginfo` with
+`installer_type: nopkg`, `name`, `version` and native scripts. Scripts are metadata
+for endpoints and never execute on the runner. `munki.pkginfo` remains an optional
+JSON rendering operation for explicit artifact composition; ordinary publication
+needs no renderer step.
+
+Intune accepts native Graph fields with `type: win32`, `pkg` or `dmg` as subtype
+shorthands. `derive.msi` names the subject supplying observed descriptive and MSI identity
+fields from a named subject. Windows commands, requirements, detection, return
+codes and assignments remain authored. The Win32 provider packages raw MSI/EXE
+inputs into `.intunewin` internally. Relationship declarations use Software names:
 
 ```yaml
-subjects:
-  main:
-    kind: app
-    bundle_id: org.example.app
-destinations:
-  munki:
-    version:
-      "$fact": main.app.build
+dependencies:
+  - software: vc-runtime
+    auto_install: true
+supersedes:
+  - software: legacy-client
+    uninstall_previous: true
 ```
 
-Native defaults derive from observed facts, then explicitly supplied metadata takes
-precedence. Objects merge recursively; lists replace collections, including generated
-detection lists. Explicit `false`, `[]` and supported `null` retain their meaning.
-Fields outside derived or explicit ownership remain unmanaged.
+Relationships resolve durable app bindings on the same named connection. Selected
+items run in reference order. A missing binding fails; omitted relationship
+categories remain unmanaged and an empty list clears that category. Ordinary
+releases update the existing app ID. Supersedence connects explicitly separate
+app objects and does not automatically retire the old app.
 
-`munki.pkginfo` renders native metadata as a JSON artifact. A local repository or
-external transport can consume that document alongside the original installer:
+Jamf publishes immutable package IDs. Its optional `patch` associates a package
+with one exact title version and maintains a bound native policy:
 
 ```yaml
-steps:
-  - name: contents
-    operation: inspect
-    inputs:
-      input: prepared
-  - name: metadata
-    operation: munki.pkginfo
-    inputs:
-      input: contents/artifact
-    config:
-      name: Example
-      description: Our managed application
-destinations:
-  munki:
-    artifact: metadata/artifact
-    inputs:
-      installer: contents/artifact
-    catalogs:
-      - testing
+patch:
+  title_configuration_id: "42"
+  version:
+    $fact: app.app.version
+  policy:
+    name: Chrome updates
+    enabled: false
+    scope:
+      all_computers: false
+      computers: []
+      computer_groups: []
 ```
 
-The renderer derives receipt and version defaults from the installer. Its `config`
-accepts native fields and typed fact references. Destination `inputs` names extra
-artifacts; neither these references nor `artifact` become native metadata.
-The local Munki operation also accepts an installer directly.
-
-For a [script-only Munki item](https://github.com/munki/munki/wiki/nopkgs), omit
-the source and renderer inputs, and supply `installer_type: nopkg`, `name`,
-`version` and the native scripts in the renderer's `config`. Destinations consume
-the resulting JSON artifact without an `inputs.installer`. No installer is built
-or uploaded; scripts remain desired metadata and are never executed by Stemma.
+`retention.keep` retains the current payload and the N−1 most recently
+successfully published distinct payloads, plus anything still referenced. Protected
+older payloads do not consume those slots. Providers record success after content
+and intended reference updates complete; metadata edits do not advance publication
+order. Intune prunes inactive content versions, Jamf retires owned obsolete title
+associations before deleting eligible packages, and Munki retires version
+records before unreferenced installer content. Unknown ownership/order and
+incomplete reference visibility block destructive cleanup. Keep durable bindings
+independently of cache; retained content is neither deployment rollback nor an
+uninstall-file strategy.
 
 ## 🔌 Operations
 
@@ -185,10 +226,12 @@ Registry authentication uses the standard Docker/ORAS credential store and helpe
 No container runtime is required.
 The [Go SDK](plugin) uses protocol v2: one executable advertises multiple named
 operations with input/output JSON Schemas, runner requirements, methods and side
-effects. Providers with constrained configuration also declare a `config_schema`
+effects. Providers with constrained configuration declare `config_schema` and `metadata_schema`
 so authored fields can be checked before runtime artifacts exist. Built-in and
 external names share one registry; collisions fail. Schemas are self-contained
 and cannot load network or filesystem references.
+Providers can declare `requires_inspection` to receive observed artifact facts;
+Stemma does not interpret their metadata to decide what evidence they need.
 
 Preparation steps support `validate` and `run` with `none` or `workspace` side
 effects. Reconciliation operations support `validate`, `plan` and `apply`.
@@ -196,6 +239,8 @@ Plugins execute with the caller's privileges; workspaces are leases, not sandbox
 Failed reconciliation responses can retain bindings for completed remote work.
 Persist `.stemma/state` separately from the disposable cache, or set `STEMMA_STATE_DIR`.
 Supply credentials as literal configuration values using `${VAR}` expansion.
+Mark credential fields `writeOnly: true` in the connection schema so rotating them
+preserves the destination's durable bindings.
 
 ### Publishing a plugin
 
@@ -219,8 +264,9 @@ Add platform tags to the index command for Darwin, Linux or Windows on amd64 or
 arm64. Each manifest contains exactly one bundle. The index selects the runner;
 the executable's `describe` response owns operation contracts. The selected
 manifest digest identifies the implementation, so resource changes invalidate
-cached operation output. [Woodstar](https://github.com/woodleighschool/woodstar/tree/main/stemma)
-uses GoReleaser archives and its ORAS publisher for this contract.
+cached operation output. External providers own their native schema and rendering;
+they receive the same facts, subject selectors and durable bindings through the
+public protocol.
 
 ## 🔎 Artifact support
 

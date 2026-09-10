@@ -70,7 +70,7 @@ spec:
       operation: echo.inspect
       inputs: {finished: inspected/artifact}
   destinations:
-    remote: {artifact: second/finished, displayName: original}
+    remote: {installer: second/finished, displayName: original}
 `, server.URL)
 	path := filepath.Join(root, "stemma.yaml")
 	write := func(data string) {

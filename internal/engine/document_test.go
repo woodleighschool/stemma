@@ -27,7 +27,7 @@ metadata:
   name: document
 spec:
   destinations:
-    local: {operation: munki, path: repo}
+    local: {operation: munki, config: {path: repo}}
   imports: ['*.software.yaml']
 ---
 apiVersion: stemma/v1alpha1
@@ -51,9 +51,10 @@ spec:
         unattended_install: false
   destinations:
     local:
-      artifact: metadata/artifact
+      installer: metadata/artifact
       inputs: {installer: build/artifact}
-      catalogs: [testing]
+      pkginfo:
+        catalogs: [testing]
 `
 	write := func(data string) {
 		t.Helper()
@@ -104,7 +105,7 @@ spec:
 	if document["unattended_install"] != false || len(document["blocking_applications"].([]any)) != 0 {
 		t.Fatal("native document lost false or empty list")
 	}
-	files, err := filepath.Glob(filepath.Join(root, "repo", "pkgsinfo", "stemma", "*.plist"))
+	files, err := filepath.Glob(filepath.Join(root, "repo", "pkgsinfo", "stemma", "*", "*.plist"))
 	if err != nil || len(files) != 1 {
 		t.Fatal("missing local pkginfo")
 	}

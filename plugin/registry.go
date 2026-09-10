@@ -27,15 +27,18 @@ type Descriptor struct {
 // Methods contains validate, run, plan, or apply; describe is implicit.
 // ConfigSchema constrains authored configuration independently of runtime inputs;
 // providers must supply it when configuration is constrained.
+// RequiresInspection requests facts for the primary reconciliation artifact.
 type Operation struct {
-	Name         string          `json:"name"`
-	Kind         string          `json:"kind"`
-	ConfigSchema json.RawMessage `json:"config_schema,omitempty"`
-	InputSchema  json.RawMessage `json:"input_schema"`
-	OutputSchema json.RawMessage `json:"output_schema"`
-	Platforms    []string        `json:"platforms,omitempty"`
-	SideEffects  string          `json:"side_effects"`
-	Methods      []string        `json:"methods"`
+	Name               string          `json:"name"`
+	Kind               string          `json:"kind"`
+	ConfigSchema       json.RawMessage `json:"config_schema,omitempty"`
+	MetadataSchema     json.RawMessage `json:"metadata_schema,omitempty"`
+	RequiresInspection bool            `json:"requires_inspection,omitempty"`
+	InputSchema        json.RawMessage `json:"input_schema"`
+	OutputSchema       json.RawMessage `json:"output_schema"`
+	Platforms          []string        `json:"platforms,omitempty"`
+	SideEffects        string          `json:"side_effects"`
+	Methods            []string        `json:"methods"`
 }
 
 // SupportsPlatform reports whether the operation supports this runner.
@@ -61,6 +64,7 @@ type registeredOperation struct {
 	descriptor Operation
 	handle     Handler
 	config     *jsonschema.Schema
+	metadata   *jsonschema.Schema
 	input      *jsonschema.Schema
 	output     *jsonschema.Schema
 }
@@ -149,6 +153,20 @@ func (registry *Registry) Handle(ctx context.Context, request Request) (Response
 		}
 		if err := validateData(operation.config, config); err != nil {
 			return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
+		}
+	}
+	if operation.metadata != nil {
+		var input struct {
+			Metadata json.RawMessage `json:"metadata"`
+		}
+		if err := json.Unmarshal(request.Input, &input); err != nil {
+			return Response{}, err
+		}
+		if len(input.Metadata) == 0 || bytes.Equal(bytes.TrimSpace(input.Metadata), []byte("null")) {
+			input.Metadata = json.RawMessage(`{}`)
+		}
+		if err := validateData(operation.metadata, input.Metadata); err != nil {
+			return Response{}, fmt.Errorf("operation %q metadata: %w", request.Operation, err)
 		}
 	}
 	response, err := operation.handle(ctx, request)
@@ -244,6 +262,14 @@ func compileOperation(operation Operation) (registeredOperation, error) {
 			return registeredOperation{}, fmt.Errorf("operation %q config: %w", operation.Name, err)
 		}
 	}
+	var metadata *jsonschema.Schema
+	if len(operation.MetadataSchema) != 0 {
+		var err error
+		metadata, err = compileSchema(operation.MetadataSchema)
+		if err != nil {
+			return registeredOperation{}, fmt.Errorf("operation %q metadata: %w", operation.Name, err)
+		}
+	}
 	input, err := compileSchema(operation.InputSchema)
 	if err != nil {
 		return registeredOperation{}, fmt.Errorf("operation %q input: %w", operation.Name, err)
@@ -252,11 +278,12 @@ func compileOperation(operation Operation) (registeredOperation, error) {
 	if err != nil {
 		return registeredOperation{}, fmt.Errorf("operation %q output: %w", operation.Name, err)
 	}
-	return registeredOperation{descriptor: cloneOperation(operation), config: config, input: input, output: output}, nil
+	return registeredOperation{descriptor: cloneOperation(operation), config: config, metadata: metadata, input: input, output: output}, nil
 }
 
 func cloneOperation(operation Operation) Operation {
 	operation.ConfigSchema = bytes.Clone(operation.ConfigSchema)
+	operation.MetadataSchema = bytes.Clone(operation.MetadataSchema)
 	operation.InputSchema = bytes.Clone(operation.InputSchema)
 	operation.OutputSchema = bytes.Clone(operation.OutputSchema)
 	operation.Platforms = slices.Clone(operation.Platforms)

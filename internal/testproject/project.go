@@ -9,7 +9,7 @@ import (
 )
 
 // Write stores the first document at filename and subsequent software documents
-// beside it. Production configuration still requires one document per file.
+// beside it. Family-stream tests write their imported YAML directly.
 func Write(filename string, data []byte) error {
 	documents := bytes.Split(data, []byte("\n---\n"))
 	for i, document := range documents {

@@ -34,11 +34,14 @@ func generate() error {
 			base + "/{mobileApp-id}#GET", base + "/{mobileApp-id}#PATCH",
 			base + "/{mobileApp-id}/assignments#GET", base + "/{mobileApp-id}/assign#POST",
 		}
+		if target.version == "beta" {
+			paths = append(paths, base+"/{mobileApp-id}/relationships#GET", base+"/{mobileApp-id}/updateRelationships#POST")
+		}
 		for _, appType := range target.types {
 			versions := base + "/{mobileApp-id}/graph." + appType + "/contentVersions"
 			files := versions + "/{mobileAppContent-id}/files"
 			file := files + "/{mobileAppContentFile-id}"
-			paths = append(paths, versions+"#POST", files+"#GET", files+"#POST", file+"#GET", file+"/commit#POST", file+"/renewUpload#POST")
+			paths = append(paths, versions+"#GET", versions+"#POST", versions+"/{mobileAppContent-id}#DELETE", files+"#GET", files+"#POST", file+"#GET", file+"/commit#POST", file+"/renewUpload#POST")
 		}
 		args := []string{
 			"generate", "--language", "Go",

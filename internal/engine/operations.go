@@ -55,7 +55,15 @@ func ValidateProject(ctx context.Context, opts Options) (config.Project, error) 
 		return p, err
 	}
 	defer cleanup()
-	return p, checkOperations(p, ops)
+	if err := checkOperations(p, ops); err != nil {
+		return p, err
+	}
+	root, err := filepath.Abs(filepath.Dir(opts.ConfigPath))
+	if err != nil {
+		return p, err
+	}
+	_, _, err = orderDestinations(ctx, p, ops, root, sortedKeys(p.Software))
+	return p, err
 }
 
 func projectOperations(ctx context.Context, p config.Project, opts Options) (*operations, func(), error) {
@@ -105,9 +113,6 @@ func checkOperations(p config.Project, ops *operations) error {
 				return fmt.Errorf("software %s destination %s: %w", name, destination, err)
 			}
 			settings := p.Destinations[destination].Config
-			if p.Destinations[destination].Operation == "munki" {
-				settings = map[string]any{"path": p.Destinations[destination].Path}
-			}
 			if err := ops.configuration(p.Destinations[destination].Operation, settings); err != nil {
 				return fmt.Errorf("destination %s: %w", destination, err)
 			}
@@ -164,7 +169,7 @@ func operationSchema(value any) json.RawMessage {
 }
 
 func builtins(handlers map[string]reconcileHandler) (*operations, error) {
-	ops := &operations{registry: plugin.New("stemma", "operations/2"), identity: map[string]string{}}
+	ops := &operations{registry: plugin.New("stemma", "operations/3"), identity: map[string]string{}}
 	register := func(name, kind, effects string, methods []string, input, output any, handler plugin.Handler) error {
 		operation := plugin.Operation{Name: name, Kind: kind, SideEffects: effects, Methods: methods, InputSchema: operationSchema(input), OutputSchema: operationSchema(output)}
 		switch name {
@@ -180,16 +185,21 @@ func builtins(handlers map[string]reconcileHandler) (*operations, error) {
 			metadata.Required = []string{"name"}
 			operation.ConfigSchema, _ = json.Marshal(metadata)
 		case "munki":
-			operation.ConfigSchema = json.RawMessage(`{"type":"object","required":["path"],"properties":{"path":{"type":"string","minLength":1}},"additionalProperties":false}`)
+			operation.RequiresInspection = true
+			operation.ConfigSchema, _ = json.Marshal(munkirepo.ConnectionSchema())
+			operation.MetadataSchema, _ = json.Marshal(munkirepo.MetadataSchema())
 		case "intune":
+			operation.RequiresInspection = true
 			operation.ConfigSchema, _ = json.Marshal(intune.ConnectionSchema())
+			operation.MetadataSchema, _ = json.Marshal(intune.MetadataSchema())
 		case "jamf":
 			operation.ConfigSchema, _ = json.Marshal(jamf.ConnectionSchema())
+			operation.MetadataSchema, _ = json.Marshal(jamf.MetadataSchema())
 		}
 		if err := ops.registry.Register(operation, handler); err != nil {
 			return err
 		}
-		ops.identity[name] = "stemma/operations/2"
+		ops.identity[name] = "stemma/operations/3"
 		return nil
 	}
 	for _, name := range []string{"munki", "intune", "jamf"} {
@@ -258,10 +268,7 @@ func munkiOperation(ctx context.Context, request plugin.Request) (plugin.Respons
 			}
 		}
 	}
-	effective, _, err := resolveMetadata(config.Software{}, authored, artifact.Facts, "munki")
-	if err != nil {
-		return plugin.Response{}, err
-	}
+	effective := config.Merge(munki.ArtifactDefaults(artifact.Facts, authored), authored)
 	metadata, err := json.Marshal(effective)
 	if err != nil {
 		return plugin.Response{}, err

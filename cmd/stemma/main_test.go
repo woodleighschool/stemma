@@ -71,8 +71,8 @@ metadata:
   name: test-apps
 spec:
   destinations:
-    first: {operation: munki, path: first}
-    second: {operation: munki, path: second}
+    first: {operation: munki, config: {path: first}}
+    second: {operation: munki, config: {path: second}}
   imports: ['*.software.yaml']
 ---
 apiVersion: stemma/v1alpha1
@@ -83,8 +83,8 @@ spec:
   source: {type: http, url: %s/fixture.pkg}
   verification: {integrity: true}
   destinations:
-    first: {description: original, unattended_install: false, catalogs: [testing]}
-    second: {catalogs: [testing]}
+    first: {pkginfo: {description: original, unattended_install: false, catalogs: [testing]}}
+    second: {pkginfo: {catalogs: [testing]}}
 `, server.URL)
 	write := func(text string) {
 		t.Helper()
@@ -202,10 +202,10 @@ spec:
 	if err := os.RemoveAll(filepath.Join(project, ".stemma", "state")); err != nil {
 		t.Fatal(err)
 	}
-	recovered := run(true, "apply")
-	for _, destination := range recovered.Software[0].Destinations {
-		if len(destination.Changes) != 0 {
-			t.Fatal("lost bindings duplicated/replayed destination")
+	unbound := run(false, "apply")
+	for _, destination := range unbound.Software[0].Destinations {
+		if destination.Applied || !strings.Contains(destination.Error, "not owned") {
+			t.Fatal("lost bindings silently adopted a destination")
 		}
 	}
 }

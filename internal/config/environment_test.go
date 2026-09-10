@@ -24,7 +24,7 @@ spec:
           description: ${STEMMA_TEST_VALUE}
           catalogs: ["${STEMMA_TEST_VALUE}"]
   destinations:
-    repo: {operation: munki, path: repo}
+    repo: {operation: munki, config: {path: repo}}
     jamf:
       operation: jamf
       config:

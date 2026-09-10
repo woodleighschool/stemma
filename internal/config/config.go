@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -87,12 +86,7 @@ type Step struct {
 }
 
 // SubjectSelector identifies one observed subject without changing its facts.
-type SubjectSelector struct {
-	Kind          string `yaml:"kind,omitempty" json:"kind,omitempty" jsonschema_description:"Observed subject kind. All supplied criteria must match the same subject."`
-	Path          string `yaml:"path,omitempty" json:"path,omitempty" jsonschema_description:"Exact relative path in the inspected input, independent of the runner filesystem."`
-	InstalledPath string `yaml:"installed_path,omitempty" json:"installed_path,omitempty" jsonschema_description:"Exact observed absolute installation path. This selects evidence; it does not author an installation mapping."`
-	BundleID      string `yaml:"bundle_id,omitempty" json:"bundle_id,omitempty" jsonschema_description:"Exact observed application bundle identifier."`
-}
+type SubjectSelector plugin.SubjectSelector
 
 // Artifact declares a portable package derived from the selected source tree.
 type Artifact struct {
@@ -136,14 +130,13 @@ type Verification struct {
 // Destination keeps connection settings separate from native software metadata.
 type Destination struct {
 	Operation string         `yaml:"operation" json:"operation" jsonschema_description:"Registered destination operation, such as munki, intune or jamf. Trusted executable plugins register their own operation names."`
-	Path      string         `yaml:"path,omitempty" json:"path,omitempty" jsonschema_description:"Local Munki repository path. Other operations use config for connection settings."`
 	Config    map[string]any `yaml:"config,omitempty" json:"config,omitempty" jsonschema_description:"Destination-specific connection configuration. Reference credential environment variables instead of embedding secrets."`
 }
 
 // Plugin identifies an explicitly trusted OCI release for all runner platforms.
 type Plugin struct {
 	Trusted bool   `yaml:"trusted" json:"trusted" jsonschema_description:"Explicit consent to execute this plugin. Checksums prove binary identity, not publisher trust."`
-	Image   string `yaml:"image" json:"image" jsonschema_description:"OCI registry reference with a tag or digest, for example ghcr.io/woodleighschool/woodstar/stemma:v1.0.0."`
+	Image   string `yaml:"image" json:"image" jsonschema_description:"OCI registry reference with a tag or digest, for example ghcr.io/example/inventory:v1.0.0."`
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -367,10 +360,13 @@ func (p Project) Validate() error {
 			if _, exists := p.Destinations[destination]; !exists {
 				return fmt.Errorf("software %s: unknown destination %q", name, destination)
 			}
-			if selected, exists := metadata["artifact"]; exists {
+			if _, old := metadata["artifact"]; old {
+				return fmt.Errorf("software %s destination %s: use installer for the delivered artifact", name, destination)
+			}
+			if selected, exists := metadata["installer"]; exists {
 				artifact, ok := selected.(string)
 				if !ok {
-					return fmt.Errorf("software %s destination %s: artifact must be an input reference string", name, destination)
+					return fmt.Errorf("software %s destination %s: installer must be an input reference string", name, destination)
 				}
 				if err := validateArtifactReference(artifact, r.Source != nil, r.Artifacts, steps); err != nil {
 					return fmt.Errorf("software %s destination %s: %w", name, destination, err)
@@ -399,13 +395,6 @@ func (p Project) Validate() error {
 		}
 		if err := validateOperation(d.Operation); err != nil {
 			return fmt.Errorf("destination %s: %w", name, err)
-		}
-		if d.Operation == "munki" {
-			if d.Path == "" || len(d.Config) != 0 {
-				return fmt.Errorf("destination %s: munki requires only path", name)
-			}
-		} else if d.Path != "" {
-			return fmt.Errorf("destination %s: use config for connection settings", name)
 		}
 	}
 	for name, plugin := range p.Plugins {
@@ -582,16 +571,6 @@ func ValidateHTTPURL(address string) error {
 func (s Source) Fingerprint() string {
 	s.Token = ""
 	return Fingerprint(s)
-}
-
-// Fingerprint identifies a destination without its authentication secrets.
-func (d Destination) Fingerprint() string {
-	if d.Operation == "intune" || d.Operation == "jamf" {
-		d.Config = maps.Clone(d.Config)
-		delete(d.Config, "token")
-		delete(d.Config, "client_secret")
-	}
-	return Fingerprint(d)
 }
 
 // Fingerprint returns a canonical digest, independent of map iteration order.

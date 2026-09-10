@@ -9,4 +9,5 @@ spec:
   destinations:
     munki:
       operation: munki
-      path: .stemma/munki
+      config:
+        path: .stemma/munki

@@ -94,6 +94,12 @@ func (m *MobileAppsMobileAppItemRequestBuilder) Patch(ctx context.Context, body 
 	return res.([]byte), nil
 }
 
+// Relationships provides operations to manage the relationships property of the microsoft.graph.mobileApp entity.
+// returns a *MobileAppsItemRelationshipsRequestBuilder when successful
+func (m *MobileAppsMobileAppItemRequestBuilder) Relationships() *MobileAppsItemRelationshipsRequestBuilder {
+	return NewMobileAppsItemRelationshipsRequestBuilderInternal(m.BaseRequestBuilder.PathParameters, m.BaseRequestBuilder.RequestAdapter)
+}
+
 // ToGetRequestInformation the mobile apps.
 // returns a *RequestInformation when successful
 func (m *MobileAppsMobileAppItemRequestBuilder) ToGetRequestInformation(ctx context.Context, requestConfiguration *i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.RequestConfiguration[MobileAppsMobileAppItemRequestBuilderGetQueryParameters]) (*i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.RequestInformation, error) {
@@ -111,6 +117,12 @@ func (m *MobileAppsMobileAppItemRequestBuilder) ToPatchRequestInformation(ctx co
 	requestInfo.Headers.TryAdd("Accept", "application/json")
 	requestInfo.SetStreamContentAndContentType(body, "application/json")
 	return requestInfo, nil
+}
+
+// UpdateRelationships provides operations to call the updateRelationships method.
+// returns a *MobileAppsItemUpdateRelationshipsRequestBuilder when successful
+func (m *MobileAppsMobileAppItemRequestBuilder) UpdateRelationships() *MobileAppsItemUpdateRelationshipsRequestBuilder {
+	return NewMobileAppsItemUpdateRelationshipsRequestBuilderInternal(m.BaseRequestBuilder.PathParameters, m.BaseRequestBuilder.RequestAdapter)
 }
 
 // WithUrl returns a request builder with the provided arbitrary URL. Using this method means any other path or query parameters are ignored.

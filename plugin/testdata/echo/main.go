@@ -29,7 +29,7 @@ func main() {
 	if err := registry.Register(plugin.Operation{
 		Name: "echo.reconcile", Kind: "reconcile", SideEffects: "remote", Methods: []string{"validate", "plan", "apply"},
 		ConfigSchema: json.RawMessage(`{"type":"object","properties":{"fail":{"type":"boolean"},"wait_url":{"type":"string"}}}`),
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"method":{"type":"string"},"identity":{"type":"object"},"config":true,"metadata":true,"binding":true,"artifact":{"type":"object"},"inputs":{"type":"object","additionalProperties":{"type":"object"}},"facts":{"type":"object"}},"additionalProperties":false}`),
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"method":{"type":"string"},"identity":{"type":"object"},"config":true,"metadata":true,"binding":true,"bindings":{"type":"object"},"subjects":{"type":"object"},"prepared":{"type":"boolean"},"root":{"type":"string"},"artifact":{"type":"object"},"inputs":{"type":"object","additionalProperties":{"type":"object"}},"facts":{"type":"object"}},"additionalProperties":false}`),
 		OutputSchema: json.RawMessage(`{"type":"object","properties":{"changes":{"type":"array"},"binding":true},"additionalProperties":false}`),
 	}, reconcile); err != nil {
 		os.Exit(1)

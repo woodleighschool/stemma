@@ -17,7 +17,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/fileio"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	"github.com/woodleighschool/stemma/internal/munkirepo"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -111,6 +110,20 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 		return report, err
 	}
 	defer func() { _ = os.RemoveAll(pluginWork) }()
+	selected := opts.Software
+	if len(selected) == 0 {
+		for name := range p.Software {
+			selected = append(selected, name)
+		}
+		sort.Strings(selected)
+	}
+	for _, name := range selected {
+		if _, exists := p.Software[name]; !exists {
+			return report, fmt.Errorf("unknown software %q", name)
+		}
+	}
+	var destinations []destinationRef
+	var dependencies map[destinationRef][]destinationRef
 	var ops *operations
 	if opts.Method != "update" {
 		ops, err = loadOperations(ctx, p, m, pluginWork, opts.Handlers)
@@ -118,6 +131,10 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 			return report, err
 		}
 		if err := checkOperations(p, ops); err != nil {
+			return report, err
+		}
+		destinations, dependencies, err = orderDestinations(ctx, p, ops, root, selected)
+		if err != nil {
 			return report, err
 		}
 	}
@@ -152,18 +169,13 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	if err != nil {
 		return report, err
 	}
-	selected := opts.Software
-	if len(selected) == 0 {
-		for name := range p.Software {
-			selected = append(selected, name)
-		}
-		sort.Strings(selected)
+	type preparedSoftware struct {
+		work    string
+		outputs map[string]Prepared
+		report  int
+		ready   bool
 	}
-	for _, name := range selected {
-		if _, exists := p.Software[name]; !exists {
-			return report, fmt.Errorf("unknown software %q", name)
-		}
-	}
+	preparedItems := map[string]preparedSoftware{}
 	var failures []error
 	for _, name := range selected {
 		item := SoftwareReport{Name: name, SourceCached: locked.CacheHits[name]}
@@ -171,10 +183,9 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 		if err != nil {
 			return report, err
 		}
+		defer func() { _ = os.RemoveAll(work) }()
 		software := p.Software[name]
 		preparation := software
-		// Payload requirements apply to the delivered representations. The source
-		// requirement is checked against the original acquired input only once.
 		if software.Verification.Subject != "source" {
 			preparation.Verification = config.Verification{}
 		}
@@ -183,22 +194,53 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 			prepared, err = prepare(ctx, store, locked.File.Software[name], preparation, work)
 			item.Prepared = &prepared
 		}
+		var outputs map[string]Prepared
 		if err == nil {
-			var outputs map[string]Prepared
 			outputs, err = prepareSoftware(ctx, store, ops, software, item.Prepared, work, opts.Method == "prepare", &item)
-			if err == nil {
-				err = reconcileSoftware(ctx, opts, p, ops, store, root, work, name, outputs, &current, statePath, &item)
-			}
 		}
 		if err != nil {
 			item.Error = err.Error()
 			failures = append(failures, fmt.Errorf("%s: %w", name, err))
 		}
-		if err := os.RemoveAll(work); err != nil {
-			failures = append(failures, err)
-		}
+		preparedItems[name] = preparedSoftware{work, outputs, len(report.Software), err == nil}
 		report.Software = append(report.Software, item)
 	}
+	failed := map[destinationRef]bool{}
+	for _, destination := range destinations {
+		prepared := preparedItems[destination.Software]
+		item := &report.Software[prepared.report]
+		if !prepared.ready {
+			failed[destination] = true
+			continue
+		}
+		var dependencyErr error
+		for _, dependency := range dependencies[destination] {
+			if failed[dependency] {
+				dependencyErr = fmt.Errorf("required software %s/%s failed", dependency.Software, dependency.Destination)
+				break
+			}
+		}
+		if dependencyErr != nil {
+			item.Destinations = append(item.Destinations, DestinationReport{Name: destination.Destination, Error: dependencyErr.Error()})
+			err = dependencyErr
+		} else {
+			before := len(item.Destinations)
+			err = reconcileDestination(ctx, opts, p, ops, store, root, prepared.work, destination.Software, destination.Destination, prepared.outputs, &current, statePath, item)
+			if err != nil && len(item.Destinations) == before {
+				item.Destinations = append(item.Destinations, DestinationReport{Name: destination.Destination, Error: err.Error()})
+			}
+		}
+		if err != nil {
+			failed[destination] = true
+			if item.Error == "" {
+				item.Error = err.Error()
+			} else {
+				item.Error += "\n" + err.Error()
+			}
+			failures = append(failures, fmt.Errorf("%s/%s: %w", destination.Software, destination.Destination, err))
+		}
+	}
+
 	return report, errors.Join(failures...)
 }
 
@@ -209,142 +251,98 @@ type destinationInput struct {
 	report   DestinationReport
 }
 
-func reconcileSoftware(ctx context.Context, opts Options, p config.Project, ops *operations, store *cas.Store, root, work, name string, outputs map[string]Prepared, current *state, statePath string, item *SoftwareReport) error {
+func reconcileDestination(ctx context.Context, opts Options, p config.Project, ops *operations, store *cas.Store, root, work, name, destination string, outputs map[string]Prepared, current *state, statePath string, item *SoftwareReport) error {
 	software := p.Software[name]
-	inputs := []destinationInput{}
-	var failures []error
-	for _, destination := range sortedKeys(software.Destinations) {
-		prepared, present := outputs["prepared"]
-		if reference, ok := software.Destinations[destination]["artifact"].(string); ok {
-			prepared, present = outputs[reference]
-			if !present {
-				failures = append(failures, fmt.Errorf("destination %s references missing output %s", destination, reference))
-				continue
-			}
+	prepared, present := outputs["prepared"]
+	if reference, ok := software.Destinations[destination]["installer"].(string); ok {
+		prepared, present = outputs[reference]
+		if !present {
+			return fmt.Errorf("destination %s references missing output %s", destination, reference)
 		}
-		var err error
-		d := p.Destinations[destination]
-		metadata := destinationMetadata(software.Destinations[destination])
-		if present && !prepared.SuppliedFacts && needsInspection(metadata, d.Operation) {
-			prepared.Facts, err = inspection.Read(ctx, prepared.Path)
-			if err != nil {
-				failures = append(failures, fmt.Errorf("destination %s required inspection: %w", destination, err))
-				continue
-			}
-		}
-		effective, origins, err := resolveMetadata(software, metadata, prepared.Facts, d.Operation)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("destination %s metadata: %w", destination, err))
-			continue
-		}
-		if present {
-			prepared, err = materialize(ctx, store, prepared, filepath.Join(work, "destinations", destination))
-			if err != nil {
-				return err
-			}
-		}
-		input, err := makeDestinationInput(p, root, name, destination, prepared, effective, origins, current)
-		if err == nil {
-			input.request.Inputs = map[string]plugin.Artifact{}
-			for inputName, reference := range destinationReferences(software.Destinations[destination]) {
-				artifact, exists := outputs[reference]
-				if !exists {
-					err = fmt.Errorf("missing input %s output %s", inputName, reference)
-					break
-				}
-				artifact, err = materialize(ctx, store, artifact, filepath.Join(work, "destinations", destination, "inputs", inputName))
-				if err != nil {
-					break
-				}
-				input.request.Inputs[inputName] = artifact.artifact()
-			}
-		}
-		if err == nil {
-			err = ops.call(ctx, d.Operation, "validate", input.request, nil)
-		}
-		if err != nil {
-			failures = append(failures, fmt.Errorf("destination %s: %w", destination, err))
-			continue
-		}
-		inputs = append(inputs, input)
 	}
-	// Every configured output must be valid before any publication. Apply still
-	// re-observes each destination and retains partial bindings independently.
-	if len(failures) != 0 {
-		return errors.Join(failures...)
+	d := p.Destinations[destination]
+	metadata := destinationMetadata(software.Destinations[destination])
+	operation, err := ops.operation(d.Operation)
+	if err != nil {
+		return err
 	}
-	for _, input := range inputs {
-		if err := verifyLeases(ctx, store, work, input.request); err != nil {
+	if present && !prepared.SuppliedFacts && (operation.RequiresInspection || hasFactReference(metadata)) {
+		prepared.Facts, err = inspection.Read(ctx, prepared.Path)
+		if err != nil {
+			return fmt.Errorf("destination %s required inspection: %w", destination, err)
+		}
+	}
+	effective, origins, err := resolveMetadata(software, metadata, prepared.Facts)
+	if err != nil {
+		return fmt.Errorf("destination %s metadata: %w", destination, err)
+	}
+	if present {
+		prepared, err = materialize(ctx, store, prepared, filepath.Join(work, "destinations", destination))
+		if err != nil {
 			return err
 		}
+	}
+	input, err := makeDestinationInput(ops, p, root, name, destination, prepared, effective, origins, current)
+	if err != nil {
+		return err
+	}
+	input.request.Inputs = map[string]plugin.Artifact{}
+	for inputName, reference := range destinationReferences(software.Destinations[destination]) {
+		artifact, exists := outputs[reference]
+		if !exists {
+			return fmt.Errorf("destination %s missing input %s output %s", destination, inputName, reference)
+		}
+		artifact, err = materialize(ctx, store, artifact, filepath.Join(work, "destinations", destination, "inputs", inputName))
+		if err != nil {
+			return err
+		}
+		input.request.Inputs[inputName] = artifact.artifact()
+	}
+	if err := ops.call(ctx, d.Operation, "validate", input.request, nil); err != nil {
+		return fmt.Errorf("destination %s: %w", destination, err)
+	}
+	if err := verifyLeases(ctx, store, work, input.request); err != nil {
+		return err
 	}
 	if opts.Method == "prepare" {
 		return nil
 	}
-	for i := range inputs {
-		input := &inputs[i]
-		input.request.Method = "plan"
-		var response plugin.ReconcileResponse
-		err := ops.call(ctx, p.Destinations[input.name].Operation, "plan", input.request, &response)
-		input.report.Changes = response.Changes
-		if err != nil {
-			input.report.Error = err.Error()
-			failures = append(failures, fmt.Errorf("destination %s: %w", input.name, err))
-		}
+	input.request.Method = "plan"
+	var response plugin.ReconcileResponse
+	err = ops.call(ctx, d.Operation, "plan", input.request, &response)
+	input.report.Changes = response.Changes
+	input.report.Origins = mergeOrigins(input.report.Origins, response.Origins)
+	err = errors.Join(err, verifyLeases(ctx, store, work, input.request))
+	if err == nil && opts.Method == "apply" {
+		input.report, err = deliver(ctx, ops, p, store, work, name, input, current, statePath)
 	}
-	for _, input := range inputs {
-		if err := verifyLeases(ctx, store, work, input.request); err != nil {
-			return err
-		}
+	if err != nil {
+		input.report.Error = err.Error()
 	}
-	if opts.Method == "plan" {
-		for _, input := range inputs {
-			item.Destinations = append(item.Destinations, input.report)
-		}
-		return errors.Join(failures...)
+	item.Destinations = append(item.Destinations, input.report)
+	if err != nil {
+		return fmt.Errorf("destination %s: %w", destination, err)
 	}
-	for _, input := range inputs {
-		if input.report.Error != "" {
-			item.Destinations = append(item.Destinations, input.report)
-			continue
-		}
-		report, err := deliver(ctx, ops, p, store, work, name, input, current, statePath)
-		if err != nil {
-			report.Error = err.Error()
-			failures = append(failures, fmt.Errorf("destination %s: %w", input.name, err))
-		}
-		item.Destinations = append(item.Destinations, report)
-	}
-	return errors.Join(failures...)
+	return nil
 }
 
-func makeDestinationInput(p config.Project, root, software, name string, prepared Prepared, metadata map[string]any, origins map[string]string, current *state) (destinationInput, error) {
+func makeDestinationInput(ops *operations, p config.Project, root, software, name string, prepared Prepared, metadata map[string]any, origins map[string]string, current *state) (destinationInput, error) {
 	d := p.Destinations[name]
 	previous := current.Bindings[software+"/"+name]
-	if previous.Connection != d.Fingerprint() {
-		previous = binding{Connection: d.Fingerprint()}
+	if previous.Connection != ops.fingerprint(d) {
+		previous = binding{Connection: ops.fingerprint(d)}
 	}
 	input := destinationInput{name: name, prepared: prepared, report: DestinationReport{Name: name, Origins: origins, SourceChanged: previous.Source != prepared.Source.Artifact.SHA256, PreparedChanged: previous.Payload != prepared.Payload.SHA256}}
-	if prepared.Tree && nativeHandler(d.Operation) != nil {
-		return input, fmt.Errorf("destination %s requires a file representation; %s conversion is unsupported", name, prepared.Format)
-	}
 	metadataData, err := json.Marshal(metadata)
 	if err != nil {
 		return input, err
 	}
 	settings := d.Config
-	if d.Operation == "munki" {
-		path := d.Path
-		if !filepath.IsAbs(path) {
-			path = filepath.Join(root, path)
-		}
-		settings = map[string]any{"path": path}
-	}
 	configData, err := json.Marshal(settings)
 	if err != nil {
 		return input, err
 	}
-	input.request = plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: p.Project, Recipe: software, Destination: name}, Config: configData, Metadata: metadataData, Artifact: prepared.artifact(), Facts: prepared.Facts, Binding: previous.Binding}
+	input.request = plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: p.Project, Software: software, Destination: name}, Config: configData, Metadata: metadataData, Artifact: prepared.artifact(), Facts: prepared.Facts, Binding: previous.Binding, Prepared: true, Root: root, Subjects: subjectSelectors(p.Software[software]), Bindings: peerBindings(ops, p, name, current)}
 	return input, nil
 }
 
@@ -352,8 +350,8 @@ func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.
 	d := p.Destinations[input.name]
 	report := input.report
 	previous := current.Bindings[software+"/"+input.name]
-	if previous.Connection != d.Fingerprint() {
-		previous = binding{Connection: d.Fingerprint()}
+	if previous.Connection != ops.fingerprint(d) {
+		previous = binding{Connection: ops.fingerprint(d)}
 	}
 	if err := verifyLeases(ctx, store, work, input.request); err != nil {
 		return report, err
@@ -363,6 +361,7 @@ func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.
 	err := ops.call(ctx, d.Operation, "apply", input.request, &response)
 	err = errors.Join(err, verifyLeases(ctx, store, work, input.request))
 	report.Changes = response.Changes
+	report.Origins = mergeOrigins(report.Origins, response.Origins)
 	if err == nil || len(response.Binding) > 0 {
 		if len(response.Binding) > 0 {
 			previous.Binding = response.Binding
@@ -400,45 +399,14 @@ func verifyLeases(ctx context.Context, store *cas.Store, work string, request pl
 	return nil
 }
 
-// Validate checks authored native fields and references without acquisition
-// or destination requests. Prepared input validation runs later.
+// Validate checks references without acquiring inputs or contacting destinations.
 func Validate(ctx context.Context, p config.Project) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	for name, software := range p.Software {
 		if err := validateReferences(software); err != nil {
 			return fmt.Errorf("software %s: %w", name, err)
-		}
-		for destination, metadata := range software.Destinations {
-			d := p.Destinations[destination]
-			handler := nativeHandler(d.Operation)
-			if handler == nil {
-				continue
-			}
-			settings := d.Config
-			if d.Operation == "munki" {
-				settings = map[string]any{"path": d.Path}
-			}
-			configData, err := json.Marshal(settings)
-			if err != nil {
-				return err
-			}
-			static := destinationMetadata(metadata)
-			for key, value := range static {
-				if hasFactReference(value) {
-					delete(static, key)
-				}
-			}
-			metadataData, err := json.Marshal(static)
-			if err != nil {
-				return err
-			}
-			if d.Operation == "munki" {
-				err = munkirepo.Validate(configData, metadataData)
-			} else {
-				_, err = handler(ctx, plugin.ReconcileRequest{Method: "validate", Config: configData, Metadata: metadataData})
-			}
-			if err != nil {
-				return fmt.Errorf("%s/%s: %w", name, destination, err)
-			}
 		}
 	}
 	return nil

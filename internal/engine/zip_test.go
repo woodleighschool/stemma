@@ -39,7 +39,7 @@ metadata:
 spec:
   imports: ['*.software.yaml']
   destinations:
-    local: {operation: munki, path: repo}
+    local: {operation: munki, config: {path: repo}}
 ---
 apiVersion: stemma/v1alpha1
 kind: Software
@@ -69,9 +69,10 @@ spec:
         uninstall_method: removepackages
   destinations:
     local:
-      artifact: metadata/artifact
+      installer: metadata/artifact
+      retention: {keep: 1}
       inputs: {installer: package/artifact}
-      catalogs: [testing]
+      pkginfo: {catalogs: [testing]}
 `, server.URL)
 	if err := testproject.Write(configPath, []byte(manifest)); err != nil {
 		t.Fatal(err)

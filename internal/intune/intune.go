@@ -23,13 +23,16 @@ import (
 const appsPath = "/deviceAppManagement/mobileApps"
 
 type binding struct {
-	Identity        string         `json:"identity"`
-	AppID           string         `json:"app_id,omitempty"`
-	PayloadSHA256   string         `json:"payload_sha256,omitempty"`
-	EnvelopeSHA256  string         `json:"envelope_sha256,omitempty"`
-	ContentVersion  string         `json:"content_version,omitempty"`
-	UncertainCreate bool           `json:"uncertain_create,omitempty"`
-	Pending         *pendingUpload `json:"pending,omitempty"`
+	Identity        string                        `json:"identity"`
+	AppID           string                        `json:"app_id,omitempty"`
+	PayloadSHA256   string                        `json:"payload_sha256,omitempty"`
+	EnvelopeSHA256  string                        `json:"envelope_sha256,omitempty"`
+	ContentVersion  string                        `json:"content_version,omitempty"`
+	UncertainCreate bool                          `json:"uncertain_create,omitempty"`
+	Pending         *pendingUpload                `json:"pending,omitempty"`
+	Publications    plugin.Publications           `json:"publications,omitzero"`
+	Versions        map[string]contentPublication `json:"versions,omitempty"`
+	Derived         []string                      `json:"derived,omitempty"`
 }
 
 type pendingUpload struct {
@@ -48,35 +51,42 @@ var markerPattern = regexp.MustCompile(`(?m)^\[stemma:v1 id=([0-9a-f]{64}) paylo
 
 // Handle validates, plans or applies an Intune destination request.
 // Callers must persist a returned Binding even when an error reports partial
-// progress. Configuration contains credential environment names, never secrets.
-func Handle(ctx context.Context, req plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+// progress. Connection credentials are supplied through the request configuration.
+func Handle(ctx context.Context, req plugin.ReconcileRequest) (response plugin.ReconcileResponse, err error) {
+	authored, err := decodeObject(req.Metadata)
+	if err != nil {
+		return response, err
+	}
+	unmanaged, err := unmanagedFields(authored)
+	if err != nil {
+		return response, err
+	}
+	_, deriving := authored["derive"]
+	req, response.Origins, err = Derive(req)
+	if err != nil {
+		return response, err
+	}
 	cfg, err := parseConfiguration(req.Config)
 	if err != nil {
-		return plugin.ReconcileResponse{}, err
-	}
-	if req.Method == "validate" && req.Artifact.Path == "" {
-		metadata, err := decodeObject(req.Metadata)
-		if err != nil {
-			return plugin.ReconcileResponse{}, err
-		}
-		// Artifact inspection can supply the subtype. Its native field contract
-		// is validated once that discriminator is available.
-		if _, exists := metadata["@odata.type"]; !exists {
-			return plugin.ReconcileResponse{}, nil
-		}
+		return response, err
 	}
 	desired, err := validateMetadata(req.Metadata)
 	if err != nil {
-		return plugin.ReconcileResponse{}, err
+		return response, err
 	}
+	lifecycle, err := lifecycleMetadata(desired)
+	if err != nil {
+		return response, err
+	}
+	response.Requires = lifecycle.requires()
 	cfg.AppID = text(desired["app_id"])
 	delete(desired, "app_id")
 	if req.Method == "validate" {
 		if req.Artifact.Path != "" {
 			_, err := identifyArtifact(req.Artifact, text(desired["@odata.type"]))
-			return plugin.ReconcileResponse{}, err
+			return response, err
 		}
-		return plugin.ReconcileResponse{}, nil
+		return response, nil
 	}
 	if req.Method != "plan" && req.Method != "apply" {
 		return plugin.ReconcileResponse{}, fmt.Errorf("unsupported Intune method %q", req.Method)
@@ -85,10 +95,23 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest) (plugin.ReconcileR
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
 	}
-	return c.handle(ctx, req, cfg, desired)
+	paths := slices.Sorted(maps.Keys(response.Origins))
+	paths = slices.DeleteFunc(paths, func(path string) bool { return path == "@odata.type" })
+	c.derivation = &derivedOwnership{Active: deriving, Unmanaged: unmanaged, Paths: paths}
+	result, err := c.handle(ctx, req, cfg, desired)
+	result.Origins, result.Requires = response.Origins, response.Requires
+	return result, err
 }
 
 func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg configuration, desired object) (response plugin.ReconcileResponse, err error) {
+	lifecycle, err := lifecycleMetadata(desired)
+	if err != nil {
+		return response, err
+	}
+	desired = maps.Clone(desired)
+	for _, key := range []string{"retention", "dependencies", "supersedes"} {
+		delete(desired, key)
+	}
 	typedClient := *c
 	typedClient.appType = text(desired["@odata.type"])
 	c = &typedClient
@@ -106,6 +129,9 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 		}
 	}
 	defer func() { response.Binding = raw(b) }()
+	if err := c.derivation.check(b.Derived, desired); err != nil {
+		return response, err
+	}
 	artifact, err := identifyArtifact(req.Artifact, c.appType)
 	if err != nil {
 		return response, err
@@ -124,11 +150,8 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 		if err := recoverMarker(current, &b); err != nil {
 			return response, err
 		}
-		if b.Pending != nil && b.Pending.VersionID != "" && text(current["committedContentVersion"]) == b.Pending.VersionID {
-			b.PayloadSHA256 = b.Pending.PayloadSHA256
-			b.EnvelopeSHA256 = b.Pending.EnvelopeSHA256
-			b.ContentVersion = b.Pending.VersionID
-			b.Pending = nil
+		if b.Pending != nil && b.Pending.VersionID != "" && text(current["committedContentVersion"]) == b.Pending.VersionID && current["publishingState"] == "published" {
+			b.activate()
 		}
 	}
 	contentChanged := current == nil || b.PayloadSHA256 != artifact.identity || b.ContentVersion == "" || b.ContentVersion != text(current["committedContentVersion"])
@@ -169,10 +192,49 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 			response.Changes = append(response.Changes, plugin.Change{Kind: "assignments", Field: "assignments", Action: "replace", Before: raw(existing), After: raw(assignments)})
 		}
 	}
+	var relationships []object
+	var relationshipChanged bool
+	if lifecycle.Dependencies != nil || lifecycle.Supersedes != nil {
+		wanted, err := c.desiredRelationships(ctx, req, lifecycle, b.AppID)
+		if err != nil {
+			return response, err
+		}
+		var existing []object
+		if current != nil {
+			existing, err = c.list(ctx, c.relationships(b.AppID))
+			if err != nil {
+				return response, err
+			}
+		}
+		relationships, relationshipChanged, err = mergeRelationships(existing, wanted, lifecycle)
+		if err != nil {
+			return response, err
+		}
+		if relationshipChanged {
+			if err := c.checkRelationships(ctx, b.AppID, relationships, existing); err != nil {
+				return response, err
+			}
+			response.Changes = append(response.Changes, plugin.Change{Kind: "relationships", Field: "relationships", Action: "replace", Before: raw(existing), After: raw(relationships)})
+		}
+	}
 	if req.Method == "plan" {
+		if lifecycle.Retention != nil && current != nil {
+			planned := b
+			// Predict successful publication without granting cleanup ownership to
+			// recovered or otherwise unknown content versions.
+			if contentChanged || b.Pending != nil {
+				planned.Publications.Order = maps.Clone(b.Publications.Order)
+				planned.Publications.Record(artifact.identity)
+				planned.ContentVersion = ""
+			}
+			changes, err := c.pruneContent(ctx, &planned, lifecycle.Retention.Keep, false)
+			response.Changes = append(response.Changes, changes...)
+			return response, err
+		}
 		return response, nil
 	}
-	if len(response.Changes) == 0 && b.Pending == nil {
+	if len(response.Changes) == 0 && b.Pending == nil && lifecycle.Retention == nil {
+		b.Derived = c.derivation.paths()
 		return response, nil
 	}
 	var prepared *preparedArtifact
@@ -237,14 +299,12 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 		if text(current["committedContentVersion"]) != b.Pending.VersionID {
 			return response, errors.New("intune did not activate the committed content version")
 		}
-		b.PayloadSHA256 = b.Pending.PayloadSHA256
-		b.EnvelopeSHA256 = b.Pending.EnvelopeSHA256
-		b.ContentVersion = b.Pending.VersionID
-		b.Pending = nil
+		b.activate()
 	}
 	if residual, _ := metadataPatch(current, desired, b); len(residual) > 0 {
 		return response, errors.New("intune metadata readback differs from requested values")
 	}
+	b.Derived = c.derivation.paths()
 	if assignmentChanged {
 		items, err := c.list(ctx, c.assignments(b.AppID))
 		if err != nil {
@@ -268,6 +328,52 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 		}
 		if _, changed := reconcileAssignments(existing, desired["assignments"].([]any)); changed {
 			return response, errors.New("intune assignments readback differs from requested targeting")
+		}
+	}
+	if lifecycle.Dependencies != nil || lifecycle.Supersedes != nil {
+		// Preserve omitted categories against changes during a long content upload.
+		existing, err := c.list(ctx, c.relationships(b.AppID))
+		if err != nil {
+			return response, err
+		}
+		wanted, err := c.desiredRelationships(ctx, req, lifecycle, b.AppID)
+		if err != nil {
+			return response, err
+		}
+		relationships, changed, err := mergeRelationships(existing, wanted, lifecycle)
+		if err != nil {
+			return response, err
+		}
+		if err := c.checkRelationships(ctx, b.AppID, relationships, existing); err != nil {
+			return response, err
+		}
+		if changed {
+			if err := c.request(ctx, abs.POST, c.updateRelationships(b.AppID), object{"relationships": relationships}, nil); err != nil {
+				return response, err
+			}
+		}
+		readback, err := c.list(ctx, c.relationships(b.AppID))
+		if err != nil {
+			return response, err
+		}
+		expected := slices.Clone(relationships)
+		for _, item := range existing {
+			if item["targetType"] == "parent" {
+				expected = append(expected, item)
+			}
+		}
+		if !sameRelationships(readback, expected) {
+			return response, errors.New("intune relationship readback differs from requested references")
+		}
+	}
+	if b.Pending != nil {
+		b.published()
+	}
+	if lifecycle.Retention != nil {
+		changes, err := c.pruneContent(ctx, &b, lifecycle.Retention.Keep, true)
+		response.Changes = append(response.Changes, changes...)
+		if err != nil {
+			return response, err
 		}
 	}
 	return response, nil

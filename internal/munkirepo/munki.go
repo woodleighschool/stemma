@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/munki"
 	"github.com/woodleighschool/stemma/plugin"
@@ -30,12 +29,19 @@ import (
 // Apply serializes writers sharing this repository; external writers must use the same lock.
 func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
 	var inputErr error
-	request, inputErr = documentInput(ctx, request)
+	request, inputErr = munki.DocumentInput(ctx, request)
 	if inputErr != nil {
 		return plugin.ReconcileResponse{}, inputErr
 	}
 	root, err := repositoryPath(request.Config)
+	if err == nil && !filepath.IsAbs(root) && request.Root != "" {
+		root = filepath.Join(request.Root, root)
+	}
 	if err != nil {
+		return plugin.ReconcileResponse{}, err
+	}
+	if request.Method == "validate" && !request.Prepared && request.Artifact.Path == "" {
+		_, err := munki.DecodeDestination(request.Metadata)
 		return plugin.ReconcileResponse{}, err
 	}
 	if request.Method == "validate" {
@@ -62,17 +68,9 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 		}
 		defer func() { _ = lock.Close() }()
 	}
-	return reconcile(ctx, root, request)
-}
-
-// Validate checks connection settings and authored metadata before artifact
-// preparation. Handle validates the complete input before publication.
-func Validate(configuration, metadata json.RawMessage) error {
-	if _, err := repositoryPath(configuration); err != nil {
-		return err
-	}
-	_, _, err := munki.Compose(munki.Input{}, metadata)
-	return err
+	response, err := reconcile(ctx, root, request)
+	_, response.Origins, _ = munki.Derive(request)
+	return response, err
 }
 
 func repositoryPath(configuration json.RawMessage) (string, error) {
@@ -91,11 +89,19 @@ func repositoryPath(configuration json.RawMessage) (string, error) {
 }
 
 func nativeInput(request plugin.ReconcileRequest) (munki.Input, map[string]any, error) {
-	input := munki.Input{Name: request.Identity.Recipe, Version: request.Artifact.Version, SHA256: request.Artifact.SHA256, Size: request.Artifact.Size, InstallerLocation: "stemma/" + request.Artifact.SHA256 + "/" + request.Artifact.Filename}
+	input := munki.Input{Name: request.Identity.Software, Version: request.Artifact.Version, SHA256: request.Artifact.SHA256, Size: request.Artifact.Size, InstallerLocation: "stemma/" + request.Artifact.SHA256 + "/" + request.Artifact.Filename}
 	if request.Artifact.Format == "pkg" || strings.EqualFold(filepath.Ext(request.Artifact.Filename), ".pkg") {
 		input.InstallerType = "pkg"
 	}
-	return munki.Compose(input, request.Metadata)
+	values, _, err := munki.Derive(request)
+	if err != nil {
+		return input, nil, err
+	}
+	data, err := json.Marshal(values)
+	if err != nil {
+		return input, nil, err
+	}
+	return munki.Compose(input, data)
 }
 
 func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
@@ -103,16 +109,54 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
 	}
-	identity := config.Fingerprint(request.Identity)
-	pkginfoPath := filepath.Join("pkgsinfo", "stemma", identity+".plist")
+	identity := hashValue(request.Identity)
+	var binding repositoryBinding
+	if len(request.Binding) > 0 && string(request.Binding) != "null" {
+		if err := json.Unmarshal(request.Binding, &binding); err != nil {
+			return plugin.ReconcileResponse{}, err
+		}
+	}
+	if binding.Identity != "" && binding.Identity != identity {
+		return plugin.ReconcileResponse{}, errors.New("munki binding belongs to a different destination")
+	}
+	if binding.Entries == nil {
+		binding.Entries = map[string]publication{}
+	}
+	fingerprint := hashValue([]any{input.Name, input.Version, input.SHA256, managed["supported_architectures"]})
+	payload := input.SHA256
+	if input.InstallerType == "nopkg" {
+		payload = hashValue([]any{"nopkg", input.Version})
+	}
+	if binding.Latest == nil {
+		binding.Latest = map[string]string{}
+	}
+	pkginfoPath := filepath.Join("pkgsinfo", "stemma", identity, fingerprint+".plist")
+	entry, known := binding.Entries[fingerprint]
+	if known && (entry.Pkginfo != filepath.ToSlash(pkginfoPath) || entry.Name != input.Name || entry.Version != input.Version || entry.Location != input.InstallerLocation) {
+		return plugin.ReconcileResponse{}, errors.New("munki publication binding differs from installer tuple")
+	}
 	old, err := readObject(filepath.Join(root, pkginfoPath))
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
 	}
-	if old != nil && owner(old) != identity {
+	if old != nil && (!known || owner(old) != identity) {
 		return plugin.ReconcileResponse{}, fmt.Errorf("pkginfo %s is not owned by this destination", pkginfoPath)
 	}
-	desired := config.Merge(old, nil)
+	desired := mergeFields(old, nil)
+	_, origins, _ := munki.Derive(request)
+	destinationMetadata, _ := munki.DecodeDestination(request.Metadata)
+	for _, field := range entry.Derived {
+		if _, exists := managed[field]; !exists && !slices.Contains(destinationMetadata.Unmanaged, "pkginfo."+field) {
+			delete(desired, field)
+		}
+	}
+	derived := []string{}
+	for field, origin := range origins {
+		if origin != "authored" {
+			derived = append(derived, strings.TrimPrefix(field, "pkginfo."))
+		}
+	}
+	slices.Sort(derived)
 	for key, value := range managed {
 		if value == nil {
 			delete(desired, key)
@@ -171,7 +215,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		desired["catalogs"] = []string{"testing"}
 	}
 	metadata, _ := desired["_metadata"].(map[string]any)
-	metadata = config.Merge(metadata, map[string]any{"stemma": identity})
+	metadata = mergeFields(metadata, map[string]any{"stemma": identity})
 	desired["_metadata"] = metadata
 	response := plugin.ReconcileResponse{}
 	contentPath := ""
@@ -186,7 +230,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		}
 	}
 	for key, value := range desired {
-		if config.Fingerprint(old[key]) != config.Fingerprint(value) {
+		if hashValue(old[key]) != hashValue(value) {
 			response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: key, Action: "set", Before: raw(old[key]), After: raw(value)})
 		}
 	}
@@ -206,8 +250,21 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		a, b := response.Changes[i], response.Changes[j]
 		return a.Kind+"/"+a.Field < b.Kind+"/"+b.Field
 	})
-	response.Binding = raw(map[string]string{"pkginfo": filepath.ToSlash(pkginfoPath), "identity": identity})
+	binding.Pkginfo, binding.Identity = filepath.ToSlash(pkginfoPath), identity
+	binding.Entries[fingerprint] = publication{Payload: payload, Pkginfo: filepath.ToSlash(pkginfoPath), Location: input.InstallerLocation, Name: input.Name, Version: input.Version, SHA256: input.SHA256, Derived: derived}
+	response.Binding = raw(binding)
 	if request.Method != "apply" {
+		destination, err := munki.DecodeDestination(request.Metadata)
+		if err != nil {
+			return response, err
+		}
+		if destination.Retention != nil {
+			binding.Publications.Record(payload)
+			binding.Latest[payload] = fingerprint
+			if err := prune(ctx, root, &binding, destination.Retention.Keep, false, &response); err != nil {
+				return response, err
+			}
+		}
 		return response, nil
 	}
 	// No catalog references an installer before its complete bytes are available.
@@ -232,7 +289,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	}
 	// Keep the previous catalog membership until every catalog is published, so a
 	// retry after interruption still knows which old catalogs require removal.
-	if config.Fingerprint(old) != config.Fingerprint(desired) {
+	if hashValue(old) != hashValue(desired) {
 		data, err := plist.MarshalIndent(desired, plist.XMLFormat, "  ")
 		if err != nil {
 			return response, err
@@ -241,6 +298,19 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 			return response, err
 		}
 	}
+	binding.Publications.Record(payload)
+	binding.Latest[payload] = fingerprint
+	response.Binding = raw(binding)
+	destination, err := munki.DecodeDestination(request.Metadata)
+	if err != nil {
+		return response, err
+	}
+	if destination.Retention != nil {
+		if err := prune(ctx, root, &binding, destination.Retention.Keep, true, &response); err != nil {
+			return response, err
+		}
+	}
+	response.Binding = raw(binding)
 	return response, nil
 }
 
@@ -271,12 +341,12 @@ func catalogChanges(root string, old, desired map[string]any) (map[string][]map[
 		}
 		var merged []map[string]any
 		for _, entry := range existing {
-			if owner(entry) == owner(desired) {
+			if samePublication(entry, old) || samePublication(entry, desired) {
 				continue
 			}
 			merged = append(merged, entry)
 		}
-		include := name == "all"
+		include := desired != nil && name == "all"
 		for _, catalog := range catalogNames(desired) {
 			if catalog == name {
 				include = true
@@ -291,7 +361,7 @@ func catalogChanges(root string, old, desired map[string]any) (map[string][]map[
 		sort.SliceStable(merged, func(i, j int) bool {
 			return fmt.Sprint(merged[i]["name"])+"/"+fmt.Sprint(merged[i]["version"]) < fmt.Sprint(merged[j]["name"])+"/"+fmt.Sprint(merged[j]["version"])
 		})
-		if config.Fingerprint(existing) != config.Fingerprint(merged) {
+		if hashValue(existing) != hashValue(merged) {
 			changes[name] = merged
 		}
 	}

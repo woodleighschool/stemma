@@ -1,5 +1,5 @@
 {
-  "descriptionHash": "537926EA6BC074BF9B3B92100C89AE5F0B6101A34652C1EEA3A796D902B2A98B9D1599B1F1E6DA921D5B9D01D0F93B890CCA0291D7D392BEEFBCDE102012B62F",
+  "descriptionHash": "6C9F04624372750C57EAA81B77DA09FD9353ED3812EBE55F046548F388D4DF4308A9EE6AB13CC9FD2A4A415790B4AA8390179FB4B262585CE62A476BBF88801F",
   "descriptionLocation": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/0d13ff1/openapi/v1.0/openapi.yaml",
   "lockFileVersion": "1.0.0",
   "kiotaVersion": "1.35.0",
@@ -32,7 +32,9 @@
     "/deviceAppManagement/mobileApps/{mobileApp-id}#PATCH",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/assignments#GET",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/assign#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions#GET",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions/{mobileAppContent-id}#DELETE",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions/{mobileAppContent-id}/files#GET",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions/{mobileAppContent-id}/files#POST",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}#GET",

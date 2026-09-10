@@ -13,7 +13,27 @@ type MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilder struct {
 	i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.BaseRequestBuilder
 }
 
-// ByMobileAppContentId gets an item from the github.com/woodleighschool/stemma/internal/intune/graph/beta.deviceAppManagement.mobileApps.item.graphMacOSPkgApp.contentVersions.item collection
+// MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilderGetQueryParameters the list of content versions for this app. This property is read-only.
+type MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilderGetQueryParameters struct {
+	// Include count of items
+	Count *bool "uriparametername:\"%24count\""
+	// Expand related entities
+	Expand []string "uriparametername:\"%24expand\""
+	// Filter items by property values
+	Filter *string "uriparametername:\"%24filter\""
+	// Order items by property values
+	Orderby []string "uriparametername:\"%24orderby\""
+	// Search items by search phrases
+	Search *string "uriparametername:\"%24search\""
+	// Select properties to be returned
+	Select []string "uriparametername:\"%24select\""
+	// Skip the first n items
+	Skip *int32 "uriparametername:\"%24skip\""
+	// Show only the first n items
+	Top *int32 "uriparametername:\"%24top\""
+}
+
+// ByMobileAppContentId provides operations to manage the contentVersions property of the microsoft.graph.mobileLobApp entity.
 // returns a *MobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder when successful
 func (m *MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilder) ByMobileAppContentId(mobileAppContentId string) *MobileAppsItemGraphMacOSPkgAppContentVersionsMobileAppContentItemRequestBuilder {
 	urlTplParams := make(map[string]string)
@@ -29,7 +49,7 @@ func (m *MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilder) ByMobileAp
 // NewMobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilderInternal instantiates a new MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilder and sets the default values.
 func NewMobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilderInternal(pathParameters map[string]string, requestAdapter i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.RequestAdapter) *MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilder {
 	m := &MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilder{
-		BaseRequestBuilder: *i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.NewBaseRequestBuilder(requestAdapter, "{+baseurl}/deviceAppManagement/mobileApps/{mobileApp%2Did}/graph.macOSPkgApp/contentVersions", pathParameters),
+		BaseRequestBuilder: *i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.NewBaseRequestBuilder(requestAdapter, "{+baseurl}/deviceAppManagement/mobileApps/{mobileApp%2Did}/graph.macOSPkgApp/contentVersions{?%24count,%24expand,%24filter,%24orderby,%24search,%24select,%24skip,%24top}", pathParameters),
 	}
 	return m
 }
@@ -39,6 +59,23 @@ func NewMobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilder(rawUrl strin
 	urlParams := make(map[string]string)
 	urlParams["request-raw-url"] = rawUrl
 	return NewMobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilderInternal(urlParams, requestAdapter)
+}
+
+// Get the list of content versions for this app. This property is read-only.
+// returns a []byte when successful
+func (m *MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilder) Get(ctx context.Context, requestConfiguration *i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.RequestConfiguration[MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilderGetQueryParameters]) ([]byte, error) {
+	requestInfo, err := m.ToGetRequestInformation(ctx, requestConfiguration)
+	if err != nil {
+		return nil, err
+	}
+	res, err := m.BaseRequestBuilder.RequestAdapter.SendPrimitive(ctx, requestInfo, "[]byte", nil)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		return nil, nil
+	}
+	return res.([]byte), nil
 }
 
 // Post create new navigation property to contentVersions for deviceAppManagement
@@ -56,6 +93,15 @@ func (m *MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilder) Post(ctx c
 		return nil, nil
 	}
 	return res.([]byte), nil
+}
+
+// ToGetRequestInformation the list of content versions for this app. This property is read-only.
+// returns a *RequestInformation when successful
+func (m *MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilder) ToGetRequestInformation(ctx context.Context, requestConfiguration *i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.RequestConfiguration[MobileAppsItemGraphMacOSPkgAppContentVersionsRequestBuilderGetQueryParameters]) (*i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.RequestInformation, error) {
+	requestInfo := i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.NewRequestInformationWithMethodAndUrlTemplateAndPathParameters(i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.GET, m.BaseRequestBuilder.UrlTemplate, m.BaseRequestBuilder.PathParameters)
+	i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.ConfigureRequestInformation(requestInfo, requestConfiguration)
+	requestInfo.Headers.TryAdd("Accept", "application/json")
+	return requestInfo, nil
 }
 
 // ToPostRequestInformation create new navigation property to contentVersions for deviceAppManagement

@@ -28,7 +28,7 @@ metadata: {name: source-free}
 spec:
   imports: ['*.software.yaml']
   destinations:
-    repo: {operation: munki, path: repo}
+    repo: {operation: munki, config: {path: repo}}
 ---
 apiVersion: stemma/v1alpha1
 kind: Software
@@ -36,12 +36,13 @@ metadata: {name: fixture}
 spec:
   destinations:
     repo:
-      name: NativeName
-      version: "1.0"
-      installer_type: nopkg
-      description: original
-      installcheck_script: "#!/bin/sh\nexit 1\n"
-      postinstall_script: "#!/bin/sh\nexit 0\n"
+      pkginfo:
+        name: NativeName
+        version: "1.0"
+        installer_type: nopkg
+        description: original
+        installcheck_script: "#!/bin/sh\nexit 1\n"
+        postinstall_script: "#!/bin/sh\nexit 0\n"
 `
 			if rendered {
 				manifest = strings.Replace(manifest, "spec:\n  destinations:", `spec:
@@ -55,12 +56,13 @@ spec:
         installcheck_script: "#!/bin/sh\nexit 1\n"
         postinstall_script: "#!/bin/sh\nexit 0\n"
   destinations:`, 1)
-				manifest = strings.Replace(manifest, `      name: NativeName
-      version: "1.0"
-      installer_type: nopkg
-      description: original
-      installcheck_script: "#!/bin/sh\nexit 1\n"
-      postinstall_script: "#!/bin/sh\nexit 0\n"`, "      artifact: pkginfo/artifact\n      description: original", 1)
+				manifest = strings.Replace(manifest, `      pkginfo:
+        name: NativeName
+        version: "1.0"
+        installer_type: nopkg
+        description: original
+        installcheck_script: "#!/bin/sh\nexit 1\n"
+        postinstall_script: "#!/bin/sh\nexit 0\n"`, "      installer: pkginfo/artifact\n      pkginfo: {description: original}", 1)
 			}
 			path := filepath.Join(root, "stemma.yaml")
 			write := func(data string) {
@@ -124,7 +126,7 @@ spec:
 			if _, err := os.Stat(lockPath); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("metadata/cache changes created a source lock: %v", err)
 			}
-			files, err := filepath.Glob(filepath.Join(root, "repo", "pkgsinfo", "stemma", "*.plist"))
+			files, err := filepath.Glob(filepath.Join(root, "repo", "pkgsinfo", "stemma", "*", "*.plist"))
 			if err != nil || len(files) != 1 {
 				t.Fatalf("pkginfo binding was duplicated: %v: %v", files, err)
 			}
@@ -199,14 +201,14 @@ kind: Project
 metadata: {name: missing-installer}
 spec:
   imports: ['*.software.yaml']
-  destinations: {repo: {operation: munki, path: repo}}
+  destinations: {repo: {operation: munki, config: {path: repo}}}
 ---
 apiVersion: stemma/v1alpha1
 kind: Software
 metadata: {name: fixture}
 spec:
   destinations:
-    repo: {name: fixture, version: "1", installer_type: pkg}
+    repo: {pkginfo: {name: fixture, version: "1", installer_type: pkg}}
 `)); err != nil {
 		t.Fatal(err)
 	}

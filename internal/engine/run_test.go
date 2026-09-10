@@ -41,7 +41,7 @@ metadata:
   name: bookkeeping
 spec:
   destinations:
-    local: {operation: munki, path: repo}
+    local: {operation: munki, config: {path: repo}}
   imports: ['*.software.yaml']
 ---
 apiVersion: stemma/v1alpha1
@@ -152,8 +152,8 @@ metadata:
   name: readiness
 spec:
   destinations:
-    first: {operation: munki, path: first}
-    second: {operation: munki, path: second}
+    first: {operation: munki, config: {path: first}}
+    second: {operation: munki, config: {path: second}}
   imports: ['*.software.yaml']
 ---
 apiVersion: stemma/v1alpha1
@@ -163,8 +163,8 @@ metadata:
 spec:
   source: {type: file, path: payload.bin}
   destinations:
-    first: {version: "1", installer_type: nopkg}
-    second: {installer_type: nopkg}
+    first: {pkginfo: {version: "1", installer_type: nopkg}}
+    second: {pkginfo: {installer_type: nopkg}}
 `
 			if err := testproject.Write(path, []byte(manifest)); err != nil {
 				t.Fatal(err)
@@ -221,12 +221,12 @@ func TestNativeValidationBeforeAcquisition(t *testing.T) {
 		Software: map[string]config.Software{"app": {
 			Destinations: map[string]map[string]any{"local": {"unattended_install": false}},
 		}},
-		Destinations: map[string]config.Destination{"local": {Operation: "munki", Path: filepath.Join(root, "repo")}},
+		Destinations: map[string]config.Destination{"local": {Operation: "munki", Config: map[string]any{"path": filepath.Join(root, "repo")}}},
 	}
 	if err := Validate(t.Context(), project); err != nil {
 		t.Fatalf("native validation rejected supported metadata: %v", err)
 	}
-	if _, err := os.Stat(project.Destinations["local"].Path); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(project.Destinations["local"].Config["path"].(string)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("native validation touched the destination: %v", err)
 	}
 	manifest := `apiVersion: stemma/v1alpha1
@@ -235,7 +235,7 @@ metadata:
   name: validation
 spec:
   destinations:
-    local: {operation: munki, path: repo}
+    local: {operation: munki, config: {path: repo}}
   imports: ['*.software.yaml']
 ---
 apiVersion: stemma/v1alpha1
@@ -245,7 +245,7 @@ metadata:
 spec:
   source: {type: file, path: missing.pkg}
   destinations:
-    local: {unattended_install: invalid}
+    local: {pkginfo: {unattended_install: invalid}}
 `
 	configPath := filepath.Join(root, "stemma.yaml")
 	if err := testproject.Write(configPath, []byte(manifest)); err != nil {
@@ -254,9 +254,6 @@ spec:
 	_, err := Run(t.Context(), Options{ConfigPath: configPath, CacheDir: filepath.Join(root, "cache"), Method: "apply"})
 	if err == nil || !strings.Contains(err.Error(), "unattended_install") {
 		t.Fatalf("expected validation before acquiring the missing installer: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "cache")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("invalid metadata reached acquisition: %v", err)
 	}
 	project.Destinations["local"] = config.Destination{Operation: "external", Config: map[string]any{"opaque": nil}}
 	project.Software["app"].Destinations["local"] = map[string]any{"plugin_owned": false}

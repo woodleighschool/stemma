@@ -1,8 +1,10 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -10,10 +12,11 @@ import (
 	"strings"
 
 	"github.com/bmatcuk/doublestar/v4"
+	"go.yaml.in/yaml/v4"
 )
 
-// Load resolves one Software document per imported file. Acquisition paths remain
-// relative to the owning document; project identity survives directory moves.
+// Load resolves Software documents from imported family files. Acquisition paths
+// remain relative to the owning file; project identity survives directory moves.
 func Load(filename string) (Project, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
@@ -59,16 +62,22 @@ func Load(filename string) (Project, error) {
 			if err != nil {
 				return p, fmt.Errorf("import %s: %w", name, err)
 			}
-			var software SoftwareDocument
-			raw, err := parseConfig(data, &software)
+			documents, err := splitDocuments(data)
 			if err != nil {
 				return p, fmt.Errorf("import %s: %w", name, err)
 			}
-			if err := validateHeader(software.APIVersion, software.Kind, "Software", software.Metadata); err != nil {
-				return p, fmt.Errorf("import %s: %w", name, err)
-			}
-			if err := addSoftware(&p, software.Metadata.Name, raw["spec"], components, path.Dir(name)); err != nil {
-				return p, fmt.Errorf("import %s: %w", name, err)
+			for i, data := range documents {
+				var software SoftwareDocument
+				raw, err := parseConfig(data, &software)
+				if err != nil {
+					return p, fmt.Errorf("import %s document %d: %w", name, i+1, err)
+				}
+				if err := validateHeader(software.APIVersion, software.Kind, "Software", software.Metadata); err != nil {
+					return p, fmt.Errorf("import %s document %d: %w", name, i+1, err)
+				}
+				if err := addSoftware(&p, software.Metadata.Name, raw["spec"], components, path.Dir(name)); err != nil {
+					return p, fmt.Errorf("import %s document %d: %w", name, i+1, err)
+				}
 			}
 		}
 	}
@@ -99,32 +108,46 @@ func FindRoot(startDir string) (string, error) {
 		filename := filepath.Join(dir, "stemma.yaml")
 		data, err := os.ReadFile(filename)
 		if err == nil {
-			var header struct {
-				APIVersion string         `yaml:"apiVersion"`
-				Kind       string         `yaml:"kind"`
-				Metadata   Metadata       `yaml:"metadata"`
-				Spec       map[string]any `yaml:"spec"`
-			}
-			if _, err := parseDocument(data, &header); err != nil {
+			documents, err := splitDocuments(data)
+			if err != nil {
 				return "", fmt.Errorf("%s: %w", filename, err)
 			}
-			var document any
-			switch header.Kind {
-			case "Project":
-				document = &ProjectDocument{}
-			case "Software":
-				document = &SoftwareDocument{}
-			default:
-				return "", fmt.Errorf("%s: kind must be Project or Software", filename)
-			}
-			if err := validateHeader(header.APIVersion, header.Kind, header.Kind, header.Metadata); err != nil {
-				return "", fmt.Errorf("%s: %w", filename, err)
-			}
-			if _, err := parseDocument(data, document); err != nil {
-				return "", fmt.Errorf("%s: %w", filename, err)
-			}
-			if header.Kind == "Project" {
-				return dir, nil
+			seen := map[string]bool{}
+			for i, data := range documents {
+				var header struct {
+					APIVersion string         `yaml:"apiVersion"`
+					Kind       string         `yaml:"kind"`
+					Metadata   Metadata       `yaml:"metadata"`
+					Spec       map[string]any `yaml:"spec"`
+				}
+				if _, err := parseDocument(data, &header); err != nil {
+					return "", fmt.Errorf("%s document %d: %w", filename, i+1, err)
+				}
+				var document any
+				switch header.Kind {
+				case "Project":
+					if len(documents) != 1 {
+						return "", fmt.Errorf("%s: Project requires one YAML document", filename)
+					}
+					document = &ProjectDocument{}
+				case "Software":
+					if seen[header.Metadata.Name] {
+						return "", fmt.Errorf("%s: conflicting software ID %q", filename, header.Metadata.Name)
+					}
+					seen[header.Metadata.Name] = true
+					document = &SoftwareDocument{}
+				default:
+					return "", fmt.Errorf("%s document %d: kind must be Project or Software", filename, i+1)
+				}
+				if err := validateHeader(header.APIVersion, header.Kind, header.Kind, header.Metadata); err != nil {
+					return "", fmt.Errorf("%s document %d: %w", filename, i+1, err)
+				}
+				if _, err := parseDocument(data, document); err != nil {
+					return "", fmt.Errorf("%s document %d: %w", filename, i+1, err)
+				}
+				if header.Kind == "Project" {
+					return dir, nil
+				}
 			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return "", err
@@ -135,6 +158,37 @@ func FindRoot(startDir string) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+func splitDocuments(data []byte) ([][]byte, error) {
+	if len(data) > 4<<20 {
+		return nil, errors.New("configuration exceeds 4 MiB")
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	var documents [][]byte
+	for {
+		var node yaml.Node
+		if err := dec.Decode(&node); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("document %d: %w", len(documents)+1, err)
+		}
+		if len(node.Content) != 1 || node.Content[0].Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("document %d must be a resource mapping", len(documents)+1)
+		}
+		if err := checkNode(&node); err != nil {
+			return nil, fmt.Errorf("document %d: %w", len(documents)+1, err)
+		}
+		encoded, err := yaml.Marshal(&node)
+		if err != nil {
+			return nil, err
+		}
+		documents = append(documents, encoded)
+	}
+	if len(documents) == 0 {
+		return nil, errors.New("expected at least one YAML document")
+	}
+	return documents, nil
 }
 
 func safeRelative(name string) bool {

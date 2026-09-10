@@ -1,4 +1,4 @@
-package munkirepo
+package munki
 
 import (
 	"context"
@@ -7,14 +7,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
 
-	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func documentInput(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileRequest, error) {
+// DocumentInput reads an explicitly rendered pkginfo artifact and binds it to
+// its installer input before native destination derivation.
+func DocumentInput(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileRequest, error) {
 	installer, exists := request.Inputs["installer"]
 	if !exists && request.Artifact.Format != "json" {
 		return request, nil
@@ -74,7 +76,13 @@ func documentInput(ctx context.Context, request plugin.ReconcileRequest) (plugin
 			return request, err
 		}
 	}
-	request.Metadata, err = json.Marshal(config.Merge(document, explicit))
+	native, _ := explicit["pkginfo"].(map[string]any)
+	if explicit == nil {
+		explicit = map[string]any{}
+	}
+	maps.Copy(document, native)
+	explicit["pkginfo"] = document
+	request.Metadata, err = json.Marshal(explicit)
 	request.Artifact, request.Facts = installer, installer.Facts
 	return request, err
 }
