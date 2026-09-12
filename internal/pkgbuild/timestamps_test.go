@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	cpio "github.com/korylprince/go-cpio-odc"
+	"github.com/deploymenttheory/go-macos-pkg/pkg/cpio"
 )
 
 func TestPackageTimestamps(t *testing.T) {
@@ -167,7 +167,7 @@ func cpioTimestamps(t *testing.T, data []byte) map[string]time.Time {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out[path.Clean(file.Path)] = file.ModifiedTime
+		out[path.Clean(file.Name)] = file.ModTime
 	}
 	return out
 }

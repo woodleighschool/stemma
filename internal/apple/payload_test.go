@@ -12,14 +12,13 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
-	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	cpio "github.com/korylprince/go-cpio-odc"
+	"github.com/deploymenttheory/go-macos-pkg/pkg/cpio"
 	xzdecode "github.com/mikelolasagasti/xz"
 	"github.com/ulikunitz/xz"
 	"howett.net/plist"
@@ -52,7 +51,7 @@ func TestPackageContentsRetainsAllComponents(t *testing.T) {
 		component := appName + ".pkg"
 		metadata := fmt.Sprintf(`<pkg-info identifier="org.example.%s" version="%d.0" install-location="/Applications"><payload installKBytes="20"/></pkg-info>`, strings.ToLower(appName), i+3)
 		members = append(members, payloadMember{path.Join(component, "PackageInfo"), []byte(metadata)})
-		members = append(members, payloadMember{path.Join(component, "Payload"), cpioPayload(t, []cpio.File{plistEntry(t, "./"+appName+".app/Contents/Info.plist", appName)})})
+		members = append(members, payloadMember{path.Join(component, "Payload"), cpioPayload(t, []payloadEntry{plistEntry(t, "./"+appName+".app/Contents/Info.plist", appName)})})
 	}
 	members = append(members, payloadMember{"Distribution", []byte(`<installer-gui-script><pkg-ref id="org.example.example">#Example.pkg</pkg-ref><pkg-ref id="org.example.companion">#Companion.pkg</pkg-ref></installer-gui-script>`)})
 	name := writePayloadPackage(t, members)
@@ -71,7 +70,7 @@ func TestPackageContentsRetainsAllComponents(t *testing.T) {
 }
 
 func TestPackagePayloadCompression(t *testing.T) {
-	payload := cpioPayload(t, []cpio.File{plistEntry(t, "./Applications/Example.app/Contents/Info.plist", "Example")})
+	payload := cpioPayload(t, []payloadEntry{plistEntry(t, "./Applications/Example.app/Contents/Info.plist", "Example")})
 	for _, compression := range []string{"plain", "gzip", "xz", "pbzx"} {
 		t.Run(compression, func(t *testing.T) {
 			data := compressPayload(t, compression, payload)
@@ -89,39 +88,40 @@ func TestPackagePayloadCompression(t *testing.T) {
 
 func TestPackageContentsRejectsUnsafeAndIncompletePayloads(t *testing.T) {
 	for _, test := range []struct {
-		name string
-		file cpio.File
+		name   string
+		header cpio.Header
+		body   []byte
 	}{
-		{"traversal", cpio.File{Path: "./../outside", Body: []byte("data"), FileMode: 0644}},
-		{"absolute", cpio.File{Path: "/Applications/Example.app/Contents/Info.plist", FileMode: 0644}},
-		{"symlink_info", cpio.File{Path: "./Example.app/Contents/Info.plist", Body: []byte("/Applications/Example.app/Contents/Info.plist"), FileMode: os.ModeSymlink | 0777}},
-		{"hardlink_info", cpio.File{Path: "./Example.app/Contents/Info.plist", FileMode: 0644, NLink: 2}},
-		{"malformed_info", cpio.File{Path: "./Example.app/Contents/Info.plist", FileMode: 0644, Body: []byte("malformed plist")}},
-		{"oversized_info", cpio.File{Path: "./Example.app/Contents/Info.plist", FileMode: 0644, Body: make([]byte, maxMetadata+1)}},
+		{"traversal", cpio.Header{Name: "./../outside", Mode: cpio.ModeRegular | 0o644}, []byte("data")},
+		{"absolute", cpio.Header{Name: "/Applications/Example.app/Contents/Info.plist", Mode: cpio.ModeRegular | 0o644}, nil},
+		{"symlink_info", cpio.Header{Name: "./Example.app/Contents/Info.plist", Mode: cpio.ModeSymlink | 0o777}, []byte("/Applications/Example.app/Contents/Info.plist")},
+		{"hardlink_info", cpio.Header{Name: "./Example.app/Contents/Info.plist", Mode: cpio.ModeRegular | 0o644, NLink: 2}, nil},
+		{"malformed_info", cpio.Header{Name: "./Example.app/Contents/Info.plist", Mode: cpio.ModeRegular | 0o644}, []byte("malformed plist")},
+		{"oversized_info", cpio.Header{Name: "./Example.app/Contents/Info.plist", Mode: cpio.ModeRegular | 0o644}, make([]byte, maxMetadata+1)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			name := writePayloadPackage(t, []payloadMember{{"PackageInfo", []byte(`<pkg-info identifier="org.example.app" version="1" install-location="/"/>`)}, {"Payload", cpioPayload(t, []cpio.File{test.file})}})
+			name := writePayloadPackage(t, []payloadMember{{"PackageInfo", []byte(`<pkg-info identifier="org.example.app" version="1" install-location="/"/>`)}, {"Payload", cpioPayload(t, []payloadEntry{{test.header, test.body}})}})
 			if facts, err := InspectPackageContents(t.Context(), name); err == nil || len(facts.Applications) != 0 {
 				t.Fatalf("accepted incomplete inspection: %+v, %v", facts, err)
 			}
 		})
 	}
 	t.Run("ancestor_symlink", func(t *testing.T) {
-		payload := cpioPayload(t, []cpio.File{plistEntry(t, "./Example.app/Contents/Info.plist", "Example"), {Path: "./Example.app", FileMode: os.ModeSymlink | 0777, Body: []byte("outside")}})
+		payload := cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example"), {cpio.Header{Name: "./Example.app", Mode: cpio.ModeSymlink | 0o777}, []byte("outside")}})
 		budget := newPayloadBudget()
 		if _, err := readPayload(bytes.NewReader(payload), budget, false); err == nil {
 			t.Fatal("accepted symlink application ancestor")
 		}
 	})
 	t.Run("truncated", func(t *testing.T) {
-		payload := cpioPayload(t, []cpio.File{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")})
+		payload := cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")})
 		budget := newPayloadBudget()
 		if _, err := readPayload(bytes.NewReader(payload[:90]), budget, false); err == nil {
 			t.Fatal("accepted truncated payload")
 		}
 	})
 	t.Run("corrupt_gzip_checksum", func(t *testing.T) {
-		payload := compressPayload(t, "gzip", cpioPayload(t, []cpio.File{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")}))
+		payload := compressPayload(t, "gzip", cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")}))
 		payload[len(payload)-5] ^= 1
 		budget := newPayloadBudget()
 		if _, err := readPayload(bytes.NewReader(payload), budget, false); err == nil {
@@ -130,7 +130,7 @@ func TestPackageContentsRejectsUnsafeAndIncompletePayloads(t *testing.T) {
 	})
 	t.Run("duplicate", func(t *testing.T) {
 		file := plistEntry(t, "./Example.app/Contents/Info.plist", "Example")
-		payload := cpioPayload(t, []cpio.File{file, file})
+		payload := cpioPayload(t, []payloadEntry{file, file})
 		budget := newPayloadBudget()
 		if _, err := readPayload(bytes.NewReader(payload), budget, false); err == nil {
 			t.Fatal("accepted duplicate plist")
@@ -166,13 +166,13 @@ func TestPackageContentsRejectsUnsupportedLayouts(t *testing.T) {
 }
 
 func TestPayloadBudgetsSpanComponents(t *testing.T) {
-	payload := cpioPayload(t, []cpio.File{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")})
+	payload := cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")})
 	for _, test := range []struct {
 		name   string
 		budget *payloadBudget
 	}{
 		{"bytes", &payloadBudget{bytes: int64(len(payload)), metadata: maxPackageMetadata, entries: maxPayloadEntries}},
-		{"metadata", &payloadBudget{bytes: maxEntrySize, metadata: int64(len(plistEntry(t, "unused", "Example").Body)), entries: maxPayloadEntries}},
+		{"metadata", &payloadBudget{bytes: maxEntrySize, metadata: int64(len(plistEntry(t, "unused", "Example").body)), entries: maxPayloadEntries}},
 		{"entries", &payloadBudget{bytes: maxEntrySize, metadata: maxPackageMetadata, entries: 2}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -233,27 +233,36 @@ func TestPayloadRejectsOversizedXZDictionary(t *testing.T) {
 	}
 }
 
-func plistEntry(t *testing.T, name, appName string) cpio.File {
+type payloadEntry struct {
+	header cpio.Header
+	body   []byte
+}
+
+func plistEntry(t *testing.T, name, appName string) payloadEntry {
 	t.Helper()
 	data, err := plist.Marshal(AppFacts{BundleID: "org.example." + strings.ToLower(appName), Name: appName, Version: "2.4", Build: "2048", Executable: appName, MinimumOS: "13.0"}, plist.BinaryFormat)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cpio.File{Path: name, FileMode: 0644, NLink: 1, Body: data}
+	return payloadEntry{cpio.Header{Name: name, Mode: cpio.ModeRegular | 0o644, NLink: 1}, data}
 }
 
-func cpioPayload(t *testing.T, files []cpio.File) []byte {
+func cpioPayload(t *testing.T, files []payloadEntry) []byte {
 	t.Helper()
 	var payload bytes.Buffer
-	w := cpio.NewWriter(&payload, 512)
+	w := cpio.NewWriter(&payload)
 	for i, file := range files {
-		file.Inode = uint64(i + 1)
-		file.ModifiedTime = time.Unix(0, 0)
-		if err := w.WriteFile(&file); err != nil {
+		file.header.Inode = uint64(i + 1)
+		file.header.ModTime = time.Unix(0, 0)
+		file.header.Size = int64(len(file.body))
+		if err := w.WriteHeader(&file.header); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(file.body); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := w.Close(); err != nil {
+	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
 	return payload.Bytes()

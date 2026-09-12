@@ -14,7 +14,6 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/invopop/jsonschema v0.14.0
 	github.com/klauspost/compress v1.20.0
-	github.com/korylprince/go-cpio-odc v0.9.5
 	github.com/mholt/archives v0.1.5
 	github.com/microsoft/kiota-abstractions-go v1.10.1
 	github.com/microsoft/kiota-http-go v1.5.6
