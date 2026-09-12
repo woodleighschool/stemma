@@ -255,6 +255,7 @@ func validateHTTPURL(address string) error {
 
 func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntry, expected string) (cas.Ref, error) {
 	if s.Type == "local" {
+		plugin.Stage(ctx, "Reading local inputs")
 		project, err := os.OpenRoot(m.Root)
 		if err != nil {
 			return cas.Ref{}, err
@@ -294,6 +295,7 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntr
 		return m.importTree(ctx, root, names, expected)
 	}
 	if s.Type == "file" {
+		plugin.Stage(ctx, "Reading local input")
 		root, err := os.OpenRoot(m.Root)
 		if err != nil {
 			return cas.Ref{}, err
@@ -353,6 +355,7 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntr
 	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
 		return cas.Ref{}, errors.New("locked asset does not belong to the configured GitHub repository")
 	}
+	plugin.Stage(ctx, "Downloading input")
 	req, err := m.request(ctx, entry.URL, token)
 	if err != nil {
 		return cas.Ref{}, err
@@ -368,6 +371,7 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntr
 	if res.ContentLength > cas.MaxObjectSize {
 		return cas.Ref{}, errors.New("download exceeds 16 GiB")
 	}
+	plugin.Logger(ctx).DebugContext(ctx, "Download response", "bytes", res.ContentLength)
 	return m.Store.Import(ctx, res.Body, expected)
 }
 
@@ -401,6 +405,7 @@ func (m *Manager) request(ctx context.Context, address, token string) (*http.Req
 }
 
 func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEntry) error {
+	plugin.Stage(ctx, "Discovering source release")
 	req, err := m.request(ctx, s.URL, s.Token)
 	if err != nil {
 		return err
@@ -442,6 +447,7 @@ func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEnt
 }
 
 func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry) error {
+	plugin.Stage(ctx, "Discovering GitHub release")
 	endpoint := "https://api.github.com/repos/" + s.Repository + "/releases/latest"
 	if s.Release != "" && s.Release != "latest" {
 		endpoint = "https://api.github.com/repos/" + s.Repository + "/releases/tags/" + url.PathEscape(s.Release)

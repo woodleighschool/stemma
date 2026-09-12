@@ -7,6 +7,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"github.com/woodleighschool/stemma/plugin"
 	"io"
 	"io/fs"
 	"math"
@@ -96,6 +97,7 @@ var packageIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
 // It supports ordinary payload files/directories and declared install hooks.
 // Unsupported links, extended metadata and bundle installation policy are rejected.
 func Build(ctx context.Context, root, output string, opts Options) error {
+	plugin.Stage(ctx, "Building Apple package")
 	if err := Validate(opts); err != nil {
 		return err
 	}

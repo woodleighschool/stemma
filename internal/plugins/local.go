@@ -64,6 +64,8 @@ func (s *Store) Load(ctx context.Context, root string, declaration config.Plugin
 func (s *Store) Install(ctx context.Context, root string, declarations map[string]config.Plugin, previous map[string]Entry, refresh bool) (map[string]Entry, error) {
 	entries := make(map[string]Entry, len(declarations))
 	for _, name := range slices.Sorted(maps.Keys(declarations)) {
+		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("plugin", name))
+		plugin.Stage(ctx, "Installing plugin")
 		declaration := declarations[name]
 		entry := previous[name]
 		if declaration.Image != "" && (refresh || entry.Validate(declaration.Image) != nil) {

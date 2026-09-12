@@ -40,6 +40,7 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 	if err != nil {
 		return nil, err
 	}
+	plugin.Stage(ctx, "Inspecting application")
 	facts, err := inspect.Read(ctx, selected)
 	if err != nil {
 		return nil, err
@@ -73,6 +74,7 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 			app.InstalledPath = path.Join("/Applications", filepath.Base(selected))
 		}
 	}
+	plugin.Stage(ctx, "Verifying installer")
 	var verification *apple.Evidence
 	if spec.Verification.Subject != "installer" {
 		verification, err = verifySelected(spec.Verification, input.Path, selected, appPath)
@@ -88,6 +90,7 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 		app.ID, app.Path, app.Parent = archivePath, archivePath, "."
 		facts = plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: ".", Path: ".", Kind: "container", SHA256: installer.SHA256}, *app}}
 	case info.IsDir():
+		plugin.Stage(ctx, "Building Apple package")
 		installer, err = wrapApp(ctx, selected, *app, options, workspace, timestamp)
 		if err == nil {
 			facts, err = inspect.Read(ctx, installer.Path)
@@ -154,11 +157,13 @@ func selectPayload(ctx context.Context, spec Spec, input plugin.Artifact, worksp
 	}
 	expanded := filepath.Join(workspace, "expanded")
 	if ext == ".dmg" || input.Format == "dmg" {
+		plugin.Stage(ctx, "Extracting disk image")
 		selected, err := diskimage.Extract(ctx, input.Path, expanded, selection)
 		relative, _ := filepath.Rel(expanded, selected)
 		return selected, filepath.ToSlash(relative), true, err
 	}
 	if isArchive(input.Filename) {
+		plugin.Stage(ctx, "Extracting archive")
 		if err := archive.Extract(ctx, input.Path, expanded); err != nil {
 			return "", "", false, err
 		}

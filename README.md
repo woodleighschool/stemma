@@ -33,6 +33,15 @@ are prepared first. Use the full `apiVersion/Kind/name` when names are ambiguous
 `plan` reads destinations without mutating them. `prepare` stops before publication.
 `--output json` reports resources, immutable artifacts and individual destinations.
 
+Stages and diagnostics go to stderr. Terminals show the current stage and elapsed
+time; redirected output and CI use ordinary log lines. `--no-progress` disables
+animation. `--quiet` (`-q`) keeps warnings and errors, `--verbose` (`-v`) and
+`--debug` (`-d`) enable debug diagnostics, and `--log-level` selects `debug`,
+`info` (default), `warn` or `error`. These settings leave stdout reports intact.
+Use `--log-format json` for structured stderr logs and `--output json` for the
+final stdout report. Failed runs retain partial results and an `error`; absent
+`lock_changed` means the lockfile comparison did not complete.
+
 ## 🌱 Documents
 
 A root `Project` imports family YAML files. Each document has a literal
@@ -213,6 +222,12 @@ The [public SDK](plugin) defines the same registry and protocol used by built-in
   declaration fingerprints exclude credentials.
 - A destination advertises accepted content and owns native publication semantics,
   bindings and cleanup. It never needs a list of originating kind names.
+
+`plugin.Stage(ctx, "Uploading installer")` reports activity and `plugin.Logger(ctx)`
+provides a standard `slog.Logger`. Protocol version 3 streams bounded JSON log
+records before the final response; `plugin.Serve` and `plugin.Run` handle framing
+and log levels. Plugins reserve stdout for that protocol. Raw subprocess stderr
+is discarded; log only deliberate diagnostics, never credentials or request bodies.
 
 Artifacts carry optional typed facts and open, namespaced JSON evidence. The host
 computes content identity, checks declared hashes and detects leased-input mutation.

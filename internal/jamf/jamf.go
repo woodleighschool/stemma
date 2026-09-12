@@ -625,6 +625,7 @@ func (c *client) merge(ctx context.Context, current *observed, changes map[strin
 }
 
 func (c *client) upload(ctx context.Context, id, file string, content payload) error {
+	plugin.Stage(ctx, "Uploading Jamf package")
 	f, err := os.Open(file)
 	if err != nil {
 		return err
@@ -639,6 +640,7 @@ func (c *client) upload(ctx context.Context, id, file string, content payload) e
 }
 
 func (c *client) awaitContent(ctx context.Context, id string, content payload) (*observed, error) {
+	plugin.Stage(ctx, "Waiting for Jamf processing")
 	for attempt := range 31 {
 		current, err := c.get(ctx, id)
 		if err != nil {

@@ -15,7 +15,7 @@ import (
 
 func main() {
 	if mode := os.Getenv("STEMMA_ECHO_RESPONSE"); mode != "" {
-		fmt.Fprint(os.Stdout, mode)
+		fmt.Fprintln(os.Stdout, mode)
 		fmt.Fprint(os.Stderr, "synthetic diagnostic credential")
 		if url := os.Getenv("STEMMA_ECHO_WAIT_URL"); url != "" {
 			if err := waitForResponse(context.Background(), url); err != nil {
@@ -59,6 +59,7 @@ func main() {
 }
 
 func reconcile(ctx context.Context, envelope plugin.Request) (plugin.Response, error) {
+	plugin.Logger(ctx).DebugContext(ctx, "Fixture request")
 	var request plugin.ReconcileRequest
 	if err := json.Unmarshal(envelope.Input, &request); err != nil {
 		return plugin.Response{}, err
@@ -71,6 +72,7 @@ func reconcile(ctx context.Context, envelope plugin.Request) (plugin.Response, e
 		return plugin.Response{}, err
 	}
 	if config.WaitURL != "" {
+		plugin.Stage(ctx, "Waiting for fixture")
 		if err := waitForResponse(ctx, config.WaitURL); err != nil {
 			return plugin.Response{}, err
 		}

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -49,6 +50,7 @@ func Lock(ctx context.Context, root string) (func() error, error) {
 		return nil, err
 	}
 	l := flock.New(filepath.Join(dir, "project.lock"))
+	plugin.Stage(ctx, "Acquiring project lock")
 	ok, err := l.TryLockContext(ctx, 50*time.Millisecond)
 	if err != nil {
 		return nil, err
@@ -132,7 +134,7 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 		}
 	}
 	resolved := map[string]source.Entry{}
-	resolve := func(input plugin.Input, previous source.Entry) (source.Entry, error) {
+	resolve := func(ctx context.Context, input plugin.Input, previous source.Entry) (source.Entry, error) {
 		version, declaration, err := m.Declaration(input)
 		if err != nil {
 			return source.Entry{}, err
@@ -152,7 +154,7 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 		}
 		return current, nil
 	}
-	acquire := func(input plugin.Input, entry source.Entry) (source.Entry, bool, error) {
+	acquire := func(ctx context.Context, input plugin.Input, entry source.Entry) (source.Entry, bool, error) {
 		version, declaration, err := m.Declaration(input)
 		if err != nil {
 			return source.Entry{}, false, err
@@ -163,7 +165,7 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 				return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 			}
 			cached := matches && m.Store.Verify(ctx, entry.Content.Artifact) == nil
-			current, err := resolve(input, entry)
+			current, err := resolve(ctx, input, entry)
 			if err != nil {
 				return current, false, err
 			}
@@ -180,7 +182,7 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 		if opts.Frozen || opts.Offline {
 			return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 		}
-		current, err := resolve(input, entry)
+		current, err := resolve(ctx, input, entry)
 		return current, false, err
 	}
 	if opts.PluginsOnly {
@@ -202,10 +204,17 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 				if name == "" {
 					return result, errors.New("inputs require a name")
 				}
-				entry, hit, err := acquire(inputs[resource][name], old.Inputs[resource][name])
+				label := resource
+				if parts := strings.Split(resource, "/"); len(parts) >= 2 {
+					label = strings.Join(parts[len(parts)-2:], "/")
+				}
+				ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", label, "input", name))
+				plugin.Stage(ctx, "Acquiring input")
+				entry, hit, err := acquire(ctx, inputs[resource][name], old.Inputs[resource][name])
 				if err != nil {
 					return result, fmt.Errorf("%s input %s: %w", resource, name, err)
 				}
+				plugin.Logger(ctx).InfoContext(ctx, "Input acquired", "cached", hit)
 				result.File.Inputs[resource][name] = entry
 				result.CacheHits[resource][name] = hit
 			}

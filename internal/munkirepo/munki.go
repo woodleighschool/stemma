@@ -444,6 +444,7 @@ func fileMatches(ctx context.Context, path string, artifact plugin.Artifact) (bo
 	return hex.EncodeToString(h.Sum(nil)) == artifact.SHA256, nil
 }
 func publishContent(ctx context.Context, path string, artifact plugin.Artifact) error {
+	plugin.Stage(ctx, "Publishing Munki installer")
 	if matches, err := fileMatches(ctx, path, artifact); err != nil || matches {
 		return err
 	}

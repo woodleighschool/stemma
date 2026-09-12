@@ -4,10 +4,11 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 )
 
 // ProtocolVersion is the executable protocol understood by this SDK.
-const ProtocolVersion = 2
+const ProtocolVersion = 3
 
 // Request invokes one advertised operation. Describe requests omit Operation and Input.
 type Request struct {
@@ -15,6 +16,7 @@ type Request struct {
 	Operation string          `json:"operation,omitempty"`
 	Method    string          `json:"method"`
 	Input     json.RawMessage `json:"input,omitempty"`
+	LogLevel  slog.Level      `json:"log_level,omitempty"`
 }
 
 // Response retains partial Output when an operation fails. Callers must persist

@@ -33,7 +33,8 @@ type Options struct {
 
 // Report distinguishes source, preparation and each destination's work.
 type Report struct {
-	LockChanged bool             `json:"lock_changed"`
+	LockChanged *bool            `json:"lock_changed,omitempty"`
+	Error       string           `json:"error,omitempty"`
 	Resources   []ResourceReport `json:"resources"`
 }
 
@@ -73,8 +74,13 @@ type state struct {
 }
 
 // Run resolves locked resources in dependency order and reconciles destinations independently.
-func Run(ctx context.Context, opts Options) (Report, error) {
-	var report Report
+func Run(ctx context.Context, opts Options) (report Report, runErr error) {
+	defer func() {
+		if runErr != nil {
+			report.Error = runErr.Error()
+		}
+	}()
+	plugin.Stage(ctx, "Loading project")
 	switch opts.Method {
 	case "update", "prepare", "plan", "apply":
 	default:
@@ -115,6 +121,7 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	if err != nil {
 		return report, err
 	}
+	plugin.Stage(ctx, "Validating operation contracts")
 	plans, err := discover(ctx, p, ops)
 	if err != nil {
 		return report, err
@@ -133,6 +140,7 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	if err != nil {
 		return report, err
 	}
+	plugin.Logger(ctx).InfoContext(ctx, "Resources selected", "count", len(selected))
 	declarations := map[string]map[string]plugin.Input{}
 	for _, key := range selected {
 		declarations[key] = map[string]plugin.Input{}
@@ -147,7 +155,7 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	if err != nil {
 		return report, err
 	}
-	report.LockChanged = locked.Changed
+	report.LockChanged = &locked.Changed
 	if opts.Method == "update" {
 		return report, nil
 	}
@@ -157,6 +165,7 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	}
 	statePath := filepath.Join(stateDir, p.Project+".json")
 	if opts.Method == "apply" {
+		plugin.Stage(ctx, "Acquiring destination state lock")
 		if err := os.MkdirAll(stateDir, 0o700); err != nil {
 			return report, err
 		}
@@ -184,6 +193,9 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 	var failures []error
 	for _, key := range selected {
 		plan := plans[key]
+		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", plan.Resource.Kind+"/"+plan.Resource.Metadata.Name))
+		plugin.Stage(ctx, "Preparing resource")
+		started := time.Now()
 		item := ResourceReport{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Key: key, InputCacheHits: locked.CacheHits[key]}
 		work, err := os.MkdirTemp(filepath.Join(store.Dir, "work"), "resource-*")
 		if err != nil {
@@ -223,6 +235,11 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 			item.Error = preparationErr.Error()
 			failures = append(failures, fmt.Errorf("%s: %w", key, preparationErr))
 		}
+		if preparationErr == nil {
+			plugin.Logger(ctx).InfoContext(ctx, "Resource prepared", "cached", item.Cached, "elapsed", time.Since(started).Round(time.Millisecond))
+		} else {
+			plugin.Logger(ctx).ErrorContext(ctx, "Preparation failed", "error", preparationErr)
+		}
 		preparedItems[key] = preparedResource{work, outputs, len(report.Resources), preparationErr == nil}
 		report.Resources = append(report.Resources, item)
 	}
@@ -246,6 +263,7 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 			destinationErr = reconcileDestination(ctx, opts, p, plans, ops, store, root, prepared.work, destination.Resource, destination.Destination, prepared.outputs, &current, statePath, item)
 		}
 		if destinationErr != nil {
+			plugin.Logger(ctx).ErrorContext(ctx, "Destination failed", "resource", destination.Resource, "destination", destination.Destination, "error", destinationErr)
 			failed[destination] = true
 			if len(item.Destinations) == before {
 				item.Destinations = append(item.Destinations, DestinationReport{Name: destination.Destination, Error: destinationErr.Error()})
@@ -270,6 +288,8 @@ type destinationInput struct {
 
 func reconcileDestination(ctx context.Context, opts Options, p config.Project, plans map[string]resourcePlan, ops *operations, store *cas.Store, root, work, name, destination string, outputs map[string]Prepared, current *state, statePath string, item *ResourceReport) error {
 	software := plans[name]
+	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", software.Resource.Kind+"/"+software.Resource.Metadata.Name, "destination", destination))
+	plugin.Stage(ctx, "Validating destination")
 	prepared, present := outputs["installer"]
 	if reference, ok := software.Destinations[destination]["installer"].(string); ok {
 		prepared, present = outputs[reference]
@@ -336,12 +356,16 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 	if opts.Method == "prepare" {
 		return nil
 	}
+	plugin.Stage(ctx, "Planning destination")
 	input.request.Method = "plan"
 	var response plugin.ReconcileResponse
 	err = ops.call(ctx, d.Operation, "plan", input.request, &response)
 	input.report.Changes = response.Changes
 	input.report.Origins = mergeOrigins(input.report.Origins, response.Origins)
 	err = errors.Join(err, verifyLeases(ctx, store, work, input.request))
+	if err == nil {
+		plugin.Logger(ctx).InfoContext(ctx, "Destination planned", "changes", len(response.Changes))
+	}
 	if err == nil && opts.Method == "apply" {
 		input.report, err = deliver(ctx, ops, p, store, work, name, input, current, statePath)
 	}
@@ -377,6 +401,7 @@ func makeDestinationInput(ops *operations, p config.Project, plans map[string]re
 
 func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.Store, work, software string, input destinationInput, current *state, statePath string) (DestinationReport, error) {
 	d := p.Destinations[input.name]
+	plugin.Stage(ctx, "Applying destination")
 	report := input.report
 	previous := current.Bindings[software+"/"+input.name]
 	if previous.Connection != ops.fingerprint(d) {
@@ -404,6 +429,9 @@ func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.
 		if saveErr := saveState(statePath, *current); saveErr != nil {
 			return report, errors.Join(err, saveErr)
 		}
+	}
+	if err == nil {
+		plugin.Logger(ctx).InfoContext(ctx, "Destination applied", "changes", len(report.Changes))
 	}
 	return report, err
 }

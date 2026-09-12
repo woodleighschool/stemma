@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 
 	"github.com/invopop/jsonschema"
 	"github.com/woodleighschool/stemma/internal/cas"
@@ -27,6 +28,7 @@ import (
 // Catalog describes built-in and installed plugin operations without acquiring
 // software inputs or contacting destinations. Trusted plugin discovery executes code.
 func Catalog(ctx context.Context, opts Options) (plugin.Descriptor, error) {
+	plugin.Stage(ctx, "Loading operation contracts")
 	p, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		return plugin.Descriptor{}, err
@@ -42,6 +44,7 @@ func Catalog(ctx context.Context, opts Options) (plugin.Descriptor, error) {
 // ValidateProject checks authored fields and available operation contracts.
 // Values that depend on artifacts are validated after preparation.
 func ValidateProject(ctx context.Context, opts Options) (config.Project, error) {
+	plugin.Stage(ctx, "Validating project")
 	p, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		return p, err
@@ -234,6 +237,12 @@ func (o *operations) operation(name string) (plugin.Operation, error) {
 }
 
 func (o *operations) call(ctx context.Context, name, method string, input, output any) error {
+	logger := plugin.Logger(ctx).With("operation", name, "method", method)
+	started := time.Now()
+	logger.DebugContext(ctx, "Invoking operation")
+	defer func() {
+		logger.DebugContext(ctx, "Operation returned", "elapsed", time.Since(started).Round(time.Millisecond))
+	}()
 	data, err := json.Marshal(input)
 	if err != nil {
 		return err
@@ -264,6 +273,8 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 	slices.Sort(names)
 	pluginStore := plugins.New(manager.Store, manager.Offline)
 	for _, name := range names {
+		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("plugin", name))
+		plugin.Stage(ctx, "Loading plugin")
 		provider := p.Plugins[name]
 		bundle, entry, err := pluginStore.Load(ctx, manager.Root, provider, locked.Plugins[name], frozen)
 		if err != nil {

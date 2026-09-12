@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +25,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 var version = "dev"
@@ -31,17 +34,29 @@ var date = "unknown"
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	err := command(os.Stdout, os.Stderr).ExecuteContext(ctx)
+	cmd, finish := command(os.Stdout, os.Stderr)
+	err := cmd.ExecuteContext(ctx)
+	finish(err)
 	cancel()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "stemma:", err)
 		os.Exit(1)
 	}
 }
 
-func command(out, errOut io.Writer) *cobra.Command {
+func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	var rootDir, configPath, cacheDir, stateDir, output string
 	root := &cobra.Command{Use: "stemma", Short: "Resolve, prepare and publish reviewed software artifacts", SilenceErrors: true, SilenceUsage: true, Version: version}
+	display := newCommandOutput(root, errOut)
+	out = reportWriter{Writer: out, output: display}
+	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if err := display.start(cmd); err != nil {
+			return err
+		}
+		if output != "text" && output != "json" {
+			return errors.New("output must be text or json")
+		}
+		return nil
+	}
 	root.SetOut(out)
 	root.SetErr(errOut)
 	root.PersistentFlags().StringVar(&rootDir, "root", "", "Stemma project directory (discovered from the current directory)")
@@ -111,9 +126,6 @@ func command(out, errOut io.Writer) *cobra.Command {
 	for _, method := range []string{"update", "prepare", "plan", "apply"} {
 		var offline bool
 		cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
-			if output != "text" && output != "json" {
-				return errors.New("output must be text or json")
-			}
 			path, err := resolve()
 			if err != nil {
 				return err
@@ -138,6 +150,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 	root.AddCommand(&cobra.Command{Use: "inspect FILE", Short: "Read artifact metadata without executing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		switch strings.ToLower(filepath.Ext(args[0])) {
 		case ".intunewin":
+			plugin.Stage(cmd.Context(), "Inspecting artifact")
 			value, err := intunewin.Inspect(args[0])
 			if err != nil {
 				return err
@@ -162,6 +175,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 		return err
 	}})
 	cache.AddCommand(&cobra.Command{Use: "prune", Short: "Remove cached objects after active runs finish", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		plugin.Stage(cmd.Context(), "Pruning cache; waiting for active runs")
 		store, err := cas.Open(cacheDir)
 		if err != nil {
 			return err
@@ -183,6 +197,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 	}})
 	for _, method := range []string{"install", "update"} {
 		plugins.AddCommand(&cobra.Command{Use: method, Short: "Resolve plugin images and lock their release indexes", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+			plugin.Stage(cmd.Context(), "Loading plugin declarations")
 			path, err := resolve()
 			if err != nil {
 				return err
@@ -222,7 +237,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 		}})
 	}
 	root.AddCommand(plugins)
-	return root
+	return root, display.finish
 }
 
 func packageCommand(out io.Writer) *cobra.Command {
@@ -287,22 +302,43 @@ func writeJSON(out io.Writer, value any) error {
 }
 func printReport(out io.Writer, method string, r engine.Report) error {
 	var text strings.Builder
-	if method == "update" || method == "prepare" {
-		_, _ = fmt.Fprintf(&text, "Lockfile changed: %t\n", r.LockChanged)
+	if (method == "update" || method == "prepare") && r.LockChanged != nil {
+		if *r.LockChanged {
+			text.WriteString("Lockfile updated.\n")
+		} else {
+			text.WriteString("Lockfile unchanged.\n")
+		}
 	}
 	for _, software := range r.Resources {
-		if software.Error != "" {
-			_, _ = fmt.Fprintf(&text, "%s: failed: %s\n", software.Name, software.Error)
+		identity := software.Kind + "/" + software.Name
+		if software.Kind == "" {
+			identity = software.Name
 		}
-		_, _ = fmt.Fprintf(&text, "%s/%s (preparation cached: %t)\n", software.Kind, software.Name, software.Cached)
-		for name, artifact := range software.Artifacts {
-			_, _ = fmt.Fprintf(&text, "  %s: %s %s (cached: %t)\n", name, artifact.Filename, artifact.Version, artifact.Cached)
+		switch {
+		case software.Error != "":
+			_, _ = fmt.Fprintf(&text, "%s: failed: %s\n", identity, software.Error)
+		case software.Cached:
+			_, _ = fmt.Fprintf(&text, "%s: cached\n", identity)
+		default:
+			_, _ = fmt.Fprintf(&text, "%s: prepared\n", identity)
+		}
+		for _, name := range slices.Sorted(maps.Keys(software.Artifacts)) {
+			artifact := software.Artifacts[name]
+			_, _ = fmt.Fprintf(&text, "  %s: %s\n", name, strings.TrimSpace(artifact.Filename+" "+artifact.Version))
 		}
 		for _, destination := range software.Destinations {
-			if destination.Error != "" {
+			switch {
+			case destination.Error != "":
 				_, _ = fmt.Fprintf(&text, "  %s: failed: %s\n", destination.Name, destination.Error)
-			} else {
-				_, _ = fmt.Fprintf(&text, "  %s: %d changes, applied: %t\n", destination.Name, len(destination.Changes), destination.Applied)
+			case destination.Applied:
+				_, _ = fmt.Fprintf(&text, "  %s: applied (%d changes)\n", destination.Name, len(destination.Changes))
+			case len(destination.Changes) == 0:
+				_, _ = fmt.Fprintf(&text, "  %s: unchanged\n", destination.Name)
+			default:
+				_, _ = fmt.Fprintf(&text, "  %s: %d changes\n", destination.Name, len(destination.Changes))
+			}
+			for _, change := range destination.Changes {
+				_, _ = fmt.Fprintf(&text, "    %s %s\n", change.Action, change.Field)
 			}
 		}
 	}

@@ -238,6 +238,7 @@ func snapshotFile(ctx context.Context, artifact plugin.Artifact, source string) 
 }
 
 func (c *client) upload(ctx context.Context, appID, identity string, prepared *preparedArtifact, b *binding) error {
+	plugin.Stage(ctx, "Publishing Intune content")
 	if b.Pending == nil {
 		b.Pending = &pendingUpload{PayloadSHA256: identity, Stage: "version-request"}
 		var created object
@@ -356,6 +357,7 @@ func (c *client) upload(ctx context.Context, appID, identity string, prepared *p
 }
 
 func (c *client) waitFile(ctx context.Context, builder *abs.BaseRequestBuilder, committed bool) (object, error) {
+	plugin.Stage(ctx, "Waiting for Intune processing")
 	for range 360 {
 		var file object
 		if err := c.request(ctx, abs.GET, builder, nil, &file); err != nil {
@@ -379,6 +381,7 @@ func (c *client) waitFile(ctx context.Context, builder *abs.BaseRequestBuilder, 
 }
 
 func (c *client) uploadBlob(ctx context.Context, sas string, prepared *preparedArtifact) error {
+	plugin.Stage(ctx, "Uploading Intune content")
 	endpoint, err := url.Parse(sas)
 	if err != nil || endpoint.Host == "" || endpoint.User != nil || (endpoint.Scheme != "https" && (endpoint.Scheme != "http" || (endpoint.Hostname() != "localhost" && endpoint.Hostname() != "127.0.0.1"))) {
 		return errors.New("invalid Azure upload endpoint")

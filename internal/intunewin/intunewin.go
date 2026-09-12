@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/woodleighschool/stemma/plugin"
 	"io"
 	"os"
 	"path/filepath"
@@ -31,6 +32,7 @@ func ValidateSource(ctx context.Context, sourceDir, setupFile string) error {
 // source tree and must not exist. Temporary files are removed on failure.
 // Payload identity ignores source timestamps and normalizes Windows file modes.
 func Write(ctx context.Context, sourceDir, setupFile, outputPath string) (Metadata, error) {
+	plugin.Stage(ctx, "Packaging Intune content")
 	var m Metadata
 	if err := ctx.Err(); err != nil {
 		return m, err

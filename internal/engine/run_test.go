@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,9 +102,30 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 		}
 		return plugin.ReconcileResponse{}, nil
 	}}
-	report, err = Run(t.Context(), options)
+	var logs bytes.Buffer
+	ctx := plugin.WithLogger(t.Context(), slog.New(slog.NewJSONHandler(&logs, nil)))
+	report, err = Run(ctx, options)
 	if err == nil || len(applied) != 1 || applied[0] != "second" || !report.Resources[0].Destinations[1].Applied {
 		t.Fatalf("independent destination was blocked: %+v %v", report, err)
+	}
+	failed := false
+	for line := range bytes.SplitSeq(bytes.TrimSpace(logs.Bytes()), []byte{'\n'}) {
+		var record struct {
+			Message     string `json:"msg"`
+			Destination string `json:"destination"`
+		}
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatal(err)
+		}
+		if record.Destination == "first" {
+			failed = failed || record.Message == "Destination failed"
+			if record.Message == "Destination planned" || record.Message == "Destination applied" {
+				t.Fatalf("failed destination logged success: %s", line)
+			}
+		}
+	}
+	if !failed {
+		t.Fatal("failed destination was not logged")
 	}
 }
 

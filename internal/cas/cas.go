@@ -16,6 +16,7 @@ import (
 	"github.com/gofrs/flock"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 // MaxObjectSize bounds downloads and individual cache objects to 16 GiB.
@@ -53,6 +54,7 @@ func Open(dir string) (*Store, error) {
 
 // Lease prevents garbage collection while a run is active. OS locks release after crashes.
 func (s *Store) Lease(ctx context.Context) (func() error, error) {
+	plugin.Stage(ctx, "Acquiring cache lease")
 	l := flock.New(filepath.Join(s.Dir, "cache.lock"))
 	ok, err := l.TryRLockContext(ctx, 50*time.Millisecond)
 	if err != nil {

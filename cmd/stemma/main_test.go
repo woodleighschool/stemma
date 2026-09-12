@@ -38,7 +38,7 @@ func TestReportRetainsIndependentDestinationResults(t *testing.T) {
 		"missing: failed: source unavailable",
 		"MacSoftware/Example",
 		"unavailable: failed: remote unavailable",
-		"local: 0 changes, applied: true",
+		"local: applied (0 changes)",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("report missing %q: %s", want, out.String())
@@ -146,11 +146,11 @@ spec:
 		t.Fatalf("inspection lost container/receipt facts: %+v", inspected.Facts)
 	}
 	firstPrepare := run(true, "prepare")
-	if !firstPrepare.LockChanged {
+	if firstPrepare.LockChanged == nil || !*firstPrepare.LockChanged {
 		t.Fatal("first preparation did not record inputs")
 	}
 	secondPrepare := run(true, "prepare")
-	if secondPrepare.LockChanged {
+	if secondPrepare.LockChanged == nil || *secondPrepare.LockChanged {
 		t.Fatal("locked preparation changed inputs")
 	}
 	if downloads.Load() != 1 {

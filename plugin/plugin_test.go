@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +28,46 @@ func TestExecutableProtocol(t *testing.T) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v\n%s", err, output)
 	}
+	t.Run("logs stream before completion and obey the caller level", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		defer cancel()
+		release := make(chan struct{})
+		server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			select {
+			case <-release:
+			case <-r.Context().Done():
+			}
+		}))
+		defer server.Close()
+		logs := &notifyingWriter{seen: make(chan struct{})}
+		ctx = plugin.WithLogger(ctx, slog.New(slog.NewJSONHandler(logs, nil)).With("resource", "fixture"))
+		result := make(chan error, 1)
+		go func() {
+			_, err := plugin.Run(ctx, binary, reconcileRequest(t, plugin.ReconcileRequest{Method: "plan", Config: raw(t, map[string]string{"wait_url": server.URL})}))
+			result <- err
+		}()
+		select {
+		case <-logs.seen:
+		case <-ctx.Done():
+			close(release)
+			t.Fatal("plugin did not stream its stage while running")
+		}
+		close(release)
+		if err := <-result; err != nil {
+			t.Fatal(err)
+		}
+		if text := logs.String(); strings.Contains(text, "Fixture request") || !strings.Contains(text, `"resource":"fixture"`) {
+			t.Fatalf("plugin lost caller scope or log filtering: %s", text)
+		}
+		var debug bytes.Buffer
+		debugCtx := plugin.WithLogger(t.Context(), slog.New(slog.NewTextHandler(&debug, &slog.HandlerOptions{Level: slog.LevelDebug})))
+		if _, err := plugin.Run(debugCtx, binary, reconcileRequest(t, plugin.ReconcileRequest{Method: "plan"})); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(debug.String(), "Fixture request") {
+			t.Fatal("debug level did not reach the plugin")
+		}
+	})
 	t.Run("one executable exposes resource and destination contracts", func(t *testing.T) {
 		response, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"})
 		if err != nil {
@@ -117,7 +159,7 @@ func TestExecutableProtocol(t *testing.T) {
 			<-r.Context().Done()
 		}))
 		defer server.Close()
-		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":2,"output":{"binding":{"id":7}}}`)
+		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":3,"output":{"binding":{"id":7}}}`)
 		t.Setenv("STEMMA_ECHO_WAIT_URL", server.URL)
 		response, err := plugin.Run(ctx, binary, plugin.Request{Method: "describe"})
 		if !errors.Is(err, context.Canceled) || response.Protocol != plugin.ProtocolVersion || string(response.Output) != `{"binding":{"id":7}}` {
@@ -137,7 +179,7 @@ func TestExecutableProtocol(t *testing.T) {
 	})
 	t.Run("reject malformed responses", func(t *testing.T) {
 		for _, response := range []string{
-			`{"protocol":1,"output":{}}`, `{"protocol":"2"}`, `{"protocol":2,"unknown":true}`, `{"protocol":2}{}`, `null`, `{"protocol":2`,
+			`{"protocol":1,"output":{}}`, `{"protocol":"2"}`, `{"protocol":3,"unknown":true}`, `{"protocol":3}{}`, `null`, `{"protocol":3`,
 		} {
 			t.Setenv("STEMMA_ECHO_RESPONSE", response)
 			if _, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"}); err == nil {
@@ -146,13 +188,27 @@ func TestExecutableProtocol(t *testing.T) {
 		}
 	})
 	t.Run("process errors retain partial output without diagnostics", func(t *testing.T) {
-		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":2,"output":{"binding":{"id":7}}}`)
+		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":3,"output":{"binding":{"id":7}}}`)
 		t.Setenv("STEMMA_ECHO_FAIL", "1")
 		response, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"})
 		if err == nil || string(reconcileResponse(t, response).Binding) != `{"id":7}` || strings.Contains(err.Error(), "credential") {
 			t.Fatalf("partial output=%s error=%v", response.Output, err)
 		}
 	})
+}
+
+type notifyingWriter struct {
+	bytes.Buffer
+	seen chan struct{}
+	once sync.Once
+}
+
+func (w *notifyingWriter) Write(data []byte) (int, error) {
+	n, err := w.Buffer.Write(data)
+	if bytes.Contains(data, []byte("Waiting for fixture")) {
+		w.once.Do(func() { close(w.seen) })
+	}
+	return n, err
 }
 
 func TestRegistryContracts(t *testing.T) {
@@ -191,10 +247,10 @@ func TestRegistryContracts(t *testing.T) {
 	}
 	for _, request := range []plugin.Request{
 		{Protocol: 1, Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":7}`)},
-		{Protocol: 2, Operation: "missing", Method: "run", Input: json.RawMessage(`{"value":7}`)},
-		{Protocol: 2, Operation: operation.Name, Method: "apply", Input: json.RawMessage(`{"value":7}`)},
-		{Protocol: 2, Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":"7"}`)},
-		{Protocol: 2, Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":7,"extra":true}`)},
+		{Protocol: plugin.ProtocolVersion, Operation: "missing", Method: "run", Input: json.RawMessage(`{"value":7}`)},
+		{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "apply", Input: json.RawMessage(`{"value":7}`)},
+		{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":"7"}`)},
+		{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":7,"extra":true}`)},
 	} {
 		if _, err := registry.Handle(t.Context(), request); err == nil {
 			t.Errorf("accepted invalid request %+v", request)
@@ -203,7 +259,7 @@ func TestRegistryContracts(t *testing.T) {
 	if called != 2 {
 		t.Fatalf("invalid request reached handler; calls = %d", called)
 	}
-	if _, err := registry.Handle(t.Context(), plugin.Request{Protocol: 2, Operation: operation.Name, Method: "validate", Input: json.RawMessage(`{"value":7}`)}); err != nil {
+	if _, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "validate", Input: json.RawMessage(`{"value":7}`)}); err != nil {
 		t.Fatalf("validation required operation output: %v", err)
 	}
 	operation.Platforms = []string{"other/processor"}
@@ -211,7 +267,7 @@ func TestRegistryContracts(t *testing.T) {
 	if err := registry.Register(operation, handler); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Handle(t.Context(), plugin.Request{Protocol: 2, Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":7}`)}); err == nil || !strings.Contains(err.Error(), "runner") {
+	if _, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":7}`)}); err == nil || !strings.Contains(err.Error(), "runner") {
 		t.Fatalf("unsupported runner error = %v", err)
 	}
 }
@@ -228,7 +284,7 @@ func TestRegistryChecksOutputAndPreservesPartialErrors(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		response, err := registry.Handle(t.Context(), plugin.Request{Protocol: 2, Operation: "fixture.echo", Method: "run", Input: json.RawMessage(`{"value":7}`)})
+		response, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: "fixture.echo", Method: "run", Input: json.RawMessage(`{"value":7}`)})
 		if err == nil {
 			t.Fatal("accepted output missing a required contract field")
 		}
@@ -322,10 +378,10 @@ func TestSchemaValidation(t *testing.T) {
 
 func TestServeRejectsMalformedProtocolBeforeHandler(t *testing.T) {
 	for _, input := range []string{
-		`{"protocol":1,"method":"describe"}`, `{"protocol":2,"method":"describe","unknown":true}`,
-		`{"protocol":2,"method":"describe"}{"protocol":2}`, `{"protocol":2`, `{"protocol":2}`,
-		`{"protocol":2,"method":"observe"}`, `{"protocol":"2","method":"describe"}`, `null`, `[]`,
-		`{"protocol":2,"method":"run","operation":"fixture.echo"}`, `{"protocol":2,"method":"describe","input":{}}`,
+		`{"protocol":1,"method":"describe"}`, `{"protocol":3,"method":"describe","unknown":true}`,
+		`{"protocol":3,"method":"describe"}{"protocol":3}`, `{"protocol":3`, `{"protocol":3}`,
+		`{"protocol":3,"method":"observe"}`, `{"protocol":"2","method":"describe"}`, `null`, `[]`,
+		`{"protocol":3,"method":"run","operation":"fixture.echo"}`, `{"protocol":3,"method":"describe","input":{}}`,
 	} {
 		t.Run(input, func(t *testing.T) {
 			registry := plugin.New("fixture", "1")
@@ -358,13 +414,32 @@ func TestServeBounds(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	input := `{"protocol":2,"operation":"fixture.echo","method":"run","input":{"padding":"` + strings.Repeat("x", 4<<20) + `"}}`
+	input := `{"protocol":3,"operation":"fixture.echo","method":"run","input":{"padding":"` + strings.Repeat("x", 4<<20) + `"}}`
 	if err := plugin.Serve(t.Context(), strings.NewReader(input), &out, registry); err == nil || !strings.Contains(err.Error(), "size limit") || called {
 		t.Fatalf("oversized request: error=%v handler called=%v", err, called)
 	}
-	input = `{"protocol":2,"operation":"fixture.echo","method":"run","input":{"value":7}}`
+	input = `{"protocol":3,"operation":"fixture.echo","method":"run","input":{"value":7}}`
 	if err := plugin.Serve(t.Context(), strings.NewReader(input), &out, registry); err == nil || !strings.Contains(err.Error(), "size limit") || !called || out.Len() != 0 {
 		t.Fatalf("oversized response: error=%v handler called=%v output size=%d", err, called, out.Len())
+	}
+}
+
+func TestOversizedDiagnosticPreservesResponse(t *testing.T) {
+	registry := plugin.New("fixture", "1")
+	if err := registry.Register(echoOperation("fixture.echo"), func(ctx context.Context, request plugin.Request) (plugin.Response, error) {
+		plugin.Logger(ctx).InfoContext(ctx, strings.Repeat("x", 4<<20))
+		return plugin.Response{Output: request.Input}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	input := raw(t, plugin.Request{Protocol: plugin.ProtocolVersion, Operation: "fixture.echo", Method: "run", Input: json.RawMessage(`{"value":7}`)})
+	var out bytes.Buffer
+	if err := plugin.Serve(t.Context(), bytes.NewReader(input), &out, registry); err != nil {
+		t.Fatal(err)
+	}
+	var response plugin.Response
+	if err := json.Unmarshal(out.Bytes(), &response); err != nil || string(response.Output) != `{"value":7}` {
+		t.Fatalf("diagnostic lost final result: response=%+v error=%v", response, err)
 	}
 }
 
@@ -377,7 +452,7 @@ func TestRegistryCancellation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	response, err := registry.Handle(ctx, plugin.Request{Protocol: 2, Operation: "fixture.echo", Method: "run", Input: json.RawMessage(`{"value":7}`)})
+	response, err := registry.Handle(ctx, plugin.Request{Protocol: plugin.ProtocolVersion, Operation: "fixture.echo", Method: "run", Input: json.RawMessage(`{"value":7}`)})
 	if !errors.Is(err, context.Canceled) || len(response.Output) == 0 {
 		t.Fatalf("cancellation lost error or partial output: response=%+v err=%v", response, err)
 	}
