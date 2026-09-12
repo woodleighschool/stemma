@@ -7,7 +7,6 @@ spec:
   source:
     url: https://dl.google.com/dl/chrome/mac/universal/stable/gcem/GoogleChrome.pkg
     filename: GoogleChrome.pkg
-  arch: universal
   verification:
     integrity: true
     signature: true

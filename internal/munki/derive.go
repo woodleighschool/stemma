@@ -168,12 +168,9 @@ func Derive(request plugin.ReconcileRequest) (map[string]any, map[string]string,
 	}
 	var selected *plugin.Subject
 	appOptions := metadata.Derive.App
-	evidence, versionKey, architectures, err := macEvidence(request.Artifact)
+	evidence, versionKey, err := macEvidence(request.Artifact)
 	if err != nil {
 		return nil, nil, err
-	}
-	if len(architectures) > 0 {
-		put("supported_architectures", architectures, "macos.arch")
 	}
 	switch {
 	case appOptions != nil:

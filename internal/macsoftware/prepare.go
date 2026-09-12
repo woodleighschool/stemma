@@ -125,9 +125,6 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 	if verification != nil {
 		installer.Evidence["macos.verification"], _ = json.Marshal(verification)
 	}
-	if spec.Arch != "" {
-		installer.Evidence["macos.arch"], _ = json.Marshal(spec.Arch)
-	}
 	outputs := map[string]plugin.Artifact{"installer": installer}
 	if appPath != "" {
 		artwork, err := applicationIcon(ctx, appPath, workspace)

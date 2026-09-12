@@ -17,7 +17,6 @@ type Spec struct {
 	Source       *plugin.Input             `json:"source,omitempty" yaml:"source,omitempty"`
 	Application  *Application              `json:"application,omitempty" yaml:"application,omitempty"`
 	PackagePath  string                    `json:"package_path,omitempty" yaml:"package_path,omitempty"`
-	Arch         string                    `json:"arch,omitempty" yaml:"arch,omitempty" jsonschema:"enum=arm64,enum=x86_64,enum=universal"`
 	Verification Verification              `json:"verification,omitzero" yaml:"verification,omitempty"`
 	Destinations map[string]map[string]any `json:"destinations,omitempty" yaml:"destinations,omitempty"`
 }
@@ -45,9 +44,6 @@ func (s Spec) Preparation() Spec {
 }
 
 func (s Spec) Validate() error {
-	if s.Arch != "" && s.Arch != "arm64" && s.Arch != "x86_64" && s.Arch != "universal" {
-		return errors.New("arch must be arm64, x86_64 or universal")
-	}
 	if s.PackagePath != "" && !relativePath(s.PackagePath) {
 		return errors.New("package_path must be a confined archive path")
 	}

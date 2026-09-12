@@ -70,8 +70,8 @@ func macSoftware(ctx context.Context, request plugin.Request) (plugin.Response, 
 		return plugin.Response{}, err
 	}
 	if request.Method == "validate" {
-		if spec.Source == nil && (spec.Application != nil || spec.PackagePath != "" || spec.Arch != "" || spec.Verification != (macsoftware.Verification{})) {
-			return plugin.Response{}, errors.New("application selection, architecture and verification require a source")
+		if spec.Source == nil && (spec.Application != nil || spec.PackagePath != "" || spec.Verification != (macsoftware.Verification{})) {
+			return plugin.Response{}, errors.New("application selection, package selection and verification require a source")
 		}
 
 		if err := spec.Validate(); err != nil {

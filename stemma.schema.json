@@ -383,14 +383,6 @@
                   },
                   "type": "object"
                 },
-                "arch": {
-                  "enum": [
-                    "arm64",
-                    "x86_64",
-                    "universal"
-                  ],
-                  "type": "string"
-                },
                 "destinations": {
                   "additionalProperties": {
                     "type": "object"
@@ -522,14 +514,6 @@
                         }
                       },
                       "type": "object"
-                    },
-                    "arch": {
-                      "enum": [
-                        "arm64",
-                        "x86_64",
-                        "universal"
-                      ],
-                      "type": "string"
                     },
                     "destinations": {
                       "additionalProperties": {
