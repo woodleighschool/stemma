@@ -1,6 +1,7 @@
 package diskimage
 
 import (
+	"bufio"
 	"bytes"
 	"compress/bzip2"
 	"compress/zlib"
@@ -13,12 +14,13 @@ import (
 	"strings"
 
 	"github.com/deploymenttheory/go-apfs-v2/pkg/disk"
+	"github.com/ulikunitz/xz"
+	"github.com/ulikunitz/xz/lzma"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"howett.net/plist"
 )
 
 const maxChunkSize = 64 << 20
-const maxZeroChunkSize = 256 << 20
 
 type block struct {
 	Name   string `plist:"Name"`
@@ -26,11 +28,9 @@ type block struct {
 	Data   []byte `plist:"Data"`
 }
 
-// The pinned reader trusts footer allocations and decompressed chunk lengths.
-// Validate those bounds, including actual expansion, before allowing it to read
-// filesystem structures. This keeps the parser shared without trusting image
-// declarations as allocation limits.
-func validateDMG(ctx context.Context, filename string) error {
+// decodeDMG validates chunk bounds while writing the single filesystem to a
+// sparse file. Zero-fill extents consume disk address space, not memory.
+func decodeDMG(ctx context.Context, filename string, filesystem *os.File) error {
 	f, err := os.Open(filename)
 	if err != nil {
 		return err
@@ -50,7 +50,7 @@ func validateDMG(ctx context.Context, filename string) error {
 	if string(footer.Signature[:]) != "koly" || footer.Version != 4 || footer.HeaderSize != 512 {
 		return errors.New("not a supported UDIF disk image")
 	}
-	if footer.SegmentCount != 1 || footer.SegmentNumber != 1 || footer.RsrcForkLength != 0 {
+	if (footer.SegmentCount != footer.SegmentNumber || footer.SegmentCount > 1) || footer.RsrcForkLength != 0 {
 		return errors.New("segmented and resource-fork disk images are unsupported")
 	}
 	end := uint64(info.Size() - 512)
@@ -84,8 +84,12 @@ func validateDMG(ctx context.Context, filename string) error {
 			return errors.New("duplicate disk image partition name")
 		}
 		seen[name] = true
-		if strings.Contains(name, "Apple_HFS") || strings.Contains(name, "Apple_APFS") || name == "disk image" || name == "(disk image)" {
+		isFilesystem := strings.Contains(name, "Apple_HFS") || strings.Contains(name, "Apple_APFS") || name == "disk image" || name == "(disk image)"
+		if isFilesystem {
 			filesystems++
+			if filesystems > 1 {
+				return errors.New("disk image has multiple filesystems; exactly one is required")
+			}
 		}
 		data := partition.Data
 		if len(data) < 204 || string(data[:4]) != "mish" {
@@ -129,11 +133,16 @@ func validateDMG(ctx context.Context, filename string) error {
 				return errors.New("compressed disk image chunk exceeds size limit")
 			}
 			if chunk.Type == 0 || chunk.Type == 2 {
-				if chunk.CompressedLength != 0 || chunk.DiskLength > maxZeroChunkSize {
-					return errors.New("zero-fill disk image chunk exceeds size limit")
+				if chunk.CompressedLength != 0 {
+					return errors.New("zero-fill disk image chunk contains compressed data")
 				}
 				if isHeader {
 					return errors.New("GPT header cannot be zero-filled")
+				}
+				if isFilesystem {
+					if _, err := filesystem.Seek(int64(chunk.DiskLength), io.SeekCurrent); err != nil {
+						return err
+					}
 				}
 				continue
 			}
@@ -141,6 +150,9 @@ func validateDMG(ctx context.Context, filename string) error {
 				return errors.New("expanded disk image chunk exceeds size limit")
 			}
 			output := io.Discard
+			if isFilesystem {
+				output = filesystem
+			}
 			if isHeader {
 				output = &header
 			}
@@ -150,6 +162,11 @@ func validateDMG(ctx context.Context, filename string) error {
 		}
 		if previousEnd != sectors {
 			return errors.New("disk image chunks do not cover the partition")
+		}
+		if isFilesystem {
+			if err := filesystem.Truncate(int64(sectors * 512)); err != nil {
+				return err
+			}
 		}
 		if isHeader {
 			if err := binary.Read(&header, binary.LittleEndian, &gpt); err != nil {
@@ -202,8 +219,25 @@ func validateChunk(ctx context.Context, image io.ReaderAt, chunk disk.DMGChunk, 
 		reader = stream
 	case 0x80000006:
 		reader = bzip2.NewReader(compressed)
+	case 0x80000008:
+		buffered := bufio.NewReader(compressed)
+		header, err := buffered.Peek(13)
+		if err != nil {
+			return err
+		}
+		if bytes.HasPrefix(header, []byte{0xfd, '7', 'z', 'X', 'Z', 0}) {
+			reader, err = (xz.ReaderConfig{DictCap: maxChunkSize}).NewReader(buffered)
+		} else {
+			if binary.LittleEndian.Uint32(header[1:5]) > maxChunkSize {
+				return errors.New("LZMA dictionary exceeds size limit")
+			}
+			reader, err = lzma.NewReader(buffered)
+		}
+		if err != nil {
+			return err
+		}
 	default:
-		return fmt.Errorf("unsupported disk image compression 0x%08x; supported codecs are raw, ADC, zlib and bzip2", chunk.Type)
+		return fmt.Errorf("unsupported disk image compression 0x%08x", chunk.Type)
 	}
 	n, err := io.Copy(output, io.LimitReader(fileio.Reader{Context: ctx, Reader: reader}, int64(chunk.DiskLength)+1))
 	if err != nil {

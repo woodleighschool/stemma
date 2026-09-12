@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/fileio"
@@ -103,17 +102,9 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 		}
 		target := ""
 		if info.Mode()&os.ModeSymlink != 0 {
-			if err := checkSymlinkMetadata(root, name, info); err != nil {
-				return fmt.Errorf("tree entry %s: %w", name, err)
-			}
-			target, err = root.Readlink(name)
+			target, err = Readlink(root, name)
 			if err != nil {
 				return err
-			}
-			target = filepath.ToSlash(target)
-			resolved := filepath.Clean(filepath.Join(filepath.Dir(name), target))
-			if filepath.IsAbs(target) || !filepath.IsLocal(resolved) || strings.Contains(target, "\\") {
-				return fmt.Errorf("escaping symlink %s", name)
 			}
 		} else if !info.IsDir() && !info.Mode().IsRegular() {
 			return fmt.Errorf("unsupported tree entry %s", name)

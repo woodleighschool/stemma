@@ -81,7 +81,7 @@ func VerifyApp(appPath string, policy Policy) (Evidence, error) {
 	if err != nil {
 		return evidence, err
 	}
-	resources, resourcesErr := rootRead(root, "Contents/_CodeSignature/CodeResources", maxMetadata)
+	resources, resourcesErr := rootRead(root, "Contents/_CodeSignature/CodeResources", 32<<20)
 	if resourcesErr != nil && !errors.Is(resourcesErr, fs.ErrNotExist) {
 		return evidence, resourcesErr
 	}

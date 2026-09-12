@@ -257,6 +257,10 @@ func Select(root, selection string) (string, error) {
 			return "", err
 		}
 		defer func() { _ = r.Close() }()
+		name, err = MatchPath(r.FS(), name)
+		if err != nil {
+			return "", err
+		}
 		info, err := r.Lstat(name)
 		if err != nil {
 			return "", err

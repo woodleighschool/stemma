@@ -3,7 +3,6 @@ package apple
 import (
 	"bytes"
 	"crypto/rsa"
-	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
 	"encoding/binary"
@@ -17,16 +16,31 @@ var oidHashAgility = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 9, 1}
 var oidHashAgilityV2 = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 9, 2}
 
 func verifyCMS(signature *codeSignature) (*x509.Certificate, error) {
-	if len(signature.directories) != 1 {
-		return nil, fmt.Errorf("%w: CMS authentication of alternate CodeDirectories", ErrUnsupported)
+	if len(signature.directories) == 0 {
+		return nil, fmt.Errorf("CMS has no CodeDirectory")
+	}
+	var hashes [][]byte
+	var algorithms []asn1.ObjectIdentifier
+	for _, directory := range signature.directories {
+		if err := validateCodeDirectory(directory); err != nil {
+			return nil, err
+		}
+		h, _, err := codeHash(directory[37])
+		if err != nil {
+			return nil, err
+		}
+		_, _ = h.Write(directory)
+		hashes = append(hashes, h.Sum(nil))
+		switch directory[37] {
+		case 1:
+			algorithms = append(algorithms, pkcs7.OIDDigestAlgorithmSHA1)
+		case 2, 3:
+			algorithms = append(algorithms, pkcs7.OIDDigestAlgorithmSHA256)
+		case 4:
+			algorithms = append(algorithms, pkcs7.OIDDigestAlgorithmSHA384)
+		}
 	}
 	cd := signature.directories[0]
-	if err := validateCodeDirectory(cd); err != nil {
-		return nil, err
-	}
-	if cd[37] != 2 {
-		return nil, fmt.Errorf("%w: CMS authentication requires a SHA-256 CodeDirectory", ErrUnsupported)
-	}
 	blob := signature.blobs[0x10000]
 	if len(blob) <= 8 {
 		return nil, fmt.Errorf("Mach-O has no CMS signature; ad-hoc hashes do not authenticate a signer")
@@ -61,7 +75,6 @@ func verifyCMS(signature *codeSignature) (*x509.Certificate, error) {
 	if !ok || key.N.BitLen() < 2048 || key.N.BitLen() > 8192 {
 		return nil, fmt.Errorf("%w: CMS signer requires a 2048-8192 bit RSA key", ErrUnsupported)
 	}
-	digest := sha256.Sum256(cd)
 	seen := map[string]bool{}
 	for _, attribute := range signer.AuthenticatedAttributes {
 		name := attribute.Type.String()
@@ -88,21 +101,57 @@ func verifyCMS(signature *codeSignature) (*x509.Certificate, error) {
 			var agility struct {
 				Hashes [][]byte `plist:"cdhashes"`
 			}
-			if _, err := plist.Unmarshal(data, &agility); err != nil || len(agility.Hashes) != 1 || !bytes.Equal(agility.Hashes[0], digest[:20]) {
-				return nil, fmt.Errorf("CMS hash agility does not match the primary CodeDirectory")
+			if _, err := plist.Unmarshal(data, &agility); err != nil || len(agility.Hashes) != len(hashes) {
+				return nil, fmt.Errorf("CMS hash agility does not match CodeDirectories")
+			}
+			matched := make([]bool, len(hashes))
+			for _, digest := range agility.Hashes {
+				found := false
+				for i, expected := range hashes {
+					if !matched[i] && bytes.Equal(digest, expected[:20]) {
+						matched[i], found = true, true
+						break
+					}
+				}
+				if !found {
+					return nil, fmt.Errorf("CMS hash agility does not match CodeDirectories")
+				}
 			}
 		case attribute.Type.Equal(oidHashAgilityV2):
-			var agility struct {
-				Algorithm asn1.ObjectIdentifier
-				Digest    []byte
+			matched := make([]bool, len(hashes))
+			for data := attribute.Value.Bytes; len(data) != 0; {
+				var agility struct {
+					Algorithm asn1.ObjectIdentifier
+					Digest    []byte
+				}
+				rest, err := asn1.Unmarshal(data, &agility)
+				if err != nil {
+					return nil, fmt.Errorf("CMS hash agility v2: %w", err)
+				}
+				data = rest
+				found := false
+				for i, expected := range hashes {
+					if !matched[i] && agility.Algorithm.Equal(algorithms[i]) && bytes.Equal(agility.Digest, expected) {
+						matched[i], found = true, true
+						break
+					}
+				}
+				if !found {
+					return nil, fmt.Errorf("CMS hash agility v2 does not match CodeDirectories")
+				}
 			}
-			if err := decodeCMSAttribute(attribute.Value.Bytes, &agility); err != nil || !agility.Algorithm.Equal(pkcs7.OIDDigestAlgorithmSHA256) || !bytes.Equal(agility.Digest, digest[:]) {
-				return nil, fmt.Errorf("CMS hash agility v2 does not match the primary CodeDirectory")
+			for _, match := range matched {
+				if !match {
+					return nil, fmt.Errorf("CMS hash agility v2 omits a CodeDirectory")
+				}
 			}
 		}
 	}
 	if !seen[pkcs7.OIDAttributeContentType.String()] || !seen[pkcs7.OIDAttributeMessageDigest.String()] {
 		return nil, fmt.Errorf("CMS requires signed content-type and message-digest attributes")
+	}
+	if len(hashes) > 1 && !seen[oidHashAgility.String()] && !seen[oidHashAgilityV2.String()] {
+		return nil, fmt.Errorf("CMS does not authenticate alternate CodeDirectories")
 	}
 	signed.Content = cd
 	// Verify authenticates the detached bytes with the embedded signer certificate.

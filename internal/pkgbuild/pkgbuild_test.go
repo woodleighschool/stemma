@@ -8,7 +8,6 @@ import (
 	"encoding/binary"
 	"encoding/xml"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -94,7 +93,7 @@ func TestBuildIntegrityReproducibilityAndInputChanges(t *testing.T) {
 	}
 }
 func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
-	for _, name := range []string{"empty", "traversal", "script-name", "bundle", "symlink", "hardlink", "oversize", "total-size", "entry-limit", "output-in-root", "output-via-symlink", "script-ancestor", "existing-output", "cancelled"} {
+	for _, name := range []string{"empty", "traversal", "script-name", "symlink", "hardlink", "oversize", "total-size", "output-in-root", "output-via-symlink", "script-ancestor", "existing-output", "cancelled"} {
 		t.Run(name, func(t *testing.T) {
 			root, opts := fixture(t)
 			output := filepath.Join(t.TempDir(), "out.pkg")
@@ -107,12 +106,8 @@ func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
 				opts.Scripts["preinstall"] = "../outside"
 			case "script-name":
 				opts.Scripts["prepare"] = "Scripts/preinstall"
-			case "bundle":
-				if err := os.Mkdir(filepath.Join(root, "Payload/Fake.app"), 0o755); err != nil {
-					t.Fatal(err)
-				}
 			case "symlink":
-				if err := os.Symlink("message.txt", filepath.Join(root, "Payload/Library/Application Support/Fixture/link")); err != nil {
+				if err := os.Symlink("../../../../../outside", filepath.Join(root, "Payload/Library/Application Support/Fixture/link")); err != nil {
 					t.Skip(err)
 				}
 			case "hardlink":
@@ -132,10 +127,6 @@ func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
 					t.Fatal(err)
 				}
 				_ = f.Close()
-			case "entry-limit":
-				for i := range MaxEntries {
-					writeFile(t, filepath.Join(root, "Payload", fmt.Sprintf("file-%d", i)), nil, 0o644)
-				}
 			case "output-in-root":
 				output = filepath.Join(root, "output.pkg")
 			case "output-via-symlink":

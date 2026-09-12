@@ -58,8 +58,9 @@ map defaults through `extends`; lists and explicit nulls replace inherited value
 A Mac application needs one selection. Archive paths describe where to inspect;
 `installed_path` describes its endpoint location. Bundle metadata, version and
 supported icons derive from that selection. ZIP applications are wrapped as PKGs;
-app DMGs retain the original image. `package_path` selects a nested vendor PKG
-without reconstructing it. A source-free `MacSoftware` can publish Munki `nopkg`.
+app DMGs retain the original image. `package_path` selects one nested vendor PKG
+by relative path or glob without reconstructing it. DMG inspection uses a temporary
+sparse filesystem image; publication retains the original installer bytes. A source-free `MacSoftware` can publish Munki `nopkg`.
 
 ```yaml
 apiVersion: stemma/v1alpha1
@@ -250,16 +251,16 @@ and runner platform are separate; resource and provider descriptors declare conc
 runner requirements. Missing commands or unsupported runners fail before acquisition
 or destination mutation, with setup instructions supplied by the operation.
 
-| Operation                                           | Runner requirements and supported scope                                                                                     |
-| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| HTTP/GitHub/local resolution, MSI inspection        | Go binary; no Windows runtime or installer execution                                                                        |
-| Mac bundle/PKG inspection, HFS+/HFSX DMG extraction | Portable Go implementation; APFS and unsupported compression/layouts fail                                                   |
-| `BuildMacPkg`, ZIP-app wrapping                     | Portable unsigned component PKGs; endpoint scripts are packaged, never executed; unsupported links/metadata fail            |
-| Signature inspection                                | Portable supported PKG/Mach-O integrity and exact certificate pins; no Apple chain/revocation or native platform assessment |
-| Automatic application icons                         | Embedded PNG and PNG-backed ICNS; extraction is optional                                                                    |
-| `stemma icon` native rendering                      | macOS system image/Quick Look frameworks; PNG input remains portable                                                        |
-| Intune Win32 preparation                            | Existing portable Go wrapper, bounded to 2 GiB; no .NET requirement                                                         |
-| Microsoft's comparison tool                         | Windows and .NET Framework 4.7.2, as documented by Microsoft                                                                |
+| Operation                                                | Runner requirements and supported scope                                                                                                                  |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HTTP/GitHub/local resolution, MSI inspection             | Go binary; no Windows runtime or installer execution                                                                                                     |
+| Mac bundle/PKG inspection, HFS+/HFSX/APFS DMG inspection | Portable Go implementation; raw, ADC, zlib, bzip2 and LZMA DMG chunks                                                                                    |
+| `BuildMacPkg`, ZIP-app wrapping                          | Portable unsigned component PKGs; endpoint scripts are packaged, never executed; confined relative symlinks retained; unsupported payload metadata fails |
+| Signature inspection                                     | Portable supported PKG/Mach-O integrity and exact certificate pins; no Apple chain/revocation or native platform assessment                              |
+| Automatic application icons                              | Embedded PNG and PNG-backed ICNS; extraction is optional                                                                                                 |
+| `stemma icon` native rendering                           | macOS system image/Quick Look frameworks; PNG input remains portable                                                                                     |
+| Intune Win32 preparation                                 | Existing portable Go wrapper, bounded to 2 GiB; no .NET requirement                                                                                      |
+| Microsoft's comparison tool                              | Windows and .NET Framework 4.7.2, as documented by Microsoft                                                                                             |
 
 The portable wrapper has independent format verification. Packaging or API acceptance
 does not prove endpoint installation. Microsoft's tool is not invoked implicitly;
@@ -283,5 +284,5 @@ mise run build
 ## 🙏 Credits
 
 - [WrapTune-MacOS](https://github.com/thefinder808/WrapTune-MacOS) — Windows packaging and verification reference
-- [Fleet](https://github.com/fleetdm/fleet) — BOM and XAR package writers
+- [Fleet](https://github.com/fleetdm/fleet) — XAR package writer
 - [mholt/archives](https://github.com/mholt/archives) — archive handling

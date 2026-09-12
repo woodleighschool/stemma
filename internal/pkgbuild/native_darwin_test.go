@@ -109,3 +109,28 @@ func native(t *testing.T, tool string, args ...string) string {
 	}
 	return string(data)
 }
+
+func TestNativeFrameworkLinksAndMultipleBOMLeaves(t *testing.T) {
+	root, opts := fixture(t)
+	framework := filepath.Join(root, "Payload/Library/Fixture.framework")
+	for i := range 600 {
+		writeFile(t, filepath.Join(framework, "Versions/A", fmt.Sprintf("file-%03d", i)), []byte("payload"), 0o644)
+	}
+	if err := os.Symlink("A", filepath.Join(framework, "Versions/Current")); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(t.TempDir(), "framework.pkg")
+	if err := Build(t.Context(), root, output, opts); err != nil {
+		t.Fatal(err)
+	}
+	expanded := filepath.Join(t.TempDir(), "expanded")
+	native(t, "/usr/sbin/pkgutil", "--expand-full", output, expanded)
+	target, err := os.Readlink(filepath.Join(expanded, "Payload/Library/Fixture.framework/Versions/Current"))
+	if err != nil || target != "A" {
+		t.Fatalf("symlink: %q %v", target, err)
+	}
+	listing := native(t, "/usr/bin/lsbom", filepath.Join(expanded, "Bom"))
+	if !strings.Contains(listing, "./Library/Fixture.framework/Versions/A/file-599\t100644") || !strings.Contains(listing, "./Library/Fixture.framework/Versions/Current\t120755") {
+		t.Fatalf("native BOM lost a leaf or symlink: %s", listing)
+	}
+}

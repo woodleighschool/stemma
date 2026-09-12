@@ -46,10 +46,12 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 		return nil, err
 	}
 	options := spec.Application
-	if archivePath != "" && options != nil && options.Path == archivePath {
-		copyOptions := *options
-		copyOptions.Path = "."
-		options = &copyOptions
+	if archivePath != "" && options != nil {
+		if matched, _ := path.Match(options.Path, archivePath); matched {
+			copyOptions := *options
+			copyOptions.Path = "."
+			options = &copyOptions
+		}
 	}
 	app, err := selectApp(facts, options)
 	if err != nil {

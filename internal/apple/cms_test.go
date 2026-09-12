@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -152,7 +153,7 @@ func TestCMSRejectsUnboundCodeDirectories(t *testing.T) {
 	t.Run("alternate", func(t *testing.T) {
 		signature := signedFixtureSignature(t, 0)
 		signature.directories = append(signature.directories, bytes.Clone(signature.directories[0]))
-		if _, err := verifyCMS(signature); !errors.Is(err, ErrUnsupported) {
+		if _, err := verifyCMS(signature); err == nil {
 			t.Fatalf("alternate CodeDirectory authentication was claimed: %v", err)
 		}
 	})
@@ -239,4 +240,45 @@ func signedCMS(t *testing.T, content []byte, digest asn1.ObjectIdentifier, attri
 	binary.BigEndian.PutUint32(blob, 0xfade0b01)
 	binary.BigEndian.PutUint32(blob[4:], uint32(len(data)+8))
 	return append(blob, data...)
+}
+
+func TestCMSBindsAlternateCodeDirectories(t *testing.T) {
+	for _, version := range []int{1, 2} {
+		t.Run(fmt.Sprint(version), func(t *testing.T) {
+			signature := signedFixtureSignature(t, 0)
+			alternate := bytes.Clone(signature.directories[0])
+			alternate[len(alternate)-1] ^= 1
+			signature.directories = append(signature.directories, alternate)
+			var short [][]byte
+			var values []byte
+			for _, cd := range signature.directories {
+				digest := sha256.Sum256(cd)
+				short = append(short, digest[:20])
+				data, err := asn1.Marshal(struct {
+					Algorithm asn1.ObjectIdentifier
+					Digest    []byte
+				}{pkcs7.OIDDigestAlgorithmSHA256, digest[:]})
+				if err != nil {
+					t.Fatal(err)
+				}
+				values = append(values, data...)
+			}
+			attribute := pkcs7.Attribute{Type: oidHashAgilityV2, Value: asn1.RawValue{FullBytes: values}}
+			if version == 1 {
+				data, err := plist.Marshal(map[string]any{"cdhashes": short}, plist.XMLFormat)
+				if err != nil {
+					t.Fatal(err)
+				}
+				attribute = pkcs7.Attribute{Type: oidHashAgility, Value: data}
+			}
+			signature.blobs[0x10000] = signedCMS(t, signature.directories[0], pkcs7.OIDDigestAlgorithmSHA256, attribute)
+			if _, err := verifyCMS(signature); err != nil {
+				t.Fatal(err)
+			}
+			alternate[len(alternate)-1] ^= 2
+			if _, err := verifyCMS(signature); err == nil {
+				t.Fatal("CMS accepted a substituted alternate directory")
+			}
+		})
+	}
 }

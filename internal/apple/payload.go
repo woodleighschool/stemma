@@ -20,15 +20,16 @@ import (
 	"github.com/woodleighschool/stemma/internal/fileio"
 )
 
-const maxPayloadEntries = 100000
+const maxPayloadEntries = 1000000
 const maxPackageMetadata = 32 << 20
 const maxPayloadPadding = 1 << 20
 const pbzxChunkSize = 16 << 20
 
 type payloadBudget struct {
-	metadata int64
-	bytes    int64
-	entries  int
+	metadata  int64
+	bytes     int64
+	entries   int
+	pathBytes int64
 }
 
 func newPayloadBudget() *payloadBudget {
@@ -202,6 +203,10 @@ func (a *xarArchive) packageInfo(name string) (PackageInfo, error) {
 	if metadata.Identifier == "" || metadata.Version == "" {
 		return PackageInfo{}, fmt.Errorf("PackageInfo requires identifier and version")
 	}
+	metadata.InstallLocation = strings.TrimRight(metadata.InstallLocation, "/")
+	if metadata.InstallLocation == "" && document.InstallLocation != "" {
+		metadata.InstallLocation = "/"
+	}
 	if metadata.InstallLocation != "" && (!path.IsAbs(metadata.InstallLocation) || strings.ContainsAny(metadata.InstallLocation, "\\\x00") || path.Clean(metadata.InstallLocation) != metadata.InstallLocation) {
 		return PackageInfo{}, fmt.Errorf("unsafe PackageInfo install location %q", metadata.InstallLocation)
 	}
@@ -354,6 +359,10 @@ func readCPIO(r io.Reader, budget *payloadBudget, applicationRoot bool) ([]Packa
 		}
 		if name == "." && mode != 0040000 {
 			return nil, fmt.Errorf("CPIO root is not a directory")
+		}
+		budget.pathBytes += int64(len(name))
+		if budget.pathBytes > 128<<20 {
+			return nil, fmt.Errorf("PKG payload paths exceed memory limit")
 		}
 		seen[name] = mode
 		if strings.HasSuffix(name, ".app/Contents/Info.plist") || applicationRoot && name == "Contents/Info.plist" {

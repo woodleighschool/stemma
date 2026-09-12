@@ -2,6 +2,7 @@
 package pkgbuild
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/xml"
@@ -27,7 +28,7 @@ import (
 )
 
 // Version identifies the package derivation, including its format and metadata policy.
-const Version = "stemma.pkgbuild/0.1.3"
+const Version = "stemma.pkgbuild/0.1.4"
 
 // BOM's 32-bit size field is narrower than ODC's 33-bit file length.
 const maxFileSize int64 = math.MaxUint32
@@ -35,8 +36,8 @@ const maxFileSize int64 = math.MaxUint32
 // MaxPayloadSize bounds the expanded payload bytes.
 const MaxPayloadSize = 512 << 20
 
-// The adopted BOM writer uses one 4 KiB leaf (12-byte header, 8 bytes per path).
-const MaxEntries = 500
+// MaxEntries bounds the in-memory package inventory.
+const MaxEntries = 100000
 
 // MaxScriptSize bounds each packaged endpoint hook.
 const MaxScriptSize = 1 << 20
@@ -95,7 +96,7 @@ var packageIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
 
 // Build writes a new unsigned PKG outside root without changing the input tree.
 // It supports ordinary payload files/directories and declared install hooks.
-// Unsupported links, extended metadata and bundle installation policy are rejected.
+// Relative symlinks are retained; unrepresentable filesystem metadata is rejected.
 func Build(ctx context.Context, root, output string, opts Options) error {
 	plugin.Stage(ctx, "Building Apple package")
 	if err := Validate(opts); err != nil {
@@ -154,8 +155,17 @@ func Build(ctx context.Context, root, output string, opts Options) error {
 		if err != nil {
 			return err
 		}
-		bom := buildBom(paths)
-		if err := os.WriteFile(filepath.Join(workspace, "Bom"), bom, 0o644); err != nil {
+		builder := bom.NewBuilder()
+		for _, entry := range paths {
+			if err := builder.Add(entry); err != nil {
+				return err
+			}
+		}
+		var data bytes.Buffer
+		if err := builder.Build(&data); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(workspace, "Bom"), data.Bytes(), 0o644); err != nil {
 			return err
 		}
 		info.Payload = &payloadInfo{Files: len(paths), Kilobytes: (size + 1023) / 1024}
@@ -285,7 +295,7 @@ func copyContents(ctx context.Context, destination io.Writer, f *os.File, info o
 	return nil
 }
 
-func writePayload(ctx context.Context, source *os.Root, prefix, destination string, timestamp time.Time, metadata map[string]EntryMetadata) ([]*bomPath, int64, error) {
+func writePayload(ctx context.Context, source *os.Root, prefix, destination string, timestamp time.Time, metadata map[string]EntryMetadata) ([]bom.Entry, int64, error) {
 	f, err := os.Create(destination)
 	if err != nil {
 		return nil, 0, err
@@ -293,11 +303,11 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 	defer func() { _ = f.Close() }()
 	gz := gzip.NewWriter(f)
 	writer := cpio.NewWriter(gz)
-	var paths []*bomPath
+	var paths []bom.Entry
 	var total int64
 	used := map[string]bool{}
-	var walk func(string, string, uint32) error
-	walk = func(name, relative string, parentID uint32) error {
+	var walk func(string, string) error
+	walk = func(name, relative string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -307,21 +317,34 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 		if !validPath(name) || len(path.Base(name)) > 255 {
 			return errors.New("unsupported package path")
 		}
-		file, info, err := checkedFile(source, name)
+		info, err := source.Lstat(name)
 		if err != nil {
 			return err
 		}
-		defer func() { _ = file.Close() }()
+		var file *os.File
+		var link string
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err = archive.Readlink(source, name)
+			if err != nil {
+				return err
+			}
+			if !validPath(path.Join(path.Dir(relative), link)) {
+				return fmt.Errorf("escaping payload symlink %s", relative)
+			}
+		} else {
+			file, info, err = checkedFile(source, name)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = file.Close() }()
+		}
 		if relative == "." && !info.IsDir() {
 			return errors.New("payload must be a directory")
 		}
-		if info.IsDir() && relative != "." {
-			ext := strings.ToLower(path.Ext(relative))
-			if slices.Contains([]string{".app", ".framework", ".bundle", ".plugin"}, ext) {
-				return fmt.Errorf("bundle installation policy is unsupported: %s", relative)
-			}
-		}
 		var size int64
+		if link != "" {
+			size = int64(len(link))
+		}
 		if info.Mode().IsRegular() {
 			size = info.Size()
 			if size < 0 || size > maxFileSize {
@@ -340,8 +363,14 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 			permissions = *attrs.Mode
 		}
 		mode := permissions | cpio.ModeRegular
+		typ := bom.TypeFile
+		if link != "" {
+			mode = permissions | cpio.ModeSymlink
+			typ = bom.TypeLink
+		}
 		if info.IsDir() {
 			mode = permissions | cpio.ModeDir
+			typ = bom.TypeDirectory
 		}
 		modified, err := packageTime(info.ModTime(), timestamp)
 		if err != nil {
@@ -354,13 +383,17 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 		if err := writer.WriteHeader(cfile); err != nil {
 			return err
 		}
-		item := &bomPath{id: id, parentID: parentID, name: path.Base(relative), isDir: info.IsDir(), mode: uint16(mode), uid: attrs.UID, gid: attrs.GID, size: uint32(size), modified: uint32(modified.Unix())}
-		if info.Mode().IsRegular() {
+		item := bom.Entry{Path: cfile.Name, Type: typ, Architecture: 15, Mode: uint16(mode), UID: attrs.UID, GID: attrs.GID, Size: size, ModTime: modified, LinkTarget: link}
+		if info.Mode().IsRegular() || link != "" {
 			digest := bom.NewCksum()
-			if err := copyContents(ctx, io.MultiWriter(writer, digest), file, info); err != nil {
+			if link != "" {
+				if _, err := io.WriteString(io.MultiWriter(writer, digest), link); err != nil {
+					return err
+				}
+			} else if err := copyContents(ctx, io.MultiWriter(writer, digest), file, info); err != nil {
 				return err
 			}
-			item.checksum = digest.Sum32()
+			item.Checksum = digest.Sum32()
 		}
 		paths = append(paths, item)
 		if info.IsDir() {
@@ -373,14 +406,14 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 			}
 			slices.SortFunc(children, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 			for _, child := range children {
-				if err := walk(path.Join(name, child.Name()), path.Join(relative, child.Name()), id); err != nil {
+				if err := walk(path.Join(name, child.Name()), path.Join(relative, child.Name())); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	if err := walk(prefix, ".", 0); err != nil {
+	if err := walk(prefix, "."); err != nil {
 		return nil, 0, err
 	}
 	for name := range metadata {

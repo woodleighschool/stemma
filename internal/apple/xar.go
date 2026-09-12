@@ -102,8 +102,9 @@ type xarArchive struct {
 		Signatures []xarSignature `xml:"signature"`
 		Files      []xarFile      `xml:"file"`
 	}
-	entries []Entry
-	files   map[string]xarFile
+	entries        []Entry
+	files          map[string]xarFile
+	duplicateBytes int64
 }
 
 // InspectPackage reads a flat PKG/XAR table of contents and component receipt
@@ -361,8 +362,22 @@ func (a *xarArchive) addFiles(parent string, files []xarFile, depth int) error {
 			return fmt.Errorf("unsafe XAR filename %q", baseName)
 		}
 		name := path.Join(parent, baseName)
-		if _, exists := a.files[name]; exists {
-			return fmt.Errorf("duplicate XAR path %q", name)
+		if prior, exists := a.files[name]; exists {
+			if prior.Type != "file" || file.Type != "file" || prior.Data == nil || file.Data == nil || len(prior.EA)+len(file.EA)+len(file.Files) != 0 || prior.Data.Size != file.Data.Size || file.Data.Size < 0 || file.Data.Size > maxMetadata-a.duplicateBytes {
+				return fmt.Errorf("conflicting or oversized duplicate XAR path %q", name)
+			}
+			a.duplicateBytes += file.Data.Size
+			var first, second bytes.Buffer
+			if err := a.readData(name, *prior.Data, &first, maxMetadata); err != nil {
+				return err
+			}
+			if err := a.readData(name, *file.Data, &second, maxMetadata); err != nil {
+				return err
+			}
+			if !bytes.Equal(first.Bytes(), second.Bytes()) {
+				return fmt.Errorf("conflicting duplicate XAR path %q", name)
+			}
+			continue
 		}
 		if len(a.files) >= 100000 {
 			return fmt.Errorf("too many XAR entries")

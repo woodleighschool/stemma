@@ -1,4 +1,4 @@
-// Package diskimage reads selected installer payloads from portable HFS+ DMGs.
+// Package diskimage reads selected installer payloads from portable HFS+ and APFS DMGs.
 package diskimage
 
 import (
@@ -15,8 +15,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/deploymenttheory/go-apfs-v2/pkg/disk"
+	"github.com/deploymenttheory/go-apfs-v2/pkg/apfs"
 	"github.com/deploymenttheory/go-apfs-v2/pkg/hfsplus"
+	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"golang.org/x/text/unicode/norm"
 )
@@ -28,32 +29,31 @@ const maxEntries = 100000
 // returning its path. An empty selection requires one unambiguous payload.
 // Partial output is removed on failure. Images are read without mounting them.
 //
-// Flat PKGs are self-contained XAR data forks; their enclosing volume's Finder
-// metadata is not installer content. App trees retain modes, times and relative
-// symlinks, and reject metadata the portable package representation cannot carry.
+// The result is an inspection copy: file bytes, modes, times and confined symlinks.
+// Filesystem metadata remains in the original DMG, which is the installer artifact.
+// This copy must not be used to repackage an application.
 func Extract(ctx context.Context, input, destination, selection string) (result string, err error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if err := validateDMG(ctx, input); err != nil {
-		return "", fmt.Errorf("disk image: %w", err)
-	}
-	image, err := disk.OpenDMG(input)
+	image, err := os.CreateTemp("", "stemma-dmg-*")
 	if err != nil {
+		return "", err
+	}
+	defer func() { _ = image.Close(); _ = os.Remove(image.Name()) }()
+	if err := decodeDMG(ctx, input, image); err != nil {
 		return "", fmt.Errorf("disk image: %w", err)
 	}
-	defer func() { _ = image.Close() }()
-	if image.Size() <= 0 || image.Size() > maxBytes {
-		return "", errors.New("disk image filesystem exceeds size limit")
+	info, err := image.Stat()
+	if err != nil {
+		return "", err
 	}
 	reader := &imageReader{ctx: ctx, reader: image, remaining: 256 << 20}
-	if err := validateVolume(reader, image.Size()); err != nil {
-		return "", fmt.Errorf("disk image: %w", err)
-	}
-	volume, err := hfsplus.New(reader)
+	volume, closeVolume, err := openVolume(reader, info.Size())
 	if err != nil {
 		return "", fmt.Errorf("disk image: %w", err)
 	}
+	defer closeVolume()
 	reader.remaining = maxBytes * 4
 	selection, err = selectPayload(ctx, volume, selection)
 	if err != nil {
@@ -76,6 +76,59 @@ func Extract(ctx context.Context, input, destination, selection string) (result 
 		return "", fmt.Errorf("disk image: %w", err)
 	}
 	return filepath.Join(destination, filepath.FromSlash(selection)), nil
+}
+
+type filesystem interface {
+	fs.StatFS
+	fs.ReadDirFS
+	Readlink(string) (string, error)
+}
+
+func openVolume(reader io.ReaderAt, size int64) (filesystem, func(), error) {
+	var header [48]byte
+	if _, err := reader.ReadAt(header[:], 0); err != nil {
+		return nil, nil, err
+	}
+	if string(header[32:36]) != "NXSB" {
+		if err := validateVolume(reader, size); err != nil {
+			return nil, nil, err
+		}
+		volume, err := hfsplus.New(reader)
+		return volume, func() {}, err
+	}
+	blockSize := binary.LittleEndian.Uint32(header[36:40])
+	blocks := binary.LittleEndian.Uint64(header[40:48])
+	if blockSize < 4096 || blockSize > 65536 || blockSize&(blockSize-1) != 0 || blocks == 0 || blocks > uint64(size)/uint64(blockSize) {
+		return nil, nil, errors.New("invalid APFS container size")
+	}
+	handle, err := apfs.NewIOHandle()
+	if err != nil {
+		return nil, nil, err
+	}
+	container, err := apfs.NewContainer(handle)
+	if err != nil {
+		return nil, nil, err
+	}
+	closeVolume := func() { _ = container.Close(); _ = handle.Close() }
+	if err := container.OpenRead(reader, 0); err != nil {
+		closeVolume()
+		return nil, nil, err
+	}
+	count, err := container.NumberOfVolumes()
+	if err != nil {
+		closeVolume()
+		return nil, nil, err
+	}
+	if count != 1 {
+		closeVolume()
+		return nil, nil, fmt.Errorf("APFS requires one readable volume (found %d)", count)
+	}
+	volume, err := container.Volume(0)
+	if err != nil {
+		closeVolume()
+		return nil, nil, err
+	}
+	return volume, closeVolume, nil
 }
 
 type imageReader struct {
@@ -129,7 +182,7 @@ func safeName(name string) error {
 	return nil
 }
 
-func selectPayload(ctx context.Context, volume *hfsplus.Volume, selection string) (string, error) {
+func selectPayload(ctx context.Context, volume filesystem, selection string) (string, error) {
 	if selection == "" {
 		var candidates []string
 		count := 0
@@ -161,9 +214,14 @@ func selectPayload(ctx context.Context, volume *hfsplus.Volume, selection string
 			return "", err
 		}
 		if len(candidates) != 1 {
-			return "", fmt.Errorf("disk image has %d plausible payloads; set select to an exact relative path", len(candidates))
+			return "", fmt.Errorf("disk image has %d plausible payloads; set select to an exact relative path: %s", len(candidates), strings.Join(candidates, ", "))
 		}
 		selection = candidates[0]
+	}
+	var err error
+	selection, err = archive.MatchPath(volume, selection)
+	if err != nil {
+		return "", err
 	}
 	if err := safeName(selection); err != nil {
 		return "", err
@@ -203,10 +261,9 @@ type entry struct {
 	link string
 }
 
-func extract(ctx context.Context, volume *hfsplus.Volume, root *os.Root, selection string) (err error) {
+func extract(ctx context.Context, volume filesystem, root *os.Root, selection string) (err error) {
 	var dirs, links []entry
 	spelling := map[string]string{}
-	fileIDs := map[hfsplus.CatalogNodeID]bool{}
 	var total int64
 	count := 0
 	flatPackage := strings.EqualFold(path.Ext(selection), ".pkg")
@@ -248,11 +305,6 @@ func extract(ctx context.Context, volume *hfsplus.Volume, root *os.Root, selecti
 			return errors.New("payload exceeds expanded size limit")
 		}
 		total += info.Size()
-		if !flatPackage {
-			if err := checkMetadata(volume, name, info, fileIDs); err != nil {
-				return fmt.Errorf("%s: %w", name, err)
-			}
-		}
 		if err := root.MkdirAll(path.Dir(name), 0o700); err != nil {
 			return err
 		}
@@ -302,7 +354,7 @@ func extract(ctx context.Context, volume *hfsplus.Volume, root *os.Root, selecti
 	return ctx.Err()
 }
 
-func writeFile(ctx context.Context, volume *hfsplus.Volume, root *os.Root, name string, info fs.FileInfo, flatPackage bool) error {
+func writeFile(ctx context.Context, volume filesystem, root *os.Root, name string, info fs.FileInfo, flatPackage bool) error {
 	source, err := volume.Open(name)
 	if err != nil {
 		return err
@@ -337,39 +389,4 @@ func writeFile(ctx context.Context, volume *hfsplus.Volume, root *os.Root, name 
 		return err
 	}
 	return root.Chtimes(name, info.ModTime(), info.ModTime())
-}
-
-func checkMetadata(volume *hfsplus.Volume, name string, info fs.FileInfo, fileIDs map[hfsplus.CatalogNodeID]bool) error {
-	var permissions hfsplus.BSDInfo
-	switch record := info.Sys().(type) {
-	case *hfsplus.HFSPlusCatalogFile:
-		permissions = record.BSDInfo
-		if fileIDs[record.FileID] || permissions.Special > 1 {
-			return errors.New("hard links are unsupported")
-		}
-		fileIDs[record.FileID] = true
-		// HFS+ encodes ordinary symbolic links with the slnk/rhap Finder pair.
-		linkType := info.Mode()&fs.ModeSymlink != 0 && record.UserInfo.FileType == hfsplus.SymLinkFileType && record.UserInfo.FileCreator == hfsplus.SymLinkCreator
-		if !linkType && (record.UserInfo.FileType != 0 || record.UserInfo.FileCreator != 0) || record.UserInfo.FinderFlags != 0 {
-			return errors.New("finder file metadata is unsupported")
-		}
-	case *hfsplus.HFSPlusCatalogFolder:
-		permissions = record.BSDInfo
-		if record.UserInfo.FinderFlags != 0 {
-			return errors.New("finder folder metadata is unsupported")
-		}
-	default:
-		return errors.New("missing filesystem metadata")
-	}
-	if permissions.FileMode&0o7000 != 0 || permissions.OwnerFlags != 0 || permissions.AdminFlags != 0 {
-		return errors.New("special permissions and filesystem flags are unsupported")
-	}
-	attrs, err := volume.Xattrs(name)
-	if err != nil {
-		return err
-	}
-	if len(attrs) != 0 {
-		return errors.New("extended attributes and resource forks are unsupported in app payloads")
-	}
-	return nil
 }

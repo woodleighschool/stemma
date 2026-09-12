@@ -14,8 +14,9 @@ import (
 const Version = "stemma.macsoftware/1"
 
 type Spec struct {
-	Source       *plugin.Input             `json:"source,omitempty" yaml:"source,omitempty"`
-	Application  *Application              `json:"application,omitempty" yaml:"application,omitempty"`
+	Source      *plugin.Input `json:"source,omitempty" yaml:"source,omitempty"`
+	Application *Application  `json:"application,omitempty" yaml:"application,omitempty"`
+	// PackagePath selects one installer by archive-relative path or glob.
 	PackagePath  string                    `json:"package_path,omitempty" yaml:"package_path,omitempty"`
 	Verification Verification              `json:"verification,omitzero" yaml:"verification,omitempty"`
 	Destinations map[string]map[string]any `json:"destinations,omitempty" yaml:"destinations,omitempty"`

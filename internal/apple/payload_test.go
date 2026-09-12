@@ -369,3 +369,47 @@ func insertPayloadMember(files *[]xarFile, parts []string, data *xarData) {
 	*files = append(*files, xarFile{Names: []string{parts[0]}, Type: "directory"})
 	insertPayloadMember(&(*files)[len(*files)-1].Files, parts[1:], data)
 }
+
+func TestLargePackageInventory(t *testing.T) {
+	entries := make([]payloadEntry, 110000)
+	for i := range entries {
+		entries[i].header = cpio.Header{Name: fmt.Sprintf("./files/%06d", i), Mode: cpio.ModeRegular | 0o644, NLink: 1}
+	}
+	entries = append(entries, plistEntry(t, "./Example.app/Contents/Info.plist", "Example"))
+	payload := cpioPayload(t, entries)
+	apps, err := readPayload(bytes.NewReader(payload), newPayloadBudget(), false)
+	if err != nil || len(apps) != 1 {
+		t.Fatalf("large inventory: %d apps, %v", len(apps), err)
+	}
+}
+
+func TestPackageRepeatedResources(t *testing.T) {
+	for _, repeated := range []string{"artwork", "different"} {
+		t.Run(repeated, func(t *testing.T) {
+			name := writePayloadPackage(t, []payloadMember{
+				{"PackageInfo", []byte(`<pkg-info identifier="org.example.app" version="1" install-location="/Applications/"/>`)},
+				{"Resources/background.png", []byte("artwork")},
+				{"Resources/background.png", []byte(repeated)},
+			})
+			facts, err := InspectPackage(name)
+			if repeated != "artwork" {
+				if err == nil {
+					t.Fatal("conflicting resources accepted")
+				}
+				return
+			}
+			if err != nil || facts.Packages[0].InstallLocation != "/Applications" {
+				t.Fatalf("repeated artwork: %+v %v", facts, err)
+			}
+			if _, err := VerifyPackage(name, Policy{RequireIntegrity: true}); err != nil {
+				t.Fatal(err)
+			}
+			data := readTestFile(t, name)
+			data[len(data)-1] ^= 1
+			writeTestFile(t, name, data, 0o600)
+			if _, err := InspectPackage(name); err == nil {
+				t.Fatal("corrupt duplicate escaped verification")
+			}
+		})
+	}
+}
