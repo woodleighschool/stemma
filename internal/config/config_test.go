@@ -5,24 +5,29 @@ import (
 	"testing"
 )
 
-func TestPluginOCIReferences(t *testing.T) {
+func TestPluginSources(t *testing.T) {
 	for _, test := range []struct {
-		image          string
-		trusted, valid bool
+		plugin Plugin
+		valid  bool
 	}{
-		{"ghcr.io/example/plugin:v1", true, true},
-		{"ghcr.io/example/plugin@sha256:" + strings.Repeat("a", 64), true, true},
-		{"ghcr.io/example/plugin", true, false},
-		{"https://ghcr.io/example/plugin:v1", true, false},
-		{"ghcr.io/example/plugin:v1", false, false},
+		{Plugin{Image: "ghcr.io/example/plugin:v1", Trusted: true}, true},
+		{Plugin{Image: "ghcr.io/example/plugin@sha256:" + strings.Repeat("a", 64), Trusted: true}, true},
+		{Plugin{Image: "ghcr.io/example/plugin", Trusted: true}, false},
+		{Plugin{Image: "https://ghcr.io/example/plugin:v1", Trusted: true}, false},
+		{Plugin{Image: "ghcr.io/example/plugin:v1"}, false},
+		{Plugin{Path: "plugins/probe", Trusted: true}, true},
+		{Plugin{Path: "/opt/plugins/probe", Trusted: true}, true},
+		{Plugin{Path: "plugins/probe", Entrypoint: "bin/run", Trusted: true}, true},
+		{Plugin{Path: "plugins/probe", Entrypoint: "../run", Trusted: true}, false},
+		{Plugin{Path: "plugins/probe", Image: "ghcr.io/example/plugin:v1", Trusted: true}, false},
+		{Plugin{Path: "plugins/probe"}, false},
+		{Plugin{Trusted: true}, false},
 	} {
-		t.Run(test.image, func(t *testing.T) {
-			resource := Resource{APIVersion: "stemma/v1alpha1", Kind: "MacSoftware", Metadata: Metadata{Name: "fixture"}, Spec: map[string]any{}}
-			project := Project{Project: "test", Resources: map[string]Resource{resource.Reference().Key(): resource}, Plugins: map[string]Plugin{"fixture": {Image: test.image, Trusted: test.trusted}}}
-			if err := project.Validate(); (err == nil) != test.valid {
-				t.Fatalf("valid=%v error=%v", test.valid, err)
-			}
-		})
+		resource := Resource{APIVersion: "stemma/v1alpha1", Kind: "MacSoftware", Metadata: Metadata{Name: "fixture"}, Spec: map[string]any{}}
+		project := Project{Project: "test", Resources: map[string]Resource{resource.Reference().Key(): resource}, Plugins: map[string]Plugin{"fixture": test.plugin}}
+		if err := project.Validate(); (err == nil) != test.valid {
+			t.Fatalf("plugin=%+v valid=%v error=%v", test.plugin, test.valid, err)
+		}
 	}
 }
 
@@ -80,14 +85,13 @@ spec:
 func TestRejectMalformedConfiguration(t *testing.T) {
 	base := projectFixture + "---\n" + resourceFixture
 	for name, document := range map[string]string{
-		"unknown-envelope":      base + "typo: true\n",
-		"duplicate-field":       base + "kind: MacSoftware\n",
-		"malformed-document":    base + "---\nversion: 1\n",
-		"nonfinite":             strings.Replace(base, "  imports:", "  destinations:\n    fixture:\n      operation: fixture.publish\n      config:\n        value: .nan\n  imports:", 1),
-		"old-connection-shape":  strings.Replace(base, "  imports:", "  destinations:\n    fixture:\n      type: fixture.publish\n  imports:", 1),
-		"raw-executable-plugin": strings.Replace(base, "  imports:", "  plugins:\n    fixture:\n      trusted: true\n      path: plugin\n  imports:", 1),
-		"cycle":                 strings.Replace(strings.Replace(base, "  imports:", "  components:\n    a:\n      extends: b\n    b:\n      extends: a\n  imports:", 1), "  source:", "  extends: a\n  source:", 1),
-		"yaml-alias":            strings.Replace(base, "  source:", "  source: &source", 1),
+		"unknown-envelope":     base + "typo: true\n",
+		"duplicate-field":      base + "kind: MacSoftware\n",
+		"malformed-document":   base + "---\nversion: 1\n",
+		"nonfinite":            strings.Replace(base, "  imports:", "  destinations:\n    fixture:\n      operation: fixture.publish\n      config:\n        value: .nan\n  imports:", 1),
+		"old-connection-shape": strings.Replace(base, "  imports:", "  destinations:\n    fixture:\n      type: fixture.publish\n  imports:", 1),
+		"cycle":                strings.Replace(strings.Replace(base, "  imports:", "  components:\n    a:\n      extends: b\n    b:\n      extends: a\n  imports:", 1), "  source:", "  extends: a\n  source:", 1),
+		"yaml-alias":           strings.Replace(base, "  source:", "  source: &source", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := parseTest(t, []byte(document)); err == nil {

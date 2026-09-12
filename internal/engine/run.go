@@ -108,7 +108,10 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 		return report, err
 	}
 	defer func() { _ = os.RemoveAll(pluginWork) }()
-	ops, err := loadOperations(ctx, p, manager, pluginWork, opts.Handlers)
+	if opts.Method == "plan" || opts.Method == "apply" {
+		opts.Lock.Frozen = true
+	}
+	ops, err := loadOperations(ctx, p, manager, pluginWork, opts.Handlers, opts.Lock.Frozen || opts.Lock.Offline)
 	if err != nil {
 		return report, err
 	}
@@ -139,15 +142,8 @@ func Run(ctx context.Context, opts Options) (Report, error) {
 			}
 		}
 	}
-	images := map[string]string{}
-	for name, provider := range p.Plugins {
-		images[name] = provider.Image
-	}
-	if opts.Method != "update" && !opts.Lock.Refresh && !opts.Lock.Ignore {
-		opts.Lock.Frozen = true
-	}
 	opts.Lock.PreserveUnselected = len(opts.Resources) > 0
-	locked, err := lockfile.Prepare(ctx, root, declarations, images, manager, opts.Lock)
+	locked, err := lockfile.Prepare(ctx, root, declarations, ops.plugins, manager, opts.Lock)
 	if err != nil {
 		return report, err
 	}

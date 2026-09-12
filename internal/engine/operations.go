@@ -94,7 +94,7 @@ func projectOperations(ctx context.Context, p config.Project, opts Options) (*op
 		cleanup()
 		return nil, nil, err
 	}
-	ops, err := loadOperations(ctx, p, source.New(store, root, opts.Lock.Offline), work, opts.Handlers)
+	ops, err := loadOperations(ctx, p, source.New(store, root, opts.Lock.Offline), work, opts.Handlers, false)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
@@ -132,6 +132,7 @@ type reconcileHandler func(context.Context, plugin.ReconcileRequest) (plugin.Rec
 type operations struct {
 	registry *plugin.Registry
 	identity map[string]string
+	plugins  map[string]plugins.Entry
 }
 
 func operationSchema(value any) json.RawMessage {
@@ -246,15 +247,16 @@ func (o *operations) call(ctx context.Context, name, method string, input, outpu
 	return callErr
 }
 
-func loadOperations(ctx context.Context, p config.Project, manager *source.Manager, work string, handlers map[string]reconcileHandler) (*operations, error) {
+func loadOperations(ctx context.Context, p config.Project, manager *source.Manager, work string, handlers map[string]reconcileHandler, frozen bool) (*operations, error) {
 	ops, err := builtins(handlers)
 	if err != nil || len(p.Plugins) == 0 {
 		return ops, err
 	}
 	locked, err := lockfile.Load(filepath.Join(manager.Root, "stemma.lock.yaml"))
-	if err != nil {
-		return nil, fmt.Errorf("plugin operations require installed locks; run stemma plugins install: %w", err)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
 	}
+	ops.plugins = map[string]plugins.Entry{}
 	names := make([]string, 0, len(p.Plugins))
 	for name := range p.Plugins {
 		names = append(names, name)
@@ -263,14 +265,11 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 	pluginStore := plugins.New(manager.Store, manager.Offline)
 	for _, name := range names {
 		provider := p.Plugins[name]
-		entry, exists := locked.Plugins[name]
-		if !exists {
-			return nil, fmt.Errorf("plugin %s is not locked; run stemma plugins install", name)
-		}
-		bundle, err := pluginStore.Acquire(ctx, provider.Image, entry)
+		bundle, entry, err := pluginStore.Load(ctx, manager.Root, provider, locked.Plugins[name], frozen)
 		if err != nil {
 			return nil, fmt.Errorf("plugin %s: %w", name, err)
 		}
+		ops.plugins[name] = entry
 		executable, err := pluginStore.Materialize(ctx, bundle, filepath.Join(work, name))
 		if err != nil {
 			return nil, fmt.Errorf("plugin %s: %w", name, err)

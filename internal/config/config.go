@@ -17,7 +17,6 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 
 	"go.yaml.in/yaml/v4"
-	"oras.land/oras-go/v2/registry"
 )
 
 // Project is resolved configuration, rather than an authored document.
@@ -48,7 +47,7 @@ type ProjectSpec struct {
 	Imports      []string                  `yaml:"imports" json:"imports" jsonschema:"minItems=1" jsonschema_description:"Project-relative resource document paths or globs, such as software/**/*.yaml. Every pattern must match."`
 	Components   map[string]map[string]any `yaml:"components,omitempty" json:"components,omitempty" jsonschema_description:"Reusable software defaults. Maps merge recursively; lists and null replace inherited values."`
 	Destinations map[string]Destination    `yaml:"destinations,omitempty" json:"destinations,omitempty" jsonschema_description:"Named connections, separate from each resource document's native destination metadata."`
-	Plugins      map[string]Plugin         `yaml:"plugins,omitempty" json:"plugins,omitempty" jsonschema_description:"Explicitly trusted OCI plugin images, locked by release index digest."`
+	Plugins      map[string]Plugin         `yaml:"plugins,omitempty" json:"plugins,omitempty" jsonschema_description:"Trusted local executables or OCI plugin images."`
 }
 
 // Resource is one authored contract; the registered kind owns its spec.
@@ -70,10 +69,12 @@ type Destination struct {
 	Config    map[string]any `yaml:"config,omitempty" json:"config,omitempty" jsonschema_description:"Destination-specific connection configuration. Reference credential environment variables instead of embedding secrets."`
 }
 
-// Plugin identifies an explicitly trusted OCI release for all runner platforms.
+// Plugin selects trusted executable code independently of its distribution.
 type Plugin struct {
-	Trusted bool   `yaml:"trusted" json:"trusted" jsonschema_description:"Explicit consent to execute this plugin. Checksums prove binary identity, not publisher trust."`
-	Image   string `yaml:"image" json:"image" jsonschema_description:"OCI registry reference with a tag or digest, for example ghcr.io/example/inventory:v1.0.0."`
+	Trusted    bool   `yaml:"trusted" json:"trusted" jsonschema_description:"Consent to execute this plugin with the caller's privileges."`
+	Image      string `yaml:"image,omitempty" json:"image,omitempty" jsonschema_description:"OCI registry reference with a tag or digest."`
+	Path       string `yaml:"path,omitempty" json:"path,omitempty" jsonschema_description:"Local executable or directory. Relative paths resolve from the Project."`
+	Entrypoint string `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty" jsonschema_description:"Executable within a local directory. Defaults to plugin, or plugin.exe on Windows."`
 }
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -229,9 +230,8 @@ func (p Project) Validate() error {
 		if !namePattern.MatchString(name) || !plugin.Trusted {
 			return fmt.Errorf("plugin %s: requires a valid name and trusted: true", name)
 		}
-		ref, err := registry.ParseReference(plugin.Image)
-		if err != nil || ref.Reference == "" {
-			return fmt.Errorf("plugin %s: image must be an OCI registry reference with a tag or digest", name)
+		if err := plugin.Validate(); err != nil {
+			return fmt.Errorf("plugin %s: %w", name, err)
 		}
 	}
 	return nil

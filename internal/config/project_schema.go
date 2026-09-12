@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/woodleighschool/stemma/plugin"
-	"oras.land/oras-go/v2/registry"
 )
 
 // LoadSchemaProject reads connection and plugin declarations without resolving
@@ -40,15 +39,17 @@ func LoadSchemaProject(filename string) (Project, error) {
 		if !namePattern.MatchString(name) || !provider.Trusted {
 			return p, fmt.Errorf("plugin %s: requires a valid name and trusted: true", name)
 		}
-		image, err := expandEnvironment(provider.Image)
-		if err != nil {
+		for _, field := range []*string{&provider.Image, &provider.Path, &provider.Entrypoint} {
+			expanded, err := expandEnvironment(*field)
+			if err != nil {
+				return p, fmt.Errorf("plugin %s: %w", name, err)
+			}
+			*field = expanded.(string)
+		}
+		if err := provider.Validate(); err != nil {
 			return p, fmt.Errorf("plugin %s: %w", name, err)
 		}
-		provider.Image = image.(string)
-		ref, err := registry.ParseReference(provider.Image)
-		if err != nil || ref.Reference == "" {
-			return p, fmt.Errorf("plugin %s: image must be an OCI registry reference with a tag or digest", name)
-		}
+
 		p.Plugins[name] = provider
 	}
 	return p, nil

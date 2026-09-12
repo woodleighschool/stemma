@@ -16,14 +16,15 @@ cp stemma.example.yaml stemma.yaml
 mkdir -p software
 cp software.example.yaml software/chrome.yaml
 stemma validate
-stemma update
+stemma prepare
 stemma plan
 stemma apply
 ```
 
-Commit the Project, imported family documents and `stemma.lock.yaml`. `update`
-discovers inputs; `prepare`, `plan` and `apply` consume their reviewed locks.
-A changed local input or a missing lock requires an explicit update. A cold cache
+Commit the Project, imported family documents and `stemma.lock.yaml`. `prepare`
+records new inputs and local changes, then builds and inspects their content. It
+reuses existing remote pins; `update` explicitly refreshes upstream discovery.
+`plan` and `apply` require unchanged, reviewed locks. A cold cache
 fetches the locked observation and verifies its bytes instead of rediscovering a
 release. `--offline` requires cached network inputs and still checks local files.
 
@@ -178,8 +179,25 @@ is neither a rollback promise nor an uninstall-file strategy.
 
 ## 🔌 Plugins
 
-Plugins are trusted standalone executables distributed as OCI platform bundles.
-Declare their release images under Project `plugins`, with `trusted: true`.
+Plugins are trusted executables, selected by local `path` or registry `image`.
+Declare each under Project `plugins` with `trusted: true`:
+
+```yaml
+plugins:
+  catalog-tools:
+    path: plugins/catalog-tools
+    trusted: true
+```
+
+A path selects an executable file or a directory containing `plugin` (`plugin.exe`
+on Windows). Set `entrypoint` to select another executable within a directory.
+Relative paths resolve from the Project. Scripts use their executable shebang;
+interpreters and other runtime dependencies must be installed on the runner.
+`prepare` snapshots local files and records their content in the lockfile. Directory
+snapshots include helper files. Local changes affect preparation identity, and
+`plan`/`apply` reject changed code before executing it.
+
+OCI images select a release tag or digest.
 `stemma plugins install` records the index digest; `stemma plugins update` explicitly
 changes pins. Only the current runner's bundle is fetched. Cold recovery uses the
 locked digest. Registry authentication uses Docker/ORAS credentials; no container
@@ -207,9 +225,7 @@ Publish one tar.zst bundle per runner with `plugin` (`plugin.exe` on Windows) an
 its resources at the archive root. Use OCI artifact type
 `application/vnd.stemma.plugin.v1`, layer type
 `application/vnd.stemma.plugin.bundle.v1.tar+zstd`, then combine platform manifests
-in an OCI index. Development across local modules uses an explicit temporary Go
-workspace; release modules pin a published SDK version. Workspaces are leases, not
-security sandboxes: trusted executables run with the caller's privileges.
+in an OCI index. Workspaces are leases, not security sandboxes: trusted executables run with the caller's privileges.
 
 ## 🛠️ Runtime
 

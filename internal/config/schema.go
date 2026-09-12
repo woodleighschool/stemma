@@ -26,6 +26,10 @@ func Schema() ([]byte, error) {
 	schema["description"] = "A Project imports family files containing resource documents separated by ---. Each kind owns preparation; destination operations own native publication fields."
 	delete(schema, "$ref")
 	definitions := schema["$defs"].(map[string]any)
+	definitions["Plugin"].(map[string]any)["oneOf"] = []any{
+		map[string]any{"required": []string{"image"}, "not": map[string]any{"anyOf": []any{map[string]any{"required": []string{"path"}}, map[string]any{"required": []string{"entrypoint"}}}}},
+		map[string]any{"required": []string{"path"}, "not": map[string]any{"required": []string{"image"}}},
+	}
 	variants := []any{map[string]any{"$ref": "#/$defs/ProjectDocument"}}
 	for _, item := range []struct {
 		kind string

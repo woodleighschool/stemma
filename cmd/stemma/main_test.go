@@ -145,8 +145,14 @@ spec:
 	if inspected.Facts.Version != plugin.FactsVersion || len(inspected.Facts.Subjects) < 2 {
 		t.Fatalf("inspection lost container/receipt facts: %+v", inspected.Facts)
 	}
-	run(false, "prepare")
-	run(true, "update")
+	firstPrepare := run(true, "prepare")
+	if !firstPrepare.LockChanged {
+		t.Fatal("first preparation did not record inputs")
+	}
+	secondPrepare := run(true, "prepare")
+	if secondPrepare.LockChanged {
+		t.Fatal("locked preparation changed inputs")
+	}
 	if downloads.Load() != 1 {
 		t.Fatal("unexpected acquisition count")
 	}

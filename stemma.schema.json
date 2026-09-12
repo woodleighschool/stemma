@@ -640,19 +640,57 @@
     },
     "Plugin": {
       "additionalProperties": false,
+      "oneOf": [
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "path"
+                ]
+              },
+              {
+                "required": [
+                  "entrypoint"
+                ]
+              }
+            ]
+          },
+          "required": [
+            "image"
+          ]
+        },
+        {
+          "not": {
+            "required": [
+              "image"
+            ]
+          },
+          "required": [
+            "path"
+          ]
+        }
+      ],
       "properties": {
+        "entrypoint": {
+          "description": "Executable within a local directory. Defaults to plugin, or plugin.exe on Windows.",
+          "type": "string"
+        },
         "image": {
-          "description": "OCI registry reference with a tag or digest, for example ghcr.io/example/inventory:v1.0.0.",
+          "description": "OCI registry reference with a tag or digest.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Local executable or directory. Relative paths resolve from the Project.",
           "type": "string"
         },
         "trusted": {
-          "description": "Explicit consent to execute this plugin. Checksums prove binary identity, not publisher trust.",
+          "description": "Consent to execute this plugin with the caller's privileges.",
           "type": "boolean"
         }
       },
       "required": [
-        "trusted",
-        "image"
+        "trusted"
       ],
       "type": "object"
     },
@@ -715,7 +753,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/Plugin"
           },
-          "description": "Explicitly trusted OCI plugin images, locked by release index digest.",
+          "description": "Trusted local executables or OCI plugin images.",
           "type": "object"
         }
       },

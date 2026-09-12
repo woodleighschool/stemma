@@ -21,6 +21,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/intunewin"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
+	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
 )
 
@@ -109,7 +110,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 	root.AddCommand(operations)
 	for _, method := range []string{"update", "prepare", "plan", "apply"} {
 		var offline bool
-		cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Acquire and inspect locked inputs without publication", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
+		cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
 			if output != "text" && output != "json" {
 				return errors.New("output must be text or json")
 			}
@@ -118,7 +119,7 @@ func command(out, errOut io.Writer) *cobra.Command {
 				return err
 			}
 
-			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Resources: args, Lock: lockfile.Options{Frozen: method != "update", Refresh: method == "update", Offline: offline}})
+			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Resources: args, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply", Refresh: method == "update", Offline: offline}})
 			if output == "json" {
 				if err := writeJSON(out, report); err != nil {
 					return errors.Join(runErr, err)
@@ -205,11 +206,15 @@ func command(out, errOut io.Writer) *cobra.Command {
 				return err
 			}
 			defer func() { _ = release() }()
-			images := map[string]string{}
-			for name, provider := range p.Plugins {
-				images[name] = provider.Image
+			previous, err := lockfile.Load(filepath.Join(projectRoot, "stemma.lock.yaml"))
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
 			}
-			result, err := lockfile.Prepare(cmd.Context(), projectRoot, nil, images, source.New(store, projectRoot, false), lockfile.Options{PluginsOnly: true, Refresh: method == "update"})
+			entries, err := pluginstore.New(store, false).Install(cmd.Context(), projectRoot, p.Plugins, previous.Plugins, method == "update")
+			if err != nil {
+				return err
+			}
+			result, err := lockfile.Prepare(cmd.Context(), projectRoot, nil, entries, source.New(store, projectRoot, false), lockfile.Options{PluginsOnly: true})
 			if err != nil {
 				return err
 			}
@@ -282,10 +287,8 @@ func writeJSON(out io.Writer, value any) error {
 }
 func printReport(out io.Writer, method string, r engine.Report) error {
 	var text strings.Builder
-	if method == "update" {
+	if method == "update" || method == "prepare" {
 		_, _ = fmt.Fprintf(&text, "Lockfile changed: %t\n", r.LockChanged)
-		_, err := io.WriteString(out, text.String())
-		return err
 	}
 	for _, software := range r.Resources {
 		if software.Error != "" {

@@ -1,4 +1,4 @@
-// Package plugins acquires digest-pinned OCI bundles for the current runner.
+// Package plugins snapshots local executables and acquires pinned OCI bundles.
 package plugins
 
 import (
@@ -17,6 +17,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
+	"github.com/woodleighschool/stemma/internal/source"
 	"oras.land/oras-go/v2"
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/registry/remote"
@@ -29,17 +30,22 @@ const ArtifactType = "application/vnd.stemma.plugin.v1"
 const BundleType = "application/vnd.stemma.plugin.bundle.v1.tar+zstd"
 const maxMetadataSize = 1 << 20
 
-// Entry pins the release index, which transitively pins every supported platform.
+// Entry records a local content observation or an OCI release index.
 type Entry struct {
-	Image  string `json:"image" yaml:"image"`
-	Digest string `json:"digest" yaml:"digest"`
-	Size   int64  `json:"size" yaml:"size"`
+	Path       string        `json:"path,omitempty" yaml:"path,omitempty"`
+	Entrypoint string        `json:"entrypoint,omitempty" yaml:"entrypoint,omitempty"`
+	Local      *source.Entry `json:"local,omitempty" yaml:"local,omitempty"`
+	Image      string        `json:"image,omitempty" yaml:"image,omitempty"`
+	Digest     string        `json:"digest,omitempty" yaml:"digest,omitempty"`
+	Size       int64         `json:"size,omitempty" yaml:"size,omitempty"`
 }
 
 // Bundle identifies the entire selected package, including executable resources.
 type Bundle struct {
-	Manifest string
-	Artifact cas.Ref
+	Manifest   string
+	Artifact   cas.Ref
+	Local      *source.Content
+	Entrypoint string
 }
 
 // Store keeps registry content in the shared disposable cache. Callers hold a lease.
@@ -91,7 +97,7 @@ func (s *Store) Resolve(ctx context.Context, image string) (Entry, error) {
 }
 
 func (e Entry) Validate(image string) error {
-	if e.Image != image || e.Image == "" {
+	if e.Image != image || e.Image == "" || e.Path != "" || e.Local != nil || e.Entrypoint != "" {
 		return errors.New("plugin image is missing or stale in the lockfile; run stemma plugins install")
 	}
 	_, err := reference(ocispec.Descriptor{Digest: digest.Digest(e.Digest), Size: e.Size}, maxMetadataSize)
@@ -174,7 +180,11 @@ func (s *Store) Materialize(ctx context.Context, bundle Bundle, destination stri
 	if err != nil {
 		return "", err
 	}
-	if err := archive.Extract(ctx, path, destination); err != nil {
+	if bundle.Local != nil && !bundle.Local.Tree {
+		if err := s.cache.Materialize(ctx, bundle.Artifact, filepath.Join(destination, bundle.Entrypoint)); err != nil {
+			return "", err
+		}
+	} else if err := archive.Extract(ctx, path, destination); err != nil {
 		return "", err
 	}
 	defer func() {
@@ -185,6 +195,9 @@ func (s *Store) Materialize(ctx context.Context, bundle Bundle, destination stri
 	name := "plugin"
 	if s.platform.OS == "windows" {
 		name += ".exe"
+	}
+	if bundle.Entrypoint != "" {
+		name = bundle.Entrypoint
 	}
 	executable = filepath.Join(destination, name)
 	info, err := os.Lstat(executable)

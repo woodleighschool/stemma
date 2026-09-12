@@ -21,7 +21,7 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-// File pins each resource's named inputs and explicitly installed plugin indexes.
+// File pins resource inputs and executable plugin content.
 type File struct {
 	Version int                                `yaml:"version" json:"version"`
 	Inputs  map[string]map[string]source.Entry `yaml:"inputs" json:"inputs"`
@@ -99,7 +99,7 @@ func Load(path string) (File, error) {
 
 // Prepare obtains exactly the required inputs, then replaces the lockfile atomically.
 // A failed resolution never writes a partially updated lockfile.
-func Prepare(ctx context.Context, root string, inputs map[string]map[string]plugin.Input, pluginImages map[string]string, m *source.Manager, opts Options) (Result, error) {
+func Prepare(ctx context.Context, root string, inputs map[string]map[string]plugin.Input, pluginEntries map[string]plugins.Entry, m *source.Manager, opts Options) (Result, error) {
 	result := Result{File: File{Version: 2, Inputs: map[string]map[string]source.Entry{}, Plugins: map[string]plugins.Entry{}}, CacheHits: map[string]map[string]bool{}}
 	opts.Offline = opts.Offline || m.Offline
 	manager := *m
@@ -113,7 +113,7 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 	}
 	filename := filepath.Join(root, "stemma.lock.yaml")
 	old := File{}
-	requiresLock := len(pluginImages) != 0
+	requiresLock := len(pluginEntries) != 0
 	for _, named := range inputs {
 		requiresLock = requiresLock || len(named) != 0
 	}
@@ -211,25 +211,8 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 			}
 		}
 	}
-	pluginStore := plugins.New(m.Store, opts.Offline || m.Offline)
-	for _, name := range names(pluginImages) {
-		image := pluginImages[name]
-		entry := old.Plugins[name]
-		if opts.Ignore || entry.Validate(image) != nil || (opts.PluginsOnly && opts.Refresh) {
-			if !opts.PluginsOnly || opts.Frozen || opts.Offline {
-				return result, fmt.Errorf("plugin %s is not locked; run stemma plugins install (plugins never update implicitly)", name)
-			}
-			var err error
-			entry, err = pluginStore.Resolve(ctx, image)
-			if err != nil {
-				return result, fmt.Errorf("plugin %s: %w", name, err)
-			}
-		}
-		if _, err := pluginStore.Acquire(ctx, image, entry); err != nil {
-			return result, fmt.Errorf("plugin %s: %w", name, err)
-		}
-		result.File.Plugins[name] = entry
-	}
+	result.File.Plugins = pluginEntries
+
 	empty := len(result.File.Inputs) == 0 && len(result.File.Plugins) == 0
 	if empty && old.Version == 0 {
 		return result, nil
@@ -250,11 +233,16 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 		if empty {
 			return result, os.Remove(filename)
 		}
-		data, err := yaml.Marshal(result.File)
-		if err != nil {
+		var data bytes.Buffer
+		encoder := yaml.NewEncoder(&data)
+		encoder.SetIndent(2)
+		if err := encoder.Encode(result.File); err != nil {
 			return result, err
 		}
-		if err := fileio.Write(filename, data, 0o644); err != nil {
+		if err := encoder.Close(); err != nil {
+			return result, err
+		}
+		if err := fileio.Write(filename, data.Bytes(), 0o644); err != nil {
 			return result, err
 		}
 	}
