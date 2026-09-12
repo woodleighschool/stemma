@@ -2,163 +2,44 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
-	"github.com/woodleighschool/stemma/internal/apple"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
-	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/internal/diskimage"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
-	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
 // Prepared preserves the original source alongside selected payloads and verification evidence.
 type Prepared struct {
-	Source        source.Entry    `json:"source,omitzero"`
-	Payload       cas.Ref         `json:"payload"`
-	Filename      string          `json:"filename"`
-	Format        string          `json:"format"`
-	Version       string          `json:"version,omitempty"`
-	Tree          bool            `json:"tree,omitempty"`
-	Facts         plugin.Facts    `json:"facts"`
-	SuppliedFacts bool            `json:"supplied_facts,omitempty"`
-	Evidence      *apple.Evidence `json:"evidence,omitempty"`
-	Cached        bool            `json:"cached"`
-	Path          string          `json:"-"`
-}
-
-func prepare(ctx context.Context, store *cas.Store, entry source.Entry, software config.Software, work string) (Prepared, error) {
-	key := config.Fingerprint(struct {
-		Implementation                   string
-		Source                           cas.Ref
-		Filename, Select, Platform, Arch string
-		Tree                             bool
-		Verification                     config.Verification
-	}{"prepare/3", entry.Artifact, entry.Filename, software.Select, software.Platform, software.Arch, entry.Tree, software.Verification})
-	if descriptor, ok := store.Recall(ctx, key); ok {
-		path, err := store.Path(descriptor)
-		if err != nil {
-			return Prepared{}, err
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return Prepared{}, err
-		}
-		var prepared Prepared
-		if json.Unmarshal(data, &prepared) == nil && store.Verify(ctx, prepared.Payload) == nil {
-			prepared.Source = entry
-			prepared.Cached = true
-			return materialize(ctx, store, prepared, work)
-		}
-	}
-	input := filepath.Join(work, "source", entry.Filename)
-	if entry.Tree {
-		input += ".tar"
-	}
-	if err := store.Materialize(ctx, entry.Artifact, input); err != nil {
-		return Prepared{}, err
-	}
-	payload := input
-	switch {
-	case entry.Tree:
-		payload = filepath.Join(work, entry.Filename)
-		if err := archive.Extract(ctx, input, payload); err != nil {
-			return Prepared{}, err
-		}
-		if software.Select != "" {
-			selected, err := archive.Select(payload, software.Select)
-			if err != nil {
-				return Prepared{}, err
-			}
-			payload = selected
-		}
-	case strings.EqualFold(filepath.Ext(entry.Filename), ".dmg"):
-		selected, err := diskimage.Extract(ctx, input, filepath.Join(work, "expanded"), software.Select)
-		if err != nil {
-			return Prepared{}, err
-		}
-		payload = selected
-	case isArchive(entry.Filename):
-		extracted := filepath.Join(work, "expanded")
-		if err := archive.Extract(ctx, input, extracted); err != nil {
-			return Prepared{}, err
-		}
-		selected, err := archive.Select(extracted, software.Select)
-		if err != nil {
-			return Prepared{}, err
-		}
-		payload = selected
-	case software.Select != "":
-		return Prepared{}, errors.New("select requires a supported archive source")
-	}
-	prepared, err := inspect(ctx, payload)
-	if err != nil {
-		return prepared, err
-	}
-	prepared.Source = entry
-	verificationPath := payload
-	if software.Verification.Subject == "source" {
-		verificationPath = input
-		if entry.Tree {
-			verificationPath = filepath.Join(work, entry.Filename)
-		}
-	}
-	if requested(software.Verification) {
-		evidence, err := verify(verificationPath, software.Verification)
-		prepared.Evidence = &evidence
-		if err != nil {
-			return prepared, err
-		}
-	}
-	if prepared.Tree {
-		packed, err := os.CreateTemp(work, "payload-*.tar")
-		if err != nil {
-			return prepared, err
-		}
-		packErr := archive.Pack(ctx, payload, packed)
-		closeErr := packed.Close()
-		if packErr != nil {
-			return prepared, packErr
-		}
-		if closeErr != nil {
-			return prepared, closeErr
-		}
-		prepared.Payload, err = store.ImportFile(ctx, packed.Name(), "")
-		if err != nil {
-			return prepared, err
-		}
-	} else {
-		prepared.Payload, err = store.ImportFile(ctx, payload, "")
-		if err != nil {
-			return prepared, err
-		}
-	}
-	prepared.Path = payload
-	data, err := json.Marshal(prepared)
-	if err != nil {
-		return prepared, err
-	}
-	descriptor, err := store.Import(ctx, bytes.NewReader(data), "")
-	if err != nil {
-		return prepared, err
-	}
-	err = store.Remember(key, descriptor)
-	return prepared, err
+	InputsHash    string                     `json:"inputs_hash,omitempty"`
+	Timestamp     time.Time                  `json:"timestamp"`
+	Payload       cas.Ref                    `json:"payload"`
+	Filename      string                     `json:"filename"`
+	Format        string                     `json:"format"`
+	Version       string                     `json:"version,omitempty"`
+	Tree          bool                       `json:"tree,omitempty"`
+	Facts         plugin.Facts               `json:"facts"`
+	SuppliedFacts bool                       `json:"supplied_facts,omitempty"`
+	Evidence      map[string]json.RawMessage `json:"evidence,omitempty"`
+	EntryPoint    string                     `json:"entry_point,omitempty"`
+	Mode          uint32                     `json:"mode,omitempty"`
+	Cached        bool                       `json:"cached"`
+	Path          string                     `json:"-"`
 }
 
 func materialize(ctx context.Context, store *cas.Store, p Prepared, work string) (Prepared, error) {
 	p.Path = filepath.Join(work, "payload", p.Filename)
 	if !p.Tree {
-		return p, store.Materialize(ctx, p.Payload, p.Path)
+		if err := store.Materialize(ctx, p.Payload, p.Path); err != nil {
+			return p, err
+		}
+		return p, os.Chmod(p.Path, os.FileMode(p.Mode))
 	}
 	packed := filepath.Join(work, "payload.tar")
 	if err := store.Materialize(ctx, p.Payload, packed); err != nil {
@@ -167,7 +48,10 @@ func materialize(ctx context.Context, store *cas.Store, p Prepared, work string)
 	if err := os.MkdirAll(filepath.Dir(p.Path), 0o700); err != nil {
 		return p, err
 	}
-	return p, archive.Extract(ctx, packed, p.Path)
+	if err := archive.Extract(ctx, packed, p.Path); err != nil {
+		return p, err
+	}
+	return p, os.Chmod(p.Path, os.FileMode(p.Mode))
 }
 
 // Inspect reads complete supported artifact facts without acquisition or publication.
@@ -235,26 +119,4 @@ func artifactVersion(facts plugin.Facts) string {
 		version = candidate
 	}
 	return version
-}
-
-func isArchive(name string) bool {
-	lower := strings.ToLower(name)
-	return strings.HasSuffix(lower, ".zip") || strings.HasSuffix(lower, ".tar") || strings.HasSuffix(lower, ".tar.gz") || strings.HasSuffix(lower, ".tgz")
-}
-func requested(v config.Verification) bool {
-	return v.Integrity || v.Signature || v.Resources || v.Identity || v.Platform || v.CertificateSHA256 != ""
-}
-
-func verify(path string, v config.Verification) (apple.Evidence, error) {
-	policy := apple.Policy{RequireIntegrity: v.Integrity || v.Resources || v.Signature || v.Identity || v.CertificateSHA256 != "", RequireSignature: v.Signature || v.Identity || v.CertificateSHA256 != "", RequireResources: v.Resources, RequireIdentity: v.Identity, CertificateSHA256: v.CertificateSHA256, RequirePlatform: v.Platform}
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".pkg":
-		return apple.VerifyPackage(path, policy)
-	case ".app":
-		return apple.VerifyApp(path, policy)
-	case ".exe", ".msi", ".dmg", ".zip", ".tar", ".gz":
-		return apple.Evidence{}, fmt.Errorf("required verification is unsupported for %s", filepath.Ext(path))
-	default:
-		return apple.VerifyMachO(path, policy)
-	}
 }

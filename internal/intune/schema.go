@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"math"
 	"reflect"
@@ -57,6 +58,18 @@ func validateMetadata(data []byte) (object, error) {
 		switch {
 		case key == "@odata.type":
 		case key == "retention" || key == "dependencies" || key == "supersedes":
+		case appType == win32Type && key == "content":
+			content, ok := value.(object)
+			if !ok {
+				return nil, errors.New("content must be an object")
+			}
+			if err := fields(content, "setup_file"); err != nil {
+				return nil, err
+			}
+			setup := strings.ReplaceAll(text(content["setup_file"]), `\`, "/")
+			if !fs.ValidPath(setup) || setup == "." || strings.Contains(setup, ":") {
+				return nil, errors.New("content.setup_file must be a relative Windows payload path")
+			}
 		case appType == win32Type && key == "msiInformation":
 			if err := validateMSIInformation(value); err != nil {
 				return nil, err
@@ -272,6 +285,7 @@ func validateRules(value any) error {
 	if !ok || len(list) > 100 {
 		return errors.New("rules must be an array of at most 100 rules")
 	}
+	msi := false
 	for _, item := range list {
 		rule, ok := item.(object)
 		if !ok {
@@ -282,6 +296,10 @@ func validateRules(value any) error {
 		}
 		switch rule["@odata.type"] {
 		case "#microsoft.graph.win32LobAppProductCodeRule":
+			if msi {
+				return errors.New("only one MSI product-code detection rule is supported")
+			}
+			msi = true
 			if err := fields(rule, "@odata.type", "ruleType", "productCode", "productVersionOperator", "productVersion"); err != nil {
 				return err
 			}
@@ -290,6 +308,9 @@ func validateRules(value any) error {
 			}
 			if !enum(rule["productVersionOperator"], "notConfigured", "equal", "notEqual", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual") {
 				return errors.New("invalid productVersionOperator")
+			}
+			if rule["productVersionOperator"] != "notConfigured" && text(rule["productVersion"]) == "" {
+				return errors.New("product-version comparison requires productVersion")
 			}
 		case "#microsoft.graph.win32LobAppFileSystemRule":
 			if err := fields(rule, "@odata.type", "ruleType", "path", "fileOrFolderName", "check32BitOn64System", "operationType", "operator", "comparisonValue"); err != nil {
@@ -301,6 +322,9 @@ func validateRules(value any) error {
 			if !enum(rule["operator"], "notConfigured", "equal", "notEqual", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual") {
 				return errors.New("invalid file-system operator")
 			}
+			if err := validateComparison(rule, rule["operationType"] == "exists"); err != nil {
+				return err
+			}
 		case "#microsoft.graph.win32LobAppRegistryRule":
 			if err := fields(rule, "@odata.type", "ruleType", "keyPath", "valueName", "check32BitOn64System", "operationType", "operator", "comparisonValue"); err != nil {
 				return err
@@ -310,6 +334,9 @@ func validateRules(value any) error {
 			}
 			if !enum(rule["operator"], "notConfigured", "equal", "notEqual", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual") {
 				return errors.New("invalid registry operator")
+			}
+			if err := validateComparison(rule, enum(rule["operationType"], "exists", "doesNotExist")); err != nil {
+				return err
 			}
 		case "#microsoft.graph.win32LobAppPowerShellScriptRule":
 			if len(list) != 1 {
@@ -339,6 +366,20 @@ func validateRules(value any) error {
 				return fmt.Errorf("rule %s must be a string", key)
 			}
 		}
+	}
+	return nil
+}
+
+func validateComparison(rule object, existence bool) error {
+	if existence {
+		if rule["operator"] != "notConfigured" {
+			return errors.New("existence detection requires operator notConfigured")
+		}
+		return nil
+	}
+	_, valuePresent := rule["comparisonValue"].(string)
+	if rule["operator"] == "notConfigured" || !valuePresent || (rule["operationType"] != "string" && text(rule["comparisonValue"]) == "") {
+		return errors.New("property detection requires a comparison operator and comparisonValue")
 	}
 	return nil
 }

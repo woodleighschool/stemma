@@ -26,28 +26,42 @@ import (
 )
 
 // Version identifies the package derivation, including its format and metadata policy.
-const Version = "stemma.pkgbuild/0.1.2"
+const Version = "stemma.pkgbuild/0.1.3"
 
 // BOM's 32-bit size field is narrower than ODC's 33-bit file length.
 const maxFileSize int64 = math.MaxUint32
-const maxTotalSize = 512 << 20
+
+// MaxPayloadSize bounds the expanded payload bytes.
+const MaxPayloadSize = 512 << 20
 
 // The adopted BOM writer uses one 4 KiB leaf (12-byte header, 8 bytes per path).
-const maxEntries = 500
-const maxScriptSize = 1 << 20
+const MaxEntries = 500
+
+// MaxScriptSize bounds each packaged endpoint hook.
+const MaxScriptSize = 1 << 20
 
 // Options declares one component package. Paths are relative to the input root.
 // Payload is optional; Scripts accepts preinstall and postinstall hooks only.
-// Files install as root:wheel. Hook contents are packaged, never executed.
+// Files default to root:wheel; Metadata overrides archive ownership and modes.
+// Hook contents are packaged, never executed.
 // Timestamp normalizes all package dates when supplied. Otherwise source mtimes
 // are preserved and generated archive members use the captured build time.
 type Options struct {
-	Identifier      string            `json:"identifier"`
-	Version         string            `json:"version"`
-	InstallLocation string            `json:"install_location,omitempty"`
-	Payload         string            `json:"payload,omitempty"`
-	Scripts         map[string]string `json:"scripts,omitempty"`
-	Timestamp       time.Time         `json:"timestamp,omitzero"`
+	Identifier      string                   `json:"identifier"`
+	Version         string                   `json:"version"`
+	InstallLocation string                   `json:"install_location,omitempty"`
+	Payload         string                   `json:"payload,omitempty"`
+	Scripts         map[string]string        `json:"scripts,omitempty"`
+	Metadata        map[string]EntryMetadata `json:"metadata,omitempty"`
+	Timestamp       time.Time                `json:"timestamp,omitzero"`
+}
+
+// EntryMetadata controls archive metadata at an exact payload-relative path.
+// A nil mode preserves source permissions. UID and GID default to root:wheel.
+type EntryMetadata struct {
+	Mode *uint32 `json:"mode,omitempty"`
+	UID  uint32  `json:"uid,omitempty"`
+	GID  uint32  `json:"gid,omitempty"`
 }
 
 type packageInfo struct {
@@ -82,7 +96,7 @@ var packageIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
 // It supports ordinary payload files/directories and declared install hooks.
 // Unsupported links, extended metadata and bundle installation policy are rejected.
 func Build(ctx context.Context, root, output string, opts Options) error {
-	if err := validate(opts); err != nil {
+	if err := Validate(opts); err != nil {
 		return err
 	}
 	if err := ctx.Err(); err != nil {
@@ -134,7 +148,7 @@ func Build(ctx context.Context, root, output string, opts Options) error {
 		info.Location = "/"
 	}
 	if opts.Payload != "" {
-		paths, size, err := writePayload(ctx, source, opts.Payload, filepath.Join(workspace, "Payload"), opts.Timestamp)
+		paths, size, err := writePayload(ctx, source, opts.Payload, filepath.Join(workspace, "Payload"), opts.Timestamp, opts.Metadata)
 		if err != nil {
 			return err
 		}
@@ -173,7 +187,8 @@ func Build(ctx context.Context, root, output string, opts Options) error {
 	return os.Link(temporary, output)
 }
 
-func validate(opts Options) error {
+// Validate checks the package declaration without reading its input files.
+func Validate(opts Options) error {
 	if !opts.Timestamp.IsZero() {
 		if _, err := packageTime(opts.Timestamp, time.Time{}); err != nil {
 			return err
@@ -193,6 +208,17 @@ func validate(opts Options) error {
 	}
 	if opts.Payload != "" && !validPath(opts.Payload) {
 		return errors.New("payload must be a confined relative path")
+	}
+	for name, metadata := range opts.Metadata {
+		if opts.Payload == "" || !validPath(name) {
+			return errors.New("archive metadata requires a confined payload-relative path")
+		}
+		if metadata.Mode != nil && *metadata.Mode > 0o777 {
+			return errors.New("archive mode must contain ordinary permission bits only")
+		}
+		if metadata.UID > 0o777777 || metadata.GID > 0o777777 {
+			return errors.New("archive UID/GID exceeds the ODC 18-bit field")
+		}
 	}
 	for name, filename := range opts.Scripts {
 		if name != "preinstall" && name != "postinstall" {
@@ -257,7 +283,7 @@ func copyContents(ctx context.Context, destination io.Writer, f *os.File, info o
 	return nil
 }
 
-func writePayload(ctx context.Context, source *os.Root, prefix, destination string, timestamp time.Time) ([]*bomPath, int64, error) {
+func writePayload(ctx context.Context, source *os.Root, prefix, destination string, timestamp time.Time, metadata map[string]EntryMetadata) ([]*bomPath, int64, error) {
 	f, err := os.Create(destination)
 	if err != nil {
 		return nil, 0, err
@@ -267,12 +293,13 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 	writer := cpio.NewWriter(gz)
 	var paths []*bomPath
 	var total int64
+	used := map[string]bool{}
 	var walk func(string, string, uint32) error
 	walk = func(name, relative string, parentID uint32) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if len(paths) >= maxEntries {
+		if len(paths) >= MaxEntries {
 			return errors.New("package exceeds entry limit")
 		}
 		if !validPath(name) || len(path.Base(name)) > 255 {
@@ -298,28 +325,34 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 			if size < 0 || size > maxFileSize {
 				return errors.New("package input exceeds BOM file size limit")
 			}
-			if size > maxTotalSize-total {
+			if size > MaxPayloadSize-total {
 				return errors.New("package exceeds total payload size limit")
 			}
 			total += size
 		}
 		id := uint32(len(paths) + 1)
-		mode := uint32(info.Mode().Perm()) | cpio.ModeRegular
+		attrs := metadata[relative]
+		used[relative] = true
+		permissions := uint32(info.Mode().Perm())
+		if attrs.Mode != nil {
+			permissions = *attrs.Mode
+		}
+		mode := permissions | cpio.ModeRegular
 		if info.IsDir() {
-			mode = uint32(info.Mode().Perm()) | cpio.ModeDir
+			mode = permissions | cpio.ModeDir
 		}
 		modified, err := packageTime(info.ModTime(), timestamp)
 		if err != nil {
 			return fmt.Errorf("package input %s: %w", name, err)
 		}
-		cfile := &cpio.Header{Inode: uint64(id), Mode: mode, NLink: 1, Name: "./" + relative, Size: size, ModTime: modified}
+		cfile := &cpio.Header{Inode: uint64(id), Mode: mode, UID: attrs.UID, GID: attrs.GID, NLink: 1, Name: "./" + relative, Size: size, ModTime: modified}
 		if relative == "." {
 			cfile.Name = "."
 		}
 		if err := writer.WriteHeader(cfile); err != nil {
 			return err
 		}
-		item := &bomPath{id: id, parentID: parentID, name: path.Base(relative), isDir: info.IsDir(), mode: uint16(mode), size: uint32(size), modified: uint32(modified.Unix())}
+		item := &bomPath{id: id, parentID: parentID, name: path.Base(relative), isDir: info.IsDir(), mode: uint16(mode), uid: attrs.UID, gid: attrs.GID, size: uint32(size), modified: uint32(modified.Unix())}
 		if info.Mode().IsRegular() {
 			digest := bom.NewCksum()
 			if err := copyContents(ctx, io.MultiWriter(writer, digest), file, info); err != nil {
@@ -329,11 +362,11 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 		}
 		paths = append(paths, item)
 		if info.IsDir() {
-			children, err := file.ReadDir(maxEntries - len(paths) + 1)
+			children, err := file.ReadDir(MaxEntries - len(paths) + 1)
 			if err != nil && err != io.EOF {
 				return err
 			}
-			if len(children) > maxEntries-len(paths) {
+			if len(children) > MaxEntries-len(paths) {
 				return errors.New("package exceeds entry limit")
 			}
 			slices.SortFunc(children, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
@@ -347,6 +380,11 @@ func writePayload(ctx context.Context, source *os.Root, prefix, destination stri
 	}
 	if err := walk(prefix, ".", 0); err != nil {
 		return nil, 0, err
+	}
+	for name := range metadata {
+		if !used[name] {
+			return nil, 0, fmt.Errorf("archive metadata names missing payload path %s", name)
+		}
 	}
 	if err := writer.Close(); err != nil {
 		return nil, 0, err
@@ -381,7 +419,7 @@ func writeScripts(ctx context.Context, source *os.Root, scripts map[string]strin
 			return err
 		}
 		defer func() { _ = file.Close() }()
-		if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maxScriptSize {
+		if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > MaxScriptSize {
 			return errors.New("package script is not a regular file within the size limit")
 		}
 		modified, err := packageTime(info.ModTime(), timestamp)

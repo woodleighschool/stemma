@@ -12,60 +12,60 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func subjectSelectors(software config.Software) map[string]plugin.SubjectSelector {
-	result := make(map[string]plugin.SubjectSelector, len(software.Subjects))
-	for name, selector := range software.Subjects {
-		result[name] = plugin.SubjectSelector(selector)
-	}
-	return result
-}
-
-func peerBindings(ops *operations, project config.Project, destination string, current *state) map[string]json.RawMessage {
+func peerBindings(ops *operations, project config.Project, plans map[string]resourcePlan, destination string, current *state) map[string]json.RawMessage {
 	result := map[string]json.RawMessage{}
 	connection := ops.fingerprint(project.Destinations[destination])
-	for software, spec := range project.Software {
+	for software, spec := range plans {
 		if _, present := spec.Destinations[destination]; !present {
 			continue
 		}
 		value := current.Bindings[software+"/"+destination]
 		if value.Connection == connection && len(value.Binding) > 0 && string(value.Binding) != "null" {
-			result[software] = value.Binding
+			result[spec.Resource.Metadata.Name] = value.Binding
 		}
 	}
 	return result
 }
 
 type destinationRef struct {
-	Software    string
+	Resource    string
 	Destination string
 }
 
 // Providers declare software references on their own connection during validation.
-func orderDestinations(ctx context.Context, project config.Project, ops *operations, root string, selected []string) ([]destinationRef, map[destinationRef][]destinationRef, error) {
+func orderDestinations(ctx context.Context, project config.Project, plans map[string]resourcePlan, ops *operations, root string, selected []string) ([]destinationRef, map[destinationRef][]destinationRef, error) {
 	dependencies := map[destinationRef][]destinationRef{}
 	var nodes []destinationRef
 	for _, name := range selected {
-		software := project.Software[name]
+		software := plans[name]
 		for _, destination := range sortedKeys(software.Destinations) {
 			node := destinationRef{name, destination}
 			nodes = append(nodes, node)
 			connection := project.Destinations[destination]
 			metadata, _ := json.Marshal(staticMetadata(destinationMetadata(software.Destinations[destination])))
 			settings, _ := json.Marshal(connection.Config)
-			request := plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: project.Project, Software: name, Destination: destination}, Root: root, Config: settings, Metadata: metadata, Subjects: subjectSelectors(software)}
+			request := plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: project.Project, Software: software.Resource.Metadata.Name, Destination: destination}, Root: root, Config: settings, Metadata: metadata, Subjects: software.Subjects}
 			var response plugin.ReconcileResponse
 			if err := ops.call(ctx, connection.Operation, "validate", request, &response); err != nil {
 				return nil, nil, fmt.Errorf("%s/%s: %w", name, destination, err)
 			}
 			for _, required := range response.Requires {
-				target, exists := project.Software[required]
+				var requiredKey string
+				for key, target := range plans {
+					if target.Resource.Metadata.Name == required {
+						if _, ok := target.Destinations[destination]; ok {
+							requiredKey = key
+						}
+					}
+				}
+				target, exists := plans[requiredKey]
 				if !exists {
 					return nil, nil, fmt.Errorf("%s/%s references unknown software %q", name, destination, required)
 				}
 				if _, exists := target.Destinations[destination]; !exists {
 					return nil, nil, fmt.Errorf("%s/%s requires %s on the same connection", name, destination, required)
 				}
-				ref := destinationRef{required, destination}
+				ref := destinationRef{requiredKey, destination}
 				if !slices.Contains(dependencies[node], ref) {
 					dependencies[node] = append(dependencies[node], ref)
 				}
@@ -78,9 +78,9 @@ func orderDestinations(ctx context.Context, project config.Project, ops *operati
 	var visit func(destinationRef) error
 	visit = func(node destinationRef) error {
 		if visiting[node] {
-			return fmt.Errorf("software reference cycle at %s/%s", node.Software, node.Destination)
+			return fmt.Errorf("software reference cycle at %s/%s", node.Resource, node.Destination)
 		}
-		if visited[node] || !slices.Contains(selected, node.Software) {
+		if visited[node] || !slices.Contains(selected, node.Resource) {
 			return nil
 		}
 		visiting[node] = true

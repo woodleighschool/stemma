@@ -1,6 +1,7 @@
 package source
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/cas"
-	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 func TestGitHubReleaseRetainsRawTag(t *testing.T) {
@@ -28,15 +29,15 @@ func TestGitHubReleaseRetainsRawTag(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
 	})
-	s := config.Source{Type: "github", Repository: "example/app", Release: "v1.2.3", Asset: "App.pkg"}
+	s := plugin.Input{Resolver: "github", Config: map[string]any{"repository": "example/app", "release": "v1.2.3", "asset": "App.pkg"}}
 	entry, err := m.Resolve(t.Context(), s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry.Release != "v1.2.3" || entry.ReleaseID != 12 || entry.AssetID != 34 {
+	if observation(t, entry).Release != "v1.2.3" || observation(t, entry).ReleaseID != 12 || observation(t, entry).AssetID != 34 {
 		t.Fatalf("release identity changed: %+v", entry)
 	}
-	if _, err := m.Acquire(t.Context(), s, entry); err != nil {
+	if _, err := m.FetchLocked(t.Context(), s, entry); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -61,22 +62,22 @@ func TestDownloadPagePinsUniqueURLAndColdRecovery(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
 	})
-	s := config.Source{Type: "http", URL: "https://vendor.example/download", Match: `https://cdn\.example/App\.pkg\?version=\d+&arch=arm64`, Token: "private"}
+	s := plugin.Input{Resolver: "http", Config: map[string]any{"url": "https://vendor.example/download", "match": `https://cdn\.example/App\.pkg\?version=\d+&arch=arm64`, "token": "private"}}
 	entry, err := m.Resolve(t.Context(), s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry.URL != "https://cdn.example/App.pkg?version=1&arch=arm64" || entry.Filename != "App.pkg" {
+	if observation(t, entry).URL != "https://cdn.example/App.pkg?version=1&arch=arm64" || entry.Content.Filename != "App.pkg" {
 		t.Fatalf("unexpected discovery: %+v", entry)
 	}
-	filename, err := store.Path(entry.Artifact)
+	filename, err := store.Path(entry.Content.Artifact)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filename); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Acquire(t.Context(), s, entry); err != nil {
+	if _, err := m.FetchLocked(t.Context(), s, entry); err != nil {
 		t.Fatal(err)
 	}
 	if pageReads != 1 {
@@ -105,7 +106,7 @@ func TestDownloadPageRejectsAmbiguousOrUnsafeMatches(t *testing.T) {
 				}
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(tc.body)), Header: http.Header{}}, nil
 			})
-			_, err = m.Resolve(t.Context(), config.Source{Type: "http", URL: "https://vendor.example/download", Match: tc.pattern, Filename: "App.pkg"})
+			_, err = m.Resolve(t.Context(), plugin.Input{Resolver: "http", Config: map[string]any{"url": "https://vendor.example/download", "match": tc.pattern, "filename": "App.pkg"}})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want %s", err, tc.want)
 			}
@@ -131,7 +132,7 @@ func TestRedirectFailureDoesNotExposeTemporaryCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := New(store, t.TempDir(), false)
-	_, err = manager.Resolve(t.Context(), config.Source{Type: "http", URL: server.URL + "/app.pkg"})
+	_, err = manager.Resolve(t.Context(), plugin.Input{Resolver: "http", Config: map[string]any{"url": server.URL + "/app.pkg"}})
 	if err == nil {
 		t.Fatal("expected failed redirected download")
 	}
@@ -157,12 +158,21 @@ func TestStableQueryRetainsOriginalURLAcrossRedirects(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := New(store, t.TempDir(), false)
-	s := config.Source{Type: "http", URL: server.URL + "/fwlink?linkid=853070", Filename: "CompanyPortal.pkg"}
+	s := plugin.Input{Resolver: "http", Config: map[string]any{"url": server.URL + "/fwlink?linkid=853070", "filename": "CompanyPortal.pkg"}}
 	entry, err := m.Resolve(t.Context(), s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry.URL != s.URL || strings.Contains(entry.URL, "temporary-signature") {
-		t.Fatalf("lock retained redirected URL: %q", entry.URL)
+	if observation(t, entry).URL != s.Config["url"].(string) || strings.Contains(observation(t, entry).URL, "temporary-signature") {
+		t.Fatalf("lock retained redirected URL: %q", observation(t, entry).URL)
 	}
+}
+
+func observation(t *testing.T, entry Entry) nativeObservation {
+	t.Helper()
+	var value nativeObservation
+	if err := json.Unmarshal(entry.Observation, &value); err != nil {
+		t.Fatal(err)
+	}
+	return value
 }

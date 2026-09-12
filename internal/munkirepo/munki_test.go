@@ -306,3 +306,36 @@ func writeNative(t *testing.T, filename string, value any) {
 }
 
 func nativeMetadata(data string) json.RawMessage { return json.RawMessage(`{"pkginfo":` + data + `}`) }
+
+func TestPreparedIconPublishesAndRetainsExplicitOverride(t *testing.T) {
+	root, request := repositoryRequest(t, "Example.pkg", `{}`)
+	data := []byte("synthetic PNG content")
+	icon := filepath.Join(t.TempDir(), "icon.png")
+	if err := os.WriteFile(icon, data, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	artifact := plugin.Artifact{Path: icon, Filename: "icon.png", Format: "png", Size: int64(len(data)), SHA256: hex.EncodeToString(digest[:])}
+	request.Inputs = map[string]plugin.Artifact{"icon": artifact}
+	pkginfo := apply(t, root, &request)
+	values := readNative[map[string]any](t, pkginfo)
+	name, _ := values["icon_name"].(string)
+	published, err := os.ReadFile(filepath.Join(root, "icons", name))
+	if err != nil || !bytes.Equal(data, published) || values["icon_hash"] != artifact.SHA256 {
+		t.Fatalf("icon publication: %v %#v", err, values)
+	}
+	assertConverged(t, request)
+	request.Inputs = nil
+	apply(t, root, &request)
+	values = readNative[map[string]any](t, pkginfo)
+	if _, exists := values["icon_name"]; exists {
+		t.Fatal("stale derived icon retained")
+	}
+	request.Metadata = nativeMetadata(`{"icon_name":"manual.png","icon_hash":null}`)
+	request.Inputs = map[string]plugin.Artifact{"icon": artifact}
+	apply(t, root, &request)
+	values = readNative[map[string]any](t, pkginfo)
+	if values["icon_name"] != "manual.png" {
+		t.Fatal("authored icon overwritten")
+	}
+}

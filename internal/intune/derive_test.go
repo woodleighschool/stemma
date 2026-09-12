@@ -101,6 +101,10 @@ func TestIntuneAuthoringSchemaAndProviderAgree(t *testing.T) {
 		valid    bool
 	}{
 		{"native MSI", object{"@odata.type": win32Type, "msiInformation": object{"productVersion": "2.0", "packageType": "perMachine"}}, true},
+		{"setup entrypoint", object{"type": "win32", "content": object{"setup_file": "bin/setup.exe"}}, true},
+		{"unknown content option", object{"type": "win32", "content": object{"setup_file": "setup.exe", "run": true}}, false},
+		{"missing setup entrypoint", object{"type": "win32", "content": object{}}, false},
+		{"mac setup tree", object{"type": "pkg", "content": object{"setup_file": "setup.exe"}}, false},
 		{"registry", object{"type": "win32", "rules": []any{object{"@odata.type": "#microsoft.graph.win32LobAppRegistryRule", "ruleType": "detection", "keyPath": `HKEY_LOCAL_MACHINE\Software\Example`, "valueName": "Version", "operationType": "version", "operator": "greaterThanOrEqual", "comparisonValue": "2.0"}}}, true},
 		{"script", object{"type": "win32", "rules": []any{object{"@odata.type": "#microsoft.graph.win32LobAppPowerShellScriptRule", "ruleType": "detection", "scriptContent": script, "runAs32Bit": false}}}, true},
 		{"references", object{"type": "win32", "dependencies": []any{object{"software": "runtime", "auto_install": true}}, "retention": object{"keep": 1}}, true},

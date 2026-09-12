@@ -22,23 +22,26 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/cas"
-	"github.com/woodleighschool/stemma/internal/config"
+
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/source"
 )
 
-func TestExecutableRegistersPreparationAndReconciliation(t *testing.T) {
+func TestExternalResolverBuilderAndNativeDestination(t *testing.T) {
 	root := t.TempDir()
 	binary := filepath.Join(root, "echo")
 	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../plugin/testdata/echo")
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build plugin: %v\n%s", err, output)
 	}
+	payload, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var served atomic.Value
+	served.Store(payload)
 	var downloads atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		downloads.Add(1)
-		_, _ = w.Write([]byte("fixture content"))
-	}))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { downloads.Add(1); _, _ = w.Write(served.Load().([]byte)) }))
 	defer server.Close()
 	manifest := fmt.Sprintf(`apiVersion: stemma/v1alpha1
 kind: Project
@@ -50,75 +53,103 @@ spec:
       trusted: true
       image: registry.example/plugins/echo:v1
   destinations:
-    remote: {operation: echo.reconcile, config: {}}
-  imports: ['*.software.yaml']
+    local:
+      operation: munki
+      config:
+        path: repo
+  imports:
+    - '*.software.yaml'
+---
+apiVersion: example.test/v1
+kind: ExternalInstaller
+metadata:
+  name: fixture-builder
+spec:
+  source:
+    resolver: echo.download
+    url: %s/vendor.pkg
 ---
 apiVersion: stemma/v1alpha1
-kind: Software
+kind: MacSoftware
 metadata:
   name: fixture
 spec:
-  source: {type: http, url: %s/payload.bin}
-  steps:
-    - name: first
-      operation: echo.inspect
-      inputs: {payload: source}
-    - name: inspected
-      operation: inspect
-      inputs: {input: first/payload}
-    - name: second
-      operation: echo.inspect
-      inputs: {finished: inspected/artifact}
+  source:
+    resource:
+      apiVersion: example.test/v1
+      kind: ExternalInstaller
+      name: fixture-builder
+      output: installer
   destinations:
-    remote: {installer: second/finished, displayName: original}
+    local:
+      pkginfo:
+        description: original
 `, server.URL)
-	path := filepath.Join(root, "stemma.yaml")
-	write := func(data string) {
+	filename := filepath.Join(root, "stemma.yaml")
+	write := func(text string) {
 		t.Helper()
-		if err := testproject.Write(path, []byte(data)); err != nil {
+		if err := testproject.Write(filename, []byte(text)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	write(manifest)
-	project, err := config.Load(path)
-	if err != nil {
-		t.Fatal(err)
-	}
 	store, err := cas.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	installFixturePlugin(t, store, root, binary, "original resource")
-	if _, err := lockfile.Prepare(t.Context(), project, source.New(store, root, false), lockfile.Options{PluginsOnly: true}); err != nil {
-		t.Fatal(err)
-	}
-	opts := Options{ConfigPath: path, CacheDir: store.Dir, Method: "plan"}
+	opts := Options{ConfigPath: filename, CacheDir: store.Dir, Method: "update"}
 	if _, err := ValidateProject(t.Context(), opts); err != nil {
 		t.Fatal(err)
 	}
-	catalog, err := Catalog(t.Context(), opts)
-	if err != nil || len(catalog.Operations) != 8 || downloads.Load() != 0 {
-		t.Fatalf("catalog acquired software or lost operations: %+v %v downloads=%d", catalog, err, downloads.Load())
+	descriptor, err := Catalog(t.Context(), opts)
+	if err != nil || downloads.Load() != 0 {
+		t.Fatalf("catalog acquired inputs: %v", err)
 	}
+	found := false
+	for _, operation := range descriptor.Operations {
+		if operation.Resource != nil && operation.Resource.Kind == "ExternalInstaller" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("external kind registration missing")
+	}
+	t.Setenv("STEMMA_ECHO_REQUIRE_TOOL", "stemma-fixture-missing-helper-8ab22")
+	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "install the fixture helper") {
+		t.Fatalf("missing runner prerequisite: %v", err)
+	}
+	if downloads.Load() != 0 {
+		t.Fatal("prerequisite failure acquired an input")
+	}
+	t.Setenv("STEMMA_ECHO_REQUIRE_TOOL", "")
+	if _, err := Run(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	opts.Method = "apply"
 	first, err := Run(t.Context(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Software) != 1 || len(first.Software[0].Steps) != 3 || first.Software[0].Steps[2].Artifacts["finished"].Payload != first.Software[0].Prepared.Source.Artifact {
-		t.Fatalf("named step outputs were not preserved: %+v", first)
+	if len(first.Resources) != 2 || !first.Resources[1].Destinations[0].Applied {
+		t.Fatalf("external artifact was not published by native consumer: %+v", first)
 	}
-	write(strings.Replace(manifest, "displayName: original", "displayName: edited", 1))
+	installer := first.Resources[0].Artifacts["installer"]
+	if !bytes.Contains(installer.Evidence["vendor.probe"], []byte(`"revision":7`)) {
+		t.Fatal("external evidence was dropped")
+	}
+	write(strings.Replace(manifest, "description: original", "description: edited", 1))
 	second, err := Run(t.Context(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, step := range second.Software[0].Steps {
-		if !step.Cached {
-			t.Fatalf("metadata edit invalidated step %s", step.Name)
+	for _, item := range second.Resources {
+		if !item.Cached {
+			t.Fatalf("metadata invalidated %s", item.Kind)
 		}
 	}
 	if downloads.Load() != 1 {
-		t.Fatal("warm operation run redownloaded source")
+		t.Fatal("warm run reacquired locked input")
 	}
 	if err := os.RemoveAll(store.Dir); err != nil {
 		t.Fatal(err)
@@ -129,33 +160,27 @@ spec:
 	}
 	installFixturePlugin(t, store, root, binary, "original resource")
 	third, err := Run(t.Context(), opts)
-	if err != nil || third.Software[0].Steps[2].Artifacts["finished"].Payload != first.Software[0].Steps[2].Artifacts["finished"].Payload {
-		t.Fatalf("cold operation output changed: %+v %v", third, err)
-	}
-	installFixturePlugin(t, store, root, binary, "changed resource")
-	changed, err := Run(t.Context(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changed.Software[0].Steps[0].Cached {
-		t.Fatal("resource-only bundle change reused plugin step cache")
+	if third.Resources[0].Artifacts["installer"].Payload != installer.Payload || len(third.Resources[1].Destinations[0].Changes) != 0 {
+		t.Fatal("cache loss changed immutable output or replayed publication")
 	}
-	// A second provider advertising the same names cannot shadow the first.
-	write(strings.Replace(manifest, "  plugins:\n", "  plugins:\n    other:\n      trusted: true\n      image: registry.example/plugins/echo:v1\n", 1))
-	project, err = config.Load(path)
+	if downloads.Load() != 2 {
+		t.Fatal("cold external resolver was not exercised")
+	}
+	// Locked consumption cannot accept changed bytes at the observation URL.
+	served.Store([]byte("changed upstream content"))
+	if err := os.RemoveAll(store.Dir); err != nil {
+		t.Fatal(err)
+	}
+	store, err = cas.Open(store.Dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	installFixturePlugin(t, store, root, binary, "changed resource")
-	if _, err := lockfile.Prepare(t.Context(), project, source.New(store, root, false), lockfile.Options{PluginsOnly: true}); err != nil {
-		t.Fatal(err)
-	}
-	count := downloads.Load()
-	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "already registered") {
-		t.Fatalf("provider collision: %v", err)
-	}
-	if downloads.Load() != count {
-		t.Fatal("collision discovered after software acquisition")
+	installFixturePlugin(t, store, root, binary, "original resource")
+	if _, err := Run(t.Context(), opts); err == nil {
+		t.Fatal("locked resolver silently substituted changed upstream bytes")
 	}
 }
 
@@ -216,9 +241,9 @@ func installFixturePlugin(t *testing.T, store *cas.Store, root, binary, resource
 	entry := plugins.Entry{Image: "registry.example/plugins/echo:v1", Digest: index.Digest.String(), Size: index.Size}
 	locked, err := lockfile.Load(filepath.Join(root, "stemma.lock.yaml"))
 	if err != nil {
-		locked = lockfile.File{Version: 1, Software: map[string]source.Entry{}}
+		locked = lockfile.File{Version: 2, Inputs: map[string]map[string]source.Entry{}}
 	}
-	locked.Plugins = map[string]plugins.Entry{"provider": entry, "other": entry}
+	locked.Plugins = map[string]plugins.Entry{"provider": entry}
 	data, err = yaml.Marshal(locked)
 	if err != nil {
 		t.Fatal(err)

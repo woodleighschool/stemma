@@ -26,8 +26,8 @@ import (
 // "Paths" is a B-tree whose single leaf lists (PathInfo1, File) block-index
 // pairs, one per path. PathInfo1 -> PathInfo2 holds the metadata (type, mode,
 // uid/gid, size, checksum); File holds the parent path id and the base name.
-// Ownership is fixed to root/wheel (0/0), matching the declared package ownership
-// behavior. Per-file checksums use the POSIX cksum (CRC-32/CKSUM) algorithm,
+// Ownership records the package declaration. Per-file checksums use the
+// POSIX cksum (CRC-32/CKSUM) algorithm,
 // exactly as Apple's mkbom records them.
 //
 // This writer does not reproduce Apple's exact block layout byte-for-byte (its
@@ -42,6 +42,8 @@ type bomPath struct {
 	name     string // base name; "." for the root
 	isDir    bool
 	mode     uint16 // full st_mode (type bits | permissions)
+	uid      uint32
+	gid      uint32
 	size     uint32
 	checksum uint32 // POSIX cksum of contents; 0 for directories
 	modified uint32 // Unix modification time in seconds
@@ -148,7 +150,7 @@ func buildBom(paths []*bomPath) []byte {
 }
 
 // buildBomPathInfo2 renders the metadata block for a path (35 bytes for files,
-// 31 for directories). Ownership is fixed to uid 0 / gid 0 (root/wheel).
+// 31 for directories), including the declared numeric ownership.
 func buildBomPathInfo2(p *bomPath) []byte {
 	var b bytes.Buffer
 	be := binary.BigEndian
@@ -160,8 +162,8 @@ func buildBomPathInfo2(p *bomPath) []byte {
 	b.WriteByte(1)                      // unknown0 (always 1)
 	_ = binary.Write(&b, be, uint16(3)) // architecture
 	_ = binary.Write(&b, be, p.mode)
-	_ = binary.Write(&b, be, uint32(0))  // uid = root
-	_ = binary.Write(&b, be, uint32(0))  // gid = wheel
+	_ = binary.Write(&b, be, p.uid)
+	_ = binary.Write(&b, be, p.gid)
 	_ = binary.Write(&b, be, p.modified) // mtime
 	_ = binary.Write(&b, be, p.size)
 	b.WriteByte(1) // unknown1 (always 1)

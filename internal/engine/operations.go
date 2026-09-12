@@ -1,11 +1,13 @@
 package engine
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -13,13 +15,10 @@ import (
 	"github.com/invopop/jsonschema"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
-	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/intune"
 	"github.com/woodleighschool/stemma/internal/jamf"
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	"github.com/woodleighschool/stemma/internal/munki"
 	"github.com/woodleighschool/stemma/internal/munkirepo"
-	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
@@ -55,14 +54,19 @@ func ValidateProject(ctx context.Context, opts Options) (config.Project, error) 
 		return p, err
 	}
 	defer cleanup()
-	if err := checkOperations(p, ops); err != nil {
+	plans, err := discover(ctx, p, ops)
+	if err != nil {
+		return p, err
+	}
+	selected, err := orderResources(plans, nil)
+	if err != nil {
 		return p, err
 	}
 	root, err := filepath.Abs(filepath.Dir(opts.ConfigPath))
 	if err != nil {
 		return p, err
 	}
-	_, _, err = orderDestinations(ctx, p, ops, root, sortedKeys(p.Software))
+	_, _, err = orderDestinations(ctx, p, plans, ops, root, selected)
 	return p, err
 }
 
@@ -98,29 +102,6 @@ func projectOperations(ctx context.Context, p config.Project, opts Options) (*op
 	return ops, cleanup, nil
 }
 
-func checkOperations(p config.Project, ops *operations) error {
-	for name, software := range p.Software {
-		for _, step := range software.Steps {
-			if err := ops.check(step.Operation, true); err != nil {
-				return fmt.Errorf("software %s step %s: %w", name, step.Name, err)
-			}
-			if err := ops.configuration(step.Operation, step.Config); err != nil {
-				return fmt.Errorf("software %s step %s: %w", name, step.Name, err)
-			}
-		}
-		for destination := range software.Destinations {
-			if err := ops.check(p.Destinations[destination].Operation, false); err != nil {
-				return fmt.Errorf("software %s destination %s: %w", name, destination, err)
-			}
-			settings := p.Destinations[destination].Config
-			if err := ops.configuration(p.Destinations[destination].Operation, settings); err != nil {
-				return fmt.Errorf("destination %s: %w", destination, err)
-			}
-		}
-	}
-	return nil
-}
-
 func (o *operations) configuration(name string, settings map[string]any) error {
 	op, err := o.operation(name)
 	if err != nil {
@@ -142,16 +123,7 @@ func (o *operations) configuration(name string, settings map[string]any) error {
 	if err := plugin.ValidateSchema(op.ConfigSchema, data); err != nil {
 		return fmt.Errorf("operation %s config: %w", name, err)
 	}
-	if name == "pkg" {
-		var spec config.Artifact
-		if err := json.Unmarshal(data, &spec); err != nil {
-			return err
-		}
-		if spec.Type == "" {
-			spec.Type = "pkg"
-		}
-		return spec.Validate()
-	}
+
 	return nil
 }
 
@@ -169,33 +141,27 @@ func operationSchema(value any) json.RawMessage {
 }
 
 func builtins(handlers map[string]reconcileHandler) (*operations, error) {
-	ops := &operations{registry: plugin.New("stemma", "operations/3"), identity: map[string]string{}}
+	ops := &operations{registry: plugin.New("stemma", "operations/4"), identity: map[string]string{}}
 	register := func(name, kind, effects string, methods []string, input, output any, handler plugin.Handler) error {
 		operation := plugin.Operation{Name: name, Kind: kind, SideEffects: effects, Methods: methods, InputSchema: operationSchema(input), OutputSchema: operationSchema(output)}
 		switch name {
-		case "pkg":
-			schema := jsonschema.Reflector{DoNotReference: true}
-			value := schema.Reflect(config.Artifact{})
-			value.Required = slices.DeleteFunc(value.Required, func(field string) bool { return field == "type" })
-			operation.ConfigSchema, _ = json.Marshal(value)
-		case "inspect":
-			operation.ConfigSchema = json.RawMessage(`{"type":"object","additionalProperties":false}`)
-		case "munki.pkginfo":
-			metadata := munki.MetadataSchema()
-			metadata.Required = []string{"name"}
-			operation.ConfigSchema, _ = json.Marshal(metadata)
 		case "munki":
 			operation.RequiresInspection = true
+			operation.Content = &plugin.ContentContract{Formats: []string{"pkg", "dmg"}, SourceFree: true}
 			operation.ConfigSchema, _ = json.Marshal(munkirepo.ConnectionSchema())
 			operation.MetadataSchema, _ = json.Marshal(munkirepo.MetadataSchema())
 		case "intune":
 			operation.RequiresInspection = true
+			operation.Content = intune.ContentContract()
+			operation.Requirements = intune.RuntimeRequirements()
 			operation.ConfigSchema, _ = json.Marshal(intune.ConnectionSchema())
 			operation.MetadataSchema, _ = json.Marshal(intune.MetadataSchema())
 		case "jamf":
+			operation.Content = &plugin.ContentContract{Formats: []string{"pkg", "dmg"}}
 			operation.ConfigSchema, _ = json.Marshal(jamf.ConnectionSchema())
 			operation.MetadataSchema, _ = json.Marshal(jamf.MetadataSchema())
 		}
+
 		if err := ops.registry.Register(operation, handler); err != nil {
 			return err
 		}
@@ -220,87 +186,28 @@ func builtins(handlers map[string]reconcileHandler) (*operations, error) {
 			return nil, err
 		}
 	}
-	if err := register("inspect", "inspect", "none", []string{"validate", "run"}, plugin.StepRequest{}, plugin.StepResponse{}, inspectOperation); err != nil {
+	if err := registerKinds(ops); err != nil {
 		return nil, err
 	}
-	if err := register("pkg", "package", "workspace", []string{"validate", "run"}, plugin.StepRequest{}, plugin.StepResponse{}, packageOperation); err != nil {
+	executable, err := os.Executable()
+	if err != nil {
 		return nil, err
 	}
-	if err := register("munki.pkginfo", "render", "workspace", []string{"validate", "run"}, plugin.StepRequest{}, plugin.StepResponse{}, munkiOperation); err != nil {
+	file, err := os.Open(executable)
+	if err != nil {
 		return nil, err
 	}
-	ops.identity["pkg"] += "/" + pkgbuild.Version
-	ops.identity["munki.pkginfo"] += "/4"
+	hash := sha256.New()
+	_, err = io.Copy(hash, file)
+	err = errors.Join(err, file.Close())
+	if err != nil {
+		return nil, err
+	}
+	implementation := hex.EncodeToString(hash.Sum(nil))
+	for name, version := range ops.identity {
+		ops.identity[name] = version + "/" + implementation
+	}
 	return ops, nil
-}
-
-func munkiOperation(ctx context.Context, request plugin.Request) (plugin.Response, error) {
-	if err := ctx.Err(); err != nil {
-		return plugin.Response{}, err
-	}
-	var input plugin.StepRequest
-	if err := json.Unmarshal(request.Input, &input); err != nil {
-		return plugin.Response{}, err
-	}
-	artifact, exists := input.Inputs["input"]
-	var authored map[string]any
-	if err := json.Unmarshal(input.Config, &authored); err != nil {
-		return plugin.Response{}, err
-	}
-	if authored["installer_type"] == "nopkg" {
-		if len(input.Inputs) != 0 {
-			return plugin.Response{}, errors.New("munki.pkginfo nopkg requires no installer inputs")
-		}
-	} else if !exists || len(input.Inputs) != 1 || artifact.Tree || artifact.Path == "" {
-		return plugin.Response{}, errors.New("munki.pkginfo requires one file named input")
-	}
-	_, installs := authored["installs"]
-	_, receipts := authored["receipts"]
-	_, script := authored["installcheck_script"]
-	if exists && !installs && !receipts && !script && !slices.ContainsFunc(artifact.Facts.Subjects, func(subject plugin.Subject) bool { return subject.App != nil }) {
-		facts, err := inspection.Read(ctx, artifact.Path)
-		if err != nil {
-			return plugin.Response{}, fmt.Errorf("munki.pkginfo inspect installer: %w", err)
-		}
-		for _, subject := range facts.Subjects {
-			if subject.App != nil {
-				artifact.Facts.Subjects = append(artifact.Facts.Subjects, subject)
-			}
-		}
-	}
-	effective := config.Merge(munki.ArtifactDefaults(artifact.Facts, authored), authored)
-	metadata, err := json.Marshal(effective)
-	if err != nil {
-		return plugin.Response{}, err
-	}
-	base := munki.Input{}
-	if exists {
-		base = munki.Input{Version: artifact.Version, SHA256: artifact.SHA256, Size: artifact.Size, InstallerLocation: "stemma/" + artifact.SHA256 + "/" + artifact.Filename}
-	}
-	if artifact.Format == "pkg" || filepath.Ext(artifact.Filename) == ".pkg" {
-		base.InstallerType = "pkg"
-	}
-	value, _, err := munki.Compose(base, metadata)
-	if err != nil {
-		return plugin.Response{}, err
-	}
-	document, err := munki.Render(value)
-	if err != nil {
-		return plugin.Response{}, err
-	}
-	if request.Method == "validate" {
-		return plugin.Response{}, nil
-	}
-	data, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		return plugin.Response{}, err
-	}
-	filename := filepath.Join(input.Workspace, "pkginfo.json")
-	if err := os.WriteFile(filename, append(data, '\n'), 0o600); err != nil {
-		return plugin.Response{}, err
-	}
-	output, err := json.Marshal(plugin.StepResponse{Artifacts: map[string]plugin.Artifact{"artifact": {Path: filename, Filename: "pkginfo.json"}}})
-	return plugin.Response{Output: output}, err
 }
 
 func nativeHandler(name string) reconcileHandler {
@@ -392,67 +299,4 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 		}
 	}
 	return ops, nil
-}
-
-func inspectOperation(ctx context.Context, request plugin.Request) (plugin.Response, error) {
-	var input plugin.StepRequest
-	if err := json.Unmarshal(request.Input, &input); err != nil {
-		return plugin.Response{}, err
-	}
-	if len(input.Inputs) != 1 || input.Inputs["input"].Path == "" {
-		return plugin.Response{}, errors.New("inspect requires one artifact named input")
-	}
-	if len(input.Config) > 0 && string(input.Config) != "{}" && string(input.Config) != "null" {
-		return plugin.Response{}, errors.New("inspect has no configuration fields")
-	}
-	if request.Method == "validate" {
-		return plugin.Response{}, nil
-	}
-	artifact := input.Inputs["input"]
-	facts, err := inspection.Read(ctx, artifact.Path)
-	if err != nil {
-		return plugin.Response{}, err
-	}
-	artifact.Facts = facts
-	data, err := json.Marshal(plugin.StepResponse{Artifacts: map[string]plugin.Artifact{"artifact": artifact}, Facts: facts})
-	return plugin.Response{Output: data}, err
-}
-
-func packageOperation(ctx context.Context, request plugin.Request) (plugin.Response, error) {
-	var input plugin.StepRequest
-	if err := json.Unmarshal(request.Input, &input); err != nil {
-		return plugin.Response{}, err
-	}
-	var spec config.Artifact
-	decoder := json.NewDecoder(bytes.NewReader(input.Config))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&spec); err != nil {
-		return plugin.Response{}, err
-	}
-	if spec.Type == "" {
-		spec.Type = "pkg"
-	}
-	if err := spec.Validate(); err != nil {
-		return plugin.Response{}, err
-	}
-	artifact, exists := input.Inputs["input"]
-	if len(input.Inputs) != 1 || !exists || !artifact.Tree {
-		return plugin.Response{}, errors.New("pkg requires one directory artifact named input")
-	}
-	if input.Timestamp.IsZero() {
-		return plugin.Response{}, errors.New("pkg requires a stable input timestamp")
-	}
-	if request.Method == "validate" {
-		return plugin.Response{}, nil
-	}
-	filename := spec.Filename
-	if filename == "" {
-		filename = spec.Identifier + ".pkg"
-	}
-	output := filepath.Join(input.Workspace, filename)
-	if err := pkgbuild.Build(ctx, artifact.Path, output, pkgbuild.Options{Identifier: spec.Identifier, Version: spec.Version, Payload: spec.Payload, InstallLocation: spec.InstallLocation, Scripts: spec.Scripts, Timestamp: input.Timestamp}); err != nil {
-		return plugin.Response{}, err
-	}
-	data, err := json.Marshal(plugin.StepResponse{Artifacts: map[string]plugin.Artifact{"artifact": {Path: output, Filename: filename, Format: "pkg"}}})
-	return plugin.Response{Output: data}, err
 }

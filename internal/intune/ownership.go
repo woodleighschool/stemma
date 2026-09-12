@@ -40,7 +40,7 @@ func unmanagedFields(m object) ([]string, error) {
 
 func unmanagedPath(field string) bool {
 	parts := strings.Split(field, ".")
-	if field == "" || len(field) > 256 || slices.Contains([]string{"derive", "unmanaged", "type", "app_id", "retention", "dependencies", "supersedes", "assignments"}, parts[0]) {
+	if field == "" || len(field) > 256 || slices.Contains([]string{"derive", "unmanaged", "type", "app_id", "retention", "content", "dependencies", "supersedes", "assignments"}, parts[0]) {
 		return false
 	}
 	// Graph encodes one OS selection as boolean fields; ownership is atomic.

@@ -4,14 +4,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/woodleighschool/stemma/internal/config"
 	"reflect"
+	"slices"
 	"strings"
 
-	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func validateReferences(software config.Software) error {
+func validateReferences(software plugin.ResourceResult) error {
 	validate := func(value any) error {
 		_, err := mapFactReferences(value, func(reference string) (any, error) {
 			_, _, err := parseFactReference(software, reference)
@@ -24,23 +25,43 @@ func validateReferences(software config.Software) error {
 			return fmt.Errorf("destination %s: %w", destination, err)
 		}
 	}
-	for _, step := range software.Steps {
-		if err := validate(step.Config); err != nil {
-			return fmt.Errorf("step %s: %w", step.Name, err)
-		}
-	}
+
 	return nil
 }
 
-func resolveMetadata(software config.Software, native map[string]any, facts plugin.Facts) (map[string]any, map[string]string, error) {
+func resolveMetadata(software plugin.ResourceResult, native map[string]any, facts plugin.Facts, evidence map[string]json.RawMessage) (map[string]any, map[string]string, error) {
 	selected := map[string]plugin.Subject{}
 	resolved, err := mapFactReferences(native, func(reference string) (any, error) {
+		keys := sortedKeys(evidence)
+		slices.SortFunc(keys, func(a, b string) int { return len(b) - len(a) })
+		for _, key := range keys {
+			if strings.HasPrefix(reference, key+".") {
+				var value any
+				if err := json.Unmarshal(evidence[key], &value); err != nil {
+					return nil, err
+				}
+				for field := range strings.SplitSeq(strings.TrimPrefix(reference, key+"."), ".") {
+					object, ok := value.(map[string]any)
+					if !ok {
+						return nil, fmt.Errorf("fact %s is not an object", key)
+					}
+					value, ok = object[field]
+					if !ok || value == nil {
+						return nil, fmt.Errorf("required fact %s is missing", reference)
+					}
+				}
+				return value, nil
+			}
+		}
 		name, fields, err := parseFactReference(software, reference)
 		if err != nil {
 			return nil, err
 		}
 		if _, present := selected[name]; !present {
-			selector := software.Subjects[name]
+			selector, exists := software.Subjects[name]
+			if !exists {
+				return nil, fmt.Errorf("required evidence %s is missing", reference)
+			}
 			match, err := plugin.SelectSubject(facts, plugin.SubjectSelector(selector))
 			if err != nil {
 				return nil, fmt.Errorf("subject %s: %w", name, err)
@@ -101,13 +122,18 @@ func mapFactReferences(value any, resolve func(string) (any, error)) (any, error
 	}
 }
 
-func parseFactReference(software config.Software, reference string) (string, []string, error) {
+func parseFactReference(software plugin.ResourceResult, reference string) (string, []string, error) {
 	name, field, ok := strings.Cut(reference, ".")
 	if !ok || field == "" {
 		return "", nil, fmt.Errorf("invalid fact reference %q", reference)
 	}
 	if _, exists := software.Subjects[name]; !exists {
-		return "", nil, fmt.Errorf("unknown fact subject %q", name)
+		for part := range strings.SplitSeq(reference, ".") {
+			if !safeOutputName(part) {
+				return "", nil, fmt.Errorf("invalid fact reference %q", reference)
+			}
+		}
+		return name, strings.Split(field, "."), nil
 	}
 	fields := strings.Split(field, ".")
 	typ := reflect.TypeFor[plugin.Subject]()
@@ -168,4 +194,11 @@ func readFact(value reflect.Value, fields []string) (any, error) {
 	var result any
 	err = json.Unmarshal(data, &result)
 	return result, err
+}
+
+func destinationMetadata(input map[string]any) map[string]any {
+	result := config.Merge(input, nil)
+	delete(result, "installer")
+	delete(result, "inputs")
+	return result
 }

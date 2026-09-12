@@ -83,7 +83,7 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest) (response plugin.R
 	delete(desired, "app_id")
 	if req.Method == "validate" {
 		if req.Artifact.Path != "" {
-			_, err := identifyArtifact(req.Artifact, text(desired["@odata.type"]))
+			_, err := identifyArtifact(ctx, req.Artifact, text(desired["@odata.type"]), setupFile(desired))
 			return response, err
 		}
 		return response, nil
@@ -97,7 +97,7 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest) (response plugin.R
 	}
 	paths := slices.Sorted(maps.Keys(response.Origins))
 	paths = slices.DeleteFunc(paths, func(path string) bool { return path == "@odata.type" })
-	c.derivation = &derivedOwnership{Active: deriving, Unmanaged: unmanaged, Paths: paths}
+	c.derivation = &derivedOwnership{Active: deriving || (text(desired["@odata.type"]) == win32Type && req.Artifact.Path != ""), Unmanaged: unmanaged, Paths: paths}
 	result, err := c.handle(ctx, req, cfg, desired)
 	result.Origins, result.Requires = response.Origins, response.Requires
 	return result, err
@@ -108,8 +108,9 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 	if err != nil {
 		return response, err
 	}
+	setup := setupFile(desired)
 	desired = maps.Clone(desired)
-	for _, key := range []string{"retention", "dependencies", "supersedes"} {
+	for _, key := range []string{"retention", "dependencies", "supersedes", "content"} {
 		delete(desired, key)
 	}
 	typedClient := *c
@@ -132,7 +133,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 	if err := c.derivation.check(b.Derived, desired); err != nil {
 		return response, err
 	}
-	artifact, err := identifyArtifact(req.Artifact, c.appType)
+	artifact, err := identifyArtifact(ctx, req.Artifact, c.appType, setup)
 	if err != nil {
 		return response, err
 	}

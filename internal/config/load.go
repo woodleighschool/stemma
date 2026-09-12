@@ -30,7 +30,7 @@ func Load(filename string) (Project, error) {
 	if err := validateHeader(document.APIVersion, document.Kind, "Project", document.Metadata); err != nil {
 		return Project{}, err
 	}
-	p := Project{Project: document.Metadata.Name, Imports: document.Spec.Imports, Components: document.Spec.Components, Destinations: document.Spec.Destinations, Plugins: document.Spec.Plugins, Software: map[string]Software{}}
+	p := Project{Project: document.Metadata.Name, Imports: document.Spec.Imports, Components: document.Spec.Components, Destinations: document.Spec.Destinations, Plugins: document.Spec.Plugins, Resources: map[string]Resource{}}
 	spec, _ := raw["spec"].(map[string]any)
 	components, _ := spec["components"].(map[string]any)
 	root, err := os.OpenRoot(filepath.Dir(filename))
@@ -67,15 +67,18 @@ func Load(filename string) (Project, error) {
 				return p, fmt.Errorf("import %s: %w", name, err)
 			}
 			for i, data := range documents {
-				var software SoftwareDocument
-				raw, err := parseConfig(data, &software)
+				var resource Resource
+				_, err := parseConfig(data, &resource)
 				if err != nil {
 					return p, fmt.Errorf("import %s document %d: %w", name, i+1, err)
 				}
-				if err := validateHeader(software.APIVersion, software.Kind, "Software", software.Metadata); err != nil {
+				if err := validateHeader(resource.APIVersion, resource.Kind, "", resource.Metadata); err != nil {
 					return p, fmt.Errorf("import %s document %d: %w", name, i+1, err)
 				}
-				if err := addSoftware(&p, software.Metadata.Name, raw["spec"], components, path.Dir(name)); err != nil {
+				if resource.Kind == "Project" {
+					return p, errors.New("Project cannot be imported as a resource")
+				}
+				if err := addResource(&p, resource, components, path.Dir(name)); err != nil {
 					return p, fmt.Errorf("import %s document %d: %w", name, i+1, err)
 				}
 			}
@@ -85,11 +88,16 @@ func Load(filename string) (Project, error) {
 }
 
 func validateHeader(version, kind, expected string, metadata Metadata) error {
-	if version != "stemma/v1alpha1" {
-		return errors.New("apiVersion must be stemma/v1alpha1")
+	group, revision, ok := strings.Cut(version, "/")
+	if !ok || !namePattern.MatchString(group) || !namePattern.MatchString(revision) {
+		return errors.New("apiVersion must identify a group and version")
 	}
-	if kind != expected {
+
+	if expected != "" && (kind != expected || version != "stemma/v1alpha1") {
 		return fmt.Errorf("kind must be %s", expected)
+	}
+	if !namePattern.MatchString(kind) {
+		return errors.New("kind must be a resource type name")
 	}
 	if !namePattern.MatchString(metadata.Name) {
 		return errors.New("metadata.name must be a stable name containing letters, digits, dots, underscores or hyphens")
@@ -123,6 +131,9 @@ func FindRoot(startDir string) (string, error) {
 				if _, err := parseDocument(data, &header); err != nil {
 					return "", fmt.Errorf("%s document %d: %w", filename, i+1, err)
 				}
+				if header.Spec == nil {
+					return "", fmt.Errorf("%s document %d: spec must be an object", filename, i+1)
+				}
 				var document any
 				switch header.Kind {
 				case "Project":
@@ -130,22 +141,23 @@ func FindRoot(startDir string) (string, error) {
 						return "", fmt.Errorf("%s: Project requires one YAML document", filename)
 					}
 					document = &ProjectDocument{}
-				case "Software":
-					if seen[header.Metadata.Name] {
+				default:
+					if seen[header.APIVersion+"/"+header.Kind+"/"+header.Metadata.Name] {
 						return "", fmt.Errorf("%s: conflicting software ID %q", filename, header.Metadata.Name)
 					}
-					seen[header.Metadata.Name] = true
-					document = &SoftwareDocument{}
-				default:
-					return "", fmt.Errorf("%s document %d: kind must be Project or Software", filename, i+1)
+					seen[header.APIVersion+"/"+header.Kind+"/"+header.Metadata.Name] = true
+					document = &Resource{}
 				}
-				if err := validateHeader(header.APIVersion, header.Kind, header.Kind, header.Metadata); err != nil {
+				if err := validateHeader(header.APIVersion, header.Kind, "", header.Metadata); err != nil {
 					return "", fmt.Errorf("%s document %d: %w", filename, i+1, err)
 				}
 				if _, err := parseDocument(data, document); err != nil {
 					return "", fmt.Errorf("%s document %d: %w", filename, i+1, err)
 				}
 				if header.Kind == "Project" {
+					if err := validateHeader(header.APIVersion, header.Kind, "Project", header.Metadata); err != nil {
+						return "", err
+					}
 					return dir, nil
 				}
 			}

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/invopop/jsonschema"
+	"github.com/woodleighschool/stemma/internal/macsoftware"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -23,7 +25,13 @@ func TestProjectSchemaUsesExternalContractsAndReferenceScopes(t *testing.T) {
 	}`)
 	settings := json.RawMessage(`{"$id":"https://fixture.invalid/shared","$ref":"#/$defs/config","$defs":{"config":{"type":"object","additionalProperties":false,"required":["url"],"properties":{"url":{"type":"string"},"token":{"type":"string","writeOnly":true}}}}}`)
 	project := Project{Destinations: map[string]Destination{"external": {Operation: "fixture.publish"}, "second": {Operation: "fixture.other"}}}
+	reflector := jsonschema.Reflector{DoNotReference: true}
+	spec, err := json.Marshal(reflector.Reflect(macsoftware.Spec{}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	descriptor := plugin.Descriptor{Operations: []plugin.Operation{
+		{Name: "fixture.mac", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "stemma/v1alpha1", Kind: "MacSoftware"}, ConfigSchema: spec},
 		{Name: "fixture.publish", Kind: "reconcile", MetadataSchema: metadata, ConfigSchema: settings},
 		{Name: "fixture.other", Kind: "reconcile", MetadataSchema: json.RawMessage(`{"$id":"https://fixture.invalid/shared","type":"object","properties":{"label":{"type":"integer"}},"additionalProperties":false}`)},
 	}}
@@ -41,7 +49,7 @@ func TestProjectSchemaUsesExternalContractsAndReferenceScopes(t *testing.T) {
 	}{
 		"literal refs":          {"\"external\":{\"title\":null,\"details\":{\"version\":\"1\"},\"counts\":[1]}", true},
 		"typed facts":           {`"external":{"enabled":{"$fact":"app.package.has_payload"},"details":{"version":{"$fact":"app.app.version"}},"counts":[{"$fact":"app.size"}]}`, true},
-		"core refs":             {`"external":{"installer":"render/artifact","inputs":{"payload":"contents/artifact"}}`, true},
+		"core refs":             {`"external":{"installer":"installer","inputs":{"payload":"payload"}}`, true},
 		"unknown field":         {`"external":{"typo":true}`, false},
 		"unknown nested field":  {`"external":{"details":{"typo":true}}`, false},
 		"invalid literal type":  {`"external":{"enabled":"yes"}`, false},
@@ -51,7 +59,7 @@ func TestProjectSchemaUsesExternalContractsAndReferenceScopes(t *testing.T) {
 		"unknown connection":    {`"missing":{"title":"Wrong connection"}`, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			document := json.RawMessage(`{"apiVersion":"stemma/v1alpha1","kind":"Software","metadata":{"name":"fixture"},"spec":{"destinations":{` + test.metadata + `}}}`)
+			document := json.RawMessage(`{"apiVersion":"stemma/v1alpha1","kind":"MacSoftware","metadata":{"name":"fixture"},"spec":{"destinations":{` + test.metadata + `}}}`)
 			err := plugin.ValidateSchema(schema, document)
 			if (err == nil) != test.valid {
 				t.Fatalf("valid=%v, expected %v: %v", err == nil, test.valid, err)
@@ -81,13 +89,16 @@ func TestSchemaProjectExpandsPluginImagesWithoutLoadingCredentialsOrImports(t *t
 	root := t.TempDir()
 	writeConfig(t, root, "stemma.yaml", `apiVersion: stemma/v1alpha1
 kind: Project
-metadata: {name: fixture}
+metadata:
+  name: fixture
 spec:
-  imports: [not-created-yet.yaml]
+  imports:
+    - not-created-yet.yaml
   destinations:
     external:
       operation: fixture.publish
-      config: {token: '${STEMMA_MISSING_SCHEMA_TEST_TOKEN}'}
+      config:
+        token: '${STEMMA_MISSING_SCHEMA_TEST_TOKEN}'
   plugins:
     fixture:
       trusted: true
@@ -102,5 +113,40 @@ spec:
 	}
 	if project.Plugins["fixture"].Image != "ghcr.io/example/fixture:v1" {
 		t.Fatal("schema loading did not expand the plugin image")
+	}
+}
+
+func TestProjectSchemaRegistersExternalKindsByGroupVersionAndKind(t *testing.T) {
+	first := json.RawMessage(`{"$id":"https://fixture.invalid/spec","$ref":"#/$defs/spec","$defs":{"spec":{"type":"object","additionalProperties":false,"required":["message"],"properties":{"message":{"type":"string"},"settings":{"type":"object","additionalProperties":false,"required":["enabled","count"],"properties":{"enabled":{"type":"boolean"},"count":{"type":"integer"}}}}}}}`)
+	second := json.RawMessage(`{"$id":"https://fixture.invalid/spec","type":"object","additionalProperties":false,"required":["count"],"properties":{"count":{"type":"integer"}}}`)
+	descriptor := plugin.Descriptor{Operations: []plugin.Operation{
+		{Name: "fixture.transform", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "example.test/v2", Kind: "Transform"}, ConfigSchema: first},
+		{Name: "fixture.other", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "other.test/v1", Kind: "Transform"}, ConfigSchema: second},
+	}}
+	schema, err := ProjectSchema(Project{}, descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, test := range map[string]struct {
+		version, spec string
+		valid         bool
+	}{
+		"first kind":               {"example.test/v2", `{"message":"fixture"}`, true},
+		"second kind":              {"other.test/v1", `{"count":2}`, true},
+		"version mismatch":         {"example.test/v1", `{"message":"fixture"}`, false},
+		"wrong kind schema":        {"example.test/v2", `{"count":2}`, false},
+		"unknown field":            {"example.test/v2", `{"message":"fixture","typo":true}`, false},
+		"missing required":         {"example.test/v2", `{}`, false},
+		"partial inherited config": {"example.test/v2", `{"extends":"base","settings":{"enabled":false}}`, true},
+		"invalid inherited value":  {"example.test/v2", `{"extends":"base","settings":{"enabled":"false"}}`, false},
+		"unknown inherited value":  {"example.test/v2", `{"extends":"base","settings":{"typo":false}}`, false},
+		"empty inheritance":        {"example.test/v2", `{"extends":""}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			document := []byte(`{"apiVersion":"` + test.version + `","kind":"Transform","metadata":{"name":"fixture"},"spec":` + test.spec + `}`)
+			if err := plugin.ValidateSchema(schema, document); (err == nil) != test.valid {
+				t.Fatalf("valid=%v expected=%v: %v", err == nil, test.valid, err)
+			}
+		})
 	}
 }

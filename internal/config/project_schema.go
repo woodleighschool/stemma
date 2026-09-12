@@ -72,7 +72,7 @@ func ProjectSchema(project Project, descriptor plugin.Descriptor) ([]byte, error
 		operations[operation.Name] = operation
 	}
 	connections, metadata := map[string]any{}, map[string]any{}
-	installer := map[string]any{"type": "string", "pattern": `^(source|prepared|[A-Za-z0-9][A-Za-z0-9._-]{0,127}/[A-Za-z0-9][A-Za-z0-9._-]{0,127})$`, "description": "Immutable input: source, prepared, artifacts/name or stepName/outputName."}
+	installer := map[string]any{"type": "string", "pattern": namePattern.String(), "description": "Named output from this resource. Defaults to installer."}
 	inputs := map[string]any{"type": "object", "propertyNames": map[string]any{"pattern": namePattern.String()}, "additionalProperties": installer}
 	for name, connection := range project.Destinations {
 		operation, ok := operations[connection.Operation]
@@ -99,7 +99,33 @@ func ProjectSchema(project Project, descriptor plugin.Descriptor) ([]byte, error
 		metadata[name] = map[string]any{"$ref": metadataID}
 		connections[name] = map[string]any{"type": "object", "additionalProperties": false, "required": []string{"operation"}, "properties": map[string]any{"operation": map[string]any{"const": operation.Name}, "config": map[string]any{"$ref": settingsID}}}
 	}
-	definitions["Software"].(map[string]any)["properties"].(map[string]any)["destinations"] = map[string]any{"type": "object", "properties": metadata, "additionalProperties": false}
+	for _, operation := range descriptor.Operations {
+		if operation.Resource == nil {
+			continue
+		}
+		specID := "https://stemma.invalid/editor/" + url.PathEscape(operation.Name) + "/spec"
+		native, _, err := editorResource(operation.ConfigSchema, specID)
+		if err != nil {
+			return nil, err
+		}
+		walkEditorSchema(native, func(node map[string]any) {
+			fields, _ := node["properties"].(map[string]any)
+			if _, ok := fields["destinations"]; ok {
+				fields["destinations"] = map[string]any{"type": "object", "properties": metadata, "additionalProperties": false}
+			}
+		})
+		definition := operation.Resource.Kind
+		if operation.Resource.APIVersion != "stemma/v1alpha1" {
+			definition = "Resource_" + operation.Name
+		}
+		if _, exists := definitions[definition]; !exists {
+			schema["oneOf"] = append(schema["oneOf"].([]any), map[string]any{"$ref": "#/$defs/" + definition})
+		}
+		definitions[definition], err = resourceSchema(operation.Resource.APIVersion, operation.Resource.Kind, native)
+		if err != nil {
+			return nil, err
+		}
+	}
 	definitions["ProjectSpec"].(map[string]any)["properties"].(map[string]any)["destinations"] = map[string]any{"type": "object", "properties": connections, "additionalProperties": false}
 	data, err = json.MarshalIndent(schema, "", "  ")
 	if err != nil {
@@ -109,18 +135,18 @@ func ProjectSchema(project Project, descriptor plugin.Descriptor) ([]byte, error
 }
 
 // Walk only schema positions: examples, defaults and enum values are user data.
-func walkEditorSchema(value any, visit func(map[string]any)) {
+func walkEditorSchema(value any, visit func(map[string]any), preserve ...string) {
 	node, ok := value.(map[string]any)
 	if !ok {
 		return
 	}
-	for _, child := range editorChildren(node) {
-		walkEditorSchema(child, visit)
+	for _, child := range editorChildren(node, preserve...) {
+		walkEditorSchema(child, visit, preserve...)
 	}
 	visit(node)
 }
 
-func editorChildren(node map[string]any) []map[string]any {
+func editorChildren(node map[string]any, preserve ...string) []map[string]any {
 	var result []map[string]any
 	add := func(value any) {
 		if child, ok := value.(map[string]any); ok {
@@ -140,7 +166,9 @@ func editorChildren(node map[string]any) []map[string]any {
 		}
 	}
 	for _, key := range []string{"not", "if", "then", "else", "items", "contains", "additionalProperties", "unevaluatedProperties", "propertyNames", "contentSchema"} {
-		add(node[key])
+		if !slices.Contains(preserve, key) {
+			add(node[key])
+		}
 	}
 	return result
 }
@@ -245,12 +273,18 @@ func editorResource(data json.RawMessage, identity string) (map[string]any, map[
 }
 
 func addEditorInputs(node map[string]any, resources map[string]map[string]any, installer, inputs any, seen map[string]bool) {
-	properties, _ := node["properties"].(map[string]any)
-	if properties == nil {
-		properties = map[string]any{}
-		node["properties"] = properties
-	}
-	properties["installer"], properties["inputs"] = installer, inputs
+	editEditorObject(node, resources, seen, func(node map[string]any) {
+		properties, _ := node["properties"].(map[string]any)
+		if properties == nil {
+			properties = map[string]any{}
+			node["properties"] = properties
+		}
+		properties["installer"], properties["inputs"] = installer, inputs
+	})
+}
+
+func editEditorObject(node map[string]any, resources map[string]map[string]any, seen map[string]bool, visit func(map[string]any)) {
+	visit(node)
 	if ref, ok := node["$ref"].(string); ok && !seen[ref] {
 		seen[ref] = true
 		parsed, err := url.Parse(ref)
@@ -272,7 +306,7 @@ func addEditorInputs(node map[string]any, resources map[string]map[string]any, i
 				})
 			}
 			if target, ok := target.(map[string]any); ok && target != nil {
-				addEditorInputs(target, resources, installer, inputs, seen)
+				editEditorObject(target, resources, seen, visit)
 			}
 		}
 	}
@@ -280,7 +314,7 @@ func addEditorInputs(node map[string]any, resources map[string]map[string]any, i
 		children, _ := node[key].([]any)
 		for _, child := range children {
 			if child, ok := child.(map[string]any); ok {
-				addEditorInputs(child, resources, installer, inputs, seen)
+				editEditorObject(child, resources, seen, visit)
 			}
 		}
 	}

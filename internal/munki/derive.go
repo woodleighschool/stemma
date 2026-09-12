@@ -2,6 +2,7 @@ package munki
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,6 +129,17 @@ func Derive(request plugin.ReconcileRequest) (map[string]any, map[string]string,
 	if !request.Prepared && request.Artifact.Path == "" {
 		return values, origins, nil
 	}
+	icon := request.Inputs["icon"]
+	_, authoredName := explicit["icon_name"]
+	_, authoredHash := explicit["icon_hash"]
+	if icon.Path != "" && !authoredName && !authoredHash && !slices.Contains(metadata.Unmanaged, "pkginfo.icon_name") && !slices.Contains(metadata.Unmanaged, "pkginfo.icon_hash") {
+		digest, err := hex.DecodeString(icon.SHA256)
+		if err != nil || len(digest) != 32 || icon.Format != "png" || icon.Tree || icon.Size <= 0 || icon.Size > 32<<20 {
+			return nil, nil, errors.New("icon input requires a bounded PNG artifact with a SHA-256 digest")
+		}
+		put("icon_name", "stemma/"+strings.ToLower(icon.SHA256)+".png", "input.icon")
+		put("icon_hash", strings.ToLower(icon.SHA256), "input.icon")
+	}
 	put("name", request.Identity.Software, "software.name")
 	if request.Artifact.Version != "" {
 		put("version", request.Artifact.Version, "installer.version")
@@ -156,7 +168,15 @@ func Derive(request plugin.ReconcileRequest) (map[string]any, map[string]string,
 	}
 	var selected *plugin.Subject
 	appOptions := metadata.Derive.App
-	if appOptions != nil {
+	evidence, versionKey, architectures, err := macEvidence(request.Artifact)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(architectures) > 0 {
+		put("supported_architectures", architectures, "macos.arch")
+	}
+	switch {
+	case appOptions != nil:
 		selector, exists := request.Subjects[appOptions.Subject]
 		if !exists {
 			return nil, nil, fmt.Errorf("derive.app references unknown subject %q", appOptions.Subject)
@@ -169,7 +189,10 @@ func Derive(request plugin.ReconcileRequest) (map[string]any, map[string]string,
 			return nil, nil, errors.New("derive.app requires an application subject")
 		}
 		selected = &subject
-	} else {
+	case evidence != nil:
+		selected = evidence
+		appOptions = &AppDerivation{VersionKey: versionKey}
+	default:
 		for _, subject := range facts.Subjects {
 			if subject.App != nil {
 				if selected != nil {

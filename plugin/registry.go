@@ -29,16 +29,20 @@ type Descriptor struct {
 // providers must supply it when configuration is constrained.
 // RequiresInspection requests facts for the primary reconciliation artifact.
 type Operation struct {
-	Name               string          `json:"name"`
-	Kind               string          `json:"kind"`
-	ConfigSchema       json.RawMessage `json:"config_schema,omitempty"`
-	MetadataSchema     json.RawMessage `json:"metadata_schema,omitempty"`
-	RequiresInspection bool            `json:"requires_inspection,omitempty"`
-	InputSchema        json.RawMessage `json:"input_schema"`
-	OutputSchema       json.RawMessage `json:"output_schema"`
-	Platforms          []string        `json:"platforms,omitempty"`
-	SideEffects        string          `json:"side_effects"`
-	Methods            []string        `json:"methods"`
+	Resolver           *ResolverKind    `json:"resolver,omitempty"`
+	Resource           *ResourceKind    `json:"resource,omitempty"`
+	Content            *ContentContract `json:"content,omitempty"`
+	Requirements       []Requirement    `json:"requirements,omitempty"`
+	Name               string           `json:"name"`
+	Kind               string           `json:"kind"`
+	ConfigSchema       json.RawMessage  `json:"config_schema,omitempty"`
+	MetadataSchema     json.RawMessage  `json:"metadata_schema,omitempty"`
+	RequiresInspection bool             `json:"requires_inspection,omitempty"`
+	InputSchema        json.RawMessage  `json:"input_schema"`
+	OutputSchema       json.RawMessage  `json:"output_schema"`
+	Platforms          []string         `json:"platforms,omitempty"`
+	SideEffects        string           `json:"side_effects"`
+	Methods            []string         `json:"methods"`
 }
 
 // SupportsPlatform reports whether the operation supports this runner.
@@ -84,6 +88,13 @@ func (registry *Registry) Register(operation Operation, handle Handler) error {
 	}
 	if _, exists := registry.operations[operation.Name]; exists {
 		return fmt.Errorf("operation %q is already registered", operation.Name)
+	}
+	if operation.Resource != nil {
+		for _, existing := range registry.operations {
+			if existing.descriptor.Resource != nil && *existing.descriptor.Resource == *operation.Resource {
+				return fmt.Errorf("resource kind %s/%s is already registered", operation.Resource.APIVersion, operation.Resource.Kind)
+			}
+		}
 	}
 	if handle == nil {
 		return fmt.Errorf("operation %q has no handler", operation.Name)
@@ -142,7 +153,7 @@ func (registry *Registry) Handle(ctx context.Context, request Request) (Response
 	if err := validateData(operation.input, request.Input); err != nil {
 		return Response{}, fmt.Errorf("operation %q input: %w", request.Operation, err)
 	}
-	if operation.config != nil {
+	if operation.config != nil && (operation.descriptor.Resource == nil || request.Method == "validate") {
 		var input map[string]json.RawMessage
 		if err := json.Unmarshal(request.Input, &input); err != nil || input == nil {
 			return Response{}, fmt.Errorf("operation %q configuration requires an object input", request.Operation)
@@ -233,6 +244,12 @@ func validateIdentity(name, version string) error {
 }
 
 func compileOperation(operation Operation) (registeredOperation, error) {
+	if operation.Resolver != nil && (operation.Kind != "resolve" || operation.Resolver.Version == "" || operation.SideEffects == "remote" || !operation.SupportsMethod("run") || !operation.SupportsMethod("validate")) {
+		return registeredOperation{}, errors.New("resolver registration requires version and workspace-only validate/run methods")
+	}
+	if operation.Resource != nil && (operation.Kind != "resource" || operation.Resource.APIVersion == "" || operation.Resource.Kind == "" || !operation.SupportsMethod("validate") || !operation.SupportsMethod("run") || operation.SideEffects == "remote") {
+		return registeredOperation{}, errors.New("resource registration requires apiVersion, kind and workspace-only validate/run methods")
+	}
 	if !ValidOperationName(operation.Name) || !ValidOperationName(operation.Kind) {
 		return registeredOperation{}, fmt.Errorf("operation %q requires a valid name and kind", operation.Name)
 	}
@@ -282,6 +299,24 @@ func compileOperation(operation Operation) (registeredOperation, error) {
 }
 
 func cloneOperation(operation Operation) Operation {
+	if operation.Resolver != nil {
+		value := *operation.Resolver
+		operation.Resolver = &value
+	}
+	if operation.Resource != nil {
+		value := *operation.Resource
+		operation.Resource = &value
+	}
+	if operation.Content != nil {
+		value := *operation.Content
+		value.Formats = slices.Clone(value.Formats)
+		operation.Content = &value
+	}
+	operation.Requirements = slices.Clone(operation.Requirements)
+	for i := range operation.Requirements {
+		operation.Requirements[i].Platforms = slices.Clone(operation.Requirements[i].Platforms)
+	}
+
 	operation.ConfigSchema = bytes.Clone(operation.ConfigSchema)
 	operation.MetadataSchema = bytes.Clone(operation.MetadataSchema)
 	operation.InputSchema = bytes.Clone(operation.InputSchema)

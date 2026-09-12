@@ -26,7 +26,7 @@ func TestExecutableProtocol(t *testing.T) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v\n%s", err, output)
 	}
-	t.Run("one executable exposes reconciliation and inspection", func(t *testing.T) {
+	t.Run("one executable exposes resource and destination contracts", func(t *testing.T) {
 		response, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"})
 		if err != nil {
 			t.Fatal(err)
@@ -38,28 +38,28 @@ func TestExecutableProtocol(t *testing.T) {
 		if err := plugin.ValidateDescriptor(descriptor); err != nil {
 			t.Fatal(err)
 		}
-		if descriptor.Name != "echo" || len(descriptor.Operations) != 2 || descriptor.Operations[0].Name != "echo.inspect" || descriptor.Operations[1].Name != "echo.reconcile" {
+		if descriptor.Name != "echo" || len(descriptor.Operations) != 3 || descriptor.Operations[0].Name != "echo.build" || descriptor.Operations[2].Name != "echo.reconcile" {
 			t.Fatalf("descriptor = %+v", descriptor)
 		}
 		facts := plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{
 			{ID: "package", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.package", Version: "4.2", HasPayload: true}},
 			{ID: "app", Parent: "package", Kind: "application", Path: "Example.app", InstalledPath: "/Applications/Example.app", App: &plugin.AppFacts{BundleID: "org.example.app", Version: "4.1", Build: "402"}},
 		}}
-		request := plugin.StepRequest{Workspace: t.TempDir(), Inputs: map[string]plugin.Artifact{"source": {Filename: "Example.pkg", Format: "pkg", Facts: facts}}}
-		response, err = plugin.Run(t.Context(), binary, plugin.Request{Operation: "echo.inspect", Method: "run", Input: raw(t, request)})
+		request := plugin.ResourceRequest{Workspace: t.TempDir(), Inputs: map[string]plugin.Artifact{"vendor": {Filename: "Example.pkg", Format: "pkg", Facts: facts}}}
+		response, err = plugin.Run(t.Context(), binary, plugin.Request{Operation: "echo.build", Method: "run", Input: raw(t, request)})
 		if err != nil {
 			t.Fatal(err)
 		}
-		var output plugin.StepResponse
+		var output plugin.ResourceResult
 		if err := json.Unmarshal(response.Output, &output); err != nil {
 			t.Fatal(err)
 		}
-		subjects := output.Artifacts["source"].Facts.Subjects
-		if output.Facts.Version != plugin.FactsVersion || len(subjects) != 2 || subjects[0].Package.Version != "4.2" || subjects[1].Parent != "package" || subjects[1].App.Version != "4.1" || subjects[1].App.Build != "402" {
-			t.Fatalf("inspection facts lost: %+v", output)
+		subjects := output.Artifacts["installer"].Facts.Subjects
+		if output.Artifacts["installer"].Facts.Version != plugin.FactsVersion || len(subjects) != 2 || subjects[0].Package.Version != "4.2" || subjects[1].Parent != "package" || subjects[1].App.Version != "4.1" || subjects[1].App.Build != "402" {
+			t.Fatalf("artifact facts lost: %+v", output)
 		}
-		if _, err := plugin.Run(t.Context(), binary, plugin.Request{Operation: "echo.inspect", Method: "apply", Input: raw(t, request)}); err == nil {
-			t.Fatal("inspection accepted undeclared apply method")
+		if _, err := plugin.Run(t.Context(), binary, plugin.Request{Operation: "echo.build", Method: "apply", Input: raw(t, request)}); err == nil {
+			t.Fatal("resource accepted undeclared apply method")
 		}
 	})
 	t.Run("plan preserves opaque fields", func(t *testing.T) {

@@ -229,6 +229,18 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "installer_item_hash", Action: "upload", After: raw(request.Artifact.SHA256)})
 		}
 	}
+	iconPath := ""
+	if origins["pkginfo.icon_name"] == "input.icon" {
+		name, _ := managed["icon_name"].(string)
+		iconPath = filepath.Join(root, "icons", filepath.FromSlash(name))
+		matches, err := fileMatches(ctx, iconPath, request.Inputs["icon"])
+		if err != nil {
+			return response, err
+		}
+		if !matches {
+			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "icon_hash", Action: "upload", After: raw(request.Inputs["icon"].SHA256)})
+		}
+	}
 	for key, value := range desired {
 		if hashValue(old[key]) != hashValue(value) {
 			response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: key, Action: "set", Before: raw(old[key]), After: raw(value)})
@@ -270,6 +282,11 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	// No catalog references an installer before its complete bytes are available.
 	if contentPath != "" {
 		if err := publishContent(ctx, contentPath, request.Artifact); err != nil {
+			return response, err
+		}
+	}
+	if iconPath != "" {
+		if err := publishContent(ctx, iconPath, request.Inputs["icon"]); err != nil {
 			return response, err
 		}
 	}

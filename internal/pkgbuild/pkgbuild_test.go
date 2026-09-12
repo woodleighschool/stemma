@@ -126,14 +126,14 @@ func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
 				}
 				size := maxFileSize + 1
 				if name == "total-size" {
-					size = maxTotalSize + 1
+					size = MaxPayloadSize + 1
 				}
 				if err := f.Truncate(size); err != nil {
 					t.Fatal(err)
 				}
 				_ = f.Close()
 			case "entry-limit":
-				for i := range maxEntries {
+				for i := range MaxEntries {
 					writeFile(t, filepath.Join(root, "Payload", fmt.Sprintf("file-%d", i)), nil, 0o644)
 				}
 			case "output-in-root":

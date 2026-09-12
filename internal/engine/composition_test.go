@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 func TestDestinationReferencesStayOnTheirConnection(t *testing.T) {
@@ -19,15 +20,17 @@ func TestDestinationReferencesStayOnTheirConnection(t *testing.T) {
 	project := config.Project{Project: "fixture", Destinations: map[string]config.Destination{
 		"one": {Operation: "intune", Config: map[string]any{"token": "synthetic"}},
 		"two": {Operation: "intune", Config: map[string]any{"token": "synthetic"}},
-	}, Software: map[string]config.Software{
-		"a": {Destinations: map[string]map[string]any{"one": metadata("b"), "two": metadata("")}},
-		"b": {Destinations: map[string]map[string]any{"one": metadata(""), "two": metadata("a")}},
 	}}
+	plans := map[string]resourcePlan{
+		"a": {Resource: config.Resource{Metadata: config.Metadata{Name: "a"}}, ResourceResult: plugin.ResourceResult{Destinations: map[string]map[string]any{"one": metadata("b"), "two": metadata("")}}},
+		"b": {Resource: config.Resource{Metadata: config.Metadata{Name: "b"}}, ResourceResult: plugin.ResourceResult{Destinations: map[string]map[string]any{"one": metadata(""), "two": metadata("a")}}},
+	}
+
 	operations, err := builtins(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	order, _, err := orderDestinations(t.Context(), project, operations, t.TempDir(), []string{"a", "b"})
+	order, _, err := orderDestinations(t.Context(), project, plans, operations, t.TempDir(), []string{"a", "b"})
 	if err != nil {
 		t.Fatal(err)
 	}

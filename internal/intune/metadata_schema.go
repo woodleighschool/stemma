@@ -32,12 +32,13 @@ func MetadataSchema() *jsonschema.Schema {
 			"retention":             objectSchema(map[string]*jsonschema.Schema{"keep": {Type: "integer", Minimum: "1", Description: "Keep the current and N-1 most recently published distinct payloads in this app. Unknown content ownership or publication order is always protected."}}, "keep"),
 		}
 		if appType == win32Type {
-			p["derive"] = objectSchema(map[string]*jsonschema.Schema{"msi": {Type: "string", MinLength: new(uint64(1)), Description: "Named subject supplying MSI descriptive and identity facts. Commands, install context and detection stay explicit."}}, "msi")
+			p["content"] = objectSchema(map[string]*jsonschema.Schema{"setup_file": {Type: "string", MinLength: new(uint64(1)), Description: "Relative entrypoint inside the immutable setup tree. Defaults to the artifact entrypoint, or the filename for a single file; conflicting entries are rejected. All tree members are included in the provider-prepared Intune envelope."}}, "setup_file")
+			p["derive"] = objectSchema(map[string]*jsonschema.Schema{"msi": {Type: "string", MinLength: new(uint64(1)), Description: "Named subject for explicit MSI descriptive and identity selection. Selected setup MSI content supplies standard commands and detection defaults; native authored fields override them."}}, "msi")
 			p["msiInformation"] = msiSchema()
 			p["dependencies"] = referencesSchema("auto_install", 99)
 			p["supersedes"] = referencesSchema("uninstall_previous", 9)
-			p["installCommandLine"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Windows install command line. Required for creation; Stemma does not guess installer switches."}
-			p["uninstallCommandLine"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Windows uninstall command line. Required for creation."}
+			p["installCommandLine"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Silent Windows install command line. Selected MSI content defaults to msiexec /i with /qn /norestart; EXE switches and architecture-specific executable paths are explicit. Payloads and hooks are never executed during preparation."}
+			p["uninstallCommandLine"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Windows uninstall command line. Selected MSI content defaults to msiexec /x ProductCode /qn /norestart; EXE uninstall behavior is explicit."}
 			p["minimumSupportedWindowsRelease"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Native minimum Windows release, such as Windows11_23H2. Required for creation."}
 			p["allowedArchitectures"] = &jsonschema.Schema{Enum: []any{"x86", "x64", "arm64", nil}, Description: "Supported processor architecture; null clears it on an existing app. A non-null value is required for creation."}
 			for _, key := range []string{"minimumFreeDiskSpaceInMB", "minimumMemoryInMB", "minimumNumberOfProcessors", "minimumCpuSpeedInMHz"} {
@@ -145,28 +146,37 @@ func rulesSchema() *jsonschema.Schema {
 	}
 	product := objectSchema(map[string]*jsonschema.Schema{
 		"@odata.type": {Const: "#microsoft.graph.win32LobAppProductCodeRule"}, "ruleType": {Const: "detection"},
-		"productCode":            {Type: "string", MinLength: new(uint64(1)), Description: "MSI ProductCode GUID."},
+		"productCode":            {Type: "string", MinLength: new(uint64(1)), Description: "Exact MSI ProductCode GUID. Major MSI upgrades can change it; a version comparison only detects installations with this code. Authored detection overrides selected MSI defaults."},
 		"productVersionOperator": operator(), "productVersion": {Type: "string", MaxLength: new(uint64(10000)), Description: "Version used when comparison is configured."},
 	}, "@odata.type", "ruleType", "productCode", "productVersionOperator")
+	product.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"productVersionOperator": {Not: &jsonschema.Schema{Const: "notConfigured"}}}).Properties, Required: []string{"productVersionOperator"}}
+	product.Then = &jsonschema.Schema{Required: []string{"productVersion"}}
 	file := objectSchema(map[string]*jsonschema.Schema{
 		"@odata.type": {Const: "#microsoft.graph.win32LobAppFileSystemRule"}, "ruleType": {Const: "detection"},
 		"path": {Type: "string", MinLength: new(uint64(1))}, "fileOrFolderName": {Type: "string", MinLength: new(uint64(1))},
 		"check32BitOn64System": {Type: "boolean"}, "operationType": enumSchema("Detected file property.", "exists", "version", "sizeInMB", "modifiedDate", "createdDate"),
-		"operator": operator(), "comparisonValue": {Type: "string", MaxLength: new(uint64(10000)), Description: "Value used when comparison is configured."},
+		"operator": operator(), "comparisonValue": {Type: "string", MaxLength: new(uint64(10000)), Description: "Value used when comparison is configured. A stable file path with version greaterThanOrEqual detects already-newer installations; equal intentionally does not."},
 	}, "@odata.type", "ruleType", "path", "fileOrFolderName", "operationType", "operator")
+	file.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"operationType": {Const: "exists"}}).Properties}
+	file.Then = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"operator": {Const: "notConfigured"}}).Properties}
+	file.Else = &jsonschema.Schema{Required: []string{"comparisonValue"}, Properties: objectSchema(map[string]*jsonschema.Schema{"operator": {Not: &jsonschema.Schema{Const: "notConfigured"}}, "comparisonValue": {MinLength: new(uint64(1))}}).Properties}
 	registry := objectSchema(map[string]*jsonschema.Schema{
 		"@odata.type": {Const: "#microsoft.graph.win32LobAppRegistryRule"}, "ruleType": {Const: "detection"},
 		"keyPath": {Type: "string", MinLength: new(uint64(1))}, "valueName": {Type: "string"},
 		"check32BitOn64System": {Type: "boolean"}, "operationType": enumSchema("Registry comparison.", "exists", "doesNotExist", "string", "integer", "version"),
-		"operator": operator(), "comparisonValue": {Type: "string"},
+		"operator": operator(), "comparisonValue": {Type: "string", Description: "Version greaterThanOrEqual can detect already-newer installations at a stable vendor registry value. The key, value and comparison are explicit."},
 	}, "@odata.type", "ruleType", "keyPath", "operationType", "operator")
+	registry.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"operationType": {Enum: []any{"exists", "doesNotExist"}}}).Properties}
+	registry.Then = file.Then
+	registry.Else = &jsonschema.Schema{Required: []string{"comparisonValue"}, Properties: objectSchema(map[string]*jsonschema.Schema{"operator": {Not: &jsonschema.Schema{Const: "notConfigured"}}}).Properties,
+		If: &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"operationType": {Not: &jsonschema.Schema{Const: "string"}}}).Properties}, Then: &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"comparisonValue": {MinLength: new(uint64(1))}}).Properties}}
 	script := objectSchema(map[string]*jsonschema.Schema{
 		"@odata.type": {Const: "#microsoft.graph.win32LobAppPowerShellScriptRule"}, "ruleType": {Const: "detection"},
 		"enforceSignatureCheck": {Type: "boolean"}, "runAs32Bit": {Type: "boolean"},
-		"scriptContent": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(266668)), ContentEncoding: "base64", Description: "Base64 PowerShell detection script, at most 200000 decoded bytes. Runs in the app install context."},
+		"scriptContent": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(266668)), ContentEncoding: "base64", Description: "Base64 PowerShell detection script, at most 200000 decoded bytes. Detection requires exit code 0, nonempty STDOUT and empty STDERR. Runs in the app install context. This is an alternative to manual rules; preparation never executes it."},
 		"operationType": {Const: "notConfigured"}, "operator": {Const: "notConfigured"},
 	}, "@odata.type", "ruleType", "scriptContent")
-	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(100)), Description: "Complete detection-rule collection. Creation requires at least one rule. Product-code, file-system, registry and PowerShell detection are supported; requirement rules are unsupported.", Items: &jsonschema.Schema{OneOf: []*jsonschema.Schema{product, file, registry, script}}}
+	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(100)), Description: "Complete detection-rule collection. Selected MSI content defaults to its ProductCode and productVersion greaterThanOrEqual; a newer major version with another ProductCode needs authored file, registry or script detection. Manual rules are ANDed, with at most one MSI rule. A PowerShell rule must be the only rule. Requirement rules are unsupported.", Items: &jsonschema.Schema{OneOf: []*jsonschema.Schema{product, file, registry, script}}, Contains: product, MinContains: new(uint64(0)), MaxContains: new(uint64(1)), If: &jsonschema.Schema{Contains: script}, Then: &jsonschema.Schema{MaxItems: new(uint64(1))}}
 }
 
 // ConnectionSchema describes a shared Intune connection. App adoption belongs

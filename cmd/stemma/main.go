@@ -108,8 +108,8 @@ func command(out, errOut io.Writer) *cobra.Command {
 	operations.Flags().BoolVar(&operationsOffline, "offline", false, "Require verified cached plugin bundles")
 	root.AddCommand(operations)
 	for _, method := range []string{"update", "prepare", "plan", "apply"} {
-		var frozen, noFrozen, refresh, ignore, offline bool
-		cmd := &cobra.Command{Use: method + " [software...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Acquire and inspect locked inputs without publication", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
+		var offline bool
+		cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Acquire and inspect locked inputs without publication", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
 			if output != "text" && output != "json" {
 				return errors.New("output must be text or json")
 			}
@@ -117,17 +117,8 @@ func command(out, errOut io.Writer) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if method == "update" && len(args) > 0 {
-				return errors.New("update resolves the complete project; software filtering applies to prepare, plan and apply")
-			}
-			useFrozen := ci()
-			if noFrozen || refresh || ignore || method == "update" {
-				useFrozen = false
-			}
-			if cmd.Flags().Changed("frozen-lockfile") {
-				useFrozen = frozen
-			}
-			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Software: args, Lock: lockfile.Options{Frozen: useFrozen, Refresh: refresh || method == "update", Ignore: ignore, Offline: offline}})
+
+			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Resources: args, Lock: lockfile.Options{Frozen: method != "update", Refresh: method == "update", Offline: offline}})
 			if output == "json" {
 				if err := writeJSON(out, report); err != nil {
 					return errors.Join(runErr, err)
@@ -139,17 +130,8 @@ func command(out, errOut io.Writer) *cobra.Command {
 			}
 			return runErr
 		}}
-		if method == "apply" {
-			cmd.Aliases = []string{"run"}
-		}
-		cmd.Flags().BoolVar(&frozen, "frozen-lockfile", false, "Require an unchanged complete lockfile (default in CI)")
-		cmd.Flags().BoolVar(&noFrozen, "no-frozen-lockfile", false, "Allow missing or changed source entries to update")
-		cmd.Flags().BoolVar(&refresh, "refresh", false, "Resolve fresh sources while running and update the lockfile")
-		cmd.Flags().BoolVar(&ignore, "no-lockfile", false, "Neither read nor write the lockfile")
+
 		cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
-		cmd.MarkFlagsMutuallyExclusive("frozen-lockfile", "no-frozen-lockfile")
-		cmd.MarkFlagsMutuallyExclusive("frozen-lockfile", "no-lockfile", "refresh")
-		cmd.MarkFlagsMutuallyExclusive("offline", "no-lockfile", "refresh")
 		root.AddCommand(cmd)
 	}
 	root.AddCommand(&cobra.Command{Use: "inspect FILE", Short: "Read artifact metadata without executing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -223,7 +205,11 @@ func command(out, errOut io.Writer) *cobra.Command {
 				return err
 			}
 			defer func() { _ = release() }()
-			result, err := lockfile.Prepare(cmd.Context(), p, source.New(store, projectRoot, false), lockfile.Options{PluginsOnly: true, Refresh: method == "update"})
+			images := map[string]string{}
+			for name, provider := range p.Plugins {
+				images[name] = provider.Image
+			}
+			result, err := lockfile.Prepare(cmd.Context(), projectRoot, nil, images, source.New(store, projectRoot, false), lockfile.Options{PluginsOnly: true, Refresh: method == "update"})
 			if err != nil {
 				return err
 			}
@@ -289,10 +275,6 @@ func findConfig(root, path string) (string, error) {
 	}
 	return filepath.Join(project, "stemma.yaml"), nil
 }
-func ci() bool {
-	value := strings.ToLower(os.Getenv("CI"))
-	return value != "" && value != "false" && value != "0"
-}
 func writeJSON(out io.Writer, value any) error {
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
@@ -305,22 +287,13 @@ func printReport(out io.Writer, method string, r engine.Report) error {
 		_, err := io.WriteString(out, text.String())
 		return err
 	}
-	for _, software := range r.Software {
+	for _, software := range r.Resources {
 		if software.Error != "" {
 			_, _ = fmt.Fprintf(&text, "%s: failed: %s\n", software.Name, software.Error)
 		}
-		if software.Prepared == nil {
-			continue
-		}
-		_, _ = fmt.Fprintf(&text, "%s: %s %s (source cached: %t, preparation cached: %t)\n", software.Name, software.Prepared.Filename, software.Prepared.Version, software.SourceCached, software.Prepared.Cached)
+		_, _ = fmt.Fprintf(&text, "%s/%s (preparation cached: %t)\n", software.Kind, software.Name, software.Cached)
 		for name, artifact := range software.Artifacts {
 			_, _ = fmt.Fprintf(&text, "  %s: %s %s (cached: %t)\n", name, artifact.Filename, artifact.Version, artifact.Cached)
-		}
-		for name, failure := range software.ArtifactErrors {
-			_, _ = fmt.Fprintf(&text, "  %s: failed: %s\n", name, failure)
-		}
-		for _, step := range software.Steps {
-			_, _ = fmt.Fprintf(&text, "  %s (%s): %d outputs (cached: %t)\n", step.Name, step.Operation, len(step.Artifacts), step.Cached)
 		}
 		for _, destination := range software.Destinations {
 			if destination.Error != "" {

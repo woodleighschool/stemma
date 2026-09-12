@@ -4,7 +4,6 @@ package plugin
 import (
 	"context"
 	"encoding/json"
-	"time"
 )
 
 // ProtocolVersion is the executable protocol understood by this SDK.
@@ -39,29 +38,17 @@ type Identity struct {
 // Artifact is an immutable file or tree leased by the engine, never a writable
 // cache object. Version is selected by a consumer; Facts retain observed versions.
 type Artifact struct {
-	Path     string `json:"path"`
-	SHA256   string `json:"sha256"`
-	Size     int64  `json:"size"`
-	Filename string `json:"filename"`
-	Format   string `json:"format,omitempty"`
-	Tree     bool   `json:"tree,omitempty"`
-	Version  string `json:"version,omitempty"`
-	Facts    Facts  `json:"facts,omitzero"`
-}
-
-// StepRequest supplies leased inputs and a writable workspace. Timestamp is the
-// retained source timestamp, allowing package creation to remain deterministic.
-type StepRequest struct {
-	Config    json.RawMessage     `json:"config,omitempty"`
-	Inputs    map[string]Artifact `json:"inputs,omitempty"`
-	Workspace string              `json:"workspace"`
-	Timestamp time.Time           `json:"timestamp,omitzero"`
-}
-
-// StepResponse names produced artifacts and preserves their observed facts.
-type StepResponse struct {
-	Artifacts map[string]Artifact `json:"artifacts,omitempty"`
-	Facts     Facts               `json:"facts,omitzero"`
+	Mode       uint32                     `json:"mode,omitempty"`
+	EntryPoint string                     `json:"entry_point,omitempty"`
+	Evidence   map[string]json.RawMessage `json:"evidence,omitempty"`
+	Path       string                     `json:"path"`
+	SHA256     string                     `json:"sha256"`
+	Size       int64                      `json:"size"`
+	Filename   string                     `json:"filename"`
+	Format     string                     `json:"format,omitempty"`
+	Tree       bool                       `json:"tree,omitempty"`
+	Version    string                     `json:"version,omitempty"`
+	Facts      Facts                      `json:"facts,omitzero"`
 }
 
 // ReconcileRequest carries native desired state. Raw JSON retains absent, null,

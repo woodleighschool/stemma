@@ -1,8 +1,10 @@
 package intune
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -10,8 +12,8 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// Derive resolves explicitly selected artifact facts into native app metadata.
-// Authored fields win; installer execution and Windows detection remain explicit.
+// Derive resolves selected artifact facts into native app metadata.
+// Authored fields win over MSI defaults and explicitly selected application facts.
 func Derive(req plugin.ReconcileRequest) (plugin.ReconcileRequest, map[string]string, error) {
 	m, err := decodeObject(req.Metadata)
 	if err != nil {
@@ -37,8 +39,9 @@ func Derive(req plugin.ReconcileRequest) (plugin.ReconcileRequest, map[string]st
 	}
 	derive, exists := m["derive"]
 	if !exists {
+		m, err = deriveInstaller(req, m, unmanaged, origins)
 		req.Metadata = raw(m)
-		return req, origins, nil
+		return req, origins, err
 	}
 	d, ok := derive.(object)
 	if !ok || len(d) != 1 {
@@ -135,8 +138,73 @@ func Derive(req plugin.ReconcileRequest) (plugin.ReconcileRequest, map[string]st
 		m = mergeDerived(m, defaults, "", "derive."+kind+":"+name, unmanaged, origins)
 	}
 	delete(m, "derive")
+	m, err = deriveInstaller(req, m, unmanaged, origins)
 	req.Metadata = raw(m)
-	return req, origins, nil
+	return req, origins, err
+}
+
+func deriveInstaller(req plugin.ReconcileRequest, metadata object, unmanaged []string, origins map[string]string) (object, error) {
+	if metadata["@odata.type"] != win32Type {
+		return metadata, nil
+	}
+	setup := req.Artifact.EntryPoint
+	if setup == "" {
+		setup = req.Artifact.Filename
+	}
+	if !strings.EqualFold(path.Ext(setup), ".msi") {
+		return metadata, nil
+	}
+	var selected *plugin.Subject
+	if data := req.Artifact.Evidence["windows.installer"]; len(data) > 0 {
+		if err := json.Unmarshal(data, &selected); err != nil || selected == nil || selected.MSI == nil {
+			return nil, errors.New("selected Windows MSI evidence is invalid")
+		}
+	} else {
+		facts := req.Artifact.Facts
+		if len(facts.Subjects) == 0 {
+			facts = req.Facts
+		}
+		for _, subject := range facts.Subjects {
+			if subject.MSI == nil {
+				continue
+			}
+			if selected != nil {
+				return nil, errors.New("MSI defaults require one selected Windows installer")
+			}
+			selected = &subject
+		}
+	}
+	if selected == nil {
+		return metadata, nil
+	}
+	msi := selected.MSI
+	defaults, info := object{}, object{}
+	for key, value := range map[string]string{"productCode": msi.ProductCode, "productVersion": msi.ProductVersion, "upgradeCode": msi.UpgradeCode, "productName": msi.ProductName, "publisher": msi.Manufacturer} {
+		if value != "" {
+			info[key] = value
+		}
+	}
+	defaults["msiInformation"] = info
+	if msi.ProductName != "" {
+		defaults["displayName"] = msi.ProductName
+	}
+	if msi.Manufacturer != "" {
+		defaults["publisher"] = msi.Manufacturer
+	}
+	if strings.ContainsAny(setup, "\"%\r\n") && metadata["installCommandLine"] == nil && !suppressedField("installCommandLine", unmanaged) {
+		return nil, errors.New("MSI setup path cannot be represented safely in a standard command")
+	}
+	defaults["installCommandLine"] = `msiexec /i "` + strings.ReplaceAll(setup, "/", `\`) + `" /qn /norestart`
+	if msi.ProductCode != "" {
+		if strings.ContainsAny(msi.ProductCode, "\"%\r\n") && metadata["uninstallCommandLine"] == nil && !suppressedField("uninstallCommandLine", unmanaged) {
+			return nil, errors.New("MSI ProductCode cannot be represented safely in a standard command")
+		}
+		defaults["uninstallCommandLine"] = `msiexec /x "` + msi.ProductCode + `" /qn /norestart`
+		if msi.ProductVersion != "" {
+			defaults["rules"] = []any{object{"@odata.type": "#microsoft.graph.win32LobAppProductCodeRule", "ruleType": "detection", "productCode": msi.ProductCode, "productVersionOperator": "greaterThanOrEqual", "productVersion": msi.ProductVersion}}
+		}
+	}
+	return mergeDerived(metadata, defaults, "", "windows.installer", unmanaged, origins), nil
 }
 
 func minimumOS(version string) (object, error) {

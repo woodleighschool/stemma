@@ -72,6 +72,8 @@ func Compose(input Input, data json.RawMessage) (Input, map[string]any, error) {
 // including explicit null, alongside the typed values. Null is accepted only for
 // nullable display strings; lists use [] and booleans use false to clear values.
 type Metadata struct {
+	IconName               *string                    `json:"icon_name,omitempty" jsonschema:"description=Relative image path in the repository icons directory. Null clears it."`
+	IconHash               *string                    `json:"icon_hash,omitempty" jsonschema:"description=SHA-256 of the selected repository icon. Null clears it."`
 	DisplayName            *string                    `json:"display_name,omitempty" jsonschema:"description=Optional display title. Omission preserves the remote title; null clears it."`
 	Description            *string                    `json:"description,omitempty" jsonschema:"description=Application description. Omission preserves the remote value; null clears it."`
 	Category               *string                    `json:"category,omitempty" jsonschema:"description=Managed Software Center category. Null clears the category."`
@@ -179,10 +181,19 @@ func DecodeMetadata(raw json.RawMessage) (Metadata, error) {
 		}
 		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
 			switch key {
-			case "display_name", "description", "category", "developer":
+			case "display_name", "description", "category", "developer", "icon_name", "icon_hash":
 			default:
 				return Metadata{}, fmt.Errorf("munki field %q does not support null", key)
 			}
+		}
+	}
+	if metadata.IconName != nil && !safeLocation(*metadata.IconName) {
+		return Metadata{}, errors.New("icon_name requires a safe relative repository path")
+	}
+	if metadata.IconHash != nil {
+		digest, err := hex.DecodeString(*metadata.IconHash)
+		if err != nil || len(digest) != 32 {
+			return Metadata{}, errors.New("icon_hash requires a SHA-256 digest")
 		}
 	}
 	if metadata.InstalledSize != nil && *metadata.InstalledSize < 0 {

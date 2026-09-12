@@ -9,14 +9,6 @@ A reproducible software artifact pipeline, run locally or in CI as one binary.
 
 > **στέμμα** (_stémma_) — “wreath; lineage”
 
-## 🌱 What's inside
-
-- Locked HTTP, GitHub and local inputs, organised by software family
-- Preserved application, package and MSI facts with explicit native composition
-- Shared preparation, named operation steps, portable PKG and Intune Windows packaging
-- Native Intune, Jamf and Munki destinations
-- Trusted executable plugins providing inspection, preparation or reconciliation operations
-
 ## 🚀 Usage
 
 ```sh
@@ -24,83 +16,55 @@ cp stemma.example.yaml stemma.yaml
 mkdir -p software
 cp software.example.yaml software/chrome.yaml
 stemma validate
-stemma operations
 stemma update
 stemma plan
 stemma apply
 ```
 
-Commit `stemma.yaml`, software files and `stemma.lock.yaml`.
+Commit the Project, imported family documents and `stemma.lock.yaml`. `update`
+discovers inputs; `prepare`, `plan` and `apply` consume their reviewed locks.
+A changed local input or a missing lock requires an explicit update. A cold cache
+fetches the locked observation and verifies its bytes instead of rediscovering a
+release. `--offline` requires cached network inputs and still checks local files.
 
-| Option                 | Purpose                                       |
-| ---------------------- | --------------------------------------------- |
-| `--frozen-lockfile`    | Require a matching lockfile; default in CI    |
-| `--no-frozen-lockfile` | Permit missing or changed inputs              |
-| `--refresh`            | Refresh sources during a run                  |
-| `--no-lockfile`        | Ignore the source lockfile without writing it |
-| `--offline`            | Require cached source inputs                  |
-| `--output json`        | Machine-readable reports                      |
+Select a resource with `stemma prepare MacSoftware/chrome`; required build outputs
+are prepared first. Use the full `apiVersion/Kind/name` when names are ambiguous.
+`plan` reads destinations without mutating them. `prepare` stops before publication.
+`--output json` reports resources, immutable artifacts and individual destinations.
 
-`validate` checks configuration and operation contracts before software acquisition;
-content-dependent requirements are checked after inspection. `operations` prints
-the built-in and trusted plugin catalog. Both accept `--offline` for cached plugin
-binaries. `prepare` stops before publication; `inspect` reads artifact facts.
-Use `package --help` for standalone packaging and `completion` for shell setup.
-`stemma icon App.app --out icons/App.png` retains a macOS-rendered PNG;
-`--refresh` explicitly replaces it.
+## 🌱 Documents
 
-## ⚙️ Configuration
+A root `Project` imports family YAML files. Each document has a literal
+`apiVersion`, `kind`, `metadata.name` and `spec`; use `---` within a family file.
+Asset paths are relative to the owning document. Components provide optional
+map defaults through `extends`; lists and explicit nulls replace inherited values.
 
-The [generated schema](stemma.schema.json) provides editor validation and hover
-descriptions. `stemma schema --project --offline` includes the configured plugins'
-schemas from verified cached bundles. Save its output for the editor; it needs no
-destination credentials or software downloads.
+| Kind              | Authoring contract                                                                             |
+| ----------------- | ---------------------------------------------------------------------------------------------- |
+| `BuildMacPkg`     | Named inputs, payload layout, modes/ownership, package identity and endpoint installer scripts |
+| `MacSoftware`     | One optional source, one application selection, Mac preparation and native destinations        |
+| `WindowsSoftware` | One vendor installer or setup tree, optional accompanying files and native destinations        |
 
-Author one `apiVersion: stemma/v1alpha1`, `kind: Software` document per managed item.
-A family file can contain several platform documents separated by `---`.
-`metadata.name` is its stable identity and `spec` owns acquisition and native delivery.
-The root `kind: Project` uses `metadata.name` for project identity and keeps imports,
-connections, plugins and component defaults under `spec`. Import paths such as
-`software/**/*.yaml` select family document streams; paths to assets are relative to
-the owning document. Components apply defaults. Included local file changes
-invalidate the lock; destination metadata edits preserve acquisition and preparation
-results. Package timestamps use the source's recorded lock time. Omit `source`
-when the managed item needs no acquisition; it then has no source lock entry or
-implicit `source` and `prepared` outputs.
-
-Sources use built-in HTTP, GitHub, file or local providers. An HTTP `match`
-expression selects one distinct complete artifact URL from a download page;
-the lock pins that URL and its bytes. Frozen recovery uses the locked URL without
-resolving the page again. Named steps compose
-registered operations; each step can consume `source`, `prepared`, `artifacts/name`
-or an earlier `step/output`. The `artifacts` shorthand declares shared PKG builds;
-steps expose the operation's named outputs directly:
+A Mac application needs one selection. Archive paths describe where to inspect;
+`installed_path` describes its endpoint location. Bundle metadata, version and
+supported icons derive from that selection. ZIP applications are wrapped as PKGs;
+app DMGs retain the original image. `package_path` selects a nested vendor PKG
+without reconstructing it. A source-free `MacSoftware` can publish Munki `nopkg`.
 
 ```yaml
 apiVersion: stemma/v1alpha1
-kind: Software
+kind: MacSoftware
 metadata:
-  name: branding
+  name: editor
 spec:
   source:
-    type: local
-    include:
-      - Payload/**
-      - Scripts/postinstall
-  steps:
-    - name: package
-      operation: pkg
-      inputs:
-        input: prepared
-      config:
-        identifier: org.example.branding
-        version: "1.0"
-        payload: Payload
-        scripts:
-          postinstall: Scripts/postinstall
+    url: https://code.visualstudio.com/sha/download?build=stable&os=darwin-arm64-dmg
+    filename: VSCode.dmg
+  application:
+    path: Visual Studio Code.app
+    installed_path: /Applications/Visual Studio Code.app
   destinations:
     munki:
-      installer: package/artifact
       retention:
         keep: 1
       pkginfo:
@@ -108,216 +72,178 @@ spec:
           - testing
 ```
 
-Named subjects select observed evidence without changing the delivered artifact.
-Selectors accept an exact artifact `path`, observed `installed_path`, `bundle_id`,
-or a combination; they must match exactly one subject. Providers derive native
-metadata from that evidence, with explicit native fields taking precedence:
+Explicit construction stays separate from publication:
 
 ```yaml
-subjects:
-  app:
-    kind: app
-    path: Example.app
-destinations:
-  munki:
-    installer: source
-    derive:
-      app:
-        subject: app
-        installed_path: /Applications/Example.app
-    pkginfo:
-      name: Example
-      catalogs:
-        - testing
+apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata:
+  name: fonts
+spec:
+  inputs:
+    fonts:
+      path: Assets/Fonts
+  payload:
+    /Library/Fonts:
+      $input: fonts
+      uid: 0
+      gid: 0
+      mode: "0755"
+  package:
+    identifier: edu.example.fonts
+    version: "1.0"
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: fonts
+spec:
+  source:
+    resource:
+      kind: BuildMacPkg
+      name: fonts
+      output: installer
+  destinations:
+    munki:
+      pkginfo:
+        catalogs:
+          - testing
 ```
 
-The Munki provider owns `pkginfo` and `derive`. Derivation builds
-complete application detection entries, including both observed version strings.
-`version_key: CFBundleVersion` chooses the build for the native version comparison.
-Local Munki catalogs use `pkginfo.catalogs`. Copying one app from a DMG defaults to `/Applications`; package
-payload detection uses the observed installation path or an authored override.
+Inputs accept `url`, `path`, or an explicit `resolver` with its configuration.
+HTTP page matching and GitHub release discovery belong to their resolvers. Build
+references identify a resource and named output; they are independent of native
+installed-application dependencies. Files and trees are immutable. Tree identity
+includes bytes, modes and confined symlinks; unsupported filesystem metadata fails
+instead of being discarded. Payload ownership is explicitly authored and is never
+implemented by changing ownership on the runner.
 
-Typed `$fact` references select individual native values, for example
-`version: {$fact: app.app.build}` inside `pkginfo`. Objects merge recursively;
-provided lists replace their collections. Explicit `false`, `[]` and supported
-`null` retain their meaning. Omitted fields outside derivation remain unmanaged.
-`unmanaged` lists native field paths to exclude from derivation, such as
-`pkginfo.minimum_os_version`. Removing `derive` relinquishes its ownership.
-Disappearing optional facts clear prior generated Munki fields; Intune requires an
-explicit replacement or `unmanaged` when the native clear is not established.
-
-A source-free Munki item directly supplies `pkginfo` with
-`installer_type: nopkg`, `name`, `version` and native scripts. Scripts are metadata
-for endpoints and never execute on the runner. `munki.pkginfo` remains an optional
-JSON rendering operation for explicit artifact composition; ordinary publication
-needs no renderer step.
-
-Intune accepts native Graph fields with `type: win32`, `pkg` or `dmg` as subtype
-shorthands. `derive.msi` names the subject supplying observed descriptive and MSI identity
-fields from a named subject. Windows commands, requirements, detection, return
-codes and assignments remain authored. The Win32 provider packages raw MSI/EXE
-inputs into `.intunewin` internally. Relationship declarations use Software names:
+Windows setup content is part of `WindowsSoftware`, with no extra build document:
 
 ```yaml
-dependencies:
-  - software: vc-runtime
-    auto_install: true
-supersedes:
-  - software: legacy-client
-    uninstall_previous: true
+source:
+  url: https://update.code.visualstudio.com/latest/win32-x64/stable
+  filename: VSCodeSetup.exe
+content:
+  setup_file: install.cmd
+  files:
+    install.cmd:
+      path: windows/install.cmd
 ```
 
-Relationships resolve durable app bindings on the same named connection. Selected
-items run in reference order. A missing binding fails; omitted relationship
-categories remain unmanaged and an empty list clears that category. Ordinary
-releases update the existing app ID. Supersedence connects explicitly separate
-app objects and does not automatically retire the old app.
+The Intune provider prepares the entire setup directory as `.intunewin`. A single
+installer omits `content`. MSI descriptive fields, standard silent commands and
+ProductCode/version detection derive from the selected MSI. Explicit native fields
+win; EXE commands and detection are authored from vendor documentation. A
+ProductCode rule only detects that ProductCode: use native file, registry or script
+rules when detection must span major MSI upgrades. Intune script detection requires
+exit zero, output on stdout and no stderr. File/registry version comparisons can
+accept an already-newer installation.
 
-Jamf publishes immutable package IDs. Its optional `patch` associates a package
-with one exact title version and maintains a bound native policy:
+The [generated schema](stemma.schema.json) describes the current interface.
+`stemma schema --project --offline` incorporates installed plugin schemas and named
+connections without loading destination credentials or downloading software.
 
-```yaml
-patch:
-  title_configuration_id: "42"
-  version:
-    $fact: app.app.version
-  policy:
-    name: Chrome updates
-    enabled: false
-    scope:
-      all_computers: false
-      computers: []
-      computer_groups: []
-```
+## 📦 Publication
 
-`retention.keep` retains the current payload and the N−1 most recently
-successfully published distinct payloads, plus anything still referenced. Protected
-older payloads do not consume those slots. Providers record success after content
-and intended reference updates complete; metadata edits do not advance publication
-order. Intune prunes inactive content versions, Jamf retires owned obsolete title
-associations before deleting eligible packages, and Munki retires version
-records before unreferenced installer content. Unknown ownership/order and
-incomplete reference visibility block destructive cleanup. Keep durable bindings
-independently of cache; retained content is neither deployment rollback nor an
-uninstall-file strategy.
+Connections live in the Project; each resource supplies native destination fields.
+Explicit values override derived evidence. Omitted fields remain unmanaged, supported
+nulls clear fields, and supplied lists replace their collections. Optional `$fact`
+references select typed evidence such as `macos.application.app.version`; ordinary
+application metadata and icon derivation require no individual fact references.
 
-## 🔌 Operations
+Intune supports native commands, context, requirements, detection and restart codes.
+Dependencies and explicit supersedence refer to compatible Win32 app bindings on the
+same connection. Releases update one bound app ID; supersedence connects separate
+applications. Omitted relationship categories remain unmanaged; empty lists clear
+them. No app retirement is inferred from supersedence.
 
-Plugins are trusted executable providers, separate from source acquisition and
-destination connections. Each OCI release supplies bundles for its supported runners. Configure plugins and
-connections under the Project document’s `spec`:
+Jamf uploads immutable packages and can maintain an exact patch-title association
+and bound policy. Munki owns native pkginfo and installer objects. Destination
+plugins define their own native modes: accepting PKG content does not imply accepting
+`nopkg`, scripts, or another provider's deployment model.
 
-```yaml
-plugins:
-  inventory:
-    trusted: true
-    image: ghcr.io/example/inventory:v1.0.0
-destinations:
-  inventory:
-    operation: inventory.reconcile
-    config:
-      token: ${INVENTORY_TOKEN}
-```
+`retention.keep` retains the current payload plus the N−1 most recently successfully
+published distinct payloads, and anything still referenced. Protected older payloads
+do not consume those slots. Metadata edits do not upload unchanged content or
+advance publication order. Intune prunes inactive content versions; Jamf retires
+owned obsolete associations before eligible packages; Munki retires version records
+before unreferenced installers. Unknown ownership/order or incomplete reference
+visibility blocks destructive cleanup.
 
-Run `stemma plugins install` to pin the release index in `stemma.lock.yaml`.
-Only the current runner's bundle is fetched. Tags move only on explicit
-`stemma plugins update`; normal runs and cold cache recovery use the locked digest.
-Registry authentication uses the standard Docker/ORAS credential store and helpers.
-No container runtime is required.
-The [Go SDK](plugin) uses protocol v2: one executable advertises multiple named
-operations with input/output JSON Schemas, runner requirements, methods and side
-effects. Providers with constrained configuration declare `config_schema` and `metadata_schema`
-so authored fields can be checked before runtime artifacts exist. Built-in and
-external names share one registry; collisions fail. Schemas are self-contained
-and cannot load network or filesystem references.
-Providers can declare `requires_inspection` to receive observed artifact facts;
-Stemma does not interpret their metadata to decide what evidence they need.
+The content cache is disposable. Keep `.stemma/state` durable, or set
+`STEMMA_STATE_DIR`; losing bindings never authorizes adoption by name. Set
+`STEMMA_CACHE_DIR` or `--cache-dir` to inspect or relocate the cache. Retained content
+is neither a rollback promise nor an uninstall-file strategy.
 
-Preparation steps support `validate` and `run` with `none` or `workspace` side
-effects. Reconciliation operations support `validate`, `plan` and `apply`.
-Plugins execute with the caller's privileges; workspaces are leases, not sandboxes.
-Failed reconciliation responses can retain bindings for completed remote work.
-Persist `.stemma/state` separately from the disposable cache, or set `STEMMA_STATE_DIR`.
-Supply credentials as literal configuration values using `${VAR}` expansion.
-Mark credential fields `writeOnly: true` in the connection schema so rotating them
-preserves the destination's durable bindings.
+## 🔌 Plugins
 
-### Publishing a plugin
+Plugins are trusted standalone executables distributed as OCI platform bundles.
+Declare their release images under Project `plugins`, with `trusted: true`.
+`stemma plugins install` records the index digest; `stemma plugins update` explicitly
+changes pins. Only the current runner's bundle is fetched. Cold recovery uses the
+locked digest. Registry authentication uses Docker/ORAS credentials; no container
+runtime is required.
 
-Build a standalone executable for each supported OS/architecture pair. Package
-it as `plugin` (`plugin.exe` on Windows) at the root of one tar.zst archive,
-alongside any resources and licences. Resolve resources relative to the executable.
-Normalize archive ordering, ownership, modes and timestamps for reproducible bundles.
+The [public SDK](plugin) defines the same registry and protocol used by built-ins:
 
-Publish each bundle with ORAS, then assemble one OCI platform index:
+- A resource operation registers its `apiVersion` and `kind`. `validate` separates
+  named inputs, preparation configuration and native destinations; `run` receives
+  leased locked inputs and produces named files or trees.
+- A resolver registers a versioned observation contract. Discovery returns its
+  observation; locked fetching must reproduce that content. Observations and
+  declaration fingerprints exclude credentials.
+- A destination advertises accepted content and owns native publication semantics,
+  bindings and cleanup. It never needs a list of originating kind names.
 
-```sh
-oras push ghcr.io/example/inventory:v1.0.0-linux-amd64 \
-  --artifact-platform linux/amd64 \
-  --artifact-type application/vnd.stemma.plugin.v1 \
-  --annotation org.opencontainers.image.created=1970-01-01T00:00:00Z \
-  plugin.tar.zst:application/vnd.stemma.plugin.bundle.v1.tar+zstd
-oras manifest index create ghcr.io/example/inventory:v1.0.0 v1.0.0-linux-amd64
-```
+Artifacts carry optional typed facts and open, namespaced JSON evidence. The host
+computes content identity, checks declared hashes and detects leased-input mutation.
+Plugin bundle identity participates in preparation cache keys. Configuration and
+metadata schemas are self-contained; external schema references cannot load code or
+network resources. Credential fields use `writeOnly: true` so secret rotation does
+not change connection identity.
 
-Add platform tags to the index command for Darwin, Linux or Windows on amd64 or
-arm64. Each manifest contains exactly one bundle. The index selects the runner;
-the executable's `describe` response owns operation contracts. The selected
-manifest digest identifies the implementation, so resource changes invalidate
-cached operation output. External providers own their native schema and rendering;
-they receive the same facts, subject selectors and durable bindings through the
-public protocol.
+Publish one tar.zst bundle per runner with `plugin` (`plugin.exe` on Windows) and
+its resources at the archive root. Use OCI artifact type
+`application/vnd.stemma.plugin.v1`, layer type
+`application/vnd.stemma.plugin.bundle.v1.tar+zstd`, then combine platform manifests
+in an OCI index. Development across local modules uses an explicit temporary Go
+workspace; release modules pin a published SDK version. Workspaces are leases, not
+security sandboxes: trusted executables run with the caller's privileges.
 
-## 🔎 Artifact support
+## 🛠️ Runtime
 
-Inspection is static and never runs payloads or installer hooks. Facts preserve
-container relationships, observed paths and each subject's original versions.
+Install the pinned development tools with `mise install`, then run `mise run deps`
+and `mise run build`. The resulting CLI is a standalone binary. Target platform
+and runner platform are separate; resource and provider descriptors declare concrete
+runner requirements. Missing commands or unsupported runners fail before acquisition
+or destination mutation, with setup instructions supplied by the operation.
 
-| Artifact           | Supported behaviour                                                                        |
-| ------------------ | ------------------------------------------------------------------------------------------ |
-| Application bundle | Bundle identifier, short/build versions, executable and minimum OS                         |
-| PKG                | Component receipts and payload application facts with containment and installation paths   |
-| MSI                | Database identities, product version and native properties                                 |
-| EXE or other file  | Exact content identity; installed application behaviour requires authored native rules     |
-| DMG                | Portable HFS+/HFSX inspection and selection of an app or flat PKG; original image retained |
-| `.intunewin`       | Transport envelope inspection and packaging, separate from installed software facts        |
+| Operation                                           | Runner requirements and supported scope                                                                                     |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| HTTP/GitHub/local resolution, MSI inspection        | Go binary; no Windows runtime or installer execution                                                                        |
+| Mac bundle/PKG inspection, HFS+/HFSX DMG extraction | Portable Go implementation; APFS and unsupported compression/layouts fail                                                   |
+| `BuildMacPkg`, ZIP-app wrapping                     | Portable unsigned component PKGs; endpoint scripts are packaged, never executed; unsupported links/metadata fail            |
+| Signature inspection                                | Portable supported PKG/Mach-O integrity and exact certificate pins; no Apple chain/revocation or native platform assessment |
+| Automatic application icons                         | Embedded PNG and PNG-backed ICNS; extraction is optional                                                                    |
+| `stemma icon` native rendering                      | macOS system image/Quick Look frameworks; PNG input remains portable                                                        |
+| Intune Win32 preparation                            | Existing portable Go wrapper, bounded to 2 GiB; no .NET requirement                                                         |
+| Microsoft's comparison tool                         | Windows and .NET Framework 4.7.2, as documented by Microsoft                                                                |
 
-Portable PKG creation retains payloads and scripts without executing them.
-ZIP applications can become PKGs with `pkg` and an explicit installation path.
-App DMGs use the original `source` with native `copy_from_dmg`, `items_to_copy`
-and installed application detection. A selected inner PKG uses `prepared` and
-retains the vendor's installer bytes and receipts. Disk images are never mounted;
-APFS, unsupported compression and unrepresentable payload metadata are rejected.
-Required unsupported layouts or verification capabilities fail before publication.
-`verification.subject` selects `source`, `payload`, `prepared`, `artifacts/name`
-or `step/output`; evidence remains attached to that artifact. This allows an
-installer to be verified independently of a rendered metadata document.
-Application signature checks authenticate each architecture's primary SHA-256
-CodeDirectory using detached CMS. Alternate CodeDirectories and nested resource
-sealing remain unsupported. Certificate pins authenticate the exact signer;
-Apple chain trust, revocation and native platform assessment are separate checks.
-
-String values under `spec` support whole-value environment placeholders, for example
-`token: ${GITHUB_TOKEN}` or `client_secret: ${JAMF_CLIENT_SECRET}`. Export the
-variables before running commands. Unset variables fail configuration loading;
-values remain strings, including empty strings. Resource headers (`apiVersion`,
-`kind` and `metadata.name`) are literal and never depend on the runner environment.
-Embedded expressions remain literal, including shell expressions inside scripts.
-Mapping keys remain literal. Source tokens and
-native destination authentication secrets do not affect lock or binding identity.
+The portable wrapper has independent format verification. Packaging or API acceptance
+does not prove endpoint installation. Microsoft's tool is not invoked implicitly;
+its runtime is needed when using it as an external compatibility check.
 
 ## 🧑‍💻 Development
 
 ```sh
-mise install
-mise run build
 mise run generate
 mise run test
 mise run lint
+mise run build
 ```
 
-`mise run generate-graph` regenerates the pinned Kiota clients for Intune. We scope them to
-avoid the full Microsoft Graph SDKs’ high memory use during cold builds.
+`mise run generate-graph` regenerates the scoped, pinned Intune clients.
 
 ## 📄 License
 

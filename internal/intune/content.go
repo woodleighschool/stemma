@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	abs "github.com/microsoft/kiota-abstractions-go"
+	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/intunecontent"
 	"github.com/woodleighschool/stemma/internal/intunewin"
@@ -46,15 +48,18 @@ func (p *preparedArtifact) close() {
 	}
 }
 
-func identifyArtifact(artifact plugin.Artifact, appType string) (artifactIdentity, error) {
-	if artifact.Path == "" || artifact.Filename == "" || filepath.Base(artifact.Filename) != artifact.Filename || strings.ContainsAny(artifact.Filename, `\:`) {
-		return artifactIdentity{}, errors.New("intune requires an immutable file artifact with a simple filename")
+func identifyArtifact(ctx context.Context, artifact plugin.Artifact, appType, setup string) (artifactIdentity, error) {
+	if artifact.Path == "" || (!artifact.Tree && (artifact.Filename == "" || filepath.Base(artifact.Filename) != artifact.Filename || strings.ContainsAny(artifact.Filename, `\:`))) {
+		return artifactIdentity{}, errors.New("intune requires immutable content; file artifacts need a simple filename")
 	}
 	digest, err := hex.DecodeString(artifact.SHA256)
 	if err != nil || len(digest) != sha256.Size {
 		return artifactIdentity{}, errors.New("intune artifact requires a SHA-256 digest")
 	}
 	if appType != win32Type {
+		if artifact.Tree {
+			return artifactIdentity{}, errors.New("macOS Intune apps require a file artifact")
+		}
 		extension := ".dmg"
 		if appType == pkgType {
 			extension = ".pkg"
@@ -64,12 +69,39 @@ func identifyArtifact(artifact plugin.Artifact, appType string) (artifactIdentit
 		}
 		return artifactIdentity{identity: artifact.SHA256, raw: true}, nil
 	}
+	setup = strings.ReplaceAll(setup, `\`, "/")
+	entrypoint := strings.ReplaceAll(artifact.EntryPoint, `\`, "/")
+	if setup != "" && entrypoint != "" && setup != entrypoint {
+		return artifactIdentity{}, errors.New("content.setup_file conflicts with the artifact entrypoint")
+	}
+	if setup == "" {
+		setup = entrypoint
+	}
+	if setup != "" && (!fs.ValidPath(setup) || setup == "." || strings.Contains(setup, ":")) {
+		return artifactIdentity{}, errors.New("content.setup_file must be a relative Windows payload path")
+	}
+	if artifact.Tree {
+		if setup == "" {
+			return artifactIdentity{}, errors.New("Win32 setup trees require content.setup_file or an artifact entrypoint")
+		}
+		if err := intunewin.ValidateSource(ctx, artifact.Path, setup); err != nil {
+			return artifactIdentity{}, fmt.Errorf("intune setup tree: %w", err)
+		}
+		hash := sha256.Sum256([]byte("stemma-intune-tree-v1\x00" + artifact.SHA256 + "\x00" + setup))
+		return artifactIdentity{identity: hex.EncodeToString(hash[:]), setup: strings.ReplaceAll(setup, "/", `\`)}, nil
+	}
 	if strings.EqualFold(filepath.Ext(artifact.Filename), ".intunewin") {
 		metadata, err := intunewin.Inspect(artifact.Path)
 		if err != nil {
 			return artifactIdentity{}, err
 		}
+		if setup != "" && setup != strings.ReplaceAll(metadata.SetupFile, `\`, "/") {
+			return artifactIdentity{}, errors.New("content.setup_file conflicts with the existing Intune envelope")
+		}
 		return artifactIdentity{identity: metadata.PayloadSHA256, setup: metadata.SetupFile, envelope: true, metadata: metadata}, nil
+	}
+	if setup != "" && setup != artifact.Filename {
+		return artifactIdentity{}, errors.New("content.setup_file must name the single-file artifact")
 	}
 	// The setup name is part of the one-file derivation; renaming identical bytes
 	// must not leave Graph pointing at a name absent from the uploaded payload.
@@ -96,40 +128,17 @@ func prepareArtifact(ctx context.Context, artifact plugin.Artifact, identity art
 		}
 	}()
 	source := filepath.Join(workspace, "source")
-	if err := os.Mkdir(source, 0o700); err != nil {
+	if artifact.Tree {
+		if err := snapshotTree(ctx, artifact, workspace, source); err != nil {
+			return nil, err
+		}
+	} else if err := snapshotFile(ctx, artifact, source); err != nil {
 		return nil, err
-	}
-	input, err := os.Open(artifact.Path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = input.Close() }()
-	stat, err := input.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !stat.Mode().IsRegular() || stat.Size() > 2<<30 {
-		return nil, errors.New("intune input must be a regular file no larger than 2 GiB")
-	}
-	output, err := os.Create(filepath.Join(source, artifact.Filename))
-	if err != nil {
-		return nil, err
-	}
-	hash := sha256.New()
-	n, copyErr := io.Copy(io.MultiWriter(output, hash), io.LimitReader(fileio.Reader{Context: ctx, Reader: input}, 2<<30+1))
-	closeErr := output.Close()
-	if copyErr != nil {
-		return nil, copyErr
-	}
-	if closeErr != nil {
-		return nil, closeErr
-	}
-	if n > 2<<30 || hex.EncodeToString(hash.Sum(nil)) != artifact.SHA256 {
-		return nil, errors.New("intune source changed from its immutable digest")
 	}
 	name := artifact.Filename
 	if !identity.raw {
-		name = strings.TrimSuffix(artifact.Filename, filepath.Ext(artifact.Filename)) + ".intunewin"
+		base := filepath.Base(strings.ReplaceAll(identity.setup, `\`, "/"))
+		name = strings.TrimSuffix(base, filepath.Ext(base)) + ".intunewin"
 	}
 	path := filepath.Join(workspace, name)
 	var metadata intunecontent.Info
@@ -152,7 +161,7 @@ func prepareArtifact(ctx context.Context, artifact plugin.Artifact, identity art
 			return nil, closeErr
 		}
 	} else {
-		m, err := intunewin.Write(ctx, source, artifact.Filename, path)
+		m, err := intunewin.Write(ctx, source, strings.ReplaceAll(identity.setup, `\`, "/"), path)
 		if err != nil {
 			return nil, err
 		}
@@ -162,9 +171,9 @@ func prepareArtifact(ctx context.Context, artifact plugin.Artifact, identity art
 	if err != nil {
 		return nil, err
 	}
-	hash.Reset()
-	_, copyErr = io.Copy(hash, fileio.Reader{Context: ctx, Reader: envelope})
-	closeErr = envelope.Close()
+	hash := sha256.New()
+	_, copyErr := io.Copy(hash, fileio.Reader{Context: ctx, Reader: envelope})
+	closeErr := envelope.Close()
 	if copyErr != nil {
 		return nil, copyErr
 	}
@@ -173,6 +182,59 @@ func prepareArtifact(ctx context.Context, artifact plugin.Artifact, identity art
 	}
 	success = true
 	return &preparedArtifact{path: path, name: name, envelopeSHA256: hex.EncodeToString(hash.Sum(nil)), metadata: metadata, setup: identity.setup, raw: identity.raw, cleanup: func() { _ = os.RemoveAll(workspace) }}, nil
+}
+
+func snapshotTree(ctx context.Context, artifact plugin.Artifact, workspace, source string) error {
+	snapshot, err := os.Create(filepath.Join(workspace, "source.tar"))
+	if err != nil {
+		return err
+	}
+	hash := sha256.New()
+	err = archive.Pack(ctx, artifact.Path, io.MultiWriter(snapshot, hash))
+	info, statErr := snapshot.Stat()
+	err = errors.Join(err, statErr, snapshot.Close())
+	if err != nil {
+		return err
+	}
+	if info.Size() != artifact.Size || hex.EncodeToString(hash.Sum(nil)) != artifact.SHA256 {
+		return errors.New("intune setup tree changed from its immutable digest")
+	}
+	return archive.Extract(ctx, snapshot.Name(), source)
+}
+
+func snapshotFile(ctx context.Context, artifact plugin.Artifact, source string) error {
+	if err := os.Mkdir(source, 0o700); err != nil {
+		return err
+	}
+	input, err := os.Open(artifact.Path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = input.Close() }()
+	stat, err := input.Stat()
+	if err != nil {
+		return err
+	}
+	if !stat.Mode().IsRegular() || stat.Size() > 2<<30 {
+		return errors.New("intune input must be a regular file no larger than 2 GiB")
+	}
+	output, err := os.Create(filepath.Join(source, artifact.Filename))
+	if err != nil {
+		return err
+	}
+	hash := sha256.New()
+	n, copyErr := io.Copy(io.MultiWriter(output, hash), io.LimitReader(fileio.Reader{Context: ctx, Reader: input}, 2<<30+1))
+	closeErr := output.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if n > 2<<30 || n != artifact.Size || hex.EncodeToString(hash.Sum(nil)) != artifact.SHA256 {
+		return errors.New("intune source changed from its immutable digest")
+	}
+	return nil
 }
 
 func (c *client) upload(ctx context.Context, appID, identity string, prepared *preparedArtifact, b *binding) error {

@@ -52,7 +52,7 @@ func payloadPath(name string, windows bool) (string, error) {
 	return name, nil
 }
 
-func zipSource(ctx context.Context, sourceDir, setup string, target *os.File) error {
+func zipSource(ctx context.Context, sourceDir, setup string, target io.Writer) error {
 	root, err := os.OpenRoot(sourceDir)
 	if err != nil {
 		return err

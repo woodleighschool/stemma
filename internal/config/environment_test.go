@@ -18,30 +18,31 @@ metadata:
 spec:
   components:
     base:
-      source: {type: http, url: 'https://example.test/app.pkg'}
       destinations:
         repo:
           description: ${STEMMA_TEST_VALUE}
-          catalogs: ["${STEMMA_TEST_VALUE}"]
+          catalogs:
+            - ${STEMMA_TEST_VALUE}
   destinations:
-    repo: {operation: munki, config: {path: repo}}
-    jamf:
-      operation: jamf
+    repo:
+      operation: fixture.publish
       config:
-        client_secret: ${STEMMA_TEST_VALUE}
-  imports: ['*.software.yaml']
+        token: ${STEMMA_TEST_VALUE}
+  imports:
+    - '*.software.yaml'
 ---
 apiVersion: stemma/v1alpha1
-kind: Software
+kind: MacSoftware
 metadata:
   name: app
-spec: {extends: base}
+spec:
+  extends: base
 `))
 			if err != nil {
 				t.Fatal(err)
 			}
-			metadata := p.Software["app"].Destinations["repo"]
-			if metadata["description"] != value || metadata["catalogs"].([]any)[0] != value || p.Destinations["jamf"].Config["client_secret"] != value {
+			metadata := p.Resources["stemma/v1alpha1/MacSoftware/app"].Spec["destinations"].(map[string]any)["repo"].(map[string]any)
+			if metadata["description"] != value || metadata["catalogs"].([]any)[0] != value || p.Destinations["repo"].Config["token"] != value {
 				t.Fatal("environment value was changed, reinterpreted or not expanded")
 			}
 		})
@@ -53,7 +54,7 @@ func TestEnvironmentRejectsMissingWholeValue(t *testing.T) {
 	if err := os.Unsetenv("STEMMA_TEST_MISSING"); err != nil {
 		t.Fatal(err)
 	}
-	document := "apiVersion: stemma/v1alpha1\nkind: Project\nmetadata: {name: test}\nspec: {imports: ['*.software.yaml']}\n---\napiVersion: stemma/v1alpha1\nkind: Software\nmetadata: {name: app}\nspec:\n  source:\n    type: http\n    url: https://example.test/app.pkg\n    token: '${STEMMA_TEST_MISSING}'\n"
+	document := projectFixture + "---\n" + resourceFixture + "    token: ${STEMMA_TEST_MISSING}\n"
 	if _, err := parseTest(t, []byte(document)); err == nil || !strings.Contains(err.Error(), "environment variable STEMMA_TEST_MISSING is not set") {
 		t.Fatalf("missing environment value: %v", err)
 	}
@@ -61,43 +62,35 @@ func TestEnvironmentRejectsMissingWholeValue(t *testing.T) {
 
 func TestEnvironmentPreservesEmbeddedScriptExpressions(t *testing.T) {
 	t.Setenv("STEMMA_TEST_VALUE", "runner-value")
-	root := t.TempDir()
-	writeConfig(t, root, "stemma.yaml", "apiVersion: stemma/v1alpha1\nkind: Project\nmetadata: {name: test}\nspec: {imports: [software.yaml]}\n")
 	script := "#!/bin/sh\n/bin/mkdir -p \"${config%/*}\"\necho \"${STEMMA_TEST_VALUE} ${NAME:-default}\"\n"
-	writeConfig(t, root, "software.yaml", "apiVersion: stemma/v1alpha1\nkind: Software\nmetadata: {name: policy}\nspec:\n  steps:\n    - name: policy\n      operation: munki.pkginfo\n      config:\n        postinstall_script: |\n          "+strings.ReplaceAll(strings.TrimSuffix(script, "\n"), "\n", "\n          ")+"\n")
-	p, err := Load(filepath.Join(root, "stemma.yaml"))
+	document := projectFixture + "---\n" + `apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: policy
+spec:
+  destinations:
+    external:
+      postinstall_script: |
+        ` + strings.ReplaceAll(strings.TrimSuffix(script, "\n"), "\n", "\n        ") + "\n"
+	p, err := parseTest(t, []byte(document))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := p.Software["policy"].Steps[0].Config["postinstall_script"]; got != script {
+	got := p.Resources["stemma/v1alpha1/MacSoftware/policy"].Spec["destinations"].(map[string]any)["external"].(map[string]any)["postinstall_script"]
+	if got != script {
 		t.Fatalf("native script changed: %q", got)
 	}
 }
 
 func TestLoadExpandsImportedValuesWithoutRequiringEnvironmentForDiscovery(t *testing.T) {
 	root := t.TempDir()
-	writeConfig(t, root, "stemma.yaml", `apiVersion: stemma/v1alpha1
-kind: Project
-metadata:
-  name: test
-spec:
-  imports: [software/stemma.yaml]
-  destinations:
-    jamf:
-      operation: jamf
+	writeConfig(t, root, "stemma.yaml", strings.Replace(projectFixture, "'*.software.yaml'", "software/stemma.yaml", 1)+`  destinations:
+    external:
+      operation: fixture.publish
       config:
-        client_secret: ${STEMMA_TEST_SECRET}
+        token: ${STEMMA_TEST_SECRET}
 `)
-	writeConfig(t, root, "software/stemma.yaml", `apiVersion: stemma/v1alpha1
-kind: Software
-metadata:
-  name: app
-spec:
-  source:
-    type: http
-    url: https://example.test/app.pkg
-    token: ${STEMMA_TEST_SECRET}
-`)
+	writeConfig(t, root, "software/stemma.yaml", resourceFixture+"    token: ${STEMMA_TEST_SECRET}\n")
 	t.Setenv("STEMMA_TEST_SECRET", "")
 	if err := os.Unsetenv("STEMMA_TEST_SECRET"); err != nil {
 		t.Fatal(err)
@@ -113,23 +106,22 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Destinations["jamf"].Config["client_secret"] != "test-secret" || p.Software["app"].Source.Token != "test-secret" {
+	if p.Destinations["external"].Config["token"] != "test-secret" || p.Resources["stemma/v1alpha1/MacSoftware/app"].Spec["source"].(map[string]any)["token"] != "test-secret" {
 		t.Fatal("root or imported values were not expanded")
 	}
 	data, err := os.ReadFile(filepath.Join(root, "software/stemma.yaml"))
 	if err != nil || !strings.Contains(string(data), "${STEMMA_TEST_SECRET}") {
-		t.Fatal("loading rewrote the authored configuration")
+		t.Fatal("loading rewrote authored configuration")
 	}
 }
 
 func TestEnvironmentDoesNotExpandKeysOrBypassStrictTypes(t *testing.T) {
 	t.Setenv("STEMMA_TEST_VALUE", "private-test-value")
-	base := "apiVersion: stemma/v1alpha1\nkind: Project\nmetadata:\n  name: test\nspec:\n  imports: ['*.software.yaml']\n---\napiVersion: stemma/v1alpha1\nkind: Software\nmetadata:\n  name: app\nspec: {source: {type: http, url: 'https://example.test/app.pkg'}}\n"
+	base := projectFixture + "---\n" + resourceFixture
 	for _, document := range []string{
-		strings.Replace(base, "  imports:", "  destinations: {repo: {operation: jamf, config: {'${STEMMA_TEST_VALUE}': value}}}\n  imports:", 1),
+		strings.Replace(base, "  imports:", "  destinations:\n    repo:\n      operation: fixture.publish\n      config:\n        '${STEMMA_TEST_VALUE}': value\n  imports:", 1),
 		base + "unknown: '${STEMMA_TEST_VALUE}'\n",
-		strings.Replace(base, "type: http", "type: http, include: '${STEMMA_TEST_VALUE}'", 1),
-		strings.Replace(base, "type: http", "type: http, token_env: OLD", 1),
+		strings.Replace(base, "  imports:", "  plugins:\n    fixture:\n      trusted: '${STEMMA_TEST_VALUE}'\n      image: ghcr.io/example/fixture:v1\n  imports:", 1),
 	} {
 		if _, err := parseTest(t, []byte(document)); err == nil || strings.Contains(err.Error(), "private-test-value") {
 			t.Fatalf("invalid configuration was accepted or exposed an environment value: %v", err)
@@ -138,22 +130,16 @@ func TestEnvironmentDoesNotExpandKeysOrBypassStrictTypes(t *testing.T) {
 }
 
 func TestResourceHeadersRemainLiteral(t *testing.T) {
-	t.Setenv("STEMMA_TEST_PROJECT", "catalog")
-	root := t.TempDir()
-	writeConfig(t, root, "stemma.yaml", `apiVersion: stemma/v1alpha1
-kind: Project
-metadata: {name: '${STEMMA_TEST_PROJECT}'}
-spec: {imports: [software.yaml]}
-`)
-	writeConfig(t, root, "software.yaml", `apiVersion: stemma/v1alpha1
-kind: Software
-metadata: {name: app}
-spec: {source: {type: file, path: app.pkg}}
-`)
-	if _, err := Load(filepath.Join(root, "stemma.yaml")); err == nil || !strings.Contains(err.Error(), "metadata.name") {
-		t.Fatalf("project identity depends on runner environment: %v", err)
-	}
-	if _, err := FindRoot(root); err == nil || !strings.Contains(err.Error(), "metadata.name") {
-		t.Fatalf("discovery accepted a different identity contract: %v", err)
+	t.Setenv("STEMMA_TEST_NAME", "catalog")
+	for _, replace := range []struct{ project, resource string }{
+		{strings.Replace(projectFixture, "name: catalog", "name: '${STEMMA_TEST_NAME}'", 1), resourceFixture},
+		{projectFixture, strings.Replace(resourceFixture, "name: app", "name: '${STEMMA_TEST_NAME}'", 1)},
+	} {
+		root := t.TempDir()
+		writeConfig(t, root, "stemma.yaml", replace.project)
+		writeConfig(t, root, "app.software.yaml", replace.resource)
+		if _, err := Load(filepath.Join(root, "stemma.yaml")); err == nil || !strings.Contains(err.Error(), "metadata.name") {
+			t.Fatalf("resource identity depends on runner environment: %v", err)
+		}
 	}
 }

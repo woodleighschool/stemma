@@ -5,200 +5,156 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"github.com/woodleighschool/stemma/internal/testproject"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func TestApplyBookkeepingAndBindingPresence(t *testing.T) {
-	failed := errors.New("upload failed after creating destination")
-	for _, test := range []struct {
-		name, previous, returned, wantBinding string
-		err                                   error
-	}{
-		{name: "success without binding", wantBinding: `null`},
-		{name: "omission preserves binding", previous: `{"id":1}`, wantBinding: `{"id":1}`},
-		{name: "null clears binding", previous: `{"id":1}`, returned: `null`, wantBinding: `null`},
-		{name: "value replaces binding", previous: `{"id":1}`, returned: `{"id":2}`, wantBinding: `{"id":2}`},
-		{name: "first failure retains new binding", returned: `{"id":2}`, wantBinding: `{"id":2}`, err: failed},
-		{name: "partial failure retains binding", previous: `{"id":1}`, returned: `{"id":2}`, wantBinding: `{"id":2}`, err: failed},
-		{name: "failed omission preserves binding", previous: `{"id":1}`, wantBinding: `{"id":1}`, err: failed},
-		{name: "failed null clears binding", previous: `{"id":1}`, returned: `null`, wantBinding: `null`, err: failed},
-		{name: "cancellation preserves previous success", previous: `{"id":1}`, wantBinding: `{"id":1}`, err: context.Canceled},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			configPath := filepath.Join(root, "stemma.yaml")
-			manifest := `apiVersion: stemma/v1alpha1
+const policyProject = `apiVersion: stemma/v1alpha1
 kind: Project
 metadata:
-  name: bookkeeping
+  name: policies
 spec:
+  imports:
+    - '*.software.yaml'
   destinations:
-    local: {operation: munki, config: {path: repo}}
-  imports: ['*.software.yaml']
+    first:
+      operation: munki
+      config:
+        path: first
+    second:
+      operation: munki
+      config:
+        path: second
 ---
 apiVersion: stemma/v1alpha1
-kind: Software
+kind: MacSoftware
 metadata:
-  name: app
+  name: policy
 spec:
-  source: {type: file, path: installer.bin}
   destinations:
-    local: {}
+    first:
+      pkginfo:
+        installer_type: nopkg
+        version: '1'
+        description: original
+        installcheck_script: |
+          #!/bin/sh
+          exit 1
+    second:
+      pkginfo:
+        installer_type: nopkg
+        version: '1'
+        installcheck_script: |
+          #!/bin/sh
+          exit 1
 `
-			if err := testproject.Write(configPath, []byte(manifest)); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(root, "installer.bin"), []byte("new installer bytes"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			project, err := config.Load(configPath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			stateDir := t.TempDir()
-			statePath := filepath.Join(stateDir, "bookkeeping.json")
-			previous := binding{
-				Connection: config.Fingerprint(project.Destinations["local"]),
-				Binding:    json.RawMessage(test.previous),
-			}
-			if test.previous != "" {
-				previous.Source = strings.Repeat("1", 64)
-				previous.Payload = strings.Repeat("2", 64)
-				if err := saveState(statePath, state{Version: 1, Project: project.Project, Bindings: map[string]binding{"app/local": previous}}); err != nil {
-					t.Fatal(err)
-				}
-			}
-			called := false
-			options := Options{
-				ConfigPath: configPath, CacheDir: t.TempDir(), StateDir: stateDir, Method: "apply",
-				Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
-					if request.Method == "validate" || request.Method == "plan" {
-						return plugin.ReconcileResponse{}, nil
-					}
-					called = true
-					if request.Method != "apply" || compactJSON(t, request.Binding) != test.previous {
-						t.Fatalf("apply request: %+v", request)
-					}
-					return plugin.ReconcileResponse{Binding: json.RawMessage(test.returned)}, test.err
-				}},
-			}
-			report, err := Run(t.Context(), options)
-			if !errors.Is(err, test.err) || !called || len(report.Software) != 1 || len(report.Software[0].Destinations) != 1 {
-				t.Fatalf("apply: report=%+v error=%v called=%v", report, err, called)
-			}
-			destination := report.Software[0].Destinations[0]
-			if destination.Applied != (test.err == nil) || (destination.Error != "") != (test.err != nil) || !destination.SourceChanged || !destination.PreparedChanged {
-				t.Fatalf("apply report: %+v", destination)
-			}
-			current, err := loadState(statePath, project.Project)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, exists := current.Bindings["app/local"]
-			wantSource, wantPayload := previous.Source, previous.Payload
-			if test.err == nil {
-				wantSource = report.Software[0].Prepared.Source.Artifact.SHA256
-				wantPayload = report.Software[0].Prepared.Payload.SHA256
-			}
-			if !exists || got.Connection != previous.Connection || got.Source != wantSource || got.Payload != wantPayload || compactJSON(t, got.Binding) != test.wantBinding {
-				t.Fatalf("persisted state: %+v, want source=%s payload=%s binding=%s", got, wantSource, wantPayload, test.wantBinding)
-			}
-			before, err := os.ReadFile(statePath)
-			if err != nil {
-				t.Fatal(err)
-			}
-			options.Method = "plan"
-			options.Handlers["munki"] = func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
-				if request.Method == "validate" {
-					return plugin.ReconcileResponse{}, nil
-				}
-				if request.Method != "plan" || compactJSON(t, request.Binding) != test.wantBinding {
-					t.Fatalf("plan did not receive persisted binding: %+v", request)
-				}
-				return plugin.ReconcileResponse{Binding: json.RawMessage(`{"id":3}`)}, nil
-			}
-			plan, err := Run(t.Context(), options)
-			if err != nil {
-				t.Fatal(err)
-			}
-			next := plan.Software[0].Destinations[0]
-			if next.Applied || next.SourceChanged != (test.err != nil) || next.PreparedChanged != (test.err != nil) {
-				t.Fatalf("next plan: %+v", next)
-			}
-			after, err := os.ReadFile(statePath)
-			if err != nil || !bytes.Equal(before, after) {
-				t.Fatalf("planning changed durable state: %v", err)
-			}
-		})
+
+func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	if err := testproject.Write(filename, []byte(policyProject)); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"}
+	report, err := Run(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Resources) != 1 || len(report.Resources[0].Artifacts) != 0 || len(report.Resources[0].Destinations) != 2 {
+		t.Fatalf("incomplete sourcefree result: %+v", report)
+	}
+	before, err := os.ReadFile(filepath.Join(root, ".stemma/state/policies.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	options.Method = "plan"
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(filepath.Join(root, ".stemma/state/policies.json"))
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("plan changed durable bindings")
+	}
+	if err := testproject.Write(filename, []byte(strings.Replace(policyProject, "description: original", "description: edited", 1))); err != nil {
+		t.Fatal(err)
+	}
+	options.Method = "apply"
+	report, err = Run(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Resources[0].Cached {
+		t.Fatal("metadata invalidated sourcefree preparation")
+	}
+	applied := []string{}
+	options.Handlers = map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+		if request.Method == "plan" && request.Identity.Destination == "first" {
+			return plugin.ReconcileResponse{}, errors.New("unavailable")
+		}
+		if request.Method == "apply" {
+			applied = append(applied, request.Identity.Destination)
+		}
+		return plugin.ReconcileResponse{}, nil
+	}}
+	report, err = Run(t.Context(), options)
+	if err == nil || len(applied) != 1 || applied[0] != "second" || !report.Resources[0].Destinations[1].Applied {
+		t.Fatalf("independent destination was blocked: %+v %v", report, err)
 	}
 }
 
-func TestSoftwareReadinessAndIndependentRemoteFailures(t *testing.T) {
-	for _, remoteFailure := range []bool{false, true} {
-		t.Run(fmt.Sprint(remoteFailure), func(t *testing.T) {
-			root := t.TempDir()
-			path := filepath.Join(root, "stemma.yaml")
-			manifest := `apiVersion: stemma/v1alpha1
-kind: Project
-metadata:
-  name: readiness
-spec:
-  destinations:
-    first: {operation: munki, config: {path: first}}
-    second: {operation: munki, config: {path: second}}
-  imports: ['*.software.yaml']
----
-apiVersion: stemma/v1alpha1
-kind: Software
-metadata:
-  name: fixture
-spec:
-  source: {type: file, path: payload.bin}
-  destinations:
-    first: {pkginfo: {version: "1", installer_type: nopkg}}
-    second: {pkginfo: {installer_type: nopkg}}
-`
-			if err := testproject.Write(path, []byte(manifest)); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(root, "payload.bin"), []byte("fixture"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			opts := Options{ConfigPath: path, CacheDir: t.TempDir(), Method: "apply"}
-			applied := []string{}
-			if remoteFailure {
-				opts.Handlers = map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
-					if request.Method == "plan" && request.Identity.Destination == "first" {
-						return plugin.ReconcileResponse{}, errors.New("remote unavailable")
-					}
-					if request.Method == "apply" {
-						applied = append(applied, request.Identity.Destination)
-					}
-					return plugin.ReconcileResponse{}, nil
-				}}
-			}
-			report, err := Run(t.Context(), opts)
-			if err == nil {
-				t.Fatal("expected failing destination")
-			}
-			if remoteFailure {
-				if len(applied) != 1 || applied[0] != "second" || len(report.Software[0].Destinations) != 2 || !report.Software[0].Destinations[1].Applied {
-					t.Fatalf("remote failure blocked healthy destination: %+v applied=%v", report, applied)
-				}
-			} else {
-				if _, err := os.Stat(filepath.Join(root, "first")); !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("invalid second destination allowed first publication: %v", err)
-				}
-			}
-		})
+func TestPartialFailurePersistsOwnedBindingWithoutSuccess(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	if err := testproject.Write(filename, []byte(policyProject)); err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("upload failed")
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+		if request.Method == "apply" {
+			return plugin.ReconcileResponse{Binding: json.RawMessage(`{"id":"owned-staging"}`)}, failure
+		}
+		return plugin.ReconcileResponse{}, nil
+	}}}
+	if _, err := Run(t.Context(), options); !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	current, err := loadState(filepath.Join(root, ".stemma/state/policies.json"), "policies")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, binding := range current.Bindings {
+		if compactJSON(t, binding.Binding) != `{"id":"owned-staging"}` || binding.Payload != "" {
+			t.Fatal("failed staging displaced successful payload or lost cleanup binding")
+		}
+	}
+}
+
+func TestNativeValidationBeforeAcquisition(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	manifest := strings.Replace(policyProject, "  destinations:\n    first:\n      pkginfo:", "  source:\n    path: missing.pkg\n  destinations:\n    first:\n      pkginfo:", 1)
+	manifest = strings.Replace(manifest, "description: original", "unattended_install: invalid", 1)
+	if err := testproject.Write(filename, []byte(manifest)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"})
+	if err == nil || !strings.Contains(err.Error(), "unattended_install") {
+		t.Fatalf("invalid native field reached acquisition: %v", err)
+	}
+}
+
+func TestOpenEvidencePreservesNativeTypes(t *testing.T) {
+	effective, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"count": map[string]any{"$fact": "vendor.probe.count"}, "enabled": map[string]any{"$fact": "vendor.probe.enabled"}}, plugin.Facts{}, map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"count":4,"enabled":false}`)})
+	if err != nil || effective["count"] != float64(4) || effective["enabled"] != false {
+		t.Fatalf("evidence handoff: %+v %v", effective, err)
+	}
+	if _, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"value": map[string]any{"$fact": "vendor.missing.value"}}, plugin.Facts{}, nil); err == nil {
+		t.Fatal("missing evidence accepted")
 	}
 }
 
@@ -207,57 +163,21 @@ func compactJSON(t *testing.T, data json.RawMessage) string {
 	if len(data) == 0 {
 		return ""
 	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, data); err != nil {
+	var result bytes.Buffer
+	if err := json.Compact(&result, data); err != nil {
 		t.Fatal(err)
 	}
-	return compact.String()
+	return result.String()
 }
 
-func TestNativeValidationBeforeAcquisition(t *testing.T) {
+func TestSourceFreeCannotSilentlySkipVerification(t *testing.T) {
 	root := t.TempDir()
-	project := config.Project{
-		Project: "validation",
-		Software: map[string]config.Software{"app": {
-			Destinations: map[string]map[string]any{"local": {"unattended_install": false}},
-		}},
-		Destinations: map[string]config.Destination{"local": {Operation: "munki", Config: map[string]any{"path": filepath.Join(root, "repo")}}},
-	}
-	if err := Validate(t.Context(), project); err != nil {
-		t.Fatalf("native validation rejected supported metadata: %v", err)
-	}
-	if _, err := os.Stat(project.Destinations["local"].Config["path"].(string)); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("native validation touched the destination: %v", err)
-	}
-	manifest := `apiVersion: stemma/v1alpha1
-kind: Project
-metadata:
-  name: validation
-spec:
-  destinations:
-    local: {operation: munki, config: {path: repo}}
-  imports: ['*.software.yaml']
----
-apiVersion: stemma/v1alpha1
-kind: Software
-metadata:
-  name: app
-spec:
-  source: {type: file, path: missing.pkg}
-  destinations:
-    local: {pkginfo: {unattended_install: invalid}}
-`
-	configPath := filepath.Join(root, "stemma.yaml")
-	if err := testproject.Write(configPath, []byte(manifest)); err != nil {
+	filename := filepath.Join(root, "stemma.yaml")
+	manifest := strings.Replace(policyProject, "spec:\n  destinations:\n    first:\n      pkginfo:", "spec:\n  verification:\n    signature: true\n  destinations:\n    first:\n      pkginfo:", 1)
+	if err := testproject.Write(filename, []byte(manifest)); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Run(t.Context(), Options{ConfigPath: configPath, CacheDir: filepath.Join(root, "cache"), Method: "apply"})
-	if err == nil || !strings.Contains(err.Error(), "unattended_install") {
-		t.Fatalf("expected validation before acquiring the missing installer: %v", err)
-	}
-	project.Destinations["local"] = config.Destination{Operation: "external", Config: map[string]any{"opaque": nil}}
-	project.Software["app"].Destinations["local"] = map[string]any{"plugin_owned": false}
-	if err := Validate(t.Context(), project); err != nil {
-		t.Fatalf("native validation interpreted plugin-owned input: %v", err)
+	if _, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"}); err == nil || !strings.Contains(err.Error(), "require a source") {
+		t.Fatalf("sourcefree verification was skipped: %v", err)
 	}
 }

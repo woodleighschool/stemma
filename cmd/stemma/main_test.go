@@ -20,11 +20,10 @@ import (
 )
 
 func TestReportRetainsIndependentDestinationResults(t *testing.T) {
-	report := engine.Report{Software: []engine.SoftwareReport{
+	report := engine.Report{Resources: []engine.ResourceReport{
 		{Name: "missing", Error: "source unavailable"},
 		{
-			Name: "Example", Error: "one destination failed", Prepared: &engine.Prepared{Filename: "Example.pkg"},
-			Steps: []engine.StepReport{{Name: "metadata", Operation: "munki.pkginfo", Cached: true, Artifacts: map[string]engine.Prepared{"artifact": {Filename: "pkginfo.json"}}}},
+			Name: "Example", Error: "one destination failed", Kind: "MacSoftware",
 			Destinations: []engine.DestinationReport{
 				{Name: "unavailable", Error: "remote unavailable"},
 				{Name: "local", Applied: true},
@@ -37,7 +36,7 @@ func TestReportRetainsIndependentDestinationResults(t *testing.T) {
 	}
 	for _, want := range []string{
 		"missing: failed: source unavailable",
-		"metadata (munki.pkginfo): 1 outputs (cached: true)",
+		"MacSoftware/Example",
 		"unavailable: failed: remote unavailable",
 		"local: 0 changes, applied: true",
 	} {
@@ -76,11 +75,11 @@ spec:
   imports: ['*.software.yaml']
 ---
 apiVersion: stemma/v1alpha1
-kind: Software
+kind: MacSoftware
 metadata:
   name: fixture
 spec:
-  source: {type: http, url: %s/fixture.pkg}
+  source: {url: %s/fixture.pkg}
   verification: {integrity: true}
   destinations:
     first: {pkginfo: {description: original, unattended_install: false, catalogs: [testing]}}
@@ -129,7 +128,7 @@ spec:
 	for _, operation := range descriptor.Operations {
 		operations[operation.Name] = operation.Kind
 	}
-	if operations["inspect"] != "inspect" || operations["pkg"] != "package" || operations["munki"] != "reconcile" {
+	if operations["software.mac"] != "resource" || operations["build.mac.pkg"] != "resource" || operations["munki"] != "reconcile" {
 		t.Fatalf("missing operation roles: %v", operations)
 	}
 	if downloads.Load() != 0 {
@@ -152,7 +151,7 @@ spec:
 		t.Fatal("unexpected acquisition count")
 	}
 	plan := run(true, "plan")
-	if len(plan.Software) != 1 || len(plan.Software[0].Destinations) != 2 {
+	if len(plan.Resources) != 1 || len(plan.Resources[0].Destinations) != 2 {
 		t.Fatalf("incomplete plan: %#v", plan)
 	}
 	for _, name := range []string{"first", "second"} {
@@ -161,26 +160,26 @@ spec:
 		}
 	}
 	applied := run(true, "apply")
-	for _, destination := range applied.Software[0].Destinations {
+	for _, destination := range applied.Resources[0].Destinations {
 		if !destination.Applied {
 			t.Fatal("destination not applied")
 		}
 	}
 	warm := run(true, "apply", "--offline")
-	if !warm.Software[0].Prepared.Cached || downloads.Load() != 1 {
+	if !warm.Resources[0].Cached || downloads.Load() != 1 {
 		t.Fatal("warm run repeated preparation or acquisition")
 	}
-	for _, destination := range warm.Software[0].Destinations {
+	for _, destination := range warm.Resources[0].Destinations {
 		if len(destination.Changes) != 0 {
 			t.Fatalf("unchanged run made changes: %#v", destination.Changes)
 		}
 	}
 	write(strings.Replace(manifest, "description: original", "description: edited", 1))
 	metadata := run(true, "apply")
-	if !metadata.Software[0].Prepared.Cached || downloads.Load() != 1 {
+	if !metadata.Resources[0].Cached || downloads.Load() != 1 {
 		t.Fatal("metadata change invalidated preparation")
 	}
-	for _, destination := range metadata.Software[0].Destinations {
+	for _, destination := range metadata.Resources[0].Destinations {
 		for _, change := range destination.Changes {
 			if change.Kind == "content" {
 				t.Fatal("metadata edit uploaded content")
@@ -191,7 +190,7 @@ spec:
 		t.Fatal(err)
 	}
 	cold := run(true, "apply")
-	for _, destination := range cold.Software[0].Destinations {
+	for _, destination := range cold.Resources[0].Destinations {
 		if len(destination.Changes) != 0 {
 			t.Fatalf("cold cache replayed publication: %#v", destination.Changes)
 		}
@@ -203,7 +202,7 @@ spec:
 		t.Fatal(err)
 	}
 	unbound := run(false, "apply")
-	for _, destination := range unbound.Software[0].Destinations {
+	for _, destination := range unbound.Resources[0].Destinations {
 		if destination.Applied || !strings.Contains(destination.Error, "not owned") {
 			t.Fatal("lost bindings silently adopted a destination")
 		}

@@ -1,53 +1,76 @@
-// Package source resolves provider inputs into digest-pinned downloads.
+// Package source resolves opaque declarations into immutable cached content.
 package source
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
-	"io/fs"
 	"net/http"
-	"net/url"
 	"os"
-	"path"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
-	"github.com/bmatcuk/doublestar/v4"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
-	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/plugin"
+	"go.yaml.in/yaml/v4"
 )
 
-// Entry records only stable source references; credentials and redirects are excluded.
+// Content identifies bytes and their filesystem representation. Tree bytes are a
+// canonical TAR containing every selected child mode and confined symlink target.
+type Content struct {
+	Artifact cas.Ref `json:"artifact" yaml:"artifact"`
+	Filename string  `json:"filename" yaml:"filename"`
+	Tree     bool    `json:"tree,omitempty" yaml:"tree,omitempty"`
+	Mode     uint32  `json:"mode" yaml:"mode"`
+}
+
+// Entry is the common lock envelope. Observation belongs to the named resolver
+// and must contain only stable, nonsecret data needed to fetch this exact input.
 type Entry struct {
-	ResolvedAt time.Time `json:"resolved_at,omitzero" yaml:"resolved_at,omitempty"`
-	Tree       bool      `json:"tree,omitempty" yaml:"tree,omitempty"`
-	Source     string    `json:"source" yaml:"source"`
-	URL        string    `json:"url,omitempty" yaml:"url,omitempty"`
-	Filename   string    `json:"filename" yaml:"filename"`
-	Release    string    `json:"release,omitempty" yaml:"release,omitempty"`
-	ReleaseID  int64     `json:"release_id,omitempty" yaml:"release_id,omitempty"`
-	AssetID    int64     `json:"asset_id,omitempty" yaml:"asset_id,omitempty"`
-	Artifact   cas.Ref   `json:"artifact" yaml:"artifact"`
+	Version         int             `json:"version" yaml:"version"`
+	Resolver        string          `json:"resolver" yaml:"resolver"`
+	ResolverVersion string          `json:"resolver_version" yaml:"resolver_version"`
+	Declaration     string          `json:"declaration" yaml:"declaration"`
+	ResolvedAt      time.Time       `json:"resolved_at" yaml:"resolved_at"`
+	Observation     json.RawMessage `json:"observation" yaml:"observation"`
+	Content         Content         `json:"content" yaml:"content"`
 }
 
-// Manager acquires bytes using the same client locally and in CI.
+// Resolution returns a leased resolver output for import into the shared cache.
+type Resolution struct {
+	Observation json.RawMessage
+	Artifact    plugin.Artifact
+}
+
+// Resolver owns its declaration and stable observation. Local resolvers are
+// reobserved even with a warm cache. Fingerprint must exclude credentials.
+// Callbacks keep returned artifact paths available until the manager returns.
+type Resolver struct {
+	Version     string
+	Local       bool
+	Fingerprint func(plugin.Input) (string, error)
+	Resolve     func(context.Context, plugin.Input) (Resolution, error)
+	FetchLocked func(context.Context, plugin.Input, json.RawMessage) (plugin.Artifact, error)
+}
+
+// Manager owns acquisition and cached content, independently of resource kinds.
 type Manager struct {
-	Store   *cas.Store
-	Root    string
-	Client  *http.Client
-	Offline bool
+	Store     *cas.Store
+	Root      string
+	Client    *http.Client
+	Offline   bool
+	Resolvers map[string]Resolver
 }
 
-// New creates a manager with bounded HTTP lifetimes and cross-host credential stripping.
+// New creates a manager with bounded HTTP lifetimes and credential-safe redirects.
 func New(store *cas.Store, root string, offline bool) *Manager {
-	return &Manager{Store: store, Root: root, Offline: offline, Client: &http.Client{Timeout: 15 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	return &Manager{Store: store, Root: root, Offline: offline, Resolvers: map[string]Resolver{}, Client: &http.Client{Timeout: 15 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("too many redirects")
 		}
@@ -61,339 +84,369 @@ func New(store *cas.Store, root string, offline bool) *Manager {
 	}}}
 }
 
-// Resolve checks current upstream bytes and returns their immutable identity.
-func (m *Manager) Resolve(ctx context.Context, s config.Source) (Entry, error) {
-	if err := s.Validate(); err != nil {
-		return Entry{}, err
+// Register adds a resolver without shadowing native or previously registered inputs.
+func (m *Manager) Register(name string, resolver Resolver) error {
+	if !plugin.ValidOperationName(name) || resolver.Version == "" || resolver.Resolve == nil || resolver.FetchLocked == nil {
+		return errors.New("resolver registration requires a name, version and acquisition callbacks")
 	}
-	if m.Offline && s.Type != "file" && s.Type != "local" {
-		return Entry{}, errors.New("offline mode cannot resolve sources")
+	if _, err := m.resolver(name); err == nil {
+		return fmt.Errorf("resolver %s is already registered", name)
 	}
-	entry := Entry{Source: s.Fingerprint(), URL: s.URL, Filename: s.Filename}
-	if s.Type == "local" {
-		entry.Tree = true
+	if m.Resolvers == nil {
+		m.Resolvers = map[string]Resolver{}
 	}
-	if s.Type == "file" {
-		info, err := os.Stat(filepath.Join(m.Root, s.Path))
-		if err != nil {
-			return Entry{}, err
-		}
-		entry.Tree = info.IsDir()
-	}
-	if s.Type == "github" {
-		if err := m.github(ctx, s, &entry); err != nil {
-			return Entry{}, err
-		}
-	}
-	if s.Type == "http" && s.Match != "" {
-		if err := m.discover(ctx, s, &entry); err != nil {
-			return Entry{}, err
-		}
-	}
-	if entry.Filename == "" {
-		switch s.Type {
-		case "local":
-			entry.Filename = path.Base(s.Base)
-			if entry.Filename == "." || entry.Filename == "" {
-				entry.Filename = "local"
-			}
-		case "file":
-			entry.Filename = filepath.Base(s.Path)
-		default:
-			u, err := url.Parse(entry.URL)
-			if err != nil {
-				return Entry{}, err
-			}
-			entry.Filename = path.Base(u.Path)
-		}
-	}
-	if !validFilename(entry.Filename) {
-		return Entry{}, errors.New("source has no safe filename; set filename explicitly")
-	}
-	ref, err := m.download(ctx, s, entry, s.SHA256)
-	entry.Artifact = ref
-	return entry, err
+	m.Resolvers[name] = resolver
+	return nil
 }
 
-// Acquire uses cached bytes or fetches precisely the locked URL and expected digest.
-func (m *Manager) Acquire(ctx context.Context, s config.Source, entry Entry) (bool, error) {
-	if !validFilename(entry.Filename) || entry.Source != s.Fingerprint() || !config.ValidDigest(entry.Artifact.SHA256) {
-		return false, errors.New("invalid or stale source lock")
+func (m *Manager) resolver(name string) (Resolver, error) {
+	if resolver, ok := m.Resolvers[name]; ok {
+		if resolver.Version == "" || resolver.Resolve == nil || resolver.FetchLocked == nil {
+			return Resolver{}, fmt.Errorf("resolver %s has an incomplete contract", name)
+		}
+		return resolver, nil
 	}
-	if s.Type == "file" || s.Type == "local" {
-		current, err := m.Resolve(ctx, s)
+	switch name {
+	case "http", "github":
+		return Resolver{Version: "1"}, nil
+	case "file", "local":
+		return Resolver{Version: "1", Local: true}, nil
+	default:
+		return Resolver{}, fmt.Errorf("unsupported input resolver %q", name)
+	}
+}
+
+// Declaration validates the declaration and returns its resolver version and
+// credential-independent hash, without resolving or acquiring content.
+func (m *Manager) Declaration(input plugin.Input) (string, string, error) {
+	if input.Resource != nil {
+		return "", "", errors.New("resource output references must be resolved by the scheduler")
+	}
+	resolver, err := m.resolver(input.Resolver)
+	if err != nil {
+		return "", "", err
+	}
+	var digest string
+	switch {
+	case resolver.Resolve == nil:
+		s, err := native(input)
+		if err != nil {
+			return "", "", err
+		}
+		s.Token = ""
+		digest, err = fingerprint(s)
+		if err != nil {
+			return "", "", err
+		}
+	case resolver.Fingerprint != nil:
+		digest, err = resolver.Fingerprint(input)
+	case resolver.Local:
+		digest, err = fingerprint(struct {
+			Config map[string]any
+			Base   string
+		}{input.Config, input.Base})
+	default:
+		digest, err = fingerprint(input.Config)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	if !validDigest(digest) {
+		return "", "", errors.New("resolver returned an invalid declaration hash")
+	}
+	return resolver.Version, digest, nil
+}
+
+// IsLocal reports whether the resolver must reobserve filesystem or other local
+// inputs rather than trusting a previously cached object.
+func (m *Manager) IsLocal(name string) bool {
+	resolver, err := m.resolver(name)
+	return err == nil && resolver.Local
+}
+
+// Resolve observes a declaration once and imports its exact content into CAS.
+func (m *Manager) Resolve(ctx context.Context, input plugin.Input) (Entry, error) {
+	version, declaration, err := m.Declaration(input)
+	if err != nil {
+		return Entry{}, err
+	}
+	resolver, _ := m.resolver(input.Resolver)
+	if m.Offline && !resolver.Local {
+		return Entry{}, errors.New("offline mode cannot resolve inputs")
+	}
+	entry := Entry{Version: 1, Resolver: input.Resolver, ResolverVersion: version, Declaration: declaration, ResolvedAt: time.Now().UTC().Truncate(time.Second)}
+	if resolver.Resolve == nil {
+		entry.Content, entry.Observation, err = m.resolveNative(ctx, input)
+	} else {
+		var result Resolution
+		result, err = resolver.Resolve(ctx, input)
+		if err == nil {
+			entry.Content, err = m.importArtifact(ctx, result.Artifact)
+			entry.Observation = result.Observation
+		}
+	}
+	if err != nil {
+		return Entry{}, err
+	}
+	entry.Observation, err = canonicalJSON(entry.Observation)
+	if err != nil {
+		return Entry{}, fmt.Errorf("resolver observation: %w", err)
+	}
+	return entry, entry.Validate()
+}
+
+// FetchLocked uses verified cached content or fetches from the locked observation.
+// It never refreshes remote discovery; local inputs are always rehashed.
+func (m *Manager) FetchLocked(ctx context.Context, input plugin.Input, entry Entry) (bool, error) {
+	version, declaration, err := m.Declaration(input)
+	if err != nil {
+		return false, err
+	}
+	if err := entry.Validate(); err != nil {
+		return false, err
+	}
+	if entry.Resolver != input.Resolver || entry.ResolverVersion != version || entry.Declaration != declaration {
+		return false, errors.New("invalid or stale input lock")
+	}
+	cached := m.Store.Verify(ctx, entry.Content.Artifact)
+	resolver, _ := m.resolver(input.Resolver)
+	if resolver.Local {
+		current, err := m.Resolve(ctx, input)
 		if err != nil {
 			return false, err
 		}
 		current.ResolvedAt = entry.ResolvedAt
-		if current != entry {
-			return false, errors.New("local source changed from its locked content")
+		if !current.Equal(entry) {
+			return false, errors.New("local input changed from its locked content")
 		}
+		return cached == nil, nil
+	}
+	if cached == nil {
 		return true, nil
 	}
-	if err := m.Store.Verify(ctx, entry.Artifact); err == nil {
-		return true, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, err
+	if !errors.Is(cached, os.ErrNotExist) {
+		return false, cached
 	}
 	if m.Offline {
-		return false, fmt.Errorf("offline cache miss for %s", entry.Filename)
+		return false, fmt.Errorf("offline cache miss for %s", entry.Content.Filename)
 	}
-	ref, err := m.download(ctx, s, entry, entry.Artifact.SHA256)
+	var content Content
+	if resolver.FetchLocked == nil {
+		content, err = m.fetchNative(ctx, input, entry)
+	} else {
+		var artifact plugin.Artifact
+		artifact, err = resolver.FetchLocked(ctx, input, entry.Observation)
+		if err == nil {
+			content, err = m.importArtifact(ctx, artifact)
+		}
+	}
 	if err != nil {
 		return false, err
 	}
-	if ref != entry.Artifact {
-		return false, errors.New("download size differs from lockfile")
+	if content != entry.Content {
+		return false, errors.New("fetched content differs from the input lock")
 	}
 	return false, nil
 }
 
-func (m *Manager) download(ctx context.Context, s config.Source, entry Entry, expected string) (cas.Ref, error) {
-	if s.Type == "local" {
-		project, err := os.OpenRoot(m.Root)
+func (m *Manager) importArtifact(ctx context.Context, artifact plugin.Artifact) (Content, error) {
+	if !validFilename(artifact.Filename) {
+		return Content{}, errors.New("resolver artifact requires a safe filename")
+	}
+	info, err := os.Lstat(artifact.Path)
+	if err != nil {
+		return Content{}, err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return Content{}, errors.New("resolver artifact root must not be a symlink")
+	}
+	file, err := os.Open(artifact.Path)
+	if err != nil {
+		return Content{}, err
+	}
+	defer func() { _ = file.Close() }()
+	info, err = file.Stat()
+	if err != nil {
+		return Content{}, err
+	}
+	if info.IsDir() != artifact.Tree || !info.IsDir() && !info.Mode().IsRegular() {
+		return Content{}, errors.New("resolver artifact type differs from its descriptor")
+	}
+	if err := archive.CheckMetadata(file, info); err != nil {
+		return Content{}, err
+	}
+	content := Content{Filename: artifact.Filename, Tree: artifact.Tree, Mode: uint32(info.Mode().Perm())}
+	if artifact.Tree {
+		root, err := os.OpenRoot(artifact.Path)
 		if err != nil {
-			return cas.Ref{}, err
-		}
-		defer func() { _ = project.Close() }()
-		base := s.Base
-		if base == "" {
-			base = "."
-		}
-		root, err := project.OpenRoot(base)
-		if err != nil {
-			return cas.Ref{}, err
+			return Content{}, err
 		}
 		defer func() { _ = root.Close() }()
-		var names []string
-		seen := map[string]bool{}
-		for _, pattern := range s.Include {
-			matched := false
-			err := doublestar.GlobWalk(root.FS(), pattern, func(name string, _ fs.DirEntry) error {
-				matched = true
-				if !seen[name] {
-					if len(names) >= 100000 {
-						return errors.New("local source exceeds 100000 entries")
-					}
-					seen[name] = true
-					names = append(names, name)
-				}
-				return nil
-			}, doublestar.WithNoFollow(), doublestar.WithFailOnIOErrors())
-			if err != nil {
-				return cas.Ref{}, fmt.Errorf("local include %q: %w", pattern, err)
-			}
-			if !matched {
-				return cas.Ref{}, fmt.Errorf("local include %q matched no files", pattern)
-			}
-		}
-		return m.importTree(ctx, root, names, expected)
-	}
-	if s.Type == "file" {
-		root, err := os.OpenRoot(m.Root)
+		content.Artifact, err = m.importTree(ctx, root, nil, artifact.SHA256)
 		if err != nil {
-			return cas.Ref{}, err
+			return Content{}, err
 		}
-		defer func() { _ = root.Close() }()
-		f, err := root.Open(s.Path)
+	} else {
+		if (artifact.SHA256 != "" || artifact.Size != 0) && info.Size() != artifact.Size {
+			return Content{}, errors.New("resolver artifact size differs from its descriptor")
+		}
+		content.Artifact, err = m.Store.Import(ctx, file, artifact.SHA256)
 		if err != nil {
-			return cas.Ref{}, err
-		}
-		defer func() { _ = f.Close() }()
-		info, err := f.Stat()
-		if err != nil {
-			return cas.Ref{}, err
-		}
-		if !info.Mode().IsRegular() {
-			if !info.IsDir() || !entry.Tree {
-				return cas.Ref{}, errors.New("file source changed type or is not a regular file/directory")
-			}
-			tree, err := root.OpenRoot(s.Path)
-			if err != nil {
-				return cas.Ref{}, err
-			}
-			defer func() { _ = tree.Close() }()
-			return m.importTree(ctx, tree, nil, expected)
-		}
-		if entry.Tree {
-			return cas.Ref{}, errors.New("file source changed from directory to file")
-		}
-		return m.Store.Import(ctx, f, expected)
-	}
-	if err := config.ValidateHTTPURL(entry.URL); err != nil {
-		return cas.Ref{}, fmt.Errorf("lockfile URL: %w", err)
-	}
-	u, _ := url.Parse(entry.URL)
-	token := s.Token
-	if s.Type == "http" {
-		if s.Match == "" && entry.URL != s.URL {
-			return cas.Ref{}, errors.New("locked HTTP URL does not match configuration")
-		}
-		if s.Match != "" {
-			pattern, err := regexp.Compile(s.Match)
-			if err != nil || pattern.FindString(entry.URL) != entry.URL {
-				return cas.Ref{}, errors.New("locked HTTP URL does not match source pattern")
-			}
-		}
-		origin, _ := url.Parse(s.URL)
-		if origin.Scheme == "https" && u.Scheme != "https" {
-			return cas.Ref{}, errors.New("refusing discovered HTTPS downgrade")
-		}
-		if origin.Scheme != u.Scheme || origin.Host != u.Host {
-			token = ""
+			return Content{}, err
 		}
 	}
-	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
-		return cas.Ref{}, errors.New("locked asset does not belong to the configured GitHub repository")
+	if artifact.Size != 0 && artifact.Size != content.Artifact.Size {
+		return Content{}, errors.New("resolver artifact size differs from imported content")
 	}
-	req, err := m.request(ctx, entry.URL, token)
-	if err != nil {
-		return cas.Ref{}, err
-	}
-	res, err := m.Client.Do(req)
-	if err != nil {
-		return cas.Ref{}, transportError("download", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != http.StatusOK {
-		return cas.Ref{}, fmt.Errorf("download returned HTTP %d", res.StatusCode)
-	}
-	if res.ContentLength > cas.MaxObjectSize {
-		return cas.Ref{}, errors.New("download exceeds 16 GiB")
-	}
-	return m.Store.Import(ctx, res.Body, expected)
+	return content, nil
 }
 
-func (m *Manager) importTree(ctx context.Context, root *os.Root, names []string, expected string) (cas.Ref, error) {
-	staging, err := os.CreateTemp(filepath.Join(m.Store.Dir, "work"), "source-*.tar")
-	if err != nil {
-		return cas.Ref{}, err
+// Validate checks only the shared lock envelope; resolver-owned observations are
+// interpreted by their resolver when content must be fetched again.
+func (entry Entry) Validate() error {
+	if entry.Version != 1 || !plugin.ValidOperationName(entry.Resolver) || entry.ResolverVersion == "" || !validDigest(entry.Declaration) || entry.ResolvedAt.IsZero() {
+		return errors.New("unsupported or incomplete input lock envelope")
 	}
-	defer func() { _ = os.Remove(staging.Name()) }()
-	packErr := archive.PackSelected(ctx, root, names, staging)
-	closeErr := staging.Close()
-	if packErr != nil {
-		return cas.Ref{}, packErr
+	if !validFilename(entry.Content.Filename) || !validDigest(entry.Content.Artifact.SHA256) || entry.Content.Artifact.Size < 0 || entry.Content.Artifact.Size > cas.MaxObjectSize || entry.Content.Mode > 0o777 {
+		return errors.New("invalid locked input content")
 	}
-	if closeErr != nil {
-		return cas.Ref{}, closeErr
-	}
-	return m.Store.ImportFile(ctx, staging.Name(), expected)
-}
-
-func (m *Manager) request(ctx context.Context, address, token string) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", "stemma/0.1")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	return req, nil
-}
-
-func (m *Manager) discover(ctx context.Context, s config.Source, entry *Entry) error {
-	req, err := m.request(ctx, s.URL, s.Token)
-	if err != nil {
-		return err
-	}
-	res, err := m.Client.Do(req)
-	if err != nil {
-		return transportError("download page", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("download page returned HTTP %d", res.StatusCode)
-	}
-	const limit = 4 << 20
-	data, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
-	if err != nil {
-		return transportError("download page", err)
-	}
-	if len(data) > limit {
-		return errors.New("download page exceeds 4 MiB")
-	}
-	pattern, err := regexp.Compile(s.Match)
-	if err != nil {
-		return err
-	}
-	matches := map[string]bool{}
-	for _, address := range pattern.FindAllString(html.UnescapeString(string(data)), -1) {
-		if err := config.ValidateHTTPURL(address); err != nil {
-			return fmt.Errorf("download page match must be a complete stable URL: %w", err)
-		}
-		matches[address] = true
-	}
-	if len(matches) != 1 {
-		return fmt.Errorf("download page matched %d distinct artifact URLs; expected one", len(matches))
-	}
-	for address := range matches {
-		entry.URL = address
+	if !json.Valid(entry.Observation) {
+		return errors.New("invalid resolver observation")
 	}
 	return nil
 }
 
-func (m *Manager) github(ctx context.Context, s config.Source, entry *Entry) error {
-	endpoint := "https://api.github.com/repos/" + s.Repository + "/releases/latest"
-	if s.Release != "" && s.Release != "latest" {
-		endpoint = "https://api.github.com/repos/" + s.Repository + "/releases/tags/" + url.PathEscape(s.Release)
-	}
-	req, err := m.request(ctx, endpoint, s.Token)
+// Equal compares semantic lock state, including resolver-owned JSON observations.
+func (entry Entry) Equal(other Entry) bool {
+	left, err := canonicalJSON(entry.Observation)
 	if err != nil {
-		return err
+		return false
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	res, err := m.Client.Do(req)
+	right, err := canonicalJSON(other.Observation)
+	return err == nil && entry.Version == other.Version && entry.Resolver == other.Resolver && entry.ResolverVersion == other.ResolverVersion && entry.Declaration == other.Declaration && entry.ResolvedAt.Equal(other.ResolvedAt) && entry.Content == other.Content && bytes.Equal(left, right)
+}
+
+// MarshalYAML preserves resolver JSON as ordinary YAML objects, including exact
+// integer values, rather than serializing RawMessage as a byte array.
+func (entry Entry) MarshalYAML() (any, error) {
+	type plain Entry
+	data, err := json.Marshal(plain(entry))
 	if err != nil {
-		return transportError("GitHub release lookup", err)
+		return nil, err
 	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("GitHub release lookup returned HTTP %d", res.StatusCode)
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
+		return nil, err
 	}
-	var release struct {
-		ID     int64  `json:"id"`
-		Tag    string `json:"tag_name"`
-		Draft  bool   `json:"draft"`
-		Assets []struct {
-			ID   int64  `json:"id"`
-			Name string `json:"name"`
-			URL  string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(&release); err != nil {
-		return err
-	}
-	if release.Draft {
-		return errors.New("draft releases are not supported")
-	}
-	for _, asset := range release.Assets {
-		if asset.Name == s.Asset {
-			entry.URL = asset.URL
-			entry.ReleaseID = release.ID
-			entry.AssetID = asset.ID
-			if entry.Filename == "" {
-				entry.Filename = asset.Name
-			}
-			entry.Release = release.Tag
-			return nil
+	var blockStyle func(*yaml.Node)
+	blockStyle = func(node *yaml.Node) {
+		node.Style = 0
+		for _, child := range node.Content {
+			blockStyle(child)
 		}
 	}
-	return fmt.Errorf("GitHub release %s has no asset %q", release.Tag, s.Asset)
+	blockStyle(&node)
+	return node.Content[0], nil
 }
 
-func validFilename(name string) bool {
-	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, "/\\\x00\r\n") && filepath.IsLocal(name)
-}
-
-// Redirect targets may contain temporary credentials. Do not include their URLs
-// in reports or durable state when a request fails.
-func transportError(operation string, err error) error {
-	var requestError *url.Error
-	for errors.As(err, &requestError) {
-		err = requestError.Err
+func (entry *Entry) UnmarshalYAML(node *yaml.Node) error {
+	value, err := yamlJSON(node)
+	if err != nil {
+		return err
 	}
-	return fmt.Errorf("%s failed: %w", operation, err)
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	type plain Entry
+	if err := decode(data, (*plain)(entry)); err != nil {
+		return err
+	}
+	entry.Observation, err = canonicalJSON(entry.Observation)
+	return err
+}
+
+func yamlJSON(node *yaml.Node) (any, error) {
+	switch node.Kind {
+	case yaml.MappingNode:
+		values := map[string]any{}
+		for i := 0; i < len(node.Content); i += 2 {
+			key := node.Content[i]
+			if key.Tag != "!!str" || key.Value == "<<" {
+				return nil, errors.New("lock mapping keys must be strings")
+			}
+			if _, ok := values[key.Value]; ok {
+				return nil, fmt.Errorf("duplicate lock field %q", key.Value)
+			}
+			value, err := yamlJSON(node.Content[i+1])
+			if err != nil {
+				return nil, err
+			}
+			values[key.Value] = value
+		}
+		return values, nil
+	case yaml.SequenceNode:
+		values := make([]any, 0, len(node.Content))
+		for _, child := range node.Content {
+			value, err := yamlJSON(child)
+			if err != nil {
+				return nil, err
+			}
+			values = append(values, value)
+		}
+		return values, nil
+	case yaml.DocumentNode, yaml.AliasNode, yaml.StreamNode:
+		return nil, errors.New("input locks do not support nested documents or aliases")
+	case yaml.ScalarNode:
+		switch node.Tag {
+		case "!!null":
+			return nil, nil
+		case "!!bool":
+			var value bool
+			err := node.Decode(&value)
+			return value, err
+		case "!!int", "!!float":
+			return json.Number(node.Value), nil
+		case "!!str", "!!timestamp":
+			return node.Value, nil
+		}
+	}
+	return nil, errors.New("unsupported YAML value in input lock")
+}
+
+func canonicalJSON(data json.RawMessage) (json.RawMessage, error) {
+	var value any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return nil, errors.New("expected one JSON value")
+	}
+	return json.Marshal(value)
+}
+
+func decode(data []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		return errors.New("expected one JSON object")
+	}
+	return nil
+}
+func fingerprint(value any) (string, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]), nil
+}
+func validDigest(value string) bool {
+	digest, err := hex.DecodeString(value)
+	return err == nil && len(digest) == sha256.Size && strings.ToLower(value) == value
 }

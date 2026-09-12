@@ -4,6 +4,7 @@ package lockfile
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,31 +14,32 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
+	"github.com/woodleighschool/stemma/plugin"
 	"go.yaml.in/yaml/v4"
 )
 
-// File contains digest-pinned software and plugin release indexes.
+// File pins each resource's named inputs and explicitly installed plugin indexes.
 type File struct {
-	Version  int                      `yaml:"version" json:"version"`
-	Software map[string]source.Entry  `yaml:"software" json:"software"`
-	Plugins  map[string]plugins.Entry `yaml:"plugins,omitempty" json:"plugins,omitempty"`
+	Version int                                `yaml:"version" json:"version"`
+	Inputs  map[string]map[string]source.Entry `yaml:"inputs" json:"inputs"`
+	Plugins map[string]plugins.Entry           `yaml:"plugins,omitempty" json:"plugins,omitempty"`
 }
 
 // Options controls lock consumption independently of cache use.
 type Options struct {
 	Frozen, Refresh, Ignore, Offline bool
 	PluginsOnly                      bool
+	PreserveUnselected               bool
 }
 
 // Result reports acquisition separately from downstream metadata changes.
 type Result struct {
 	File      File
 	Changed   bool
-	CacheHits map[string]bool
+	CacheHits map[string]map[string]bool
 }
 
 // Lock serializes project operations and releases automatically after a process crash.
@@ -76,27 +78,44 @@ func Load(path string) (File, error) {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return f, errors.New("expected one lockfile document")
 	}
-	if f.Version != 1 || f.Software == nil {
+	if f.Version != 2 || f.Inputs == nil {
 		return f, errors.New("unsupported or incomplete lockfile; run stemma update")
+	}
+	for resource, inputs := range f.Inputs {
+		if resource == "" || len(inputs) == 0 {
+			return f, errors.New("input lock requires a resource and named inputs")
+		}
+		for name, entry := range inputs {
+			if name == "" {
+				return f, errors.New("input lock has an empty input name")
+			}
+			if err := entry.Validate(); err != nil {
+				return f, fmt.Errorf("%s input %s: %w", resource, name, err)
+			}
+		}
 	}
 	return f, nil
 }
 
 // Prepare obtains exactly the required inputs, then replaces the lockfile atomically.
 // A failed resolution never writes a partially updated lockfile.
-func Prepare(ctx context.Context, p config.Project, m *source.Manager, opts Options) (Result, error) {
-	result := Result{File: File{Version: 1, Software: map[string]source.Entry{}, Plugins: map[string]plugins.Entry{}}, CacheHits: map[string]bool{}}
+func Prepare(ctx context.Context, root string, inputs map[string]map[string]plugin.Input, pluginImages map[string]string, m *source.Manager, opts Options) (Result, error) {
+	result := Result{File: File{Version: 2, Inputs: map[string]map[string]source.Entry{}, Plugins: map[string]plugins.Entry{}}, CacheHits: map[string]map[string]bool{}}
+	opts.Offline = opts.Offline || m.Offline
+	manager := *m
+	manager.Offline = opts.Offline
+	m = &manager
 	if opts.Frozen && (opts.Refresh || opts.Ignore) {
 		return result, errors.New("frozen lockfile conflicts with refresh or no-lockfile")
 	}
 	if opts.Offline && (opts.Refresh || opts.Ignore) {
 		return result, errors.New("offline requires a lockfile and cannot refresh")
 	}
-	filename := filepath.Join(m.Root, "stemma.lock.yaml")
+	filename := filepath.Join(root, "stemma.lock.yaml")
 	old := File{}
-	requiresLock := len(p.Plugins) != 0
-	for _, software := range p.Software {
-		requiresLock = requiresLock || software.Source != nil
+	requiresLock := len(pluginImages) != 0
+	for _, named := range inputs {
+		requiresLock = requiresLock || len(named) != 0
 	}
 	if !opts.Ignore {
 		loaded, err := Load(filename)
@@ -105,69 +124,96 @@ func Prepare(ctx context.Context, p config.Project, m *source.Manager, opts Opti
 		}
 		old = loaded
 	}
-	resolve := func(s config.Source, previous source.Entry) (source.Entry, error) {
-		current, err := m.Resolve(ctx, s)
-		if err != nil {
-			return current, err
-		}
-		current.ResolvedAt = previous.ResolvedAt
-		if current.Artifact != previous.Artifact || current.ResolvedAt.IsZero() {
-			// Checkout mtimes are not content identity. Capture one package timestamp
-			// alongside the reviewed bytes and retain it on unchanged refreshes.
-			current.ResolvedAt = time.Now().UTC().Truncate(time.Second)
-		}
-		return current, nil
-	}
-	acquire := func(key string, s config.Source, entry source.Entry) (source.Entry, error) {
-		matches := entry.Source == s.Fingerprint() && !entry.ResolvedAt.IsZero()
-		if s.Type == "file" || s.Type == "local" {
-			if !matches && (opts.Frozen || opts.Offline) {
-				return source.Entry{}, fmt.Errorf("%s is missing or stale in the lockfile; run stemma update", key)
+	if opts.PreserveUnselected {
+		for resource, entries := range old.Inputs {
+			if _, selected := inputs[resource]; !selected {
+				result.File.Inputs[resource] = entries
 			}
-			current, err := resolve(s, entry)
+		}
+	}
+	resolved := map[string]source.Entry{}
+	resolve := func(input plugin.Input, previous source.Entry) (source.Entry, error) {
+		version, declaration, err := m.Declaration(input)
+		if err != nil {
+			return source.Entry{}, err
+		}
+		key := input.Resolver + "\x00" + version + "\x00" + declaration
+		current, ok := resolved[key]
+		if !ok {
+			current, err = m.Resolve(ctx, input)
 			if err != nil {
 				return current, err
 			}
-			unchanged := matches && current == entry
-			if !unchanged && (opts.Frozen || opts.Offline) {
-				return source.Entry{}, fmt.Errorf("%s local content changed; run stemma update", key)
+			resolved[key] = current
+		}
+		// Keep the reviewed timestamp whenever immutable bytes stay the same.
+		if current.Content.Artifact == previous.Content.Artifact && !previous.ResolvedAt.IsZero() {
+			current.ResolvedAt = previous.ResolvedAt
+		}
+		return current, nil
+	}
+	acquire := func(input plugin.Input, entry source.Entry) (source.Entry, bool, error) {
+		version, declaration, err := m.Declaration(input)
+		if err != nil {
+			return source.Entry{}, false, err
+		}
+		matches := entry.Version == 1 && entry.Resolver == input.Resolver && entry.ResolverVersion == version && entry.Declaration == declaration && !entry.ResolvedAt.IsZero()
+		if m.IsLocal(input.Resolver) {
+			if !matches && (opts.Frozen || opts.Offline) {
+				return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 			}
-			result.CacheHits[key] = unchanged
-			return current, nil
+			cached := matches && m.Store.Verify(ctx, entry.Content.Artifact) == nil
+			current, err := resolve(input, entry)
+			if err != nil {
+				return current, false, err
+			}
+			unchanged := matches && current.Equal(entry)
+			if !unchanged && (opts.Frozen || opts.Offline) {
+				return source.Entry{}, false, errors.New("local input content changed; run stemma update")
+			}
+			return current, unchanged && cached, nil
 		}
 		if matches && !opts.Refresh && !opts.Ignore {
-			hit, err := m.Acquire(ctx, s, entry)
-			result.CacheHits[key] = hit
-			return entry, err
+			hit, err := m.FetchLocked(ctx, input, entry)
+			return entry, hit, err
 		}
 		if opts.Frozen || opts.Offline {
-			return source.Entry{}, fmt.Errorf("%s is missing or stale in the lockfile; run stemma update", key)
+			return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 		}
-		return resolve(s, entry)
+		current, err := resolve(input, entry)
+		return current, false, err
 	}
 	if opts.PluginsOnly {
-		result.File.Software = old.Software
-		if result.File.Software == nil {
-			result.File.Software = map[string]source.Entry{}
+		result.File.Inputs = old.Inputs
+		if result.File.Inputs == nil {
+			result.File.Inputs = map[string]map[string]source.Entry{}
 		}
-	}
-	for _, name := range names(p.Software) {
-		if opts.PluginsOnly {
-			break
+	} else {
+		for _, resource := range names(inputs) {
+			if len(inputs[resource]) == 0 {
+				continue
+			}
+			if resource == "" {
+				return result, errors.New("inputs require a resource identity")
+			}
+			result.File.Inputs[resource] = map[string]source.Entry{}
+			result.CacheHits[resource] = map[string]bool{}
+			for _, name := range names(inputs[resource]) {
+				if name == "" {
+					return result, errors.New("inputs require a name")
+				}
+				entry, hit, err := acquire(inputs[resource][name], old.Inputs[resource][name])
+				if err != nil {
+					return result, fmt.Errorf("%s input %s: %w", resource, name, err)
+				}
+				result.File.Inputs[resource][name] = entry
+				result.CacheHits[resource][name] = hit
+			}
 		}
-		input := p.Software[name].Source
-		if input == nil {
-			continue
-		}
-		entry, err := acquire(name, *input, old.Software[name])
-		if err != nil {
-			return result, fmt.Errorf("%s: %w", name, err)
-		}
-		result.File.Software[name] = entry
 	}
 	pluginStore := plugins.New(m.Store, opts.Offline || m.Offline)
-	for _, name := range names(p.Plugins) {
-		image := p.Plugins[name].Image
+	for _, name := range names(pluginImages) {
+		image := pluginImages[name]
 		entry := old.Plugins[name]
 		if opts.Ignore || entry.Validate(image) != nil || (opts.PluginsOnly && opts.Refresh) {
 			if !opts.PluginsOnly || opts.Frozen || opts.Offline {
@@ -184,11 +230,19 @@ func Prepare(ctx context.Context, p config.Project, m *source.Manager, opts Opti
 		}
 		result.File.Plugins[name] = entry
 	}
-	empty := len(result.File.Software) == 0 && len(result.File.Plugins) == 0
+	empty := len(result.File.Inputs) == 0 && len(result.File.Plugins) == 0
 	if empty && old.Version == 0 {
 		return result, nil
 	}
-	result.Changed = config.Fingerprint(result.File) != config.Fingerprint(old)
+	before, err := json.Marshal(old)
+	if err != nil {
+		return result, err
+	}
+	after, err := json.Marshal(result.File)
+	if err != nil {
+		return result, err
+	}
+	result.Changed = !bytes.Equal(before, after)
 	if opts.Frozen && result.Changed {
 		return result, errors.New("lockfile contains stale entries; run stemma update")
 	}

@@ -16,6 +16,16 @@ import (
 	"strings"
 )
 
+// ValidateSource checks the setup entrypoint and every payload member using the
+// same bounded Windows archive rules as Write, without creating an envelope.
+func ValidateSource(ctx context.Context, sourceDir, setupFile string) error {
+	setup, err := payloadPath(setupFile, true)
+	if err != nil {
+		return err
+	}
+	return zipSource(ctx, sourceDir, setup, io.Discard)
+}
+
 // Write packages regular files and directories with portable Windows paths.
 // SetupFile may be source-relative or absolute. OutputPath must be outside the
 // source tree and must not exist. Temporary files are removed on failure.

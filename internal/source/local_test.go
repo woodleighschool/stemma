@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/cas"
-	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 func TestLocalIncludesSnapshotOnlyMatchedInputs(t *testing.T) {
@@ -31,12 +31,12 @@ func TestLocalIncludesSnapshotOnlyMatchedInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := New(store, root, false)
-	s := config.Source{Type: "local", Base: "software/Branding", Include: []string{"Payload/**", "Scripts/**"}}
+	s := plugin.Input{Resolver: "local", Base: "software/Branding", Config: map[string]any{"include": []string{"Payload/**", "Scripts/**"}}}
 	first, err := m.Resolve(t.Context(), s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	filename, err := store.Path(first.Artifact)
+	filename, err := store.Path(first.Content.Artifact)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,16 +63,50 @@ func TestLocalIncludesSnapshotOnlyMatchedInputs(t *testing.T) {
 	writeInput(t, filepath.Join(base, "adjacent.txt"), "new unrelated content", 0o600)
 	writeInput(t, filepath.Join(base, "stemma.yaml"), "new configuration", 0o600)
 	second, err := m.Resolve(t.Context(), s)
-	if err != nil || second.Artifact != first.Artifact {
+	if err != nil || second.Content.Artifact != first.Content.Artifact {
 		t.Fatalf("adjacent inputs affected identity: %#v %v", second, err)
 	}
 	writeInput(t, filepath.Join(base, "Scripts", "postinstall"), "#!/bin/sh\necho changed\n", 0o755)
-	if _, err := m.Acquire(t.Context(), s, first); err == nil {
+	if _, err := m.FetchLocked(t.Context(), s, first); err == nil {
 		t.Fatal("warm CAS hid a local script change")
 	}
 	third, err := m.Resolve(t.Context(), s)
-	if err != nil || third.Artifact == first.Artifact {
+	if err != nil || third.Content.Artifact == first.Content.Artifact {
 		t.Fatalf("matched script did not affect identity: %#v %v", third, err)
+	}
+}
+
+func TestFamilyRelativeInputDeclarations(t *testing.T) {
+	root := t.TempDir()
+	writeInput(t, filepath.Join(root, "software", "Shared", "script"), "shared script", 0o755)
+	store, err := cas.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(store, root, false)
+	input := plugin.Input{Resolver: "file", Base: "software/Branding", Config: map[string]any{"path": "../Shared/script"}}
+	entry, err := m.Resolve(t.Context(), input)
+	if err != nil || entry.Content.Filename != "script" || entry.Content.Mode != 0o755 {
+		t.Fatalf("family-relative input: %v", err)
+	}
+	equivalent := plugin.Input{Resolver: "file", Base: "software/Shared", Config: map[string]any{"path": "script"}}
+	if _, hash, err := m.Declaration(equivalent); err != nil || hash != entry.Declaration {
+		t.Fatalf("same project input has a different declaration: %v", err)
+	}
+	for _, name := range []string{"../../../outside", "/absolute", `C:\outside`} {
+		input.Config["path"] = name
+		if _, _, err := m.Declaration(input); err == nil {
+			t.Fatalf("accepted escaping family-relative input %q", name)
+		}
+	}
+	remote := plugin.Input{Resolver: "http", Config: map[string]any{"url": "https://example.invalid/app.pkg"}}
+	_, first, err := m.Declaration(remote)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote.Base = "software/Branding"
+	if _, second, err := m.Declaration(remote); err != nil || second != first {
+		t.Fatalf("family location affected remote input declaration: %v", err)
 	}
 }
 
@@ -85,20 +119,20 @@ func TestLocalIncludesRejectMissingOrEscapingInputs(t *testing.T) {
 	}
 	m := New(store, root, false)
 	for _, pattern := range []string{"missing/**", "../outside", "/absolute", "Payload/["} {
-		if _, err := m.Resolve(t.Context(), config.Source{Type: "local", Include: []string{pattern}}); err == nil {
+		if _, err := m.Resolve(t.Context(), plugin.Input{Resolver: "local", Config: map[string]any{"include": []string{pattern}}}); err == nil {
 			t.Fatalf("accepted pattern %q", pattern)
 		}
 	}
 	if err := os.Symlink(t.TempDir(), filepath.Join(root, "outside")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Resolve(t.Context(), config.Source{Type: "local", Include: []string{"outside/**"}}); err == nil {
+	if _, err := m.Resolve(t.Context(), plugin.Input{Resolver: "local", Config: map[string]any{"include": []string{"outside/**"}}}); err == nil {
 		t.Fatal("traversed symlink outside local scope")
 	}
 	if err := os.Symlink("Payload", filepath.Join(root, "alias")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.Resolve(t.Context(), config.Source{Type: "local", Include: []string{"alias/**"}}); err == nil {
+	if _, err := m.Resolve(t.Context(), plugin.Input{Resolver: "local", Config: map[string]any{"include": []string{"alias/**"}}}); err == nil {
 		t.Fatal("silently flattened an included symlink parent")
 	}
 }
