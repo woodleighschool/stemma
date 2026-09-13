@@ -11,16 +11,21 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gofrs/flock"
-	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
 // MaxObjectSize bounds downloads and individual cache objects to 16 GiB.
 const MaxObjectSize int64 = 16 << 30
+
+func validDigest(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size && strings.ToLower(value) == value
+}
 
 // Ref binds an immutable object to its digest and byte length.
 type Ref struct {
@@ -69,7 +74,7 @@ func (s *Store) Lease(ctx context.Context) (release func() error, err error) {
 
 // Path locates an object; callers must treat the returned file as read-only.
 func (s *Store) Path(ref Ref) (string, error) {
-	if !config.ValidDigest(ref.SHA256) || ref.Size < 0 || ref.Size > MaxObjectSize {
+	if !validDigest(ref.SHA256) || ref.Size < 0 || ref.Size > MaxObjectSize {
 		return "", errors.New("invalid artifact reference")
 	}
 	return filepath.Join(s.Dir, "objects", ref.SHA256), nil
@@ -99,7 +104,7 @@ func (s *Store) Verify(ctx context.Context, ref Ref) error {
 
 // Import streams bytes to a temporary object and atomically publishes the digest.
 func (s *Store) Import(ctx context.Context, r io.Reader, expected string) (Ref, error) {
-	if expected != "" && !config.ValidDigest(expected) {
+	if expected != "" && !validDigest(expected) {
 		return Ref{}, errors.New("invalid expected SHA-256")
 	}
 	f, err := os.CreateTemp(filepath.Join(s.Dir, "objects"), ".import-*")
@@ -187,7 +192,7 @@ func (s *Store) Materialize(ctx context.Context, ref Ref, path string) error {
 
 // Recall reads a derivation result only if the referenced object still verifies.
 func (s *Store) Recall(ctx context.Context, key string) (Ref, bool) {
-	if !config.ValidDigest(key) {
+	if !validDigest(key) {
 		return Ref{}, false
 	}
 	data, err := os.ReadFile(filepath.Join(s.Dir, "derivations", key))
@@ -203,7 +208,7 @@ func (s *Store) Recall(ctx context.Context, key string) (Ref, bool) {
 
 // Remember indexes a completed derivation. Configuration keys exclude destination metadata.
 func (s *Store) Remember(key string, ref Ref) error {
-	if !config.ValidDigest(key) {
+	if !validDigest(key) {
 		return errors.New("invalid derivation key")
 	}
 	data, err := json.Marshal(ref)

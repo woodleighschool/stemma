@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/woodleighschool/stemma/internal/artifactname"
 	"github.com/woodleighschool/stemma/internal/macpkg"
 	"github.com/woodleighschool/stemma/internal/macsoftware"
 	"github.com/woodleighschool/stemma/internal/windowssoftware"
@@ -60,6 +61,9 @@ func buildMacPkg(ctx context.Context, request plugin.Request) (plugin.Response, 
 		config, err := json.Marshal(spec)
 		return resourceResponse(plugin.ResourceResult{Inputs: declarations, Config: config}, err)
 	}
+	if spec.Package.Filename == "" {
+		spec.Package.Filename = artifactname.Filename(input.Identity.Name, spec.Package.Version, "", "pkg")
+	}
 	artifact, err := macpkg.Build(ctx, spec, input.Inputs, input.Workspace, input.Timestamp)
 	return resourceResponse(plugin.ResourceResult{Artifacts: map[string]plugin.Artifact{"installer": artifact}}, err)
 }
@@ -85,6 +89,10 @@ func macSoftware(ctx context.Context, request plugin.Request) (plugin.Response, 
 		return resourceResponse(plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: spec.Destinations}, err)
 	}
 	artifacts, err := macsoftware.Prepare(ctx, spec, input.Inputs["source"], input.Workspace, input.Timestamp)
+	if installer, ok := artifacts["installer"]; err == nil && ok {
+		installer.Filename = artifactname.Filename(input.Identity.Name, installer.Version, installer.SHA256, installer.Format)
+		artifacts["installer"] = installer
+	}
 	return resourceResponse(plugin.ResourceResult{Artifacts: artifacts}, err)
 }
 func windowsSoftware(ctx context.Context, request plugin.Request) (plugin.Response, error) {

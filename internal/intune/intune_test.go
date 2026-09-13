@@ -49,7 +49,7 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	if fake.creates != 1 || fake.versions != 1 || fake.blobLists != 1 || fake.commits != 1 || fake.assigns != 1 {
 		t.Fatal("upload did not complete all required stages")
 	}
-	if fake.app["setupFilePath"] != "setup.cmd" || fake.app["fileName"] != "setup.intunewin" || fake.app["committedContentVersion"] != "1" {
+	if fake.app["setupFilePath"] != "setup.cmd" || fake.app["fileName"] != "test-"+req.Artifact.SHA256[:12]+".intunewin" || fake.app["committedContentVersion"] != "1" {
 		t.Fatalf("native content metadata: %+v", fake.app)
 	}
 	fake.app["owner"] = "Remote owner"

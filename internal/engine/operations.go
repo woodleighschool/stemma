@@ -141,7 +141,7 @@ type operations struct {
 }
 
 func operationSchema(value any) json.RawMessage {
-	r := jsonschema.Reflector{DoNotReference: true}
+	r := jsonschema.Reflector{DoNotReference: true, Mapper: source.InputSchema}
 	data, _ := json.Marshal(r.Reflect(value))
 	return data
 }

@@ -74,8 +74,8 @@ func New(store *cas.Store, root string, offline bool) *Manager {
 		if len(via) >= 10 {
 			return errors.New("too many redirects")
 		}
-		if req.URL.Host != via[0].URL.Host {
-			req.Header.Del("Authorization")
+		if !sameOrigin(req.URL, via[0].URL) || !sameOrigin(req.URL, via[len(via)-1].URL) {
+			stripPrivateHeaders(req.Header)
 		}
 		if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
 			return errors.New("refusing HTTPS downgrade")
@@ -134,6 +134,9 @@ func (m *Manager) Declaration(input plugin.Input) (string, string, error) {
 			return "", "", err
 		}
 		s.Token = ""
+		for _, name := range []string{"Authorization", "Proxy-Authorization", "Cookie"} {
+			delete(s.Headers, name)
+		}
 		digest, err = fingerprint(s)
 		if err != nil {
 			return "", "", err

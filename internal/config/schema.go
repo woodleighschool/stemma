@@ -7,6 +7,7 @@ import (
 	"github.com/invopop/jsonschema"
 	"github.com/woodleighschool/stemma/internal/macpkg"
 	"github.com/woodleighschool/stemma/internal/macsoftware"
+	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/internal/windowssoftware"
 )
 
@@ -35,7 +36,7 @@ func Schema() ([]byte, error) {
 		kind string
 		spec any
 	}{{"BuildMacPkg", macpkg.Spec{}}, {"MacSoftware", macsoftware.Spec{}}, {"WindowsSoftware", windowssoftware.Spec{}}} {
-		reflector := jsonschema.Reflector{DoNotReference: true}
+		reflector := jsonschema.Reflector{DoNotReference: true, Mapper: source.InputSchema}
 		raw, err := json.Marshal(reflector.Reflect(item.spec))
 		if err != nil {
 			return nil, err

@@ -31,6 +31,157 @@
               "properties": {
                 "inputs": {
                   "additionalProperties": {
+                    "allOf": [
+                      {
+                        "if": {
+                          "not": {
+                            "required": [
+                              "resolver"
+                            ]
+                          },
+                          "required": [
+                            "url"
+                          ]
+                        },
+                        "then": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "filename": {
+                              "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                              "type": "string"
+                            },
+                            "headers": {
+                              "additionalProperties": {
+                                "type": "string"
+                              },
+                              "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                              "type": "object"
+                            },
+                            "match": {
+                              "type": "string"
+                            },
+                            "sha256": {
+                              "type": "string"
+                            },
+                            "token": {
+                              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                              "type": "string",
+                              "writeOnly": true
+                            },
+                            "url": {
+                              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "url"
+                          ],
+                          "type": "object"
+                        }
+                      },
+                      {
+                        "if": {
+                          "properties": {
+                            "resolver": {
+                              "const": "http"
+                            }
+                          },
+                          "required": [
+                            "resolver"
+                          ],
+                          "type": "object"
+                        },
+                        "then": {
+                          "else": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "filename": {
+                                "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                "type": "string"
+                              },
+                              "headers": {
+                                "additionalProperties": {
+                                  "type": "string"
+                                },
+                                "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                "type": "object"
+                              },
+                              "match": {
+                                "type": "string"
+                              },
+                              "resolver": {
+                                "const": "http"
+                              },
+                              "sha256": {
+                                "type": "string"
+                              },
+                              "token": {
+                                "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                "type": "string",
+                                "writeOnly": true
+                              },
+                              "url": {
+                                "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "url"
+                            ],
+                            "type": "object"
+                          },
+                          "if": {
+                            "required": [
+                              "config"
+                            ]
+                          },
+                          "then": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "config": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "filename": {
+                                    "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                    "type": "string"
+                                  },
+                                  "headers": {
+                                    "additionalProperties": {
+                                      "type": "string"
+                                    },
+                                    "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                    "type": "object"
+                                  },
+                                  "match": {
+                                    "type": "string"
+                                  },
+                                  "sha256": {
+                                    "type": "string"
+                                  },
+                                  "token": {
+                                    "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                    "type": "string",
+                                    "writeOnly": true
+                                  },
+                                  "url": {
+                                    "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ],
+                                "type": "object"
+                              },
+                              "resolver": {
+                                "const": "http"
+                              }
+                            },
+                            "type": "object"
+                          }
+                        }
+                      }
+                    ],
                     "oneOf": [
                       {
                         "additionalProperties": false,
@@ -178,6 +329,146 @@
                     "inputs": {
                       "additionalProperties": {
                         "allOf": [
+                          {
+                            "if": {
+                              "not": {
+                                "required": [
+                                  "resolver"
+                                ]
+                              },
+                              "required": [
+                                "url"
+                              ]
+                            },
+                            "then": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "filename": {
+                                  "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                  "type": "string"
+                                },
+                                "headers": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                  "type": "object"
+                                },
+                                "match": {
+                                  "type": "string"
+                                },
+                                "sha256": {
+                                  "type": "string"
+                                },
+                                "token": {
+                                  "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                  "type": "string",
+                                  "writeOnly": true
+                                },
+                                "url": {
+                                  "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": {
+                                "resolver": {
+                                  "const": "http"
+                                }
+                              },
+                              "required": [
+                                "resolver"
+                              ],
+                              "type": "object"
+                            },
+                            "then": {
+                              "else": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "filename": {
+                                    "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                    "type": "string"
+                                  },
+                                  "headers": {
+                                    "additionalProperties": {
+                                      "type": "string"
+                                    },
+                                    "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                    "type": "object"
+                                  },
+                                  "match": {
+                                    "type": "string"
+                                  },
+                                  "resolver": {
+                                    "const": "http"
+                                  },
+                                  "sha256": {
+                                    "type": "string"
+                                  },
+                                  "token": {
+                                    "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                    "type": "string",
+                                    "writeOnly": true
+                                  },
+                                  "url": {
+                                    "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                    "type": "string"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              "if": {
+                                "required": [
+                                  "config"
+                                ]
+                              },
+                              "then": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "config": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "filename": {
+                                        "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                        "type": "string"
+                                      },
+                                      "headers": {
+                                        "additionalProperties": {
+                                          "type": "string"
+                                        },
+                                        "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                        "type": "object"
+                                      },
+                                      "match": {
+                                        "type": "string"
+                                      },
+                                      "sha256": {
+                                        "type": "string"
+                                      },
+                                      "token": {
+                                        "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                        "type": "string",
+                                        "writeOnly": true
+                                      },
+                                      "url": {
+                                        "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
+                                  "resolver": {
+                                    "const": "http"
+                                  }
+                                },
+                                "type": "object"
+                              }
+                            }
+                          },
                           {
                             "anyOf": [
                               {
@@ -393,6 +684,157 @@
                   "type": "string"
                 },
                 "source": {
+                  "allOf": [
+                    {
+                      "if": {
+                        "not": {
+                          "required": [
+                            "resolver"
+                          ]
+                        },
+                        "required": [
+                          "url"
+                        ]
+                      },
+                      "then": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "filename": {
+                            "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                            "type": "string"
+                          },
+                          "headers": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                            "type": "object"
+                          },
+                          "match": {
+                            "type": "string"
+                          },
+                          "sha256": {
+                            "type": "string"
+                          },
+                          "token": {
+                            "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                            "type": "string",
+                            "writeOnly": true
+                          },
+                          "url": {
+                            "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "url"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "resolver": {
+                            "const": "http"
+                          }
+                        },
+                        "required": [
+                          "resolver"
+                        ],
+                        "type": "object"
+                      },
+                      "then": {
+                        "else": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "filename": {
+                              "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                              "type": "string"
+                            },
+                            "headers": {
+                              "additionalProperties": {
+                                "type": "string"
+                              },
+                              "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                              "type": "object"
+                            },
+                            "match": {
+                              "type": "string"
+                            },
+                            "resolver": {
+                              "const": "http"
+                            },
+                            "sha256": {
+                              "type": "string"
+                            },
+                            "token": {
+                              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                              "type": "string",
+                              "writeOnly": true
+                            },
+                            "url": {
+                              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "url"
+                          ],
+                          "type": "object"
+                        },
+                        "if": {
+                          "required": [
+                            "config"
+                          ]
+                        },
+                        "then": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "config": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "filename": {
+                                  "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                  "type": "string"
+                                },
+                                "headers": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                  "type": "object"
+                                },
+                                "match": {
+                                  "type": "string"
+                                },
+                                "sha256": {
+                                  "type": "string"
+                                },
+                                "token": {
+                                  "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                  "type": "string",
+                                  "writeOnly": true
+                                },
+                                "url": {
+                                  "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "url"
+                              ],
+                              "type": "object"
+                            },
+                            "resolver": {
+                              "const": "http"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      }
+                    }
+                  ],
                   "oneOf": [
                     {
                       "additionalProperties": false,
@@ -530,6 +972,146 @@
                     },
                     "source": {
                       "allOf": [
+                        {
+                          "if": {
+                            "not": {
+                              "required": [
+                                "resolver"
+                              ]
+                            },
+                            "required": [
+                              "url"
+                            ]
+                          },
+                          "then": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "filename": {
+                                "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                "type": "string"
+                              },
+                              "headers": {
+                                "additionalProperties": {
+                                  "type": "string"
+                                },
+                                "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                "type": "object"
+                              },
+                              "match": {
+                                "type": "string"
+                              },
+                              "sha256": {
+                                "type": "string"
+                              },
+                              "token": {
+                                "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                "type": "string",
+                                "writeOnly": true
+                              },
+                              "url": {
+                                "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                "type": "string"
+                              }
+                            },
+                            "type": "object"
+                          }
+                        },
+                        {
+                          "if": {
+                            "properties": {
+                              "resolver": {
+                                "const": "http"
+                              }
+                            },
+                            "required": [
+                              "resolver"
+                            ],
+                            "type": "object"
+                          },
+                          "then": {
+                            "else": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "filename": {
+                                  "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                  "type": "string"
+                                },
+                                "headers": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                  "type": "object"
+                                },
+                                "match": {
+                                  "type": "string"
+                                },
+                                "resolver": {
+                                  "const": "http"
+                                },
+                                "sha256": {
+                                  "type": "string"
+                                },
+                                "token": {
+                                  "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                  "type": "string",
+                                  "writeOnly": true
+                                },
+                                "url": {
+                                  "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "if": {
+                              "required": [
+                                "config"
+                              ]
+                            },
+                            "then": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "config": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "filename": {
+                                      "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                      "type": "string"
+                                    },
+                                    "headers": {
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      },
+                                      "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                      "type": "object"
+                                    },
+                                    "match": {
+                                      "type": "string"
+                                    },
+                                    "sha256": {
+                                      "type": "string"
+                                    },
+                                    "token": {
+                                      "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                      "type": "string",
+                                      "writeOnly": true
+                                    },
+                                    "url": {
+                                      "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "resolver": {
+                                  "const": "http"
+                                }
+                              },
+                              "type": "object"
+                            }
+                          }
+                        },
                         {
                           "anyOf": [
                             {
@@ -796,6 +1378,157 @@
                   "properties": {
                     "files": {
                       "additionalProperties": {
+                        "allOf": [
+                          {
+                            "if": {
+                              "not": {
+                                "required": [
+                                  "resolver"
+                                ]
+                              },
+                              "required": [
+                                "url"
+                              ]
+                            },
+                            "then": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "filename": {
+                                  "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                  "type": "string"
+                                },
+                                "headers": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                  "type": "object"
+                                },
+                                "match": {
+                                  "type": "string"
+                                },
+                                "sha256": {
+                                  "type": "string"
+                                },
+                                "token": {
+                                  "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                  "type": "string",
+                                  "writeOnly": true
+                                },
+                                "url": {
+                                  "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "url"
+                              ],
+                              "type": "object"
+                            }
+                          },
+                          {
+                            "if": {
+                              "properties": {
+                                "resolver": {
+                                  "const": "http"
+                                }
+                              },
+                              "required": [
+                                "resolver"
+                              ],
+                              "type": "object"
+                            },
+                            "then": {
+                              "else": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "filename": {
+                                    "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                    "type": "string"
+                                  },
+                                  "headers": {
+                                    "additionalProperties": {
+                                      "type": "string"
+                                    },
+                                    "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                    "type": "object"
+                                  },
+                                  "match": {
+                                    "type": "string"
+                                  },
+                                  "resolver": {
+                                    "const": "http"
+                                  },
+                                  "sha256": {
+                                    "type": "string"
+                                  },
+                                  "token": {
+                                    "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                    "type": "string",
+                                    "writeOnly": true
+                                  },
+                                  "url": {
+                                    "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "url"
+                                ],
+                                "type": "object"
+                              },
+                              "if": {
+                                "required": [
+                                  "config"
+                                ]
+                              },
+                              "then": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "config": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "filename": {
+                                        "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                        "type": "string"
+                                      },
+                                      "headers": {
+                                        "additionalProperties": {
+                                          "type": "string"
+                                        },
+                                        "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                        "type": "object"
+                                      },
+                                      "match": {
+                                        "type": "string"
+                                      },
+                                      "sha256": {
+                                        "type": "string"
+                                      },
+                                      "token": {
+                                        "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                        "type": "string",
+                                        "writeOnly": true
+                                      },
+                                      "url": {
+                                        "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "url"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "resolver": {
+                                    "const": "http"
+                                  }
+                                },
+                                "type": "object"
+                              }
+                            }
+                          }
+                        ],
                         "oneOf": [
                           {
                             "additionalProperties": false,
@@ -869,6 +1602,157 @@
                   "type": "object"
                 },
                 "source": {
+                  "allOf": [
+                    {
+                      "if": {
+                        "not": {
+                          "required": [
+                            "resolver"
+                          ]
+                        },
+                        "required": [
+                          "url"
+                        ]
+                      },
+                      "then": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "filename": {
+                            "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                            "type": "string"
+                          },
+                          "headers": {
+                            "additionalProperties": {
+                              "type": "string"
+                            },
+                            "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                            "type": "object"
+                          },
+                          "match": {
+                            "type": "string"
+                          },
+                          "sha256": {
+                            "type": "string"
+                          },
+                          "token": {
+                            "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                            "type": "string",
+                            "writeOnly": true
+                          },
+                          "url": {
+                            "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "url"
+                        ],
+                        "type": "object"
+                      }
+                    },
+                    {
+                      "if": {
+                        "properties": {
+                          "resolver": {
+                            "const": "http"
+                          }
+                        },
+                        "required": [
+                          "resolver"
+                        ],
+                        "type": "object"
+                      },
+                      "then": {
+                        "else": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "filename": {
+                              "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                              "type": "string"
+                            },
+                            "headers": {
+                              "additionalProperties": {
+                                "type": "string"
+                              },
+                              "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                              "type": "object"
+                            },
+                            "match": {
+                              "type": "string"
+                            },
+                            "resolver": {
+                              "const": "http"
+                            },
+                            "sha256": {
+                              "type": "string"
+                            },
+                            "token": {
+                              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                              "type": "string",
+                              "writeOnly": true
+                            },
+                            "url": {
+                              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "url"
+                          ],
+                          "type": "object"
+                        },
+                        "if": {
+                          "required": [
+                            "config"
+                          ]
+                        },
+                        "then": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "config": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "filename": {
+                                  "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                  "type": "string"
+                                },
+                                "headers": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                  "type": "object"
+                                },
+                                "match": {
+                                  "type": "string"
+                                },
+                                "sha256": {
+                                  "type": "string"
+                                },
+                                "token": {
+                                  "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                  "type": "string",
+                                  "writeOnly": true
+                                },
+                                "url": {
+                                  "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "url"
+                              ],
+                              "type": "object"
+                            },
+                            "resolver": {
+                              "const": "http"
+                            }
+                          },
+                          "type": "object"
+                        }
+                      }
+                    }
+                  ],
                   "oneOf": [
                     {
                       "additionalProperties": false,
@@ -948,6 +1832,146 @@
                           "additionalProperties": {
                             "allOf": [
                               {
+                                "if": {
+                                  "not": {
+                                    "required": [
+                                      "resolver"
+                                    ]
+                                  },
+                                  "required": [
+                                    "url"
+                                  ]
+                                },
+                                "then": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "filename": {
+                                      "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                      "type": "string"
+                                    },
+                                    "headers": {
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      },
+                                      "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                      "type": "object"
+                                    },
+                                    "match": {
+                                      "type": "string"
+                                    },
+                                    "sha256": {
+                                      "type": "string"
+                                    },
+                                    "token": {
+                                      "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                      "type": "string",
+                                      "writeOnly": true
+                                    },
+                                    "url": {
+                                      "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                }
+                              },
+                              {
+                                "if": {
+                                  "properties": {
+                                    "resolver": {
+                                      "const": "http"
+                                    }
+                                  },
+                                  "required": [
+                                    "resolver"
+                                  ],
+                                  "type": "object"
+                                },
+                                "then": {
+                                  "else": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "filename": {
+                                        "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                        "type": "string"
+                                      },
+                                      "headers": {
+                                        "additionalProperties": {
+                                          "type": "string"
+                                        },
+                                        "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                        "type": "object"
+                                      },
+                                      "match": {
+                                        "type": "string"
+                                      },
+                                      "resolver": {
+                                        "const": "http"
+                                      },
+                                      "sha256": {
+                                        "type": "string"
+                                      },
+                                      "token": {
+                                        "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                        "type": "string",
+                                        "writeOnly": true
+                                      },
+                                      "url": {
+                                        "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                        "type": "string"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
+                                  "if": {
+                                    "required": [
+                                      "config"
+                                    ]
+                                  },
+                                  "then": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "config": {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "filename": {
+                                            "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                            "type": "string"
+                                          },
+                                          "headers": {
+                                            "additionalProperties": {
+                                              "type": "string"
+                                            },
+                                            "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                            "type": "object"
+                                          },
+                                          "match": {
+                                            "type": "string"
+                                          },
+                                          "sha256": {
+                                            "type": "string"
+                                          },
+                                          "token": {
+                                            "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                            "type": "string",
+                                            "writeOnly": true
+                                          },
+                                          "url": {
+                                            "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "type": "object"
+                                      },
+                                      "resolver": {
+                                        "const": "http"
+                                      }
+                                    },
+                                    "type": "object"
+                                  }
+                                }
+                              },
+                              {
                                 "anyOf": [
                                   {
                                     "additionalProperties": false,
@@ -1009,6 +2033,146 @@
                     },
                     "source": {
                       "allOf": [
+                        {
+                          "if": {
+                            "not": {
+                              "required": [
+                                "resolver"
+                              ]
+                            },
+                            "required": [
+                              "url"
+                            ]
+                          },
+                          "then": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "filename": {
+                                "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                "type": "string"
+                              },
+                              "headers": {
+                                "additionalProperties": {
+                                  "type": "string"
+                                },
+                                "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                "type": "object"
+                              },
+                              "match": {
+                                "type": "string"
+                              },
+                              "sha256": {
+                                "type": "string"
+                              },
+                              "token": {
+                                "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                "type": "string",
+                                "writeOnly": true
+                              },
+                              "url": {
+                                "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                "type": "string"
+                              }
+                            },
+                            "type": "object"
+                          }
+                        },
+                        {
+                          "if": {
+                            "properties": {
+                              "resolver": {
+                                "const": "http"
+                              }
+                            },
+                            "required": [
+                              "resolver"
+                            ],
+                            "type": "object"
+                          },
+                          "then": {
+                            "else": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "filename": {
+                                  "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                  "type": "string"
+                                },
+                                "headers": {
+                                  "additionalProperties": {
+                                    "type": "string"
+                                  },
+                                  "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                  "type": "object"
+                                },
+                                "match": {
+                                  "type": "string"
+                                },
+                                "resolver": {
+                                  "const": "http"
+                                },
+                                "sha256": {
+                                  "type": "string"
+                                },
+                                "token": {
+                                  "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                  "type": "string",
+                                  "writeOnly": true
+                                },
+                                "url": {
+                                  "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                  "type": "string"
+                                }
+                              },
+                              "type": "object"
+                            },
+                            "if": {
+                              "required": [
+                                "config"
+                              ]
+                            },
+                            "then": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "config": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "filename": {
+                                      "description": "Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming.",
+                                      "type": "string"
+                                    },
+                                    "headers": {
+                                      "additionalProperties": {
+                                        "type": "string"
+                                      },
+                                      "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin.",
+                                      "type": "object"
+                                    },
+                                    "match": {
+                                      "type": "string"
+                                    },
+                                    "sha256": {
+                                      "type": "string"
+                                    },
+                                    "token": {
+                                      "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+                                      "type": "string",
+                                      "writeOnly": true
+                                    },
+                                    "url": {
+                                      "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile.",
+                                      "type": "string"
+                                    }
+                                  },
+                                  "type": "object"
+                                },
+                                "resolver": {
+                                  "const": "http"
+                                }
+                              },
+                              "type": "object"
+                            }
+                          }
+                        },
                         {
                           "anyOf": [
                             {

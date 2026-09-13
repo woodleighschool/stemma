@@ -15,7 +15,7 @@ import (
 )
 
 // Version changes when the layout or package derivation changes.
-const Version = "stemma.macpkg/1"
+const Version = "stemma.macpkg/2"
 
 type Spec struct {
 	Inputs  map[string]plugin.Input `json:"inputs,omitempty" yaml:"inputs,omitempty"`

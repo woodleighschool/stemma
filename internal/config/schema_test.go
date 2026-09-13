@@ -48,6 +48,13 @@ func TestResourceEditorSchema(t *testing.T) {
 		valid      bool
 	}{
 		"vendor mac":                {"MacSoftware", `{"source":{"url":"https://example.test/app.pkg"},"application":{"bundle_id":"org.example.app"}}`, true},
+		"HTTP headers":              {"MacSoftware", `{"source":{"url":"https://example.test/download","headers":{"User-Agent":"Fixture"},"filename":"App.pkg"}}`, true},
+		"HTTP header value":         {"MacSoftware", `{"source":{"url":"https://example.test/download","headers":{"Accept":["one","two"]}}}`, false},
+		"HTTP unknown option":       {"MacSoftware", `{"source":{"url":"https://example.test/download","curl_opts":[]}}`, false},
+		"HTTP resolver config":      {"MacSoftware", `{"source":{"resolver":"http","config":{"url":"https://example.test/download","headers":{"Accept":"application/zip"}}}}`, true},
+		"HTTP resolver invalid":     {"MacSoftware", `{"source":{"resolver":"http","config":{"url":"https://example.test/download","headers":[]}}}`, false},
+		"HTTP mixed config":         {"MacSoftware", `{"source":{"resolver":"http","config":{"url":"https://example.test/download"},"headers":{"Accept":"application/zip"}}}`, false},
+		"HTTP flat resolver":        {"MacSoftware", `{"source":{"resolver":"http","url":"https://example.test/download","headers":{"Accept":"application/zip"}}}`, true},
 		"file mac":                  {"MacSoftware", `{"source":{"path":"../Shared/app.pkg"}}`, true},
 		"external resolver":         {"MacSoftware", `{"source":{"resolver":"example.release","config":{"channel":"stable"}}}`, true},
 		"resource source":           {"MacSoftware", `{"source":{"resource":{"kind":"BuildMacPkg","name":"branding"}}}`, true},

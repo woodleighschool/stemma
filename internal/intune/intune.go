@@ -240,7 +240,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 	}
 	var prepared *preparedArtifact
 	if contentChanged && (b.Pending == nil || b.Pending.Stage == "file" || b.Pending.Stage == "version" || b.Pending.Stage == "file-request") {
-		prepared, err = prepareArtifact(ctx, req.Artifact, artifact)
+		prepared, err = prepareArtifact(ctx, req.Identity.Software, req.Artifact, artifact)
 		if err != nil {
 			return response, err
 		}

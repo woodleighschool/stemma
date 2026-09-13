@@ -19,6 +19,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	abs "github.com/microsoft/kiota-abstractions-go"
 	"github.com/woodleighschool/stemma/internal/archive"
+	"github.com/woodleighschool/stemma/internal/artifactname"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/intunecontent"
 	"github.com/woodleighschool/stemma/internal/intunewin"
@@ -113,9 +114,13 @@ func contentInfo(m intunewin.Metadata) intunecontent.Info {
 	return intunecontent.Info{PayloadSHA256: m.PayloadSHA256, PlaintextSize: m.PlaintextSize, EncryptedContentSize: m.EncryptedContentSize, EncryptionInfo: m.EncryptionInfo}
 }
 
-func prepareArtifact(ctx context.Context, artifact plugin.Artifact, identity artifactIdentity) (*preparedArtifact, error) {
+func prepareArtifact(ctx context.Context, software string, artifact plugin.Artifact, identity artifactIdentity) (*preparedArtifact, error) {
+	name := artifact.Filename
+	if !identity.raw {
+		name = artifactname.Filename(software, artifact.Version, artifact.SHA256, "intunewin")
+	}
 	if identity.envelope {
-		return &preparedArtifact{path: artifact.Path, name: artifact.Filename, envelopeSHA256: artifact.SHA256, metadata: contentInfo(identity.metadata), setup: identity.setup}, nil
+		return &preparedArtifact{path: artifact.Path, name: name, envelopeSHA256: artifact.SHA256, metadata: contentInfo(identity.metadata), setup: identity.setup}, nil
 	}
 	workspace, err := os.MkdirTemp("", "stemma-intune-")
 	if err != nil {
@@ -134,11 +139,6 @@ func prepareArtifact(ctx context.Context, artifact plugin.Artifact, identity art
 		}
 	} else if err := snapshotFile(ctx, artifact, source); err != nil {
 		return nil, err
-	}
-	name := artifact.Filename
-	if !identity.raw {
-		base := filepath.Base(strings.ReplaceAll(identity.setup, `\`, "/"))
-		name = strings.TrimSuffix(base, filepath.Ext(base)) + ".intunewin"
 	}
 	path := filepath.Join(workspace, name)
 	var metadata intunecontent.Info

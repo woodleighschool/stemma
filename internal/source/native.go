@@ -8,6 +8,7 @@ import (
 	"html"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,26 +16,29 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
+	"golang.org/x/net/http/httpguts"
 )
 
 type nativeConfig struct {
-	Type       string   `json:"-"`
-	Include    []string `json:"include,omitempty"`
-	Base       string   `json:"base,omitempty"`
-	URL        string   `json:"url,omitempty"`
-	Match      string   `json:"match,omitempty"`
-	Path       string   `json:"path,omitempty"`
-	Repository string   `json:"repository,omitempty"`
-	Release    string   `json:"release,omitempty"`
-	Asset      string   `json:"asset,omitempty"`
-	Filename   string   `json:"filename,omitempty"`
-	SHA256     string   `json:"sha256,omitempty"`
-	Token      string   `json:"token,omitempty"`
+	Type       string            `json:"-"`
+	Include    []string          `json:"include,omitempty"`
+	Base       string            `json:"base,omitempty"`
+	URL        string            `json:"url,omitempty" jsonschema_description:"Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."`
+	Match      string            `json:"match,omitempty"`
+	Path       string            `json:"path,omitempty"`
+	Repository string            `json:"repository,omitempty"`
+	Release    string            `json:"release,omitempty"`
+	Asset      string            `json:"asset,omitempty"`
+	Filename   string            `json:"filename,omitempty" jsonschema_description:"Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming."`
+	SHA256     string            `json:"sha256,omitempty"`
+	Token      string            `json:"token,omitempty" jsonschema_description:"Optional bearer token. Mutually exclusive with an Authorization header."`
+	Headers    map[string]string `json:"headers,omitempty" jsonschema_description:"HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin."`
 }
 
 type nativeObservation struct {
@@ -69,7 +73,17 @@ func native(input plugin.Input) (nativeConfig, error) {
 	if err != nil {
 		return s, err
 	}
-	return s, s.Validate()
+	if err := s.Validate(); err != nil {
+		return s, err
+	}
+	if len(s.Headers) > 0 {
+		headers := make(map[string]string, len(s.Headers))
+		for name, value := range s.Headers {
+			headers[http.CanonicalHeaderKey(name)] = value
+		}
+		s.Headers = headers
+	}
+	return s, nil
 }
 
 func relativeTo(base, name string) (string, error) {
@@ -135,18 +149,12 @@ func (m *Manager) resolveNative(ctx context.Context, input plugin.Input) (Conten
 			}
 		case "file":
 			entry.Filename = filepath.Base(s.Path)
-		default:
-			u, err := url.Parse(entry.URL)
-			if err != nil {
-				return Content{}, nil, err
-			}
-			entry.Filename = path.Base(u.Path)
 		}
 	}
-	if !validFilename(entry.Filename) {
+	if s.Type != "http" && !validFilename(entry.Filename) {
 		return Content{}, nil, errors.New("input has no safe filename; set filename explicitly")
 	}
-	ref, err := m.download(ctx, s, entry, s.SHA256)
+	ref, err := m.download(ctx, s, &entry, s.SHA256)
 	observation, encodeErr := json.Marshal(entry.nativeObservation)
 	if err != nil {
 		return Content{}, nil, err
@@ -163,7 +171,8 @@ func (m *Manager) fetchNative(ctx context.Context, input plugin.Input, entry Ent
 	if err := decode(entry.Observation, &observation); err != nil {
 		return Content{}, err
 	}
-	ref, err := m.download(ctx, s, nativeEntry{nativeObservation: observation, Filename: entry.Content.Filename, Tree: entry.Content.Tree}, entry.Content.Artifact.SHA256)
+	download := nativeEntry{nativeObservation: observation, Filename: entry.Content.Filename, Tree: entry.Content.Tree}
+	ref, err := m.download(ctx, s, &download, entry.Content.Artifact.SHA256)
 	content := entry.Content
 	content.Artifact = ref
 	return content, err
@@ -182,8 +191,30 @@ func safeRelative(name string) bool {
 }
 
 func (s nativeConfig) Validate() error {
-	if s.Filename != "" && (filepath.Base(s.Filename) != s.Filename || strings.ContainsAny(s.Filename, `/\\`) || s.Filename == "." || s.Filename == "..") {
+	if s.Filename != "" && !validFilename(s.Filename) {
 		return errors.New("filename must be a basename")
+	}
+	if len(s.Headers) > 0 && s.Type != "http" {
+		return errors.New("headers are only supported for HTTP sources")
+	}
+	seen := map[string]bool{}
+	for name, value := range s.Headers {
+		if !httpguts.ValidHeaderFieldName(name) || !httpguts.ValidHeaderFieldValue(value) {
+			return errors.New("invalid HTTP header name or value")
+		}
+		name = http.CanonicalHeaderKey(name)
+		if seen[name] {
+			return errors.New("HTTP header names must be unique ignoring case")
+		}
+		seen[name] = true
+		switch name {
+		case "Host", "Content-Length", "Transfer-Encoding", "Trailer":
+			return fmt.Errorf("HTTP header %s is managed by the downloader", name)
+		case "Authorization":
+			if s.Token != "" {
+				return errors.New("use token or an Authorization header, not both")
+			}
+		}
 	}
 	if s.SHA256 != "" && !validDigest(s.SHA256) {
 		return errors.New("sha256 must be 64 lowercase hexadecimal characters")
@@ -254,7 +285,7 @@ func validateHTTPURL(address string) error {
 	return nil
 }
 
-func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntry, expected string) (result cas.Ref, err error) {
+func (m *Manager) download(ctx context.Context, s nativeConfig, entry *nativeEntry, expected string) (result cas.Ref, err error) {
 	if s.Type == "local" {
 		done := plugin.Stage(ctx, "Reading local inputs")
 		defer func() { done(err) }()
@@ -336,7 +367,6 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntr
 		return cas.Ref{}, fmt.Errorf("lockfile URL: %w", err)
 	}
 	u, _ := url.Parse(entry.URL)
-	token := s.Token
 	if s.Type == "http" {
 		if s.Match == "" && entry.URL != s.URL {
 			return cas.Ref{}, errors.New("locked HTTP URL does not match configuration")
@@ -351,16 +381,13 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntr
 		if origin.Scheme == "https" && u.Scheme != "https" {
 			return cas.Ref{}, errors.New("refusing discovered HTTPS downgrade")
 		}
-		if origin.Scheme != u.Scheme || origin.Host != u.Host {
-			token = ""
-		}
 	}
 	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
 		return cas.Ref{}, errors.New("locked asset does not belong to the configured GitHub repository")
 	}
 	done := plugin.Stage(ctx, "Downloading input")
 	defer func() { done(err) }()
-	req, err := m.request(ctx, entry.URL, token)
+	req, err := m.request(ctx, entry.URL, s)
 	if err != nil {
 		return cas.Ref{}, err
 	}
@@ -374,6 +401,12 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntr
 	}
 	if res.ContentLength > cas.MaxObjectSize {
 		return cas.Ref{}, errors.New("download exceeds 16 GiB")
+	}
+	if entry.Filename == "" {
+		entry.Filename = responseFilename(res, entry.URL)
+	}
+	if !validFilename(entry.Filename) {
+		return cas.Ref{}, errors.New("input has no safe filename; set filename explicitly")
 	}
 	plugin.Logger(ctx).DebugContext(ctx, "Download response", "bytes", res.ContentLength)
 	return m.Store.Import(ctx, plugin.ProgressReader(ctx, res.Body, res.ContentLength), expected)
@@ -396,22 +429,61 @@ func (m *Manager) importTree(ctx context.Context, root *os.Root, names []string,
 	return m.Store.ImportFile(ctx, staging.Name(), expected)
 }
 
-func (m *Manager) request(ctx context.Context, address, token string) (*http.Request, error) {
+func (m *Manager) request(ctx context.Context, address string, s nativeConfig) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", "stemma/0.1")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	for name, value := range s.Headers {
+		req.Header.Set(name, value)
+	}
+	if s.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+s.Token)
+	}
+	if s.Type == "http" {
+		origin, _ := url.Parse(s.URL)
+		if !sameOrigin(origin, req.URL) {
+			stripPrivateHeaders(req.Header)
+		}
 	}
 	return req, nil
+}
+
+func responseFilename(response *http.Response, original string) string {
+	if _, params, err := mime.ParseMediaType(response.Header.Get("Content-Disposition")); err == nil && validFilename(params["filename"]) {
+		return params["filename"]
+	}
+	if response.Request != nil {
+		if name := path.Base(response.Request.URL.Path); validFilename(name) {
+			return name
+		}
+	}
+	address, _ := url.Parse(original)
+	if name := path.Base(address.Path); validFilename(name) {
+		return name
+	}
+	return ""
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return a.Scheme == b.Scheme && strings.EqualFold(a.Host, b.Host)
+}
+
+func stripPrivateHeaders(headers http.Header) {
+	for name := range headers {
+		switch http.CanonicalHeaderKey(name) {
+		case "Accept", "Accept-Encoding", "Accept-Language", "User-Agent":
+		default:
+			headers.Del(name)
+		}
+	}
 }
 
 func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEntry) (err error) {
 	done := plugin.Stage(ctx, "Discovering source release")
 	defer func() { done(err) }()
-	req, err := m.request(ctx, s.URL, s.Token)
+	req, err := m.request(ctx, s.URL, s)
 	if err != nil {
 		return err
 	}
@@ -458,7 +530,7 @@ func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry
 	if s.Release != "" && s.Release != "latest" {
 		endpoint = "https://api.github.com/repos/" + s.Repository + "/releases/tags/" + url.PathEscape(s.Release)
 	}
-	req, err := m.request(ctx, endpoint, s.Token)
+	req, err := m.request(ctx, endpoint, s)
 	if err != nil {
 		return err
 	}
@@ -504,7 +576,7 @@ func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry
 }
 
 func validFilename(name string) bool {
-	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, "/\\\x00\r\n") && filepath.IsLocal(name)
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, "/\\:") && strings.IndexFunc(name, unicode.IsControl) < 0 && filepath.IsLocal(name)
 }
 
 // Redirect targets may contain temporary credentials. Do not include their URLs

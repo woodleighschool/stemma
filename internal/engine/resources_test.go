@@ -90,6 +90,15 @@ spec:
 		t.Fatalf("build dependency not prepared: %+v", first)
 	}
 	original := first.Resources[0].Artifacts["installer"].Payload
+	for _, resource := range first.Resources {
+		if artifact := resource.Artifacts["installer"]; artifact.Filename != "branding-1.0.pkg" || artifact.Payload != original {
+			t.Fatalf("resource lost the named, unchanged installer: %+v", artifact)
+		}
+	}
+	installers, err := filepath.Glob(filepath.Join(root, "repo", "pkgs", "stemma", "*", "branding-1.0.pkg"))
+	if err != nil || len(installers) != 1 {
+		t.Fatalf("published installer name: %v %v", installers, err)
+	}
 	write(strings.Replace(manifest, "description: original", "description: edited", 1))
 	edited, err := Run(t.Context(), options)
 	if err != nil {

@@ -38,6 +38,7 @@ func TestSetupTreePublicationAndEntrypointIdentity(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
 	req.Artifact = treeArtifact(t)
+	req.Artifact.Version = "4.2"
 	desired, _ := validateMetadata(req.Metadata)
 	delete(desired, "assignments")
 	desired["content"] = object{"setup_file": `bin\setup.cmd`}
@@ -48,7 +49,7 @@ func TestSetupTreePublicationAndEntrypointIdentity(t *testing.T) {
 	first := readBinding(t, response.Binding)
 	fake.mu.Lock()
 	payload := bytes.Clone(fake.plaintext)
-	if fake.app["setupFilePath"] != `bin\setup.cmd` || fake.app["fileName"] != "setup.intunewin" || fake.app["content"] != nil {
+	if fake.app["setupFilePath"] != `bin\setup.cmd` || fake.app["fileName"] != "test-4.2.intunewin" || fake.app["content"] != nil {
 		t.Fatalf("provider content options leaked or incorrect Graph entrypoint: %+v", fake.app)
 	}
 	fake.mu.Unlock()
