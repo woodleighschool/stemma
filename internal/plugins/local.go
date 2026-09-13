@@ -61,11 +61,12 @@ func (s *Store) Load(ctx context.Context, root string, declaration config.Plugin
 }
 
 // Install resolves registry images explicitly; local sources follow their files.
-func (s *Store) Install(ctx context.Context, root string, declarations map[string]config.Plugin, previous map[string]Entry, refresh bool) (map[string]Entry, error) {
+func (s *Store) Install(ctx context.Context, root string, declarations map[string]config.Plugin, previous map[string]Entry, refresh bool) (result map[string]Entry, runErr error) {
 	entries := make(map[string]Entry, len(declarations))
 	for _, name := range slices.Sorted(maps.Keys(declarations)) {
 		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("plugin", name))
-		plugin.Stage(ctx, "Installing plugin")
+		done := plugin.Stage(ctx, "Installing plugin")
+		defer func() { done(runErr) }()
 		declaration := declarations[name]
 		entry := previous[name]
 		if declaration.Image != "" && (refresh || entry.Validate(declaration.Image) != nil) {
@@ -79,6 +80,7 @@ func (s *Store) Install(ctx context.Context, root string, declarations map[strin
 		if err != nil {
 			return nil, fmt.Errorf("plugin %s: %w", name, err)
 		}
+		done(nil)
 		entries[name] = entry
 	}
 	return entries, nil

@@ -71,8 +71,9 @@ var packageIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
 // Build writes a new unsigned PKG outside root without changing the input tree.
 // It supports ordinary payload files/directories and declared install hooks.
 // Relative symlinks are retained; unrepresentable filesystem metadata is rejected.
-func Build(ctx context.Context, root, output string, opts Options) error {
-	plugin.Stage(ctx, "Building Apple package")
+func Build(ctx context.Context, root, output string, opts Options) (err error) {
+	done := plugin.Stage(ctx, "Building Apple package")
+	defer func() { done(err) }()
 	if err := Validate(opts); err != nil {
 		return err
 	}
@@ -83,7 +84,7 @@ func Build(ctx context.Context, root, output string, opts Options) error {
 	if generated.IsZero() {
 		generated = time.Now()
 	}
-	generated, err := packageTime(generated, time.Time{})
+	generated, err = packageTime(generated, time.Time{})
 	if err != nil {
 		return err
 	}

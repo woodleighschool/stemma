@@ -53,8 +53,9 @@ func Open(dir string) (*Store, error) {
 }
 
 // Lease prevents garbage collection while a run is active. OS locks release after crashes.
-func (s *Store) Lease(ctx context.Context) (func() error, error) {
-	plugin.Stage(ctx, "Acquiring cache lease")
+func (s *Store) Lease(ctx context.Context) (release func() error, err error) {
+	done := plugin.Stage(ctx, "Acquiring cache lease")
+	defer func() { done(err) }()
 	l := flock.New(filepath.Join(s.Dir, "cache.lock"))
 	ok, err := l.TryRLockContext(ctx, 50*time.Millisecond)
 	if err != nil {

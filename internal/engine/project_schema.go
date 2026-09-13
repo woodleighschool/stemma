@@ -9,8 +9,9 @@ import (
 
 // ProjectSchema describes trusted operations without acquiring software inputs
 // or contacting destinations. Offline requires verified cached plugin bundles.
-func ProjectSchema(ctx context.Context, opts Options) ([]byte, error) {
-	plugin.Stage(ctx, "Generating project schema")
+func ProjectSchema(ctx context.Context, opts Options) (result []byte, err error) {
+	done := plugin.Stage(ctx, "Generating project schema")
+	defer func() { done(err) }()
 	project, err := config.LoadSchemaProject(opts.ConfigPath)
 	if err != nil {
 		return nil, err

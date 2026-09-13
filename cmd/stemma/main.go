@@ -7,11 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -38,6 +36,9 @@ func main() {
 	err := cmd.ExecuteContext(ctx)
 	finish(err)
 	cancel()
+	if errors.Is(err, context.Canceled) {
+		os.Exit(130)
+	}
 	if err != nil {
 		os.Exit(1)
 	}
@@ -131,15 +132,9 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 				return err
 			}
 
-			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Resources: args, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply", Refresh: method == "update", Offline: offline}})
-			if output == "json" {
-				if err := writeJSON(out, report); err != nil {
-					return errors.Join(runErr, err)
-				}
-			} else {
-				if err := printReport(out, method, report); err != nil {
-					return errors.Join(runErr, err)
-				}
+			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Resources: args, ResourceDone: func(resource engine.ResourceReport) error { return display.resourceDone(out, output, method, resource) }, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply", Refresh: method == "update", Offline: offline}})
+			if err := display.report(out, output, method, report, runErr); err != nil {
+				return errors.Join(runErr, err)
 			}
 			return runErr
 		}}
@@ -150,8 +145,9 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	root.AddCommand(&cobra.Command{Use: "inspect FILE", Short: "Read artifact metadata without executing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		switch strings.ToLower(filepath.Ext(args[0])) {
 		case ".intunewin":
-			plugin.Stage(cmd.Context(), "Inspecting artifact")
+			done := plugin.Stage(cmd.Context(), "Inspecting artifact")
 			value, err := intunewin.Inspect(args[0])
+			done(err)
 			if err != nil {
 				return err
 			}
@@ -174,8 +170,9 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		_, err = fmt.Fprintln(out, store.Dir)
 		return err
 	}})
-	cache.AddCommand(&cobra.Command{Use: "prune", Short: "Remove cached objects after active runs finish", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		plugin.Stage(cmd.Context(), "Pruning cache; waiting for active runs")
+	cache.AddCommand(&cobra.Command{Use: "prune", Short: "Remove cached objects after active runs finish", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) (runErr error) {
+		done := plugin.Stage(cmd.Context(), "Pruning cache; waiting for active runs")
+		defer func() { done(runErr) }()
 		store, err := cas.Open(cacheDir)
 		if err != nil {
 			return err
@@ -197,7 +194,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	}})
 	for _, method := range []string{"install", "update"} {
 		plugins.AddCommand(&cobra.Command{Use: method, Short: "Resolve plugin images and lock their release indexes", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-			plugin.Stage(cmd.Context(), "Loading plugin declarations")
+			plugin.Logger(cmd.Context()).DebugContext(cmd.Context(), "Loading plugin declarations")
 			path, err := resolve()
 			if err != nil {
 				return err
@@ -299,49 +296,4 @@ func writeJSON(out io.Writer, value any) error {
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(value)
-}
-func printReport(out io.Writer, method string, r engine.Report) error {
-	var text strings.Builder
-	if (method == "update" || method == "prepare") && r.LockChanged != nil {
-		if *r.LockChanged {
-			text.WriteString("Lockfile updated.\n")
-		} else {
-			text.WriteString("Lockfile unchanged.\n")
-		}
-	}
-	for _, software := range r.Resources {
-		identity := software.Kind + "/" + software.Name
-		if software.Kind == "" {
-			identity = software.Name
-		}
-		switch {
-		case software.Error != "":
-			_, _ = fmt.Fprintf(&text, "%s: failed: %s\n", identity, software.Error)
-		case software.Cached:
-			_, _ = fmt.Fprintf(&text, "%s: cached\n", identity)
-		default:
-			_, _ = fmt.Fprintf(&text, "%s: prepared\n", identity)
-		}
-		for _, name := range slices.Sorted(maps.Keys(software.Artifacts)) {
-			artifact := software.Artifacts[name]
-			_, _ = fmt.Fprintf(&text, "  %s: %s\n", name, strings.TrimSpace(artifact.Filename+" "+artifact.Version))
-		}
-		for _, destination := range software.Destinations {
-			switch {
-			case destination.Error != "":
-				_, _ = fmt.Fprintf(&text, "  %s: failed: %s\n", destination.Name, destination.Error)
-			case destination.Applied:
-				_, _ = fmt.Fprintf(&text, "  %s: applied (%d changes)\n", destination.Name, len(destination.Changes))
-			case len(destination.Changes) == 0:
-				_, _ = fmt.Fprintf(&text, "  %s: unchanged\n", destination.Name)
-			default:
-				_, _ = fmt.Fprintf(&text, "  %s: %d changes\n", destination.Name, len(destination.Changes))
-			}
-			for _, change := range destination.Changes {
-				_, _ = fmt.Fprintf(&text, "    %s %s\n", change.Action, change.Field)
-			}
-		}
-	}
-	_, err := io.WriteString(out, text.String())
-	return err
 }

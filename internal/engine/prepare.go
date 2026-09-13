@@ -55,8 +55,9 @@ func materialize(ctx context.Context, store *cas.Store, p Prepared, work string)
 }
 
 // Inspect reads complete supported artifact facts without acquisition or publication.
-func Inspect(ctx context.Context, path string) (Prepared, error) {
-	plugin.Stage(ctx, "Inspecting artifact")
+func Inspect(ctx context.Context, path string) (result Prepared, err error) {
+	done := plugin.Stage(ctx, "Inspecting artifact")
+	defer func() { done(err) }()
 	p, err := inspect(ctx, path)
 	if err != nil {
 		return p, err

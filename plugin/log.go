@@ -3,6 +3,8 @@ package plugin
 import (
 	"context"
 	"log/slog"
+	"sync"
+	"time"
 )
 
 type loggerKey struct{}
@@ -22,7 +24,22 @@ func Logger(ctx context.Context) *slog.Logger {
 	return slog.New(slog.DiscardHandler)
 }
 
-// Stage reports the current activity. It does not imply completion or success.
-func Stage(ctx context.Context, message string) {
-	Logger(ctx).InfoContext(ctx, message, "stage", true)
+// Stage starts an operation and returns its completion function. Call the function
+// with the operation error; optional attributes describe its measured result.
+// Nested stages finish independently of their enclosing operation. The first
+// completion call wins; subsequent calls have no effect.
+func Stage(ctx context.Context, message string) func(error, ...any) {
+	logger := Logger(ctx)
+	started := time.Now()
+	logger.InfoContext(ctx, message, "stage", true)
+	var once sync.Once
+	return func(err error, attrs ...any) {
+		once.Do(func() {
+			args := []any{"stage_result", true, "elapsed", time.Since(started).Round(time.Millisecond)}
+			if err != nil {
+				args = append(args, "error", err)
+			}
+			logger.InfoContext(ctx, message, append(args, attrs...)...)
+		})
+	}
 }

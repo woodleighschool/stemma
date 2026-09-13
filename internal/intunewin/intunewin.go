@@ -31,8 +31,9 @@ func ValidateSource(ctx context.Context, sourceDir, setupFile string) error {
 // SetupFile may be source-relative or absolute. OutputPath must be outside the
 // source tree and must not exist. Temporary files are removed on failure.
 // Payload identity ignores source timestamps and normalizes Windows file modes.
-func Write(ctx context.Context, sourceDir, setupFile, outputPath string) (Metadata, error) {
-	plugin.Stage(ctx, "Packaging Intune content")
+func Write(ctx context.Context, sourceDir, setupFile, outputPath string) (result Metadata, err error) {
+	done := plugin.Stage(ctx, "Packaging Intune content")
+	defer func() { done(err) }()
 	var m Metadata
 	if err := ctx.Err(); err != nil {
 		return m, err

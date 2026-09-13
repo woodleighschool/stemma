@@ -27,8 +27,9 @@ import (
 
 // Catalog describes built-in and installed plugin operations without acquiring
 // software inputs or contacting destinations. Trusted plugin discovery executes code.
-func Catalog(ctx context.Context, opts Options) (plugin.Descriptor, error) {
-	plugin.Stage(ctx, "Loading operation contracts")
+func Catalog(ctx context.Context, opts Options) (result plugin.Descriptor, err error) {
+	done := plugin.Stage(ctx, "Loading operation contracts")
+	defer func() { done(err) }()
 	p, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		return plugin.Descriptor{}, err
@@ -43,8 +44,9 @@ func Catalog(ctx context.Context, opts Options) (plugin.Descriptor, error) {
 
 // ValidateProject checks authored fields and available operation contracts.
 // Values that depend on artifacts are validated after preparation.
-func ValidateProject(ctx context.Context, opts Options) (config.Project, error) {
-	plugin.Stage(ctx, "Validating project")
+func ValidateProject(ctx context.Context, opts Options) (result config.Project, err error) {
+	done := plugin.Stage(ctx, "Validating project")
+	defer func() { done(err) }()
 	p, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		return p, err
@@ -256,7 +258,7 @@ func (o *operations) call(ctx context.Context, name, method string, input, outpu
 	return callErr
 }
 
-func loadOperations(ctx context.Context, p config.Project, manager *source.Manager, work string, handlers map[string]reconcileHandler, frozen bool) (*operations, error) {
+func loadOperations(ctx context.Context, p config.Project, manager *source.Manager, work string, handlers map[string]reconcileHandler, frozen bool) (result *operations, runErr error) {
 	ops, err := builtins(handlers)
 	if err != nil || len(p.Plugins) == 0 {
 		return ops, err
@@ -274,7 +276,8 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 	pluginStore := plugins.New(manager.Store, manager.Offline)
 	for _, name := range names {
 		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("plugin", name))
-		plugin.Stage(ctx, "Loading plugin")
+		done := plugin.Stage(ctx, "Loading plugin")
+		defer func() { done(runErr) }()
 		provider := p.Plugins[name]
 		bundle, entry, err := pluginStore.Load(ctx, manager.Root, provider, locked.Plugins[name], frozen)
 		if err != nil {
@@ -307,6 +310,7 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 				Descriptor plugin.Descriptor
 			}{bundle.Manifest, descriptor})
 		}
+		done(nil)
 	}
 	return ops, nil
 }

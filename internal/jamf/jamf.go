@@ -624,23 +624,31 @@ func (c *client) merge(ctx context.Context, current *observed, changes map[strin
 	return readback, nil
 }
 
-func (c *client) upload(ctx context.Context, id, file string, content payload) error {
-	plugin.Stage(ctx, "Uploading Jamf package")
+func (c *client) upload(ctx context.Context, id, file string, content payload) (err error) {
+	done := plugin.Stage(ctx, "Uploading Jamf package")
+	defer func() { done(err) }()
 	f, err := os.Open(file)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = f.Close() }()
 	// UploadV1 uses the local basename; Stemma's identity marker is the remote filename.
+	var lastProgress time.Time
 	response, err := c.transport.NewRequest(ctx).
 		SetHeader("Accept", constants.ApplicationJSON).
-		SetMultipartFile("file", content.filename, f, content.size, nil).
+		SetMultipartFile("file", content.filename, f, content.size, func(_, _ string, current, total int64) {
+			if current == total || time.Since(lastProgress) >= 250*time.Millisecond {
+				plugin.Logger(ctx).InfoContext(ctx, "Transfer progress", "progress", true, "current", current, "total", total, "unit", "bytes", "progress_final", current == total)
+				lastProgress = time.Now()
+			}
+		}).
 		Post(packagePath + "/" + id + "/upload")
 	return requestError(ctx, response, err)
 }
 
-func (c *client) awaitContent(ctx context.Context, id string, content payload) (*observed, error) {
-	plugin.Stage(ctx, "Waiting for Jamf processing")
+func (c *client) awaitContent(ctx context.Context, id string, content payload) (result *observed, err error) {
+	done := plugin.Stage(ctx, "Waiting for Jamf processing")
+	defer func() { done(err) }()
 	for attempt := range 31 {
 		current, err := c.get(ctx, id)
 		if err != nil {

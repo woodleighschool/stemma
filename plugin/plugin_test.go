@@ -56,7 +56,7 @@ func TestExecutableProtocol(t *testing.T) {
 		if err := <-result; err != nil {
 			t.Fatal(err)
 		}
-		if text := logs.String(); strings.Contains(text, "Fixture request") || !strings.Contains(text, `"resource":"fixture"`) {
+		if text := logs.String(); strings.Contains(text, "Fixture request") || !strings.Contains(text, `"resource":"fixture"`) || !strings.Contains(text, `"current":3`) || !strings.Contains(text, `"total":7`) {
 			t.Fatalf("plugin lost caller scope or log filtering: %s", text)
 		}
 		var debug bytes.Buffer

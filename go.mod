@@ -3,6 +3,8 @@ module github.com/woodleighschool/stemma
 go 1.27.0
 
 require (
+	charm.land/bubbles/v2 v2.2.1
+	charm.land/bubbletea/v2 v2.0.9
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.1
@@ -10,11 +12,14 @@ require (
 	github.com/deploymenttheory/go-apfs-v2 v0.3.0
 	github.com/deploymenttheory/go-macos-pkg v0.5.0
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
+	github.com/dustin/go-humanize v1.0.1
 	github.com/ebitengine/purego v0.11.0
+	github.com/fatih/color v1.19.0
 	github.com/gofrs/flock v0.13.1
 	github.com/invopop/jsonschema v0.14.0
 	github.com/klauspost/compress v1.20.0
 	github.com/lmittmann/tint v1.2.0
+	github.com/mattn/go-runewidth v0.0.30
 	github.com/mholt/archives v0.1.5
 	github.com/microsoft/kiota-abstractions-go v1.10.1
 	github.com/microsoft/kiota-http-go v1.5.6
@@ -31,7 +36,6 @@ require (
 	github.com/smallstep/pkcs7 v0.2.3
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.16
-	github.com/vbauerster/mpb/v8 v8.16.1
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
 	golang.org/x/sys v0.48.0
@@ -43,11 +47,10 @@ require (
 )
 
 require (
+	charm.land/lipgloss/v2 v2.0.5 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.9.0 // indirect
 	github.com/STARRY-S/zip v0.2.3 // indirect
-	github.com/VividCortex/ewma v1.2.0 // indirect
-	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/andybalholm/brotli v1.2.4 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/bodgit/plumbing v1.3.0 // indirect
@@ -55,6 +58,13 @@ require (
 	github.com/bodgit/windows v1.0.1 // indirect
 	github.com/buger/jsonparser v1.6.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/charmbracelet/colorprofile v0.4.3 // indirect
+	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7 // indirect
+	github.com/charmbracelet/x/ansi v0.11.7 // indirect
+	github.com/charmbracelet/x/term v0.2.2 // indirect
+	github.com/charmbracelet/x/termios v0.1.1 // indirect
+	github.com/charmbracelet/x/windows v0.2.2 // indirect
+	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
@@ -67,18 +77,22 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
-	github.com/mattn/go-runewidth v0.0.30 // indirect
+	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
+	github.com/mattn/go-colorable v0.1.14 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/microsoft/kiota-authentication-azure-go v1.3.1 // indirect
 	github.com/minio/minlz v1.2.0 // indirect
+	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/nwaples/rardecode/v2 v2.4.1 // indirect
 	github.com/pierrec/lz4/v4 v4.1.29 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sorairolake/lzip-go v0.3.8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/stangelandcl/ppmd v0.1.1 // indirect
 	github.com/std-uritemplate/std-uritemplate/go/v2 v2.0.12 // indirect
-	github.com/vbauerster/cupwriter v0.0.4 // indirect
+	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0 // indirect
 	go.opentelemetry.io/otel v1.46.0 // indirect

@@ -389,3 +389,42 @@ func TestSelectedInputsPreserveOtherReviewedResources(t *testing.T) {
 		t.Fatalf("selected input removal lost another reviewed resource: %v", err)
 	}
 }
+
+func TestIncrementalAcquisitionCommitsOnlyCompleteUncancelledUpdates(t *testing.T) {
+	m := manager(t)
+	inputs := map[string]map[string]plugin.Input{}
+	for _, name := range []string{"a", "b"} {
+		if err := os.WriteFile(filepath.Join(m.Root, name), []byte("original"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		inputs[name] = map[string]plugin.Input{"source": {Resolver: "file", Config: map[string]any{"path": name}}}
+	}
+	if _, err := Prepare(t.Context(), m.Root, inputs, nil, m, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	before := lockedBytes(t, m)
+	if err := os.WriteFile(filepath.Join(m.Root, "a"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	update, err := Begin(t.Context(), m.Root, inputs, nil, m, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := update.Acquire(t.Context(), "a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := update.Commit(t.Context()); err == nil || !bytes.Equal(before, lockedBytes(t, m)) {
+		t.Fatal("incomplete acquisition replaced the reviewed lockfile")
+	}
+	if _, _, err := update.Acquire(t.Context(), "b"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := update.Commit(ctx); !errors.Is(err, context.Canceled) || !bytes.Equal(before, lockedBytes(t, m)) {
+		t.Fatal("cancelled acquisition replaced the reviewed lockfile")
+	}
+	if _, err := update.Commit(t.Context()); err != nil || bytes.Equal(before, lockedBytes(t, m)) {
+		t.Fatalf("complete acquisition did not commit: %v", err)
+	}
+}

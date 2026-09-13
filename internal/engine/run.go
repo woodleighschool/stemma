@@ -29,6 +29,8 @@ type Options struct {
 	Resources                      []string
 	Lock                           lockfile.Options
 	Handlers                       map[string]reconcileHandler
+	// ResourceDone receives each final resource result, including failures.
+	ResourceDone func(ResourceReport) error
 }
 
 // Report distinguishes source, preparation and each destination's work.
@@ -80,13 +82,15 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			report.Error = runErr.Error()
 		}
 	}()
-	plugin.Stage(ctx, "Loading project")
+	done := plugin.Stage(ctx, "Loading project")
+	defer func() { done(runErr) }()
 	switch opts.Method {
 	case "update", "prepare", "plan", "apply":
 	default:
 		return report, fmt.Errorf("unsupported run method %q", opts.Method)
 	}
 	p, err := config.Load(opts.ConfigPath)
+	done(err)
 	if err != nil {
 		return report, err
 	}
@@ -121,7 +125,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err != nil {
 		return report, err
 	}
-	plugin.Stage(ctx, "Validating operation contracts")
+	done = plugin.Stage(ctx, "Validating operation contracts")
 	plans, err := discover(ctx, p, ops)
 	if err != nil {
 		return report, err
@@ -140,7 +144,8 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err != nil {
 		return report, err
 	}
-	plugin.Logger(ctx).InfoContext(ctx, "Resources selected", "count", len(selected))
+	done(nil)
+	plugin.Logger(ctx).DebugContext(ctx, "Resources selected", "count", len(selected))
 	declarations := map[string]map[string]plugin.Input{}
 	for _, key := range selected {
 		declarations[key] = map[string]plugin.Input{}
@@ -151,13 +156,46 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		}
 	}
 	opts.Lock.PreserveUnselected = len(opts.Resources) > 0
-	locked, err := lockfile.Prepare(ctx, root, declarations, ops.plugins, manager, opts.Lock)
+	locked, err := lockfile.Begin(ctx, root, declarations, ops.plugins, manager, opts.Lock)
 	if err != nil {
 		return report, err
 	}
-	report.LockChanged = &locked.Changed
+	if opts.Lock.Frozen {
+		// Verify every reviewed input before any destination can be written.
+		reviewCtx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("phase", "review"))
+		done = plugin.Stage(reviewCtx, "Verifying reviewed inputs")
+		for _, key := range selected {
+			if _, _, err := locked.Acquire(reviewCtx, key); err != nil {
+				return report, err
+			}
+		}
+		result, err := locked.Commit(ctx)
+		if err != nil {
+			return report, err
+		}
+		report.LockChanged = &result.Changed
+		done(nil)
+	}
 	if opts.Method == "update" {
-		return report, nil
+		for _, key := range selected {
+			_, hits, err := locked.Acquire(ctx, key)
+			if err != nil {
+				return report, err
+			}
+			resource := plans[key].Resource
+			item := ResourceReport{Name: resource.Metadata.Name, Kind: resource.Kind, Key: key, InputCacheHits: hits}
+			report.Resources = append(report.Resources, item)
+			if opts.ResourceDone != nil {
+				if err := opts.ResourceDone(item); err != nil {
+					return report, err
+				}
+			}
+		}
+		result, err := locked.Commit(ctx)
+		if err == nil {
+			report.LockChanged = &result.Changed
+		}
+		return report, err
 	}
 	stateDir := opts.StateDir
 	if stateDir == "" {
@@ -165,7 +203,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	statePath := filepath.Join(stateDir, p.Project+".json")
 	if opts.Method == "apply" {
-		plugin.Stage(ctx, "Acquiring destination state lock")
+		done = plugin.Stage(ctx, "Acquiring destination state lock")
 		if err := os.MkdirAll(stateDir, 0o700); err != nil {
 			return report, err
 		}
@@ -177,6 +215,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		if !ok {
 			return report, ctx.Err()
 		}
+		done(nil)
 		defer func() { _ = lock.Close() }()
 	}
 	current, err := loadState(statePath, p.Project)
@@ -190,40 +229,73 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		ready   bool
 	}
 	preparedItems := map[string]preparedResource{}
-	var failures []error
-	for _, key := range selected {
-		plan := plans[key]
-		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", plan.Resource.Kind+"/"+plan.Resource.Metadata.Name))
-		plugin.Stage(ctx, "Preparing resource")
-		started := time.Now()
-		item := ResourceReport{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Key: key, InputCacheHits: locked.CacheHits[key]}
-		work, err := os.MkdirTemp(filepath.Join(store.Dir, "work"), "resource-*")
-		if err != nil {
-			return report, err
+	pending := map[string]int{}
+	for _, destination := range destinations {
+		pending[destination.Resource]++
+	}
+	complete := func(item ResourceReport) error {
+		if opts.ResourceDone != nil {
+			return opts.ResourceDone(item)
 		}
-		defer func() { _ = os.RemoveAll(work) }()
+		return nil
+	}
+	var workdirs []string
+	defer func() {
+		for _, work := range workdirs {
+			_ = os.RemoveAll(work)
+		}
+	}()
+	var failures []error
+	var prepare func(string) error
+	prepare = func(key string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, exists := preparedItems[key]; exists {
+			return nil
+		}
+		plan := plans[key]
+		for _, name := range sortedKeys(plan.Inputs) {
+			if ref := plan.Inputs[name].Resource; ref != nil {
+				if err := prepare(ref.Key()); err != nil {
+					return err
+				}
+			}
+		}
+		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", plan.Resource.Kind+"/"+plan.Resource.Metadata.Name))
+		plugin.Logger(ctx).DebugContext(ctx, "Preparing resource")
+		started := time.Now()
+		item := ResourceReport{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Key: key}
+		entries, hits, acquisitionErr := locked.Acquire(ctx, key)
+		item.InputCacheHits = hits
+		preparationErr := acquisitionErr
+		var work string
+		if preparationErr == nil {
+			work, preparationErr = os.MkdirTemp(filepath.Join(store.Dir, "work"), "resource-*")
+			if preparationErr == nil {
+				workdirs = append(workdirs, work)
+			}
+		}
 		inputs := map[string]Prepared{}
-		var preparationErr error
-		for name, declaration := range plan.Inputs {
-			if ref := declaration.Resource; ref != nil {
-				producer := preparedItems[ref.Key()]
-				output := ref.Output
-				if output == "" {
-					output = "installer"
+		if preparationErr == nil {
+			for _, name := range sortedKeys(plan.Inputs) {
+				declaration := plan.Inputs[name]
+				if ref := declaration.Resource; ref != nil {
+					producer := preparedItems[ref.Key()]
+					output := ref.Output
+					if output == "" {
+						output = "installer"
+					}
+					artifact, ok := producer.outputs[output]
+					if !producer.ready || !ok {
+						preparationErr = fmt.Errorf("input %s requires successful %s output %s", name, ref.Key(), output)
+						break
+					}
+					inputs[name] = artifact
+				} else {
+					entry := entries[name]
+					inputs[name] = Prepared{Timestamp: entry.ResolvedAt, Payload: entry.Content.Artifact, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, InputsHash: entry.Content.Artifact.SHA256}
 				}
-				artifact, ok := producer.outputs[output]
-				if !producer.ready || !ok {
-					preparationErr = fmt.Errorf("input %s requires successful %s output %s", name, ref.Key(), output)
-					break
-				}
-				inputs[name] = artifact
-			} else {
-				entry, ok := locked.File.Inputs[key][name]
-				if !ok {
-					preparationErr = fmt.Errorf("missing locked input %s", name)
-					break
-				}
-				inputs[name] = Prepared{Timestamp: entry.ResolvedAt, Payload: entry.Content.Artifact, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, InputsHash: entry.Content.Artifact.SHA256}
 			}
 		}
 		var outputs map[string]Prepared
@@ -233,29 +305,63 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		item.Artifacts = outputs
 		if preparationErr != nil {
 			item.Error = preparationErr.Error()
-			failures = append(failures, fmt.Errorf("%s: %w", key, preparationErr))
-		}
-		if preparationErr == nil {
-			plugin.Logger(ctx).InfoContext(ctx, "Resource prepared", "cached", item.Cached, "elapsed", time.Since(started).Round(time.Millisecond))
-		} else {
-			plugin.Logger(ctx).ErrorContext(ctx, "Preparation failed", "error", preparationErr)
+			if acquisitionErr == nil && ctx.Err() == nil {
+				failures = append(failures, fmt.Errorf("%s: %w", key, preparationErr))
+			}
 		}
 		preparedItems[key] = preparedResource{work, outputs, len(report.Resources), preparationErr == nil}
 		report.Resources = append(report.Resources, item)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if preparationErr == nil {
+			artifact := outputs["installer"]
+			plugin.Logger(ctx).DebugContext(ctx, "Prepared", "artifact", artifact.Filename, "version", artifact.Version, "cached", item.Cached, "elapsed", time.Since(started).Round(time.Millisecond))
+		} else {
+			plugin.Logger(ctx).ErrorContext(ctx, "Preparation failed", "error", preparationErr)
+		}
+		if preparationErr != nil || pending[key] == 0 {
+			if err := complete(item); err != nil {
+				return errors.Join(acquisitionErr, err)
+			}
+		}
+		return acquisitionErr
 	}
-	failed := map[destinationRef]bool{}
-	for _, destination := range destinations {
+	failed, reconciled := map[destinationRef]bool{}, map[destinationRef]bool{}
+	var reconcile func(destinationRef) error
+	reconcile = func(destination destinationRef) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if reconciled[destination] {
+			return nil
+		}
+		if opts.Method != "prepare" {
+			for _, dependency := range dependencies[destination] {
+				if _, selected := declarations[dependency.Resource]; selected {
+					if err := reconcile(dependency); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if err := prepare(destination.Resource); err != nil {
+			return err
+		}
 		prepared := preparedItems[destination.Resource]
 		item := &report.Resources[prepared.report]
+		reconciled[destination] = true
 		if !prepared.ready {
 			failed[destination] = true
-			continue
+			return nil
 		}
 		var destinationErr error
-		for _, dependency := range dependencies[destination] {
-			if failed[dependency] {
-				destinationErr = fmt.Errorf("required publication %s/%s failed", dependency.Resource, dependency.Destination)
-				break
+		if opts.Method != "prepare" {
+			for _, dependency := range dependencies[destination] {
+				if failed[dependency] {
+					destinationErr = fmt.Errorf("required publication %s/%s failed", dependency.Resource, dependency.Destination)
+					break
+				}
 			}
 		}
 		before := len(item.Destinations)
@@ -263,7 +369,6 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			destinationErr = reconcileDestination(ctx, opts, p, plans, ops, store, root, prepared.work, destination.Resource, destination.Destination, prepared.outputs, &current, statePath, item)
 		}
 		if destinationErr != nil {
-			plugin.Logger(ctx).ErrorContext(ctx, "Destination failed", "resource", destination.Resource, "destination", destination.Destination, "error", destinationErr)
 			failed[destination] = true
 			if len(item.Destinations) == before {
 				item.Destinations = append(item.Destinations, DestinationReport{Name: destination.Destination, Error: destinationErr.Error()})
@@ -273,8 +378,40 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			} else {
 				item.Error += "\n" + destinationErr.Error()
 			}
-			failures = append(failures, fmt.Errorf("%s/%s: %w", destination.Resource, destination.Destination, destinationErr))
+			if ctx.Err() == nil {
+				failures = append(failures, fmt.Errorf("%s/%s: %w", destination.Resource, destination.Destination, destinationErr))
+			}
 		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if destinationErr != nil {
+			plugin.Logger(ctx).ErrorContext(ctx, "Destination failed", "resource", item.Kind+"/"+item.Name, "destination", destination.Destination, "error", destinationErr)
+		}
+		pending[destination.Resource]--
+		if pending[destination.Resource] == 0 {
+			return complete(*item)
+		}
+		return nil
+	}
+	for _, key := range selected {
+		if len(plans[key].Destinations) == 0 {
+			if err := prepare(key); err != nil {
+				return report, errors.Join(append(failures, err)...)
+			}
+		}
+		for _, destination := range sortedKeys(plans[key].Destinations) {
+			if err := reconcile(destinationRef{key, destination}); err != nil {
+				return report, errors.Join(append(failures, err)...)
+			}
+		}
+	}
+	if !opts.Lock.Frozen {
+		result, err := locked.Commit(ctx)
+		if err != nil {
+			return report, errors.Join(append(failures, err)...)
+		}
+		report.LockChanged = &result.Changed
 	}
 	return report, errors.Join(failures...)
 }
@@ -286,10 +423,11 @@ type destinationInput struct {
 	report   DestinationReport
 }
 
-func reconcileDestination(ctx context.Context, opts Options, p config.Project, plans map[string]resourcePlan, ops *operations, store *cas.Store, root, work, name, destination string, outputs map[string]Prepared, current *state, statePath string, item *ResourceReport) error {
+func reconcileDestination(ctx context.Context, opts Options, p config.Project, plans map[string]resourcePlan, ops *operations, store *cas.Store, root, work, name, destination string, outputs map[string]Prepared, current *state, statePath string, item *ResourceReport) (runErr error) {
 	software := plans[name]
 	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", software.Resource.Kind+"/"+software.Resource.Metadata.Name, "destination", destination))
-	plugin.Stage(ctx, "Validating destination")
+	done := plugin.Stage(ctx, "Validating destination")
+	defer func() { done(runErr) }()
 	prepared, present := outputs["installer"]
 	if reference, ok := software.Destinations[destination]["installer"].(string); ok {
 		prepared, present = outputs[reference]
@@ -356,16 +494,15 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 	if opts.Method == "prepare" {
 		return nil
 	}
-	plugin.Stage(ctx, "Planning destination")
+	done(nil)
+	done = plugin.Stage(ctx, "Planning destination")
 	input.request.Method = "plan"
 	var response plugin.ReconcileResponse
 	err = ops.call(ctx, d.Operation, "plan", input.request, &response)
 	input.report.Changes = response.Changes
 	input.report.Origins = mergeOrigins(input.report.Origins, response.Origins)
 	err = errors.Join(err, verifyLeases(ctx, store, work, input.request))
-	if err == nil {
-		plugin.Logger(ctx).InfoContext(ctx, "Destination planned", "changes", len(response.Changes))
-	}
+	done(err, "changes", len(response.Changes))
 	if err == nil && opts.Method == "apply" {
 		input.report, err = deliver(ctx, ops, p, store, work, name, input, current, statePath)
 	}
@@ -399,9 +536,10 @@ func makeDestinationInput(ops *operations, p config.Project, plans map[string]re
 	return input, nil
 }
 
-func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.Store, work, software string, input destinationInput, current *state, statePath string) (DestinationReport, error) {
+func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.Store, work, software string, input destinationInput, current *state, statePath string) (result DestinationReport, runErr error) {
 	d := p.Destinations[input.name]
-	plugin.Stage(ctx, "Applying destination")
+	done := plugin.Stage(ctx, "Applying destination")
+	defer func() { done(runErr) }()
 	report := input.report
 	previous := current.Bindings[software+"/"+input.name]
 	if previous.Connection != ops.fingerprint(d) {
@@ -430,9 +568,7 @@ func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.
 			return report, errors.Join(err, saveErr)
 		}
 	}
-	if err == nil {
-		plugin.Logger(ctx).InfoContext(ctx, "Destination applied", "changes", len(report.Changes))
-	}
+	done(err, "changes", len(report.Changes))
 	return report, err
 }
 

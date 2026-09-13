@@ -237,8 +237,9 @@ func snapshotFile(ctx context.Context, artifact plugin.Artifact, source string) 
 	return nil
 }
 
-func (c *client) upload(ctx context.Context, appID, identity string, prepared *preparedArtifact, b *binding) error {
-	plugin.Stage(ctx, "Publishing Intune content")
+func (c *client) upload(ctx context.Context, appID, identity string, prepared *preparedArtifact, b *binding) (err error) {
+	done := plugin.Stage(ctx, "Publishing Intune content")
+	defer func() { done(err) }()
 	if b.Pending == nil {
 		b.Pending = &pendingUpload{PayloadSHA256: identity, Stage: "version-request"}
 		var created object
@@ -356,8 +357,9 @@ func (c *client) upload(ctx context.Context, appID, identity string, prepared *p
 	return nil
 }
 
-func (c *client) waitFile(ctx context.Context, builder *abs.BaseRequestBuilder, committed bool) (object, error) {
-	plugin.Stage(ctx, "Waiting for Intune processing")
+func (c *client) waitFile(ctx context.Context, builder *abs.BaseRequestBuilder, committed bool) (result object, err error) {
+	done := plugin.Stage(ctx, "Waiting for Intune processing")
+	defer func() { done(err) }()
 	for range 360 {
 		var file object
 		if err := c.request(ctx, abs.GET, builder, nil, &file); err != nil {
@@ -380,8 +382,9 @@ func (c *client) waitFile(ctx context.Context, builder *abs.BaseRequestBuilder, 
 	return nil, errors.New("intune file operation exceeded poll limit")
 }
 
-func (c *client) uploadBlob(ctx context.Context, sas string, prepared *preparedArtifact) error {
-	plugin.Stage(ctx, "Uploading Intune content")
+func (c *client) uploadBlob(ctx context.Context, sas string, prepared *preparedArtifact) (err error) {
+	done := plugin.Stage(ctx, "Uploading Intune content")
+	defer func() { done(err) }()
 	endpoint, err := url.Parse(sas)
 	if err != nil || endpoint.Host == "" || endpoint.User != nil || (endpoint.Scheme != "https" && (endpoint.Scheme != "http" || (endpoint.Hostname() != "localhost" && endpoint.Hostname() != "127.0.0.1"))) {
 		return errors.New("invalid Azure upload endpoint")
@@ -414,7 +417,7 @@ func (c *client) uploadBlob(ctx context.Context, sas string, prepared *preparedA
 	if err != nil {
 		return errors.New("cannot configure Azure upload")
 	}
-	_, err = blob.UploadStream(ctx, reader, &blockblob.UploadStreamOptions{BlockSize: 4 << 20, Concurrency: 1})
+	_, err = blob.UploadStream(ctx, plugin.ProgressReader(ctx, reader, prepared.metadata.EncryptedContentSize), &blockblob.UploadStreamOptions{BlockSize: 4 << 20, Concurrency: 1})
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()

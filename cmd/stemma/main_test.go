@@ -31,14 +31,17 @@ func TestReportRetainsIndependentDestinationResults(t *testing.T) {
 		},
 	}}
 	var out bytes.Buffer
-	if err := printReport(&out, "apply", report); err != nil {
-		t.Fatal(err)
+	for _, resource := range report.Resources {
+		if err := printResource(&out, "apply", resource); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, want := range []string{
-		"missing: failed: source unavailable",
+		"missing: failed",
+		"source unavailable",
 		"MacSoftware/Example",
 		"unavailable: failed: remote unavailable",
-		"local: applied (0 changes)",
+		"local: unchanged",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("report missing %q: %s", want, out.String())

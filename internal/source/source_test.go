@@ -1,8 +1,11 @@
 package source
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -175,4 +178,54 @@ func observation(t *testing.T, entry Entry) nativeObservation {
 		t.Fatal(err)
 	}
 	return value
+}
+
+func TestDownloadReportsActualBytes(t *testing.T) {
+	for _, known := range []bool{true, false} {
+		t.Run(fmt.Sprint(known), func(t *testing.T) {
+			payload := strings.Repeat("package fixture", 1024)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if known {
+					w.Header().Set("Content-Length", fmt.Sprint(len(payload)))
+				} else {
+					w.(http.Flusher).Flush()
+				}
+				_, _ = io.WriteString(w, payload)
+			}))
+			defer server.Close()
+			store, err := cas.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var logs bytes.Buffer
+			ctx := plugin.WithLogger(t.Context(), slog.New(slog.NewJSONHandler(&logs, nil)))
+			entry, err := New(store, t.TempDir(), false).Resolve(ctx, plugin.Input{Resolver: "http", Config: map[string]any{"url": server.URL + "/fixture.pkg"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if entry.Content.Artifact.Size != int64(len(payload)) {
+				t.Fatalf("artifact size %d", entry.Content.Artifact.Size)
+			}
+			decoder := json.NewDecoder(&logs)
+			found := false
+			for decoder.More() {
+				var record struct {
+					Current, Total int64
+					Final          bool `json:"progress_final"`
+				}
+				if err := decoder.Decode(&record); err != nil {
+					t.Fatal(err)
+				}
+				if record.Final {
+					found = true
+					if record.Current != int64(len(payload)) || (known && record.Total != record.Current) || (!known && record.Total != -1) {
+						t.Fatalf("transfer: %+v", record)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("download did not report its transferred bytes")
+			}
+		})
+	}
 }

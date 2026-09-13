@@ -22,8 +22,8 @@ stemma apply
 ```
 
 Commit the Project, imported family documents and `stemma.lock.yaml`. `prepare`
-records new inputs and local changes, then builds and inspects their content. It
-reuses existing remote pins; `update` explicitly refreshes upstream discovery.
+acquires, builds and validates each resource in dependency order, then atomically
+records the input observations. It reuses existing remote pins; `update` explicitly refreshes upstream discovery.
 `plan` and `apply` require unchanged, reviewed locks. A cold cache
 fetches the locked observation and verifies its bytes instead of rediscovering a
 release. `--offline` requires cached network inputs and still checks local files.
@@ -33,11 +33,17 @@ are prepared first. Use the full `apiVersion/Kind/name` when names are ambiguous
 `plan` reads destinations without mutating them. `prepare` stops before publication.
 `--output json` reports resources, immutable artifacts and individual destinations.
 
-Stages and diagnostics go to stderr. Terminals show the current stage and elapsed
-time; redirected output and CI use ordinary log lines. `--no-progress` disables
-animation. `--quiet` (`-q`) keeps warnings and errors, `--verbose` (`-v`) and
+Stages and diagnostics go to stderr. Terminals group operations beneath one resource heading. Each operation updates
+in place; successful trees collapse to the heading with the total time and final
+result. Failed operations and warnings remain expanded, and plans retain their changes. Transfers show byte counts and a percentage
+when the size is known; other work shows a spinner and elapsed time. Colours respect
+`NO_COLOR`. Redirected output and CI use log lines, with intermediate progress at
+debug level. Text reports summarize preparation and show destination changes for
+`plan` and `apply`; artifact details remain available with `--output json`.
+`--no-progress` disables animation. `--quiet` (`-q`) keeps warnings and errors, `--verbose` (`-v`) and
 `--debug` (`-d`) enable debug diagnostics, and `--log-level` selects `debug`,
 `info` (default), `warn` or `error`. These settings leave stdout reports intact.
+Cancellation stops before the next resource and leaves the reviewed lockfile intact.
 Use `--log-format json` for structured stderr logs and `--output json` for the
 final stdout report. Failed runs retain partial results and an `error`; absent
 `lock_changed` means the lockfile comparison did not complete.

@@ -253,9 +253,10 @@ func validateHTTPURL(address string) error {
 	return nil
 }
 
-func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntry, expected string) (cas.Ref, error) {
+func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntry, expected string) (result cas.Ref, err error) {
 	if s.Type == "local" {
-		plugin.Stage(ctx, "Reading local inputs")
+		done := plugin.Stage(ctx, "Reading local inputs")
+		defer func() { done(err) }()
 		project, err := os.OpenRoot(m.Root)
 		if err != nil {
 			return cas.Ref{}, err
@@ -295,7 +296,8 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntr
 		return m.importTree(ctx, root, names, expected)
 	}
 	if s.Type == "file" {
-		plugin.Stage(ctx, "Reading local input")
+		done := plugin.Stage(ctx, "Reading local input")
+		defer func() { done(err) }()
 		root, err := os.OpenRoot(m.Root)
 		if err != nil {
 			return cas.Ref{}, err
@@ -355,7 +357,8 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntr
 	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
 		return cas.Ref{}, errors.New("locked asset does not belong to the configured GitHub repository")
 	}
-	plugin.Stage(ctx, "Downloading input")
+	done := plugin.Stage(ctx, "Downloading input")
+	defer func() { done(err) }()
 	req, err := m.request(ctx, entry.URL, token)
 	if err != nil {
 		return cas.Ref{}, err
@@ -372,7 +375,7 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry nativeEntr
 		return cas.Ref{}, errors.New("download exceeds 16 GiB")
 	}
 	plugin.Logger(ctx).DebugContext(ctx, "Download response", "bytes", res.ContentLength)
-	return m.Store.Import(ctx, res.Body, expected)
+	return m.Store.Import(ctx, plugin.ProgressReader(ctx, res.Body, res.ContentLength), expected)
 }
 
 func (m *Manager) importTree(ctx context.Context, root *os.Root, names []string, expected string) (cas.Ref, error) {
@@ -404,8 +407,9 @@ func (m *Manager) request(ctx context.Context, address, token string) (*http.Req
 	return req, nil
 }
 
-func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEntry) error {
-	plugin.Stage(ctx, "Discovering source release")
+func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEntry) (err error) {
+	done := plugin.Stage(ctx, "Discovering source release")
+	defer func() { done(err) }()
 	req, err := m.request(ctx, s.URL, s.Token)
 	if err != nil {
 		return err
@@ -446,8 +450,9 @@ func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEnt
 	return nil
 }
 
-func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry) error {
-	plugin.Stage(ctx, "Discovering GitHub release")
+func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry) (err error) {
+	done := plugin.Stage(ctx, "Discovering GitHub release")
+	defer func() { done(err) }()
 	endpoint := "https://api.github.com/repos/" + s.Repository + "/releases/latest"
 	if s.Release != "" && s.Release != "latest" {
 		endpoint = "https://api.github.com/repos/" + s.Repository + "/releases/tags/" + url.PathEscape(s.Release)

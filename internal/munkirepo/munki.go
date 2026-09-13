@@ -443,8 +443,9 @@ func fileMatches(ctx context.Context, path string, artifact plugin.Artifact) (bo
 	}
 	return hex.EncodeToString(h.Sum(nil)) == artifact.SHA256, nil
 }
-func publishContent(ctx context.Context, path string, artifact plugin.Artifact) error {
-	plugin.Stage(ctx, "Publishing Munki installer")
+func publishContent(ctx context.Context, path string, artifact plugin.Artifact) (err error) {
+	done := plugin.Stage(ctx, "Publishing Munki installer")
+	defer func() { done(err) }()
 	if matches, err := fileMatches(ctx, path, artifact); err != nil || matches {
 		return err
 	}
@@ -463,7 +464,7 @@ func publishContent(ctx context.Context, path string, artifact plugin.Artifact) 
 	}
 	defer func() { _ = source.Close() }()
 	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(fileio.Reader{Context: ctx, Reader: source}, artifact.Size+1))
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(plugin.ProgressReader(ctx, fileio.Reader{Context: ctx, Reader: source}, artifact.Size), artifact.Size+1))
 	if err == nil && (n != artifact.Size || hex.EncodeToString(h.Sum(nil)) != artifact.SHA256) {
 		err = errors.New("leased artifact changed before publication")
 	}

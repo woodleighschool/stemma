@@ -181,8 +181,9 @@ func preflight(plans map[string]resourcePlan, selected []string, p config.Projec
 	return nil
 }
 
-func prepareResource(ctx context.Context, store *cas.Store, ops *operations, plan resourcePlan, inputs map[string]Prepared, work string) (map[string]Prepared, bool, error) {
-	plugin.Stage(ctx, "Checking preparation cache")
+func prepareResource(ctx context.Context, store *cas.Store, ops *operations, plan resourcePlan, inputs map[string]Prepared, work string) (result map[string]Prepared, cacheHit bool, err error) {
+	done := plugin.Stage(ctx, "Checking preparation cache")
+	defer func() { done(err) }()
 	identityInputs := map[string]plugin.Artifact{}
 	modes := map[string]uint32{}
 	var timestamp time.Time
@@ -221,7 +222,8 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			valid = valid && safeOutputName(name) && safeFilename(artifact.Filename) && store.Verify(ctx, artifact.Payload) == nil
 		}
 		if valid {
-			plugin.Stage(ctx, "Restoring cached preparation")
+			done(nil, "cached", true)
+			done = plugin.Stage(ctx, "Restoring cached preparation")
 			for name, artifact := range cached {
 				artifact.Cached = true
 				artifact, err = materialize(ctx, store, artifact, filepath.Join(work, "cached", name))
@@ -233,16 +235,17 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			return cached, true, nil
 		}
 	}
+	done(nil)
+	done = plugin.Stage(ctx, "Materializing inputs")
 	workspace := filepath.Join(work, "output")
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		return nil, false, err
 	}
-	workspace, err := filepath.EvalSymlinks(workspace)
+	workspace, err = filepath.EvalSymlinks(workspace)
 	if err != nil {
 		return nil, false, err
 	}
 	request := plugin.ResourceRequest{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp}
-	plugin.Stage(ctx, "Materializing inputs")
 	for name, input := range inputs {
 		leased, err := materialize(ctx, store, input, filepath.Join(work, "inputs", config.Fingerprint(name)))
 		if err != nil {
@@ -255,9 +258,11 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		request.Inputs[name] = leased.artifact()
 	}
 	var response plugin.ResourceResult
-	plugin.Stage(ctx, "Preparing outputs")
+	done(nil)
+	done = plugin.Stage(ctx, "Preparing outputs")
 	runErr := ops.call(ctx, plan.Operation, "run", request, &response)
-	plugin.Stage(ctx, "Verifying workspace")
+	done(runErr)
+	done = plugin.Stage(ctx, "Verifying workspace")
 	for name, input := range request.Inputs {
 		ref, err := importPath(ctx, store, input.Path, input.Tree, work)
 		if err != nil {
@@ -271,9 +276,11 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			return nil, false, errors.Join(runErr, fmt.Errorf("resource %s modified immutable input %s", plan.Resource.Reference().Key(), name))
 		}
 	}
+	done(nil)
 	if runErr != nil {
 		return nil, false, runErr
 	}
+	done = plugin.Stage(ctx, "Recording artifacts")
 	outputs := map[string]Prepared{}
 	for name, artifact := range response.Artifacts {
 		if !safeOutputName(name) {

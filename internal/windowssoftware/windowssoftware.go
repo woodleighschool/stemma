@@ -66,8 +66,9 @@ func relative(name string) bool {
 	return true
 }
 
-func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string, _ time.Time) (map[string]plugin.Artifact, error) {
-	plugin.Stage(ctx, "Preparing Windows installer")
+func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string, _ time.Time) (artifacts map[string]plugin.Artifact, err error) {
+	done := plugin.Stage(ctx, "Preparing Windows installer")
+	defer func() { done(err) }()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

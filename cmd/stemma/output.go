@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,28 +14,22 @@ import (
 
 	"github.com/lmittmann/tint"
 	"github.com/spf13/cobra"
-	"github.com/vbauerster/mpb/v8"
-	"github.com/vbauerster/mpb/v8/decor"
+	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/plugin"
-	"golang.org/x/term"
 )
 
 type commandOutput struct {
 	mu                                sync.Mutex
 	out                               io.Writer
 	logger                            *slog.Logger
-	progress                          *mpb.Progress
-	bar                               *mpb.Bar
+	progress                          *terminalProgress
 	interactive                       bool
+	style                             textStyle
 	started                           time.Time
-	stage                             atomic.Pointer[stageDisplay]
+	staged                            atomic.Bool
+	reported                          bool
 	level, format                     string
 	quiet, verbose, debug, noProgress bool
-}
-
-type stageDisplay struct {
-	label   string
-	started time.Time
 }
 
 func newCommandOutput(cmd *cobra.Command, out io.Writer) *commandOutput {
@@ -74,14 +69,13 @@ func (o *commandOutput) start(cmd *cobra.Command) error {
 	if o.format != "text" && o.format != "json" {
 		return fmt.Errorf("invalid log format %q: use text or json", o.format)
 	}
-	terminal := false
-	if file, ok := o.out.(*os.File); ok {
-		terminal = term.IsTerminal(int(file.Fd())) && os.Getenv("TERM") != "dumb"
-	}
+	terminal := terminalOutput(o.out)
+	o.style = newTextStyle(o.out)
+
 	o.interactive = terminal && !o.noProgress && o.format == "text" && os.Getenv("CI") == "" && level <= slog.LevelInfo
 	var handler slog.Handler
 	replace := func(_ []string, attr slog.Attr) slog.Attr {
-		if attr.Key == "stage" {
+		if attr.Key == "stage" || attr.Key == "progress" || attr.Key == "progress_final" || attr.Key == "stage_result" {
 			return slog.Attr{}
 		}
 		return attr
@@ -89,7 +83,7 @@ func (o *commandOutput) start(cmd *cobra.Command) error {
 	if o.format == "json" {
 		handler = slog.NewJSONHandler(o, &slog.HandlerOptions{Level: level})
 	} else {
-		handler = tint.NewTextHandler(o, &tint.Options{Level: level, NoColor: !terminal || os.Getenv("NO_COLOR") != "", TimeFormat: "15:04:05", ReplaceAttr: replace})
+		handler = tint.NewTextHandler(o, &tint.Options{Level: level, NoColor: !o.style.enabled, TimeFormat: "15:04:05", ReplaceAttr: replace})
 	}
 	o.logger = slog.New(&stageHandler{Handler: handler, output: o})
 	o.started = time.Now()
@@ -107,23 +101,21 @@ func (o *commandOutput) Write(data []byte) (int, error) {
 }
 
 func (o *commandOutput) stop() {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.progress != nil {
-		o.bar.Abort(true)
-		o.progress.Wait()
-		o.progress, o.bar = nil, nil
-	}
+	o.endProgress(nil)
 }
 
 func (o *commandOutput) finish(err error) {
-	o.stop()
+	o.endProgress(err)
+	o.interactive = false
 	if o.started.IsZero() && o.format == "json" {
 		o.logger = slog.New(slog.NewJSONHandler(o.out, nil))
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, context.Canceled):
+		o.logger.Warn("Interrupted")
+	case err != nil:
 		o.logger.Error("Command failed", "error", err)
-	} else if o.stage.Load() != nil {
+	case o.staged.Load() && !o.reported:
 		o.logger.Info("Completed", "elapsed", time.Since(o.started).Round(time.Millisecond))
 	}
 }
@@ -135,7 +127,9 @@ type reportWriter struct {
 }
 
 func (w reportWriter) Write(data []byte) (int, error) {
-	w.output.stop()
+	if terminalOutput(w.Writer) {
+		w.output.stop()
+	}
 	return w.Writer.Write(data)
 }
 
@@ -154,35 +148,91 @@ func (h *stageHandler) WithGroup(name string) slog.Handler {
 }
 
 func (h *stageHandler) Handle(ctx context.Context, record slog.Record) error {
-	stage := false
-	label := record.Message
-	read := func(attr slog.Attr) bool {
-		if attr.Key == "stage" && attr.Value.Kind() == slog.KindBool {
-			stage = attr.Value.Bool()
-		}
-		if attr.Key == "resource" || attr.Key == "destination" || attr.Key == "input" || attr.Key == "plugin" {
-			label += " · " + attr.Value.String()
-		}
-		return true
+	a := readActivity(record, h.attrs)
+	o := h.output
+	if a.stage {
+		o.staged.Store(true)
 	}
-	for _, attr := range h.attrs {
-		read(attr)
-	}
-	record.Attrs(read)
-	if stage {
-		o := h.output
+	if o.interactive && (a.stage || a.progress || a.status || record.Level >= slog.LevelWarn && a.scope != "") {
 		o.mu.Lock()
-		o.stage.Store(&stageDisplay{label: label, started: time.Now()})
-		if o.interactive {
-			if o.progress == nil {
-				o.progress = mpb.New(mpb.WithOutput(o.out), mpb.WithRefreshRate(100*time.Millisecond))
-				o.bar = o.progress.AddSpinner(0, mpb.BarWidth(1), mpb.AppendDecorators(decor.Any(func(decor.Statistics) string {
-					stage := o.stage.Load()
-					return " " + stage.label + " · " + time.Since(stage.started).Round(time.Second).String()
-				})))
-			}
+		defer o.mu.Unlock()
+		if o.progress == nil {
+			o.progress = newTerminalProgress(o.out)
 		}
-		o.mu.Unlock()
+		if a.stage || a.progress || a.status {
+			o.progress.update(a)
+		} else {
+			message := a.label
+			if a.err != "" {
+				message += ": " + a.err
+			}
+			outcome := "warning"
+			if record.Level >= slog.LevelError {
+				outcome = "failed"
+			}
+			o.progress.note(a.scope, message, outcome)
+		}
+		return nil
+	}
+	if a.progress && !a.final {
+		record.Level = slog.LevelDebug
+		if !h.Enabled(ctx, record.Level) {
+			return nil
+		}
 	}
 	return h.Handler.Handle(ctx, record)
+}
+
+func (o *commandOutput) resourceDone(out io.Writer, format, method string, resource engine.ResourceReport) error {
+	details := resource.Error != ""
+	for _, destination := range resource.Destinations {
+		details = details || destination.Error != "" || len(destination.Changes) > 0
+	}
+	if o.interactive {
+		o.mu.Lock()
+		if o.progress != nil {
+			for _, destination := range resource.Destinations {
+				for _, change := range destination.Changes {
+					o.progress.note(resourceName(resource), destination.Name+": "+change.Action+" "+change.Field, "detail")
+				}
+			}
+			o.progress.complete(resourceName(resource), resourceStatus(method, resource), resource.Error != "")
+		}
+		o.mu.Unlock()
+		if terminalOutput(out) {
+			return nil
+		}
+	}
+	if format != "json" && details {
+		return printResource(out, method, resource)
+	}
+	return nil
+}
+
+func (o *commandOutput) report(out io.Writer, format, method string, report engine.Report, runErr error) error {
+	o.endProgress(runErr)
+	o.reported = true
+	if format == "json" {
+		return writeJSON(out, report)
+	}
+	if errors.Is(runErr, context.Canceled) {
+		return nil
+	}
+	return printSummary(out, method, report)
+}
+
+func (o *commandOutput) endProgress(err error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.progress != nil {
+		outcome := ""
+		if err != nil {
+			outcome = "not completed"
+		}
+		if errors.Is(err, context.Canceled) {
+			outcome = "interrupted"
+		}
+		o.progress.stop(outcome)
+		o.progress = nil
+	}
 }

@@ -44,13 +44,14 @@ type Result struct {
 }
 
 // Lock serializes project operations and releases automatically after a process crash.
-func Lock(ctx context.Context, root string) (func() error, error) {
+func Lock(ctx context.Context, root string) (unlock func() error, err error) {
 	dir := filepath.Join(root, ".stemma")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
 	l := flock.New(filepath.Join(dir, "project.lock"))
-	plugin.Stage(ctx, "Acquiring project lock")
+	done := plugin.Stage(ctx, "Acquiring project lock")
+	defer func() { done(err) }()
 	ok, err := l.TryLockContext(ctx, 50*time.Millisecond)
 	if err != nil {
 		return nil, err
@@ -99,19 +100,32 @@ func Load(path string) (File, error) {
 	return f, nil
 }
 
-// Prepare obtains exactly the required inputs, then replaces the lockfile atomically.
-// A failed resolution never writes a partially updated lockfile.
-func Prepare(ctx context.Context, root string, inputs map[string]map[string]plugin.Input, pluginEntries map[string]plugins.Entry, m *source.Manager, opts Options) (Result, error) {
+// Update stages input observations until Commit replaces the lockfile atomically.
+// Callers hold the project lock for its lifetime.
+type Update struct {
+	result   Result
+	old      File
+	filename string
+	opts     Options
+	inputs   map[string]map[string]plugin.Input
+	acquire  func(context.Context, plugin.Input, source.Entry) (source.Entry, bool, error)
+}
+
+// Begin loads reviewed inputs without acquiring resource content.
+func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin.Input, pluginEntries map[string]plugins.Entry, m *source.Manager, opts Options) (*Update, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	result := Result{File: File{Version: 2, Inputs: map[string]map[string]source.Entry{}, Plugins: map[string]plugins.Entry{}}, CacheHits: map[string]map[string]bool{}}
 	opts.Offline = opts.Offline || m.Offline
 	manager := *m
 	manager.Offline = opts.Offline
 	m = &manager
 	if opts.Frozen && (opts.Refresh || opts.Ignore) {
-		return result, errors.New("frozen lockfile conflicts with refresh or no-lockfile")
+		return nil, errors.New("frozen lockfile conflicts with refresh or no-lockfile")
 	}
 	if opts.Offline && (opts.Refresh || opts.Ignore) {
-		return result, errors.New("offline requires a lockfile and cannot refresh")
+		return nil, errors.New("offline requires a lockfile and cannot refresh")
 	}
 	filename := filepath.Join(root, "stemma.lock.yaml")
 	old := File{}
@@ -122,7 +136,7 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 	if !opts.Ignore {
 		loaded, err := Load(filename)
 		if err != nil && (!errors.Is(err, os.ErrNotExist) || requiresLock && (opts.Frozen || opts.Offline)) {
-			return result, fmt.Errorf("lockfile: %w", err)
+			return nil, fmt.Errorf("lockfile: %w", err)
 		}
 		old = loaded
 	}
@@ -190,37 +204,65 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 		if result.File.Inputs == nil {
 			result.File.Inputs = map[string]map[string]source.Entry{}
 		}
-	} else {
-		for _, resource := range names(inputs) {
-			if len(inputs[resource]) == 0 {
-				continue
-			}
-			if resource == "" {
-				return result, errors.New("inputs require a resource identity")
-			}
-			result.File.Inputs[resource] = map[string]source.Entry{}
-			result.CacheHits[resource] = map[string]bool{}
-			for _, name := range names(inputs[resource]) {
-				if name == "" {
-					return result, errors.New("inputs require a name")
-				}
-				label := resource
-				if parts := strings.Split(resource, "/"); len(parts) >= 2 {
-					label = strings.Join(parts[len(parts)-2:], "/")
-				}
-				ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", label, "input", name))
-				plugin.Stage(ctx, "Acquiring input")
-				entry, hit, err := acquire(ctx, inputs[resource][name], old.Inputs[resource][name])
-				if err != nil {
-					return result, fmt.Errorf("%s input %s: %w", resource, name, err)
-				}
-				plugin.Logger(ctx).InfoContext(ctx, "Input acquired", "cached", hit)
-				result.File.Inputs[resource][name] = entry
-				result.CacheHits[resource][name] = hit
+	}
+	result.File.Plugins = pluginEntries
+	return &Update{result: result, old: old, filename: filename, opts: opts, inputs: inputs, acquire: acquire}, nil
+}
+
+// Acquire obtains one resource's inputs. Repeated calls reuse the same observation.
+func (u *Update) Acquire(ctx context.Context, resource string) (map[string]source.Entry, map[string]bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if entries, ok := u.result.File.Inputs[resource]; ok {
+		return entries, u.result.CacheHits[resource], nil
+	}
+	inputs, ok := u.inputs[resource]
+	if !ok || resource == "" {
+		return nil, nil, fmt.Errorf("unknown input resource %q", resource)
+	}
+	entries := map[string]source.Entry{}
+	hits := map[string]bool{}
+	for _, name := range names(inputs) {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		if name == "" {
+			return nil, nil, errors.New("input lock has an empty input name")
+		}
+		label := resource
+		if parts := strings.Split(resource, "/"); len(parts) >= 2 {
+			label = strings.Join(parts[len(parts)-2:], "/")
+		}
+		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", label, "input", name))
+		done := plugin.Stage(ctx, "Acquiring input")
+		entry, hit, err := u.acquire(ctx, inputs[name], u.old.Inputs[resource][name])
+		done(err, "cached", hit)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s input %s: %w", resource, name, err)
+		}
+		entries[name], hits[name] = entry, hit
+	}
+	if len(entries) > 0 {
+		u.result.File.Inputs[resource] = entries
+		u.result.CacheHits[resource] = hits
+	}
+	return entries, hits, nil
+}
+
+// Commit replaces the lockfile only after every selected input was acquired.
+func (u *Update) Commit(ctx context.Context) (Result, error) {
+	result, old, opts, filename := u.result, u.old, u.opts, u.filename
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if !opts.PluginsOnly {
+		for resource, inputs := range u.inputs {
+			if len(result.File.Inputs[resource]) != len(inputs) {
+				return result, fmt.Errorf("%s inputs were not acquired", resource)
 			}
 		}
 	}
-	result.File.Plugins = pluginEntries
 
 	empty := len(result.File.Inputs) == 0 && len(result.File.Plugins) == 0
 	if empty && old.Version == 0 {
@@ -256,6 +298,22 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 		}
 	}
 	return result, nil
+}
+
+// Prepare acquires all selected inputs and commits their observations atomically.
+func Prepare(ctx context.Context, root string, inputs map[string]map[string]plugin.Input, pluginEntries map[string]plugins.Entry, m *source.Manager, opts Options) (Result, error) {
+	update, err := Begin(ctx, root, inputs, pluginEntries, m, opts)
+	if err != nil {
+		return Result{}, err
+	}
+	if !opts.PluginsOnly {
+		for _, resource := range names(inputs) {
+			if _, _, err := update.Acquire(ctx, resource); err != nil {
+				return Result{}, err
+			}
+		}
+	}
+	return update.Commit(ctx)
 }
 
 func names[T any](m map[string]T) []string {

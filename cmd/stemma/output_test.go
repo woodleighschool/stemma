@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -124,5 +125,73 @@ spec:
 	}
 	if !strings.Contains(strings.Join(messages, "\n"), "Acquiring input") || messages[len(messages)-1] != "Command failed" {
 		t.Fatalf("missing stage or failure log: %v (error: %s)", messages, report.Error)
+	}
+}
+
+func TestInteractiveStagesDoNotBecomePermanentLogs(t *testing.T) {
+	var logs bytes.Buffer
+	output := &commandOutput{out: io.Discard, interactive: true}
+	logger := slog.New(&stageHandler{Handler: slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}), output: output})
+	ctx := plugin.WithLogger(t.Context(), logger.With("resource", "MacSoftware/example"))
+	plugin.Stage(ctx, "Inspecting application")
+	plugin.Stage(ctx, "Verifying installer")
+	plugin.Logger(ctx).InfoContext(ctx, "Resource prepared", "stage_result", true, "cached", false)
+	plugin.Logger(ctx).InfoContext(ctx, "Provider notice")
+	plugin.Logger(ctx).DebugContext(ctx, "Cache lookup")
+	plugin.Logger(ctx).WarnContext(ctx, "Verification disabled")
+	if err := output.resourceDone(io.Discard, "text", "prepare", engine.ResourceReport{Kind: "MacSoftware", Name: "example"}); err != nil {
+		t.Fatal(err)
+	}
+	output.stop()
+	for _, unwanted := range []string{"Inspecting application", "Verifying installer", "Resource prepared"} {
+		if strings.Contains(logs.String(), unwanted) {
+			t.Fatalf("live activity leaked into permanent logs: %s", logs.String())
+		}
+	}
+	for _, want := range []string{"Cache lookup", "Provider notice"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("diagnostic missing: %s", logs.String())
+		}
+	}
+}
+
+func TestPreparationReportIsASummary(t *testing.T) {
+	report := engine.Report{LockChanged: new(false), Resources: []engine.ResourceReport{
+		{Kind: "MacSoftware", Name: "example", Artifacts: map[string]engine.Prepared{"installer": {Filename: "example.pkg", Version: "1.0"}}},
+		{Kind: "MacSoftware", Name: "cached", Cached: true},
+	}}
+	var out bytes.Buffer
+	if err := printSummary(&out, "prepare", report); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := out.String(), "Preparation: 1 prepared, 1 cached, 0 failed.\nLockfile unchanged.\n"; got != want {
+		t.Fatalf("prepare repeated resource details: %q", got)
+	}
+	out.Reset()
+	if err := writeJSON(&out, report); err != nil {
+		t.Fatal(err)
+	}
+	var decoded engine.Report
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil || decoded.Resources[0].Artifacts["installer"].Filename != "example.pkg" {
+		t.Fatalf("JSON lost artifact details: %s (%v)", out.String(), err)
+	}
+}
+
+func TestApplyReportCountsOnlySuccessfulDestinations(t *testing.T) {
+	report := engine.Report{Resources: []engine.ResourceReport{{Kind: "MacSoftware", Name: "example", Error: "one destination failed", Destinations: []engine.DestinationReport{
+		{Name: "first", Applied: true, Changes: []plugin.Change{{Action: "update", Field: "description"}}},
+		{Name: "second", Error: "upload failed", Changes: []plugin.Change{{Action: "create", Field: "installer"}}},
+	}}}}
+	var out bytes.Buffer
+	if err := printResource(&out, "apply", report.Resources[0]); err != nil {
+		t.Fatal(err)
+	}
+	if err := printSummary(&out, "apply", report); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"first: 1 changes applied", "update description", "second: failed: upload failed", "Apply: 1 changes applied, 1 failed resources."} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q: %s", want, out.String())
+		}
 	}
 }
