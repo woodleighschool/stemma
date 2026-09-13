@@ -20,8 +20,15 @@ func checkSymlinkMetadata(root *os.Root, name string, info os.FileInfo) error {
 }
 
 func checkACL(f *os.File, info os.FileInfo) error {
-	if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Flags != 0 {
-		return errors.New("BSD file flags are unsupported")
+	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+		flags := stat.Flags
+		if info.Mode().IsRegular() {
+			// Compression and document tracking describe host storage, not payload policy.
+			flags &^= unix.UF_COMPRESSED | unix.UF_TRACKED
+		}
+		if flags != 0 {
+			return errors.New("BSD file flags are unsupported")
+		}
 	}
 	// fgetattrlist returns an attrreference for ATTR_CMN_EXTENDED_SECURITY.
 	// A nonempty security descriptor is outside the ordinary-file package subset.
@@ -42,4 +49,18 @@ func checkACL(f *os.File, info os.FileInfo) error {
 		return errors.New("ACLs and extended file security are unsupported")
 	}
 	return nil
+}
+
+func ignoreXattr(name string, info os.FileInfo) bool {
+	switch name {
+	case "com.apple.provenance", "com.apple.quarantine", "com.apple.metadata:kMDItemWhereFroms":
+		return true
+	case "com.apple.decmpfs":
+		// Normal reads return logical bytes, including when a materialized file
+		// retains this attribute. Active compression hides its backing resource
+		// fork from ordinary xattr listings; a visible resource fork is still rejected.
+		return info.Mode().IsRegular()
+	default:
+		return false
+	}
 }

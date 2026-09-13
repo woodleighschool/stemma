@@ -126,8 +126,11 @@ HTTP page matching and GitHub release discovery belong to their resolvers. Build
 references identify a resource and named output; they are independent of native
 installed-application dependencies. Files and trees are immutable. Tree identity
 includes bytes, modes and confined symlinks; unsupported filesystem metadata fails
-instead of being discarded. Payload ownership is explicitly authored and is never
-implemented by changing ownership on the runner.
+instead of being discarded. On macOS, download provenance and file tracking are
+omitted, and transparently compressed files are imported as ordinary bytes.
+Resource forks, ACLs and other unsupported payload metadata still fail. Payload
+ownership is explicitly authored and is never implemented by changing ownership
+on the runner.
 
 Windows setup content is part of `WindowsSoftware`, with no extra build document:
 

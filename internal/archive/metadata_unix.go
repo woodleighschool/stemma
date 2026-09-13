@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -30,7 +29,7 @@ func checkMetadata(f *os.File, info os.FileInfo) error {
 		return err
 	}
 	for name := range bytes.SplitSeq(names[:count], []byte{0}) {
-		if len(name) == 0 || runtime.GOOS == "darwin" && string(name) == "com.apple.provenance" {
+		if len(name) == 0 || ignoreXattr(string(name), info) {
 			continue
 		}
 		return fmt.Errorf("extended attribute %q is unsupported", name)

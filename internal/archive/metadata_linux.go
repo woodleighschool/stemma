@@ -25,3 +25,5 @@ func checkSymlinkMetadata(root *os.Root, name string, info os.FileInfo) error {
 
 // Linux POSIX ACLs are rejected with their system.posix_acl_* extended attributes.
 func checkACL(*os.File, os.FileInfo) error { return nil }
+
+func ignoreXattr(string, os.FileInfo) bool { return false }
