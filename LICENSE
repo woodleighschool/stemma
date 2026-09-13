@@ -207,10 +207,6 @@ Files marked SPDX-License-Identifier: MIT contain portions adapted from:
 WrapTune-MacOS (https://github.com/thefinder808/WrapTune-MacOS)
 Copyright (c) 2026 thefinder808
 
-Fleet (https://github.com/fleetdm/fleet)
-Copyright (c) 2020-present Fleet Device Management Inc
-Copyright (c) 2017 Kolide
-
 These portions are licensed under the MIT license:
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

@@ -40,6 +40,7 @@ Guidance for agents and humans working in this repository. This file is self-con
 - Wrap errors with `fmt.Errorf("<component>: %w", err)`. Use sentinel errors for conditions callers branch on and classify errors once at the HTTP, CLI, job, or protocol boundary.
 - Functions that perform I/O take `context.Context` first and propagate cancellation. Long-running processes use signal-aware root contexts and bounded shutdown; use `errgroup` for related goroutines that can fail.
 - Prefer standard-library tests and table-driven subtests when a table makes cases clearer. Keep the package's established test framework, use local servers or fakes at real boundaries, and run race-enabled tests for concurrent code.
+- Keep tests and builds within the macOS runner's 7 GB memory budget. Retain the scoped Graph client and direct macOS bindings; the full macOS bindings SDK adds about 2 GB of build memory.
 - Ship static, trimmed standalone binaries. Do not introduce a daemon or container runtime requirement. Run the repository's vulnerability task for dependency and release work.
 
 ## Git and completion

@@ -91,30 +91,6 @@ func InspectMachO(filePath string) (MachOFacts, error) {
 	return facts, nil
 }
 
-// VerifyMachO verifies page hashes and requested CMS signatures for every slice.
-// It does not evaluate certificate-chain trust or assess macOS acceptance.
-// Nonzero bundle slots require VerifyApp, which supplies their exact bytes.
-func VerifyMachO(filePath string, policy Policy) (Evidence, error) {
-	policy = policy.expanded()
-	f, err := os.Open(filePath)
-	if err != nil {
-		return Evidence{}, err
-	}
-	defer func() { _ = f.Close() }()
-	digest, err := fileDigest(f)
-	if err != nil {
-		return Evidence{}, err
-	}
-	evidence := newEvidence(digest, policy)
-	if policy.RequireResources {
-		evidence.Resources = Check{Status: Unsupported, Detail: "resource scope requires an app bundle subject"}
-	}
-	if err := verifyExecutable(f, policy, nil, &evidence); err != nil {
-		return evidence, err
-	}
-	return evidence, evidence.required(policy)
-}
-
 func verifyExecutable(f *os.File, policy Policy, external map[uint32][]byte, evidence *Evidence) error {
 	if policy.RequirePlatform {
 		evidence.Platform = Check{Status: Unsupported, Detail: "macOS platform assessment requires native OS policy"}

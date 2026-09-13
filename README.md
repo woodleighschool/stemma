@@ -97,8 +97,6 @@ spec:
   payload:
     /Library/Fonts:
       $input: fonts
-      uid: 0
-      gid: 0
       mode: "0755"
   package:
     identifier: edu.example.fonts
@@ -128,9 +126,9 @@ installed-application dependencies. Files and trees are immutable. Tree identity
 includes bytes, modes and confined symlinks; unsupported filesystem metadata fails
 instead of being discarded. On macOS, download provenance and file tracking are
 omitted, and transparently compressed files are imported as ordinary bytes.
-Resource forks, ACLs and other unsupported payload metadata still fail. Payload
-ownership is explicitly authored and is never implemented by changing ownership
-on the runner.
+Resource forks, ACLs and other unsupported payload metadata still fail. Packages
+default to root:wheel; numeric `uid` and `gid` override ownership in the payload
+without changing ownership on the runner.
 
 Windows setup content is part of `WindowsSoftware`, with no extra build document:
 

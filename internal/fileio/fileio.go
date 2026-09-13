@@ -45,3 +45,16 @@ func (r Reader) Read(p []byte) (int, error) {
 	}
 	return r.Reader.Read(p)
 }
+
+// Writer stops copying when the caller cancels its operation.
+type Writer struct {
+	Context context.Context
+	Writer  io.Writer
+}
+
+func (w Writer) Write(p []byte) (int, error) {
+	if err := w.Context.Err(); err != nil {
+		return 0, err
+	}
+	return w.Writer.Write(p)
+}

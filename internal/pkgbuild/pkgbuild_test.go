@@ -263,17 +263,43 @@ func TestScriptsOnlyPackageMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var document xarDocument
+	var document struct {
+		TOC struct {
+			Files []struct {
+				Name string `xml:"name"`
+				Data struct {
+					Size     int64 `xml:"size"`
+					Length   int64 `xml:"length"`
+					Offset   int64 `xml:"offset"`
+					Encoding struct {
+						Style string `xml:"style,attr"`
+					} `xml:"encoding"`
+				} `xml:"data"`
+			} `xml:"file"`
+		} `xml:"toc"`
+	}
 	if err := xml.Unmarshal(toc, &document); err != nil {
 		t.Fatal(err)
 	}
 	for _, member := range document.TOC.Files {
 		if member.Name == "PackageInfo" {
-			body := make([]byte, member.Data.Size)
+			body := make([]byte, member.Data.Length)
 			if _, err := f.ReadAt(body, int64(28+len(compressed))+member.Data.Offset); err != nil {
 				t.Fatal(err)
 			}
-			var info packageInfo
+			if member.Data.Encoding.Style == "application/x-gzip" {
+				body, err = inflateTOC(body)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			var info struct {
+				Scripts *struct {
+					Preinstall  *struct{} `xml:"preinstall"`
+					Postinstall *struct{} `xml:"postinstall"`
+				} `xml:"scripts"`
+				Payload *struct{} `xml:"payload"`
+			}
 			if err := xml.Unmarshal(body, &info); err != nil {
 				t.Fatal(err)
 			}

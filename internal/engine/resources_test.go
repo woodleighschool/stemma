@@ -47,8 +47,6 @@ spec:
     /Library/Example/branding.txt:
       $input: image
       mode: '0644'
-      uid: 0
-      gid: 0
   package:
     identifier: edu.example.branding
     version: '1.0'

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -240,30 +239,6 @@ func (p Project) Validate() error {
 func validateOperation(operation string) error {
 	if !plugin.ValidOperationName(operation) {
 		return errors.New("operation must be a named built-in or external capability")
-	}
-	return nil
-}
-
-// ValidateHTTPURL allows stable query identifiers, but excludes embedded
-// credentials and commonly signed, expiring download references from locks.
-func ValidateHTTPURL(address string) error {
-	u, err := url.Parse(address)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Fragment != "" {
-		return errors.New("HTTP source requires an http(s) URL without credentials or fragment")
-	}
-	query, err := url.ParseQuery(u.RawQuery)
-	if err != nil {
-		return errors.New("HTTP source contains an invalid query")
-	}
-	for key := range query {
-		key = strings.ToLower(key)
-		if strings.HasPrefix(key, "x-amz-") || strings.HasPrefix(key, "x-goog-") {
-			return errors.New("HTTP source must use a stable URL, not an expiring signed download")
-		}
-		switch strings.ReplaceAll(strings.ReplaceAll(key, "_", ""), "-", "") {
-		case "token", "accesstoken", "authtoken", "auth", "authorization", "apikey", "key", "signature", "sig", "expires", "expiry", "expiration", "credential", "credentials", "password", "secret":
-			return errors.New("HTTP source query must not contain credentials or expiration")
-		}
 	}
 	return nil
 }

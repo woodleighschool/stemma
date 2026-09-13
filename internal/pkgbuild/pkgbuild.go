@@ -5,10 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/xml"
 	"errors"
 	"fmt"
-	"github.com/woodleighschool/stemma/plugin"
 	"io"
 	"io/fs"
 	"math"
@@ -23,18 +21,20 @@ import (
 
 	"github.com/deploymenttheory/go-macos-pkg/pkg/bom"
 	"github.com/deploymenttheory/go-macos-pkg/pkg/cpio"
+	"github.com/deploymenttheory/go-macos-pkg/pkg/flatpkg"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 // Version identifies the package derivation, including its format and metadata policy.
-const Version = "stemma.pkgbuild/0.1.4"
+const Version = "stemma.pkgbuild/0.1.5"
 
 // BOM's 32-bit size field is narrower than ODC's 33-bit file length.
 const maxFileSize int64 = math.MaxUint32
 
 // MaxPayloadSize bounds the expanded payload bytes.
-const MaxPayloadSize = 512 << 20
+const MaxPayloadSize int64 = 16 << 30
 
 // MaxEntries bounds the in-memory package inventory.
 const MaxEntries = 100000
@@ -64,32 +64,6 @@ type EntryMetadata struct {
 	Mode *uint32 `json:"mode,omitempty"`
 	UID  uint32  `json:"uid,omitempty"`
 	GID  uint32  `json:"gid,omitempty"`
-}
-
-type packageInfo struct {
-	XMLName     xml.Name     `xml:"pkg-info"`
-	Format      string       `xml:"format-version,attr"`
-	Identifier  string       `xml:"identifier,attr"`
-	Version     string       `xml:"version,attr"`
-	Location    string       `xml:"install-location,attr,omitempty"`
-	Auth        string       `xml:"auth,attr"`
-	Overwrite   string       `xml:"overwrite-permissions,attr"`
-	Relocatable string       `xml:"relocatable,attr"`
-	Generator   string       `xml:"generator-version,attr"`
-	Payload     *payloadInfo `xml:"payload,omitempty"`
-	Scripts     *scriptInfo  `xml:"scripts,omitempty"`
-}
-type payloadInfo struct {
-	Files     int   `xml:"numberOfFiles,attr"`
-	Kilobytes int64 `xml:"installKBytes,attr"`
-}
-type scriptInfo struct {
-	Preinstall  *hookInfo `xml:"preinstall,omitempty"`
-	Postinstall *hookInfo `xml:"postinstall,omitempty"`
-}
-type hookInfo struct {
-	File    string `xml:"file,attr"`
-	Timeout int    `xml:"timeout,attr"`
 }
 
 var packageIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
@@ -146,9 +120,9 @@ func Build(ctx context.Context, root, output string, opts Options) error {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(workspace) }()
-	info := packageInfo{Format: "2", Identifier: opts.Identifier, Version: opts.Version, Location: opts.InstallLocation, Auth: "root", Overwrite: "true", Relocatable: "false", Generator: Version}
-	if info.Location == "" {
-		info.Location = "/"
+	info := flatpkg.PackageInfo{FormatVersion: 2, Identifier: opts.Identifier, Version: opts.Version, InstallLocation: opts.InstallLocation, Auth: "root", OverwritePermissions: new(true), Relocatable: new(false), GeneratorVersion: Version}
+	if info.InstallLocation == "" {
+		info.InstallLocation = "/"
 	}
 	if opts.Payload != "" {
 		paths, size, err := writePayload(ctx, source, opts.Payload, filepath.Join(workspace, "Payload"), opts.Timestamp, opts.Metadata)
@@ -168,25 +142,25 @@ func Build(ctx context.Context, root, output string, opts Options) error {
 		if err := os.WriteFile(filepath.Join(workspace, "Bom"), data.Bytes(), 0o644); err != nil {
 			return err
 		}
-		info.Payload = &payloadInfo{Files: len(paths), Kilobytes: (size + 1023) / 1024}
+		info.Payload = &flatpkg.Payload{NumberOfFiles: len(paths), InstallKBytes: int((size + 1023) / 1024)}
 	}
 	if len(opts.Scripts) > 0 {
 		if err := writeScripts(ctx, source, opts.Scripts, filepath.Join(workspace, "Scripts"), opts.Timestamp, generated); err != nil {
 			return err
 		}
-		info.Scripts = &scriptInfo{}
+		info.Scripts = &flatpkg.Scripts{}
 		if _, ok := opts.Scripts["preinstall"]; ok {
-			info.Scripts.Preinstall = &hookInfo{File: "./preinstall", Timeout: 600}
+			info.Scripts.Preinstall = []flatpkg.Script{{File: "./preinstall", Timeout: flatpkg.DefaultScriptTimeout}}
 		}
 		if _, ok := opts.Scripts["postinstall"]; ok {
-			info.Scripts.Postinstall = &hookInfo{File: "./postinstall", Timeout: 600}
+			info.Scripts.Postinstall = []flatpkg.Script{{File: "./postinstall", Timeout: flatpkg.DefaultScriptTimeout}}
 		}
 	}
-	metadata, err := xml.MarshalIndent(info, "", "  ")
+	metadata, err := info.Marshal()
 	if err != nil {
 		return err
 	}
-	if err = os.WriteFile(filepath.Join(workspace, "PackageInfo"), append([]byte(xml.Header), metadata...), 0o644); err != nil {
+	if err = os.WriteFile(filepath.Join(workspace, "PackageInfo"), metadata, 0o644); err != nil {
 		return err
 	}
 	temporary := filepath.Join(workspace, "output.pkg")
