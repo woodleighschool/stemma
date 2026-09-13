@@ -123,7 +123,7 @@ func staticMetadata(value map[string]any) map[string]any {
 }
 
 func mergeOrigins(explicit, derived map[string]string) map[string]string {
-	result := make(map[string]string, len(explicit)+len(derived))
+	result := make(map[string]string)
 	maps.Copy(result, explicit)
 	maps.Copy(result, derived)
 	return result

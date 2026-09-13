@@ -13,7 +13,7 @@ func hashValue(value any) string {
 	return hex.EncodeToString(digest[:])
 }
 func mergeFields(base, overlay map[string]any) map[string]any {
-	result := make(map[string]any, len(base)+len(overlay))
+	result := make(map[string]any)
 	maps.Copy(result, base)
 	maps.Copy(result, overlay)
 	return result

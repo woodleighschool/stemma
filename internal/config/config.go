@@ -182,7 +182,7 @@ func resolve(raw any, components map[string]any, stack []string) (map[string]any
 // Merge recursively overlays declared map fields; lists and explicit null replace.
 // Neither input is mutated. An empty object does not clear an inherited object.
 func Merge(base, overlay map[string]any) map[string]any {
-	result := make(map[string]any, len(base)+len(overlay))
+	result := make(map[string]any)
 	for key, value := range base {
 		if object, ok := value.(map[string]any); ok {
 			result[key] = Merge(object, nil)
