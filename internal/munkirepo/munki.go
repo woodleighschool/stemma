@@ -68,9 +68,7 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 		}
 		defer func() { _ = lock.Close() }()
 	}
-	response, err := reconcile(ctx, root, request)
-	_, response.Origins, _ = munki.Derive(request)
-	return response, err
+	return reconcile(ctx, root, request)
 }
 
 func repositoryPath(configuration json.RawMessage) (string, error) {
@@ -145,7 +143,38 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	desired := mergeFields(old, nil)
 	_, origins, _ := munki.Derive(request)
 	destinationMetadata, _ := munki.DecodeDestination(request.Metadata)
+	// Artwork belongs to the software, so a new installer can retain the previous reference.
+	previous := old
+	if previous == nil && binding.Pkginfo != "" {
+		previous, err = readObject(filepath.Join(root, filepath.FromSlash(binding.Pkginfo)))
+		if err != nil {
+			return plugin.ReconcileResponse{}, err
+		}
+		if previous != nil && owner(previous) != identity {
+			return plugin.ReconcileResponse{}, errors.New("previous pkginfo has a different owner")
+		}
+	}
+	_, managedName := managed["icon_name"]
+	_, managedHash := managed["icon_hash"]
+	preparedIcon := origins["pkginfo.icon_name"] == "input.icon"
+	retainIcon := preparedIcon || !managedName && !managedHash
+	retainIcon = retainIcon && !slices.Contains(destinationMetadata.Unmanaged, "pkginfo.icon_name") && !slices.Contains(destinationMetadata.Unmanaged, "pkginfo.icon_hash")
+	if retainIcon {
+		name, _ := previous["icon_name"].(string)
+		if name != "" && filepath.IsLocal(name) && (!request.RefreshIcons || !preparedIcon || !strings.HasPrefix(name, "stemma/")) {
+			if info, err := os.Stat(filepath.Join(root, "icons", filepath.FromSlash(name))); err == nil && info.Mode().IsRegular() {
+				managed["icon_name"], managed["icon_hash"] = name, previous["icon_hash"]
+				origins["pkginfo.icon_name"], origins["pkginfo.icon_hash"] = "retained", "retained"
+			} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return plugin.ReconcileResponse{}, err
+			}
+		}
+	}
+
 	for _, field := range entry.Derived {
+		if field == "icon_name" || field == "icon_hash" {
+			continue
+		}
 		if _, exists := managed[field]; !exists && !slices.Contains(destinationMetadata.Unmanaged, "pkginfo."+field) {
 			delete(desired, field)
 		}
@@ -217,7 +246,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	metadata, _ := desired["_metadata"].(map[string]any)
 	metadata = mergeFields(metadata, map[string]any{"stemma": identity})
 	desired["_metadata"] = metadata
-	response := plugin.ReconcileResponse{}
+	response := plugin.ReconcileResponse{Origins: origins}
 	contentPath := ""
 	if input.InstallerType != "nopkg" {
 		contentPath = filepath.Join(root, "pkgs", filepath.FromSlash(input.InstallerLocation))

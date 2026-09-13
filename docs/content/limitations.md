@@ -11,16 +11,15 @@ arbitrary plugin code.
 
 ## Files and packages
 
-| Operation                      | Supported scope                                                                                                       |
-| ------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| Mac PKG inspection             | Flat XAR packages and supported component payloads; streams file contents while retaining bounded inventory metadata  |
-| DMG inspection                 | Raw, ADC, zlib, bzip2 and LZMA chunks; supported HFS+, HFSX and single-volume APFS filesystems                        |
-| Custom Mac packaging           | Unsigned component packages, payload layouts and endpoint installer scripts                                           |
-| MSI inspection                 | Reads MSI database metadata without Windows or executing the installer                                                |
-| EXE preparation                | Preserves the vendor installer; commands, version-specific detection and other installation semantics remain authored |
-| Intune Win32 wrapping          | Portable `.intunewin` preparation with a 2 GiB implementation bound                                                   |
-| Automatic icons                | Supported embedded PNG and PNG-backed ICNS data                                                                       |
-| Native `stemma icon` rendering | macOS system image and Quick Look frameworks; PNG input remains portable                                              |
+| Operation             | Supported scope                                                                                                       |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Mac PKG inspection    | Flat XAR packages and supported component payloads; streams file contents while retaining bounded inventory metadata  |
+| DMG inspection        | Raw, ADC, zlib, bzip2 and LZMA chunks; supported HFS+, HFSX and single-volume APFS filesystems                        |
+| Custom Mac packaging  | Unsigned component packages, payload layouts and endpoint installer scripts                                           |
+| MSI inspection        | Reads MSI database metadata without Windows or executing the installer                                                |
+| EXE preparation       | Preserves the vendor installer; commands, version-specific detection and other installation semantics remain authored |
+| Intune Win32 wrapping | Portable `.intunewin` preparation with a 2 GiB implementation bound                                                   |
+| Automatic icons       | Native system rendering on macOS; supported embedded PNG and PNG-backed ICNS elsewhere                                |
 
 PKG inspection bounds entry counts and retained path metadata, rather than imposing
 a small total payload size. Exceptionally large inventories can still hit those
@@ -67,3 +66,7 @@ the CLI, but must retain reviewed locks, credentials and durable destination sta
 Retention is provider-owned and reference-aware. It is not a hard storage ceiling,
 an app retirement policy or an automatic rollback mechanism. See
 [publishing](publishing.md#identity-and-retention).
+
+Native application icon rendering is a macOS enhancement. Other supported runners
+use portable application icon resources. Preparation remains usable without an icon;
+vendor packages are not rendered as substitutes for their installed applications.

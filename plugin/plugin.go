@@ -56,18 +56,20 @@ type Artifact struct {
 // ReconcileRequest carries native desired state. Raw JSON retains absent, null,
 // false and empty collections; Config contains provider-owned connection settings.
 type ReconcileRequest struct {
-	Method   string                     `json:"method"`
-	Identity Identity                   `json:"identity"`
-	Config   json.RawMessage            `json:"config,omitempty"`
-	Metadata json.RawMessage            `json:"metadata,omitempty"`
-	Binding  json.RawMessage            `json:"binding,omitempty"`
-	Artifact Artifact                   `json:"artifact"`
-	Inputs   map[string]Artifact        `json:"inputs,omitempty"`
-	Facts    Facts                      `json:"facts,omitzero"`
-	Subjects map[string]SubjectSelector `json:"subjects,omitempty"`
-	Bindings map[string]json.RawMessage `json:"bindings,omitempty"`
-	Prepared bool                       `json:"prepared,omitempty"`
-	Root     string                     `json:"root,omitempty"`
+	// RefreshIcons permits replacing existing auxiliary icons.
+	RefreshIcons bool                       `json:"refresh_icons,omitempty"`
+	Method       string                     `json:"method"`
+	Identity     Identity                   `json:"identity"`
+	Config       json.RawMessage            `json:"config,omitempty"`
+	Metadata     json.RawMessage            `json:"metadata,omitempty"`
+	Binding      json.RawMessage            `json:"binding,omitempty"`
+	Artifact     Artifact                   `json:"artifact"`
+	Inputs       map[string]Artifact        `json:"inputs,omitempty"`
+	Facts        Facts                      `json:"facts,omitzero"`
+	Subjects     map[string]SubjectSelector `json:"subjects,omitempty"`
+	Bindings     map[string]json.RawMessage `json:"bindings,omitempty"`
+	Prepared     bool                       `json:"prepared,omitempty"`
+	Root         string                     `json:"root,omitempty"`
 }
 
 // ReconcileResponse carries changes and recovered durable bindings. An omitted

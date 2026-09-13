@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"image/png"
 	"io"
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/fileio"
@@ -19,7 +21,7 @@ import (
 
 // Optional icons are extracted from declared PNG files or PNG-backed ICNS entries.
 // Asset catalogs and legacy ICNS encodings remain unavailable.
-func applicationIcon(ctx context.Context, app, workspace string) (plugin.Artifact, error) {
+func portableIcon(ctx context.Context, app, workspace string) (plugin.Artifact, error) {
 	root, err := os.OpenRoot(app)
 	if err != nil {
 		return plugin.Artifact{}, err
@@ -107,4 +109,44 @@ func validPNG(data []byte) bool {
 	}
 	_, err = png.Decode(bytes.NewReader(data))
 	return err == nil
+}
+
+// IconVariant identifies the renderer without coupling installers to the host OS.
+func IconVariant() string {
+	if runtime.GOOS == "darwin" {
+		return "macos-native/1"
+	}
+	return "portable/1"
+}
+
+func addIcon(ctx context.Context, outputs map[string]plugin.Artifact, app, workspace string) {
+	artwork, err := applicationIcon(ctx, app, workspace)
+	if err != nil {
+		plugin.Logger(ctx).DebugContext(ctx, "Application icon unavailable", "error", err)
+		return
+	}
+	if artwork.Path != "" {
+		outputs["icon"] = artwork
+	}
+}
+
+func applicationIcon(ctx context.Context, app, workspace string) (plugin.Artifact, error) {
+	if runtime.GOOS == "darwin" {
+		data, version, build, err := nativeIcon(ctx, app, 256)
+		if err == nil && validPNG(data) {
+			output := filepath.Join(workspace, "icon.png")
+			if err := fileio.Write(output, data, 0o644); err != nil {
+				return plugin.Artifact{}, err
+			}
+			artifact, err := describeArtifact(ctx, output, "png")
+			evidence, _ := json.Marshal(map[string]string{"renderer": "macos-native/1", "os_version": version, "os_build": build})
+			artifact.Evidence = map[string]json.RawMessage{"macos.icon": evidence}
+			return artifact, err
+		}
+	}
+	artifact, err := portableIcon(ctx, app, workspace)
+	if artifact.Path != "" {
+		artifact.Evidence = map[string]json.RawMessage{"macos.icon": json.RawMessage(`{"renderer":"portable/1"}`)}
+	}
+	return artifact, err
 }

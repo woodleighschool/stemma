@@ -155,6 +155,11 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 			b.activate()
 		}
 	}
+	iconChanges, err := c.reconcileIcon(ctx, req, current, false)
+	if err != nil {
+		return response, err
+	}
+	response.Changes = append(response.Changes, iconChanges...)
 	contentChanged := current == nil || b.PayloadSHA256 != artifact.identity || b.ContentVersion == "" || b.ContentVersion != text(current["committedContentVersion"])
 	if b.Pending != nil && b.Pending.PayloadSHA256 != artifact.identity {
 		return response, errors.New("unfinished Intune upload belongs to different content; reconcile it before changing the source")
@@ -304,6 +309,9 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 	}
 	if residual, _ := metadataPatch(current, desired, b); len(residual) > 0 {
 		return response, errors.New("intune metadata readback differs from requested values")
+	}
+	if _, err := c.reconcileIcon(ctx, req, current, true); err != nil {
+		return response, err
 	}
 	b.Derived = c.derivation.paths()
 	if assignmentChanged {

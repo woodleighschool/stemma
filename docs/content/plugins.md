@@ -76,3 +76,20 @@ a built-in or require it to run a catalog.
 working files but are not a security sandbox. Review plugin code and lock changes
 as executable code. See [writing plugins](writing-plugins.md) for the SDK and wire
 contract.
+
+## Auxiliary icons
+
+`MacSoftware` supplies its optional immutable PNG as the named `icon` artifact in
+reconciliation `inputs`. The core passes the run's `refresh_icons` boolean in both
+plan and apply requests. Destination plugins observe icon presence independently
+of software creation: normally create missing icons and retain existing ones;
+when refresh is requested, replace or upsert the prepared icon. Missing input does
+not clear a published icon. Icon publication must not trigger installer uploads.
+The destination owns API calls, content storage and icon presence detection.
+
+Resource operations can declare `cache_variants` for optional outputs during
+validation. The cache stores those outputs independently of the base preparation.
+On a partial cache miss, `run` receives verified leased `cached` artifacts so the
+resource can reuse completed work. MacSoftware uses this for native and portable
+icons; renderer details are not catalog configuration. Refresh invalidates only the
+icon cache entry for this run, preserving reusable installer preparation.

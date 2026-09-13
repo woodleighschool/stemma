@@ -26,6 +26,7 @@ import (
 type Options struct {
 	ConfigPath, CacheDir, StateDir string
 	Method                         string
+	RefreshIcons                   bool
 	Resources                      []string
 	Lock                           lockfile.Options
 	Handlers                       map[string]reconcileHandler
@@ -300,7 +301,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		}
 		var outputs map[string]Prepared
 		if preparationErr == nil {
-			outputs, item.Cached, preparationErr = prepareResource(ctx, store, ops, plan, inputs, work)
+			outputs, item.Cached, preparationErr = prepareResource(ctx, store, ops, plan, inputs, work, opts.RefreshIcons)
 		}
 		item.Artifacts = outputs
 		if preparationErr != nil {
@@ -466,6 +467,7 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 	if err != nil {
 		return err
 	}
+	input.request.RefreshIcons = opts.RefreshIcons
 	input.request.Inputs = map[string]plugin.Artifact{}
 	references := map[string]string{}
 	for output := range outputs {

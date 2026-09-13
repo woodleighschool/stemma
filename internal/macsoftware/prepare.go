@@ -26,7 +26,7 @@ import (
 
 // Prepare retains vendor installer bytes and wraps selected archive applications
 // in an unsigned component package. It never executes applications or hooks.
-func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace string, timestamp time.Time) (map[string]plugin.Artifact, error) {
+func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace string, timestamp time.Time, cached map[string]plugin.Artifact) (map[string]plugin.Artifact, error) {
 	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
@@ -39,6 +39,13 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 	selected, archivePath, dmg, err := selectPayload(ctx, spec, input, workspace)
 	if err != nil {
 		return nil, err
+	}
+	if cached["installer"].Path != "" {
+		outputs := map[string]plugin.Artifact{"installer": cached["installer"]}
+		if info, err := os.Stat(selected); err == nil && info.IsDir() && strings.EqualFold(filepath.Ext(selected), ".app") {
+			addIcon(ctx, outputs, selected, workspace)
+		}
+		return outputs, ctx.Err()
 	}
 	inspectionDone := plugin.Stage(ctx, "Inspecting application")
 	facts, err := inspect.Read(ctx, selected)
@@ -135,13 +142,10 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 	}
 	outputs := map[string]plugin.Artifact{"installer": installer}
 	if appPath != "" {
-		artwork, err := applicationIcon(ctx, appPath, workspace)
-		if err != nil {
-			return nil, err
-		}
-		if artwork.Path != "" {
-			outputs["icon"] = artwork
-		}
+		addIcon(ctx, outputs, appPath, workspace)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	return outputs, nil
 }

@@ -109,7 +109,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	}}
 	validate.Flags().BoolVar(&resolved, "resolved", false, "Show fully resolved software composition")
 	validate.Flags().BoolVar(&validateOffline, "offline", false, "Require verified cached plugin bundles")
-	root.AddCommand(validate, iconCommand(out))
+	root.AddCommand(validate)
 	var operationsOffline bool
 	operations := &cobra.Command{Use: "operations", Short: "Print built-in and trusted plugin operation contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		path, err := resolve()
@@ -125,14 +125,14 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	operations.Flags().BoolVar(&operationsOffline, "offline", false, "Require verified cached plugin bundles")
 	root.AddCommand(operations)
 	for _, method := range []string{"update", "prepare", "plan", "apply"} {
-		var offline bool
+		var offline, refreshIcons bool
 		cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := resolve()
 			if err != nil {
 				return err
 			}
 
-			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Resources: args, ResourceDone: func(resource engine.ResourceReport) error { return display.resourceDone(out, output, method, resource) }, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply", Refresh: method == "update", Offline: offline}})
+			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Resources: args, RefreshIcons: refreshIcons, ResourceDone: func(resource engine.ResourceReport) error { return display.resourceDone(out, output, method, resource) }, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply", Refresh: method == "update", Offline: offline}})
 			if err := display.report(out, output, method, report, runErr); err != nil {
 				return errors.Join(runErr, err)
 			}
@@ -140,6 +140,9 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		}}
 
 		cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
+		if method == "apply" || method == "plan" {
+			cmd.Flags().BoolVar(&refreshIcons, "refresh-icons", false, "Refresh application icons without rebuilding installers")
+		}
 		root.AddCommand(cmd)
 	}
 	root.AddCommand(&cobra.Command{Use: "inspect FILE", Short: "Read artifact metadata without executing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {

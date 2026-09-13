@@ -17,6 +17,12 @@ For example, `stemma plan MacSoftware/chrome` selects one document. Required bui
 references are prepared first. Use `apiVersion/Kind/name` when needed to resolve an
 ambiguous identity. Omitting selectors processes the catalog.
 
+`apply --refresh-icons` refreshes application icons across the catalog; resource
+selectors compose with it. Run it on macOS to use the current native system artwork.
+`plan --refresh-icons` previews those changes without publishing. These flags
+rerender icons and permit their replacement without forcing installer or unrelated
+metadata writes. Normal runs retain existing icons and create missing ones.
+
 `--offline` requires cached network inputs and plugin bundles; destination calls
 are still allowed. Only `plan` is the publication dry run. See
 [sources](sources.md) for lock behaviour.
@@ -25,7 +31,6 @@ are still allowed. Only `plan` is the publication dry run. See
 
 ```sh
 stemma inspect installer.pkg
-stemma icon Example.app --out icons/example.png
 stemma validate --resolved
 stemma schema
 stemma schema --project --offline
@@ -33,9 +38,8 @@ stemma operations
 stemma version
 ```
 
-`inspect` reads artifact metadata without executing the installer. `icon` produces
-a PNG; use `--refresh` to replace an existing output. Native icon rendering needs
-macOS. `validate --resolved` prints merged configuration and may expose expanded
+`inspect` reads artifact metadata without executing the installer.
+`validate --resolved` prints merged configuration and may expose expanded
 environment values: do not share it without reviewing it.
 
 ## Plugins and cache

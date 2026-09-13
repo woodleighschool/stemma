@@ -1,4 +1,4 @@
-package icon
+package macsoftware
 
 import (
 	"errors"
@@ -62,7 +62,7 @@ func (api *imageIOAPI) png(image uintptr) ([]byte, error) {
 		return nil, errors.New("cannot encode Quick Look PNG")
 	}
 	length := uintptr(message(data, "length"))
-	if length == 0 || length > maxImageBytes {
+	if length == 0 || length > 32<<20 {
 		return nil, errors.New("quick look PNG has invalid size")
 	}
 	pointer := objc.Send[unsafe.Pointer](data, objc.RegisterName("bytes"))

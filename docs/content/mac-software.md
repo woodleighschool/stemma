@@ -121,7 +121,7 @@ the endpoint through Munki, never during preparation. Other destinations must
 explicitly support a source-free deployment mode; accepting PKG files alone does
 not imply that support.
 
-## Verification and icons
+## Verification
 
 Request checks appropriate to the source:
 
@@ -137,12 +137,33 @@ supplied with `certificate_sha256`. Signature verification checks supported
 artifact signatures; it does not assert Apple trust, notarisation or Gatekeeper
 acceptance. Unsupported requested checks fail. See [verification limits](limitations.md#verification).
 
-Supported embedded application icons are derived automatically. For a durable
-PNG you want to own in the catalog:
+## Application icons
+
+A selected application produces an immutable `icon` PNG artifact whenever supported.
+macOS runners use the native system renderer for the best current macOS appearance,
+including system styling. Linux and Windows runners use supported plist, PNG and
+ICNS resources from the application bundle, so ordinary CI can bootstrap a catalog
+with icons without per-application configuration.
+
+Native rendering is an optional enhancement. If it is unavailable, preparation
+uses a supported portable icon or omits the output. Unsupported applications and
+installers may legitimately have no icon. A vendor PKG with application metadata
+but no selected application directory is not rendered as an application icon.
+
+Destinations normally create an icon only when one is missing, even if the software
+object already exists. Existing artwork is retained across normal runs and software
+updates, so a portable runner does not replace a native icon. To improve the catalog's
+artwork intentionally, run on a current Mac:
 
 ```sh
-stemma icon Assets/Example.app --out icons/example.png
+stemma apply --refresh-icons
+stemma apply MacSoftware/firefox --refresh-icons
 ```
 
-Native rendering requires macOS; supplied PNGs remain portable. See
-[publishing](publishing.md) for native metadata and icon handling.
+Use `stemma plan --refresh-icons` to preview publication changes. Refresh derives
+icons again on this runner and permits destinations to replace their existing icons.
+Installer preparation remains cached; icon changes do not change installer bytes,
+versions or content identity. Native and portable icon preparations have separate
+cache entries. Munki keeps immutable icon objects and updates their references.
+External destinations must implement the icon reconciliation contract described in
+[plugins](plugins.md).

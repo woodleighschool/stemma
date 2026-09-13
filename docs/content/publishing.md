@@ -68,8 +68,11 @@ architecture are separate decisions.
 Custom icons already in the Munki repository can be referenced with
 `pkginfo.icon_name`. That path is relative to the repository's `icons/` directory;
 it is not an instruction to read an arbitrary catalog file. Automatic application
-icons arrive as artifact inputs. External destinations can expose their own asset
-inputs through their schemas.
+icons arrive as artifact inputs. Munki publishes them by content hash and retains
+existing artwork unless `--refresh-icons` is requested. A missing icon can be added
+to an existing software publication. Intune reconciles the same artifact through
+its app icon field, independently of installer uploads. External destinations receive
+the same refresh intent and implement their native icon handling.
 
 For source-free script items, see [nopkg](mac-software.md#publish-without-an-installer).
 Native endpoint behaviour is described in the

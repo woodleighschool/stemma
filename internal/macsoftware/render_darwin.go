@@ -1,4 +1,4 @@
-package icon
+package macsoftware
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func render(ctx context.Context, source string, size int) ([]byte, string, string, error) {
+func nativeIcon(ctx context.Context, source string, size int) ([]byte, string, string, error) {
 	if !strings.EqualFold(filepath.Ext(source), ".app") {
 		return nil, "", "", errors.New("system icon rendering requires a .app bundle")
 	}

@@ -5,6 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -328,8 +331,8 @@ func TestPreparedIconPublishesAndRetainsExplicitOverride(t *testing.T) {
 	request.Inputs = nil
 	apply(t, root, &request)
 	values = readNative[map[string]any](t, pkginfo)
-	if _, exists := values["icon_name"]; exists {
-		t.Fatal("stale derived icon retained")
+	if values["icon_name"] != name {
+		t.Fatal("existing icon was removed")
 	}
 	request.Metadata = nativeMetadata(`{"icon_name":"manual.png","icon_hash":null}`)
 	request.Inputs = map[string]plugin.Artifact{"icon": artifact}
@@ -338,4 +341,70 @@ func TestPreparedIconPublishesAndRetainsExplicitOverride(t *testing.T) {
 	if values["icon_name"] != "manual.png" {
 		t.Fatal("authored icon overwritten")
 	}
+}
+
+func TestIconBootstrapRefreshAndRetention(t *testing.T) {
+	root, request := repositoryRequest(t, "Example.pkg", `{}`)
+	pkginfo := apply(t, root, &request)
+	icon := func(value uint8) plugin.Artifact {
+		t.Helper()
+		img := image.NewRGBA(image.Rect(0, 0, 2, 2))
+		img.SetRGBA(0, 0, color.RGBA{R: value, A: 255})
+		var content bytes.Buffer
+		if err := png.Encode(&content, img); err != nil {
+			t.Fatal(err)
+		}
+		name := filepath.Join(t.TempDir(), "icon.png")
+		if err := os.WriteFile(name, content.Bytes(), 0o400); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(content.Bytes())
+		return plugin.Artifact{Path: name, Filename: "icon.png", Format: "png", Size: int64(content.Len()), SHA256: hex.EncodeToString(digest[:])}
+	}
+	portable, native := icon(10), icon(200)
+	request.Inputs = map[string]plugin.Artifact{"icon": portable}
+	apply(t, root, &request)
+	check := func(want plugin.Artifact) {
+		t.Helper()
+		values := readNative[map[string]any](t, pkginfo)
+		if values["icon_hash"] != want.SHA256 {
+			t.Fatalf("icon hash = %v, want %s", values["icon_hash"], want.SHA256)
+		}
+		if values["installer_item_hash"] != request.Artifact.SHA256 {
+			t.Fatal("icon changed installer identity")
+		}
+	}
+	check(portable)
+	request.Inputs["icon"] = native
+	apply(t, root, &request)
+	check(portable)
+	request.RefreshIcons = true
+	request.Method = "plan"
+	response, err := munkirepo.Handle(t.Context(), request)
+	if err != nil || len(response.Changes) == 0 {
+		t.Fatalf("refresh plan: %+v %v", response, err)
+	}
+	check(portable)
+	apply(t, root, &request)
+	check(native)
+	request.RefreshIcons = false
+	request.Inputs["icon"] = portable
+	apply(t, root, &request)
+	check(native)
+	// A new software version retains the existing artwork too.
+	request.Artifact.Version = "2.0"
+	pkginfo = apply(t, root, &request)
+	check(native)
+	request.Artifact.Version = "3.0"
+	request.Inputs = nil
+	pkginfo = apply(t, root, &request)
+	check(native)
+	request.Inputs = map[string]plugin.Artifact{"icon": portable}
+	// Remote absence is authoritative even when the software and binding exist.
+	if err := os.Remove(filepath.Join(root, "icons", "stemma", native.SHA256+".png")); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, root, &request)
+	check(portable)
+	assertConverged(t, request)
 }

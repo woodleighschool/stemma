@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -182,7 +183,7 @@ func preflight(plans map[string]resourcePlan, selected []string, p config.Projec
 	return nil
 }
 
-func prepareResource(ctx context.Context, store *cas.Store, ops *operations, plan resourcePlan, inputs map[string]Prepared, work string) (result map[string]Prepared, cacheHit bool, err error) {
+func prepareResource(ctx context.Context, store *cas.Store, ops *operations, plan resourcePlan, inputs map[string]Prepared, work string, refreshIcons bool) (result map[string]Prepared, cacheHit bool, err error) {
 	done := plugin.Stage(ctx, "Checking preparation cache")
 	defer func() { done(err) }()
 	identityInputs := map[string]plugin.Artifact{}
@@ -208,34 +209,40 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		Modes                    map[string]uint32
 		Timestamp                time.Time
 	}{"resource/1", ops.identity[plan.Operation], plan.Resource.Reference(), plan.Config, identityInputs, modes, timestamp})
-	if descriptor, ok := store.Recall(ctx, key); ok {
-		filename, err := store.Path(descriptor)
+	cached, complete, err := recallOutputs(ctx, store, key)
+	if err != nil {
+		return nil, false, err
+	}
+	for name, variant := range plan.CacheVariants {
+		delete(cached, name)
+		extra, hit, err := recallOutputs(ctx, store, config.Fingerprint([]string{key, name, variant}))
 		if err != nil {
 			return nil, false, err
 		}
-		data, err := os.ReadFile(filename)
-		if err != nil {
-			return nil, false, err
+		if refreshIcons && name == "icon" {
+			hit = false
 		}
-		var cached map[string]Prepared
-		valid := json.Unmarshal(data, &cached) == nil
-		for name, artifact := range cached {
-			valid = valid && safeOutputName(name) && safeFilename(artifact.Filename) && store.Verify(ctx, artifact.Payload) == nil
-		}
-		if valid {
-			done(nil, "cached", true)
-			done = plugin.Stage(ctx, "Restoring cached preparation")
-			for name, artifact := range cached {
-				artifact.Cached = true
-				artifact, err = materialize(ctx, store, artifact, filepath.Join(work, "cached", name))
-				if err != nil {
-					return nil, false, err
-				}
-				cached[name] = artifact
-			}
-			return cached, true, nil
+		complete = complete && hit
+		if hit {
+			maps.Copy(cached, extra)
 		}
 	}
+	for name, artifact := range cached {
+		artifact.Cached = true
+		artifact, err = materialize(ctx, store, artifact, filepath.Join(work, "cached", name))
+		if err != nil {
+			return nil, false, err
+		}
+		artifact.Path, err = filepath.EvalSymlinks(artifact.Path)
+		if err != nil {
+			return nil, false, err
+		}
+		cached[name] = artifact
+	}
+	if complete {
+		return cached, true, nil
+	}
+
 	done(nil)
 	done = plugin.Stage(ctx, "Materializing inputs")
 	workspace := filepath.Join(work, "output")
@@ -246,7 +253,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	if err != nil {
 		return nil, false, err
 	}
-	request := plugin.ResourceRequest{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp}
+	request := plugin.ResourceRequest{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Cached: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp}
 	for name, input := range inputs {
 		leased, err := materialize(ctx, store, input, filepath.Join(work, "inputs", config.Fingerprint(name)))
 		if err != nil {
@@ -257,6 +264,9 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			return nil, false, err
 		}
 		request.Inputs[name] = leased.artifact()
+	}
+	for name, artifact := range cached {
+		request.Cached[name] = artifact.artifact()
 	}
 	var response plugin.ResourceResult
 	done(nil)
@@ -275,6 +285,11 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		}
 		if ref != inputs[name].Payload || uint32(info.Mode().Perm()) != inputs[name].Mode {
 			return nil, false, errors.Join(runErr, fmt.Errorf("resource %s modified immutable input %s", plan.Resource.Reference().Key(), name))
+		}
+	}
+	for _, artifact := range cached {
+		if err := verifyLeases(ctx, store, work, plugin.ReconcileRequest{Artifact: artifact.artifact()}); err != nil {
+			return nil, false, errors.Join(runErr, err)
 		}
 	}
 	done(nil)
@@ -300,6 +315,11 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		allowed := within(workspace, resolved)
 		for _, input := range request.Inputs {
 			if resolved == input.Path {
+				allowed = true
+			}
+		}
+		for _, artifact := range request.Cached {
+			if resolved == artifact.Path {
 				allowed = true
 			}
 		}
@@ -338,6 +358,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			observed.Facts = artifact.Facts
 			observed.SuppliedFacts = true
 		}
+		observed.Cached = cached[name].Path == resolved
 		observed.EntryPoint = artifact.EntryPoint
 		observed.Evidence = artifact.Evidence
 		observed.Timestamp = timestamp
@@ -347,13 +368,58 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		}{identityInputs, modes})
 		outputs[name] = observed
 	}
+	for name, artifact := range cached {
+		if _, exists := outputs[name]; !exists {
+			outputs[name] = artifact
+		}
+	}
+	base := maps.Clone(outputs)
+	for name, variant := range plan.CacheVariants {
+		extra := map[string]Prepared{}
+		if artifact, exists := base[name]; exists {
+			extra[name] = artifact
+		}
+		delete(base, name)
+		if err := rememberOutputs(ctx, store, config.Fingerprint([]string{key, name, variant}), extra); err != nil {
+			return nil, false, err
+		}
+	}
+	return outputs, false, rememberOutputs(ctx, store, key, base)
+}
+
+func rememberOutputs(ctx context.Context, store *cas.Store, key string, outputs map[string]Prepared) error {
 	data, err := json.Marshal(outputs)
 	if err != nil {
-		return nil, false, err
+		return err
 	}
 	descriptor, err := store.Import(ctx, bytes.NewReader(data), "")
 	if err != nil {
+		return err
+	}
+	return store.Remember(key, descriptor)
+}
+
+func recallOutputs(ctx context.Context, store *cas.Store, key string) (map[string]Prepared, bool, error) {
+	empty := map[string]Prepared{}
+	descriptor, ok := store.Recall(ctx, key)
+	if !ok {
+		return empty, false, nil
+	}
+	filename, err := store.Path(descriptor)
+	if err != nil {
 		return nil, false, err
 	}
-	return outputs, false, store.Remember(key, descriptor)
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, false, err
+	}
+	var cached map[string]Prepared
+	valid := json.Unmarshal(data, &cached) == nil && cached != nil
+	for name, artifact := range cached {
+		valid = valid && safeOutputName(name) && safeFilename(artifact.Filename) && store.Verify(ctx, artifact.Payload) == nil
+	}
+	if !valid {
+		return empty, false, nil
+	}
+	return cached, true, nil
 }

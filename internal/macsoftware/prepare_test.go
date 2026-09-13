@@ -93,7 +93,7 @@ func TestZIPApplicationProducesPackageAndSelectedEvidence(t *testing.T) {
 	}
 	input := plugin.Artifact{Path: filename, Filename: "Example.zip", Format: "zip", Evidence: map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"release":"preview"}`)}}
 	spec := Spec{Application: &Application{Path: "Example.app", VersionKey: "CFBundleVersion"}}
-	outputs, err := Prepare(t.Context(), spec, input, t.TempDir(), time.Time{})
+	outputs, err := Prepare(t.Context(), spec, input, t.TempDir(), time.Time{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestZIPApplicationProducesPackageAndSelectedEvidence(t *testing.T) {
 	if _, err := apple.VerifyPackage(installer.Path, apple.Policy{RequireIntegrity: true}); err != nil {
 		t.Fatal(err)
 	}
-	again, err := Prepare(t.Context(), spec, input, t.TempDir(), time.Time{})
+	again, err := Prepare(t.Context(), spec, input, t.TempDir(), time.Time{}, nil)
 	if err != nil || again["installer"].SHA256 != installer.SHA256 {
 		t.Fatalf("nondeterministic package: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestDMGApplicationRetainsVendorBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(data)
-	outputs, err := Prepare(t.Context(), Spec{Application: &Application{InstalledPath: "/Applications/Renamed.app"}}, plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}, t.TempDir(), time.Time{})
+	outputs, err := Prepare(t.Context(), Spec{Application: &Application{InstalledPath: "/Applications/Renamed.app"}}, plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}, t.TempDir(), time.Time{}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,5 +139,73 @@ func TestDMGApplicationRetainsVendorBytes(t *testing.T) {
 	}
 	if installer.Format != "dmg" || installer.SHA256 != hex.EncodeToString(hash[:]) || app.Path != "Example.app" || app.InstalledPath != "/Applications/Renamed.app" {
 		t.Fatalf("installer=%+v app=%+v", installer, app)
+	}
+}
+
+func TestIconRefreshReusesInstaller(t *testing.T) {
+	app := filepath.Join(applicationFixture(t), "Example.app")
+	input := plugin.Artifact{Path: app, Filename: "Example.app", Tree: true}
+	first, err := Prepare(t.Context(), Spec{}, input, t.TempDir(), time.Time{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	refreshed, err := Prepare(t.Context(), Spec{}, input, workspace, time.Time{}, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed["installer"].Path != first["installer"].Path || refreshed["installer"].SHA256 != first["installer"].SHA256 || refreshed["installer"].Version != first["installer"].Version {
+		t.Fatal("refresh rebuilt installer")
+	}
+	if refreshed["icon"].Path == "" || refreshed["icon"].Path == first["icon"].Path {
+		t.Fatal("refresh did not derive an icon in the new workspace")
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "Example.pkg")); !os.IsNotExist(err) {
+		t.Fatal("refresh repackaged the installer")
+	}
+}
+
+func TestVendorPackageRemainsIconless(t *testing.T) {
+	name, err := filepath.Abs("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := Prepare(t.Context(), Spec{}, plugin.Artifact{Path: name, Filename: "vendor.pkg"}, t.TempDir(), time.Time{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result["installer"].Path == "" || result["icon"].Path != "" {
+		t.Fatal("package metadata was treated as a renderable application")
+	}
+}
+
+func TestPortableIconResources(t *testing.T) {
+	app := filepath.Join(applicationFixture(t), "Example.app")
+	iconPath := filepath.Join(app, "Contents/Resources/icon.png")
+	valid, err := os.ReadFile(iconPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		data []byte
+		want bool
+	}{
+		{"png", valid, true}, {"unsupported", []byte("unsupported icon"), false}, {"missing", nil, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.WriteFile(iconPath, test.data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if test.data == nil {
+				if err := os.Remove(iconPath); err != nil {
+					t.Fatal(err)
+				}
+			}
+			result, err := portableIcon(t.Context(), app, t.TempDir())
+			if err != nil || (result.Path != "") != test.want {
+				t.Fatalf("icon=%+v err=%v", result, err)
+			}
+		})
 	}
 }

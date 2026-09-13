@@ -86,9 +86,9 @@ func macSoftware(ctx context.Context, request plugin.Request) (plugin.Response, 
 			declarations["source"] = *spec.Source
 		}
 		config, err := json.Marshal(spec.Preparation())
-		return resourceResponse(plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: spec.Destinations}, err)
+		return resourceResponse(plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: spec.Destinations, CacheVariants: map[string]string{"icon": macsoftware.IconVariant()}}, err)
 	}
-	artifacts, err := macsoftware.Prepare(ctx, spec, input.Inputs["source"], input.Workspace, input.Timestamp)
+	artifacts, err := macsoftware.Prepare(ctx, spec, input.Inputs["source"], input.Workspace, input.Timestamp, input.Cached)
 	if installer, ok := artifacts["installer"]; err == nil && ok {
 		installer.Filename = artifactname.Filename(input.Identity.Name, installer.Version, installer.SHA256, installer.Format)
 		artifacts["installer"] = installer

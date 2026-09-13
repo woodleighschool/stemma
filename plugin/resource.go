@@ -126,6 +126,8 @@ type ResourceKind struct {
 // ResourceRequest uses validate to discover inputs and publication intentions;
 // run receives only locked, leased inputs and produces immutable outputs.
 type ResourceRequest struct {
+	// Cached contains leased outputs reusable during partial preparation.
+	Cached    map[string]Artifact `json:"cached,omitempty"`
 	Config    json.RawMessage     `json:"config"`
 	Identity  ResourceReference   `json:"identity"`
 	Inputs    map[string]Artifact `json:"inputs,omitempty"`
@@ -136,12 +138,14 @@ type ResourceRequest struct {
 // ResourceResult separates preparation configuration from destination metadata,
 // so changing native publication fields cannot invalidate build outputs.
 type ResourceResult struct {
-	Inputs       map[string]Input           `json:"inputs,omitempty"`
-	Config       json.RawMessage            `json:"config,omitempty"`
-	Destinations map[string]map[string]any  `json:"destinations,omitempty"`
-	Artifacts    map[string]Artifact        `json:"artifacts,omitempty"`
-	Subjects     map[string]SubjectSelector `json:"subjects,omitempty"`
-	Requirements []Requirement              `json:"requirements,omitempty"`
+	// CacheVariants separates optional outputs from the portable preparation cache.
+	CacheVariants map[string]string          `json:"cache_variants,omitempty"`
+	Inputs        map[string]Input           `json:"inputs,omitempty"`
+	Config        json.RawMessage            `json:"config,omitempty"`
+	Destinations  map[string]map[string]any  `json:"destinations,omitempty"`
+	Artifacts     map[string]Artifact        `json:"artifacts,omitempty"`
+	Subjects      map[string]SubjectSelector `json:"subjects,omitempty"`
+	Requirements  []Requirement              `json:"requirements,omitempty"`
 }
 
 // ContentContract constrains delivered content independently of its originating kind.
