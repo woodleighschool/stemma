@@ -29,7 +29,7 @@ destination settings in YAML.
 Start with [stemma-catalog](https://github.com/woodleighschool/stemma-catalog).
 Follow its setup instructions, then run from the catalog:
 
-```sh
+```bash
 stemma prepare
 stemma plan
 ```
@@ -46,7 +46,7 @@ Use `stemma apply` to publish after reviewing the result.
 
 ## 🧑‍💻 Development
 
-```sh
+```bash
 mise install
 mise run deps
 mise run build
@@ -60,7 +60,7 @@ Licensed under the [Apache License 2.0](LICENSE).
 
 ## 🙏 Credits
 
-- [WrapTune-MacOS](https://github.com/thefinder808/WrapTune-MacOS) — Windows packaging and verification reference
-- [Fleet](https://github.com/fleetdm/fleet) — XAR package writer
-- [mholt/archives](https://github.com/mholt/archives) — archive handling
-- [AutoPkg](https://github.com/autopkg/autopkg) — inspiration for software packaging workflows
+- **[WrapTune-MacOS](https://github.com/thefinder808/WrapTune-MacOS)** - Windows packaging and verification reference
+- **[Fleet](https://github.com/fleetdm/fleet)** - XAR package writer
+- **[mholt/archives](https://github.com/mholt/archives)** - archive handling
+- **[AutoPkg](https://github.com/autopkg/autopkg)** - inspiration for software packaging workflows
