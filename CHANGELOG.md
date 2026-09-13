@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.1](https://github.com/woodleighschool/stemma/compare/0.2.0...0.2.1) (2026-09-13)
+
+
+### Bug Fixes
+
+* bump mise deps, refresh lockfile ([92112f1](https://github.com/woodleighschool/stemma/commit/92112f1ce3abb7ccfdc3ac4a0cd61cf87c0c0f95))
+* remove overflowing map allocation hints ([4a9d5af](https://github.com/woodleighschool/stemma/commit/4a9d5af9130389137feb577ef33972614bce5cdc))
+
+
+### Miscellaneous Chores
+
+* add ignore for node_modules in go.mod ([8233f49](https://github.com/woodleighschool/stemma/commit/8233f49a0dfec8071c67cf39c4fc5df072647c68))
+* readme tweaks ([a266a82](https://github.com/woodleighschool/stemma/commit/a266a8209842d989e24b1b2530a20cea6888f741))
+
 ## [0.2.0](https://github.com/woodleighschool/stemma/compare/0.1.0...0.2.0) (2026-09-13)
 
 
