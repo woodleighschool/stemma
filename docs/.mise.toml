@@ -1,0 +1,45 @@
+[tasks.deps]
+description = "Install docs dependencies"
+run = "pnpm install --frozen-lockfile"
+
+[tasks.dev]
+description = "Run docs development server"
+depends = [":deps"]
+run = "pnpm run dev"
+
+[tasks.build]
+description = "Build docs site"
+depends = [":deps"]
+run = "pnpm run build"
+
+[tasks.serve]
+description = "Serve the built docs site"
+depends = [":build"]
+run = "pnpm run serve"
+
+[tasks.typecheck]
+description = "Typecheck docs site"
+depends = [":deps"]
+run = "pnpm run typecheck"
+
+[tasks.format]
+description = "Format authored docs files"
+run = "pnpm run format"
+
+[tasks.fmt-check]
+description = "Check authored docs formatting"
+run = "oxfmt --check"
+
+[tasks.lint]
+description = "Run docs lint and typecheck"
+depends = [":deps"]
+run = "pnpm run lint"
+
+[tasks.lint-fix]
+description = "Run docs lint fixes and typecheck"
+depends = [":deps"]
+run = "pnpm run lint:fix"
+
+[tasks.clean]
+description = "Remove docs build output"
+run = "rm -rf build .docusaurus .cache-loader"

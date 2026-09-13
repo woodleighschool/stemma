@@ -1,0 +1,148 @@
+# Mac software
+
+Use `MacSoftware` for an existing installer or application. Stemma selects the
+application, inspects its metadata and prepares content suitable for publication.
+Use [BuildMacPkg](building-packages.md) when you need to construct a custom payload.
+
+## Start with the vendor's installer
+
+| Source                          | What Stemma prepares                                                          |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| PKG                             | The original vendor package                                                   |
+| DMG containing an application   | The original DMG, with the selected application described for the destination |
+| ZIP containing an application   | An unsigned PKG containing the selected application                           |
+| DMG containing an installer PKG | The selected nested package, preserving its bytes                             |
+
+For an application in a DMG:
+
+```yaml
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: example-app
+spec:
+  source:
+    path: Assets/Example.dmg
+  application:
+    path: Example.app
+  destinations:
+    munki:
+      pkginfo:
+        description: Example application.
+```
+
+This assumes an `Assets/Example.dmg` beside the document and a Project connection
+named `munki`. Substitute your application's actual path. For a ZIP application,
+change the source to the ZIP; no separate build document is needed.
+
+## Select an application once
+
+If inspection finds one application, it can be selected automatically. If it finds
+several, select by `application.path` or `application.bundle_id`:
+
+```yaml
+application:
+  bundle_id: com.google.Chrome
+```
+
+The selection supplies coherent version, bundle and supported icon evidence to
+destinations. A helper application should not accidentally become the version or
+detection source for the main application.
+
+Archive paths and endpoint paths are different:
+
+```yaml
+application:
+  path: Release/Example.app
+  installed_path: /Applications/Example.app
+  version_key: CFBundleVersion
+```
+
+`path` locates the application inside the input. `installed_path` describes its
+location on a managed Mac; it is not a path Stemma reads on the runner. The default
+version key is `CFBundleShortVersionString`. Select `CFBundleVersion` when the
+publisher's build number is the version you need to manage.
+
+For an existing PKG, Stemma does not rewrite its payload to implement an authored
+endpoint path. Keep that path consistent with the vendor installer.
+
+## Select a nested installer
+
+A driver download such as Wacom can contain a PKG inside a DMG. When there are
+multiple plausible payloads, select the installer by its archive-relative path:
+
+```yaml
+spec:
+  source:
+    path: Assets/WacomDriver.dmg
+  package_path: Install Wacom Tablet.pkg
+  destinations:
+    munki:
+      pkginfo:
+        description: Wacom tablet driver.
+```
+
+Use the name present in your download. `package_path` also accepts a glob, but it
+must identify exactly one package. This selects and extracts the vendor installer;
+it does not reconstruct its payload or run its scripts.
+
+Some packages install a staging helper which later downloads the real application.
+Their contents cannot prove the eventual installed application. Leave
+`application` unset and author the destination's detection behaviour explicitly.
+
+## Publish without an installer
+
+Munki `nopkg` items need no fake source or package:
+
+```yaml
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: example-setting
+spec:
+  destinations:
+    munki:
+      pkginfo:
+        installer_type: nopkg
+        version: "1.0"
+        description: Set an example machine preference.
+        installcheck_script: |
+          #!/bin/sh
+          value=$(/usr/bin/defaults read /Library/Preferences/org.example.settings Enabled 2>/dev/null)
+          [ "$value" = "1" ] && exit 1
+          exit 0
+        postinstall_script: |
+          #!/bin/sh
+          /usr/bin/defaults write /Library/Preferences/org.example.settings Enabled -bool true
+```
+
+Munki's install check exits zero when installation is needed. These scripts run on
+the endpoint through Munki, never during preparation. Other destinations must
+explicitly support a source-free deployment mode; accepting PKG files alone does
+not imply that support.
+
+## Verification and icons
+
+Request checks appropriate to the source:
+
+```yaml
+verification:
+  subject: source
+  integrity: true
+  signature: true
+```
+
+`subject` selects `source`, `application` or `installer`. A certificate pin can be
+supplied with `certificate_sha256`. Signature verification checks supported
+artifact signatures; it does not assert Apple trust, notarisation or Gatekeeper
+acceptance. Unsupported requested checks fail. See [verification limits](limitations.md#verification).
+
+Supported embedded application icons are derived automatically. For a durable
+PNG you want to own in the catalog:
+
+```sh
+stemma icon Assets/Example.app --out icons/example.png
+```
+
+Native rendering requires macOS; supplied PNGs remain portable. See
+[publishing](publishing.md) for native metadata and icon handling.

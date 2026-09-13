@@ -8,14 +8,6 @@ coverage.out
 go.work
 go.work.sum
 
-# Local data
-.stemma/
-
-# Local configuration
-/stemma.yaml
-.env
-.env.*
-
 # Local Mise
 .mise.local.toml
 .mise.local.lock
