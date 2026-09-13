@@ -44,7 +44,7 @@ func (p *Publications) Record(fingerprint string) uint64 {
 
 // Retained selects payloads by publication order, never native ID or version string.
 // Unknown history returns no selection; callers must not treat that as permission to delete.
-func (p Publications) Retained(keep int) map[string]bool {
+func (p *Publications) Retained(keep int) map[string]bool {
 	retained := make(map[string]bool)
 	if keep < 1 || p.Current == "" || p.Order[p.Current] == 0 {
 		return retained

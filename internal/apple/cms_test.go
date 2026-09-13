@@ -10,10 +10,10 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -244,7 +244,7 @@ func signedCMS(t *testing.T, content []byte, digest asn1.ObjectIdentifier, attri
 
 func TestCMSBindsAlternateCodeDirectories(t *testing.T) {
 	for _, version := range []int{1, 2} {
-		t.Run(fmt.Sprint(version), func(t *testing.T) {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
 			signature := signedFixtureSignature(t, 0)
 			alternate := bytes.Clone(signature.directories[0])
 			alternate[len(alternate)-1] ^= 1

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -312,7 +313,7 @@ func writePayloadPackage(t *testing.T, members []payloadMember) string {
 	var files []xarFile
 	for _, member := range members {
 		digest := sha256.Sum256(member.data)
-		data := &xarData{Offset: int64(32 + heap.Len()), Size: int64(len(member.data)), Length: int64(len(member.data)), Archived: xarChecksum{Style: "sha256", Value: fmt.Sprintf("%x", digest)}, Extracted: xarChecksum{Style: "sha256", Value: fmt.Sprintf("%x", digest)}}
+		data := &xarData{Offset: int64(32 + heap.Len()), Size: int64(len(member.data)), Length: int64(len(member.data)), Archived: xarChecksum{Style: "sha256", Value: hex.EncodeToString(digest[:])}, Extracted: xarChecksum{Style: "sha256", Value: hex.EncodeToString(digest[:])}}
 		data.Encoding.Style = "application/octet-stream"
 		heap.Write(member.data)
 		insertPayloadMember(&files, strings.Split(member.name, "/"), data)

@@ -33,13 +33,15 @@ func TestProgressReaderPreservesBytesAndErrors(t *testing.T) {
 			}
 			decoder := json.NewDecoder(&logs)
 			var records []struct {
-				Current, Total int64
-				Final          bool `json:"progress_final"`
+				Current int64 `json:"current"`
+				Total   int64 `json:"total"`
+				Final   bool  `json:"progress_final"`
 			}
 			for decoder.More() {
 				var record struct {
-					Current, Total int64
-					Final          bool `json:"progress_final"`
+					Current int64 `json:"current"`
+					Total   int64 `json:"total"`
+					Final   bool  `json:"progress_final"`
 				}
 				if err := decoder.Decode(&record); err != nil {
 					t.Fatal(err)

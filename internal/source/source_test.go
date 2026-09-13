@@ -3,12 +3,12 @@ package source
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -182,11 +182,11 @@ func observation(t *testing.T, entry Entry) nativeObservation {
 
 func TestDownloadReportsActualBytes(t *testing.T) {
 	for _, known := range []bool{true, false} {
-		t.Run(fmt.Sprint(known), func(t *testing.T) {
+		t.Run(strconv.FormatBool(known), func(t *testing.T) {
 			payload := strings.Repeat("package fixture", 1024)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				if known {
-					w.Header().Set("Content-Length", fmt.Sprint(len(payload)))
+					w.Header().Set("Content-Length", strconv.Itoa(len(payload)))
 				} else {
 					w.(http.Flusher).Flush()
 				}
@@ -210,8 +210,9 @@ func TestDownloadReportsActualBytes(t *testing.T) {
 			found := false
 			for decoder.More() {
 				var record struct {
-					Current, Total int64
-					Final          bool `json:"progress_final"`
+					Current int64 `json:"current"`
+					Total   int64 `json:"total"`
+					Final   bool  `json:"progress_final"`
 				}
 				if err := decoder.Decode(&record); err != nil {
 					t.Fatal(err)

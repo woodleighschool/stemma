@@ -129,8 +129,8 @@ func mergeOrigins(explicit, derived map[string]string) map[string]string {
 	return result
 }
 
-func (ops *operations) fingerprint(destination config.Destination) string {
-	operation, err := ops.operation(destination.Operation)
+func (o *operations) fingerprint(destination config.Destination) string {
+	operation, err := o.operation(destination.Operation)
 	if err != nil {
 		return config.Fingerprint(destination)
 	}

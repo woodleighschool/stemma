@@ -66,11 +66,11 @@ func TestSDKRetriesPreserveNativeBody(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				if calls == 1 {
 					w.Header().Set("Retry-After", "0")
-					w.WriteHeader(429)
+					w.WriteHeader(http.StatusTooManyRequests)
 					_, _ = io.WriteString(w, `{"error":{"code":"TooManyRequests"}}`)
 					return
 				}
-				w.WriteHeader(204)
+				w.WriteHeader(http.StatusNoContent)
 			})
 			if err := c.request(t.Context(), method, c.apps(), want, nil); err != nil {
 				t.Fatal(err)
@@ -88,7 +88,7 @@ func TestSDKDoesNotRetryAmbiguousCreation(t *testing.T) {
 		calls++
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Retry-After", "0")
-		w.WriteHeader(503)
+		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = io.WriteString(w, `{"error":{"code":"Unavailable","message":"secret-token"}}`)
 	})
 	err := c.request(t.Context(), abs.POST, c.apps(), object{}, nil)
@@ -133,7 +133,7 @@ func TestSDKRetryWaitCancels(t *testing.T) {
 	defer cancel()
 	c, _ := sdkFixture(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "60")
-		w.WriteHeader(429)
+		w.WriteHeader(http.StatusTooManyRequests)
 		cancel()
 	})
 	if err := c.request(ctx, abs.GET, c.apps(), nil, nil); !errors.Is(err, context.Canceled) {
@@ -168,7 +168,7 @@ func TestAzureSDKMultipartRetry(t *testing.T) {
 			if !retried {
 				retried = true
 				w.Header().Set("Retry-After", "0")
-				w.WriteHeader(503)
+				w.WriteHeader(http.StatusServiceUnavailable)
 				return
 			}
 		} else {
@@ -184,7 +184,7 @@ func TestAzureSDKMultipartRetry(t *testing.T) {
 				uploaded = append(uploaded, blocks[id]...)
 			}
 		}
-		w.WriteHeader(201)
+		w.WriteHeader(http.StatusCreated)
 	})
 	if err := c.uploadBlob(t.Context(), base+"/blob?sig=secret", &preparedArtifact{path: path, raw: true}); err != nil {
 		t.Fatal(err)
@@ -199,7 +199,7 @@ func TestOpaqueClientsPreserveWireJSON(t *testing.T) {
 	for _, version := range []string{"v1.0", "beta"} {
 		t.Run(version, func(t *testing.T) {
 			c, _ := sdkFixture(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != "POST" || r.URL.Path != "/"+version+"/deviceAppManagement/mobileApps" {
+				if r.Method != http.MethodPost || r.URL.Path != "/"+version+"/deviceAppManagement/mobileApps" {
 					t.Errorf("request: %s %s", r.Method, r.URL.Path)
 				}
 				if r.Header.Get("Content-Type") != "application/json" {

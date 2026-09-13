@@ -128,6 +128,7 @@ func decode(reader io.Reader, value any) error {
 
 type wireResponse struct {
 	Response
+
 	Log json.RawMessage `json:"log,omitempty"`
 }
 

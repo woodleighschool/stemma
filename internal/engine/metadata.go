@@ -62,7 +62,7 @@ func resolveMetadata(software plugin.ResourceResult, native map[string]any, fact
 			if !exists {
 				return nil, fmt.Errorf("required evidence %s is missing", reference)
 			}
-			match, err := plugin.SelectSubject(facts, plugin.SubjectSelector(selector))
+			match, err := plugin.SelectSubject(facts, selector)
 			if err != nil {
 				return nil, fmt.Errorf("subject %s: %w", name, err)
 			}

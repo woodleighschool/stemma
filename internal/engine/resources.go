@@ -19,9 +19,10 @@ import (
 )
 
 type resourcePlan struct {
+	plugin.ResourceResult
+
 	Resource  config.Resource
 	Operation string
-	plugin.ResourceResult
 }
 
 func discover(ctx context.Context, p config.Project, ops *operations) (map[string]resourcePlan, error) {
@@ -89,7 +90,7 @@ func discover(ctx context.Context, p config.Project, ops *operations) (map[strin
 		if err := validateReferences(result); err != nil {
 			return nil, err
 		}
-		plans[key] = resourcePlan{r, op.Name, result}
+		plans[key] = resourcePlan{Resource: r, Operation: op.Name, ResourceResult: result}
 	}
 	return plans, nil
 }

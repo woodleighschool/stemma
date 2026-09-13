@@ -199,6 +199,7 @@ func TestExecutableProtocol(t *testing.T) {
 
 type notifyingWriter struct {
 	bytes.Buffer
+
 	seen chan struct{}
 	once sync.Once
 }

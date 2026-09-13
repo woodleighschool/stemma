@@ -46,6 +46,7 @@ type nativeObservation struct {
 
 type nativeEntry struct {
 	nativeObservation
+
 	Filename string
 	Tree     bool
 }
@@ -462,7 +463,7 @@ func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry
 		return err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("X-Github-Api-Version", "2022-11-28")
 	res, err := m.Client.Do(req)
 	if err != nil {
 		return transportError("GitHub release lookup", err)

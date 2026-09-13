@@ -80,7 +80,7 @@ func TestRegistryCredentialsPinnedRecoveryAndIntegrity(t *testing.T) {
 		}
 		data, err := content.FetchAll(r.Context(), target, desc)
 		if err != nil {
-			http.Error(w, "fixture unavailable", 500)
+			http.Error(w, "fixture unavailable", http.StatusInternalServerError)
 			return
 		}
 		if corrupt.Load() && desc.Digest == layer.Digest {
@@ -327,6 +327,7 @@ func TestRejectAmbiguousIndexAndInvalidManifest(t *testing.T) {
 
 type recordedTarget struct {
 	oras.ReadOnlyTarget
+
 	fetches  map[digest.Digest]int
 	resolves int
 }

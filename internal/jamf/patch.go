@@ -448,7 +448,7 @@ func (c *client) getPolicy(ctx context.Context, id string) (*xmlNode, error) {
 
 // xmlNode retains unowned Classic API fields during partial native reconciliation.
 type xmlNode struct {
-	XMLName  xml.Name
+	XMLName  xml.Name   `xml:""`
 	Attrs    []xml.Attr `xml:",any,attr"`
 	Text     string     `xml:",chardata"`
 	Children []xmlNode  `xml:",any"`

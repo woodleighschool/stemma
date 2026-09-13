@@ -159,7 +159,7 @@ func (cf *compoundFile) readDifat(firstDifatSector uint32, difatSectorCount uint
 		if err != nil {
 			return nil, err
 		}
-		for j := 0; j < entriesPerSector-1; j++ {
+		for j := range entriesPerSector - 1 {
 			fatSector, ok := u32(cf.data, off+j*4)
 			if !ok {
 				return nil, errors.New("truncated DIFAT sector")

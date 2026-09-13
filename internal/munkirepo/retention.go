@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -209,7 +210,23 @@ func containsLocation(value any, location string) bool {
 }
 
 func walkDocuments(root string, visit func(string, any)) error {
-	return filepath.WalkDir(root, func(filename string, entry fs.DirEntry, err error) error {
+	info, err := os.Lstat(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refusing retention with symlink %s", root)
+	}
+	scoped, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = scoped.Close() }()
+	return fs.WalkDir(scoped.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
+		filename := filepath.Join(root, filepath.FromSlash(name))
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -222,8 +239,13 @@ func walkDocuments(root string, visit func(string, any)) error {
 		if entry.Type()&os.ModeSymlink != 0 {
 			return fmt.Errorf("refusing retention with symlink %s", filename)
 		}
-		data, err := os.ReadFile(filename)
+		file, err := scoped.Open(filepath.FromSlash(name))
 		if err != nil {
+			return err
+		}
+		data, readErr := io.ReadAll(io.LimitReader(file, (32<<20)+1))
+		closeErr := file.Close()
+		if err := errors.Join(readErr, closeErr); err != nil {
 			return err
 		}
 		if len(data) > 32<<20 {

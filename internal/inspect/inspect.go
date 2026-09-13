@@ -186,10 +186,15 @@ func readDMG(ctx context.Context, name string) ([]plugin.Subject, error) {
 }
 
 func readDirectory(ctx context.Context, name string) (plugin.Facts, error) {
+	root, err := os.OpenRoot(name)
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	defer func() { _ = root.Close() }()
 	facts := plugin.Facts{Version: plugin.FactsVersion}
 	remaining := int64(maxInspectedBytes)
 	metadataRemaining := 32 << 20
-	err := filepath.WalkDir(name, func(current string, entry fs.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), ".", func(relative string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -199,19 +204,14 @@ func readDirectory(ctx context.Context, name string) (plugin.Facts, error) {
 		if len(facts.Subjects) >= maxTreeEntries {
 			return fmt.Errorf("inspection tree exceeds entry limit")
 		}
-		relative, err := filepath.Rel(name, current)
-		if err != nil {
-			return err
-		}
-		relative = filepath.ToSlash(relative)
-		parent := filepath.ToSlash(filepath.Dir(relative))
+		parent := path.Dir(relative)
 		if relative == "." {
 			parent = ""
 		}
 		subject := plugin.Subject{ID: relative, Path: relative, Parent: parent, Kind: "directory"}
 		if entry.IsDir() {
 			if relative != "." && strings.EqualFold(filepath.Ext(relative), ".app") {
-				app, err := apple.InspectApp(current)
+				app, err := apple.InspectApp(filepath.Join(name, filepath.FromSlash(relative)))
 				if err != nil {
 					return fmt.Errorf("%s: %w", relative, err)
 				}
@@ -237,7 +237,7 @@ func readDirectory(ctx context.Context, name string) (plugin.Facts, error) {
 			return fmt.Errorf("inspection tree exceeds size limit")
 		}
 		remaining -= info.Size()
-		file, err := os.Open(current)
+		file, err := root.Open(filepath.FromSlash(relative))
 		if err != nil {
 			return err
 		}

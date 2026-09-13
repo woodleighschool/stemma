@@ -189,8 +189,9 @@ func (a *xarArchive) packageInfo(name string) (PackageInfo, error) {
 		return PackageInfo{}, fmt.Errorf("PackageInfo XML: %w", err)
 	}
 	var document struct {
-		XMLName xml.Name `xml:"pkg-info"`
 		PackageInfo
+
+		XMLName  xml.Name `xml:"pkg-info"`
 		Payloads []struct {
 			Size int64 `xml:"installKBytes,attr"`
 		} `xml:"payload"`

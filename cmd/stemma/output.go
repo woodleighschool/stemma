@@ -123,6 +123,7 @@ func (o *commandOutput) finish(err error) {
 // Stop live rendering before stdout reports so terminal redraws cannot erase them.
 type reportWriter struct {
 	io.Writer
+
 	output *commandOutput
 }
 
@@ -135,6 +136,7 @@ func (w reportWriter) Write(data []byte) (int, error) {
 
 type stageHandler struct {
 	slog.Handler
+
 	output *commandOutput
 	attrs  []slog.Attr
 }

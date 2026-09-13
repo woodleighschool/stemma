@@ -317,6 +317,7 @@ func patchMetadata(version string, keep int) json.RawMessage {
 	return raw(metadata)
 }
 func newPatchFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest) {
+	t.Helper()
 	server, request := newFixture(t)
 	server.native = &nativeServer{titles: map[string]*titles.ResourcePatchSoftwareTitleConfiguration{"5": {ID: "5", DisplayName: "Test title", SoftwareTitleID: "50", Packages: []titles.SubsetPackage{}}}, patchPolicies: map[string]*xmlNode{}}
 	request.Metadata = patchMetadata("1.0", 0)
@@ -354,7 +355,7 @@ func (n *nativeServer) handle(s *fakeServer, w http.ResponseWriter, r *http.Requ
 		path := strings.Split(strings.TrimPrefix(r.URL.Path, titlePath+"/"), "/")
 		title := n.titles[path[0]]
 		if title == nil || n.hideTitle {
-			w.WriteHeader(404)
+			w.WriteHeader(http.StatusNotFound)
 			return true
 		}
 		if len(path) == 2 && path[1] == "definitions" {
@@ -397,7 +398,7 @@ func (n *nativeServer) handle(s *fakeServer, w http.ResponseWriter, r *http.Requ
 		p, err := parseXML(body, "patch_policy")
 		if err != nil {
 			s.t.Error(err)
-			w.WriteHeader(400)
+			w.WriteHeader(http.StatusBadRequest)
 			return true
 		}
 		if p.value("general", "enabled") != "false" || p.value("scope", "all_computers") != "false" || len(p.child("scope").Children) != 1 {
@@ -412,19 +413,19 @@ func (n *nativeServer) handle(s *fakeServer, w http.ResponseWriter, r *http.Requ
 		id := strings.TrimPrefix(r.URL.Path, policyPath+"/id/")
 		p := n.patchPolicies[id]
 		if p == nil {
-			w.WriteHeader(404)
+			w.WriteHeader(http.StatusNotFound)
 			return true
 		}
 		if r.Method == http.MethodPut {
 			if n.failPolicyUpdate {
-				w.WriteHeader(500)
+				w.WriteHeader(http.StatusInternalServerError)
 				return true
 			}
 			body, _ := io.ReadAll(r.Body)
 			updated, err := parseXML(body, "patch_policy")
 			if err != nil {
 				s.t.Error(err)
-				w.WriteHeader(400)
+				w.WriteHeader(http.StatusBadRequest)
 				return true
 			}
 			n.patchPolicies[id], p = updated, updated
@@ -432,7 +433,7 @@ func (n *nativeServer) handle(s *fakeServer, w http.ResponseWriter, r *http.Requ
 		writeXML(s.t, w, p)
 	case r.URL.Path == "/JSSResource/policies":
 		if n.denyPolicies {
-			w.WriteHeader(403)
+			w.WriteHeader(http.StatusForbidden)
 			return true
 		}
 		policies := &xmlNode{XMLName: xml.Name{Local: "policies"}}

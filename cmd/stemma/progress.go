@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -88,6 +89,7 @@ func activityCount(value slog.Value) int64 {
 
 type progressLine struct {
 	activity
+
 	started, ended time.Time
 	outcome        string
 	heading        bool
@@ -330,7 +332,7 @@ func progressText(style textStyle, line *progressLine, width int, now time.Time,
 	}
 	detail := line.detail
 	if line.unit != "" {
-		count := fmt.Sprintf("%d", line.current)
+		count := strconv.FormatInt(line.current, 10)
 		if line.unit == "bytes" {
 			count = humanize.IBytes(uint64(max(0, line.current)))
 		}

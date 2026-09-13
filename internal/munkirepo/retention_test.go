@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/munkirepo"
@@ -103,5 +104,56 @@ func TestDisappearingDerivedMetadataIsCleared(t *testing.T) {
 	apply(t, root, &request)
 	if value, exists := readNative[map[string]any](t, file)["minimum_os_version"]; exists {
 		t.Fatalf("retained stale derived field: %#v", value)
+	}
+}
+
+func TestRetentionRejectsUnreadableReferenceDocuments(t *testing.T) {
+	for _, kind := range []string{"symlink", "directory_symlink", "oversized"} {
+		t.Run(kind, func(t *testing.T) {
+			root, request := repositoryRequest(t, "App.pkg", `{}`)
+			first := apply(t, root, &request)
+			request.Artifact.Version = "2"
+			apply(t, root, &request)
+			filename := filepath.Join(root, "manifests", "client")
+			if err := os.MkdirAll(filepath.Dir(filename), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			switch kind {
+			case "directory_symlink":
+				if err := os.Remove(filepath.Dir(filename)); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(t.TempDir(), filepath.Dir(filename)); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Symlink(first, filename); err != nil {
+					t.Fatal(err)
+				}
+			case "oversized":
+				file, err := os.Create(filename)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = file.Truncate((32 << 20) + 1)
+				closeErr := file.Close()
+				if err != nil || closeErr != nil {
+					t.Fatalf("create oversized document: %v, %v", err, closeErr)
+				}
+			}
+			request.Metadata = json.RawMessage(`{"retention":{"keep":1},"pkginfo":{}}`)
+			request.Method = "plan"
+			_, err := munkirepo.Handle(t.Context(), request)
+			want := "symlink"
+			if kind == "oversized" {
+				want = "retention read limit"
+			}
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("unsafe reference document: %v", err)
+			}
+			if _, err := os.Stat(first); err != nil {
+				t.Fatalf("old publication removed: %v", err)
+			}
+		})
 	}
 }

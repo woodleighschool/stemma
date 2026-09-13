@@ -1,39 +1,142 @@
----
+# This file is licensed under the terms of the MIT license https://opensource.org/license/mit
+# Copyright (c) 2021-2025 Marat Reimers
+
+# Based on https://github.com/maratori/golangci-lint-config
+
 version: "2"
 
 run:
   timeout: 5m
 
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0
+
 linters:
+  # Keep correctness checks; avoid duplicate complexity metrics and layout quotas.
   default: standard
   enable:
+    - asasalint
     - asciicheck
     - bidichk
     - bodyclose
+    - canonicalheader
     - copyloopvar
     - durationcheck
+    - embeddedstructfieldcheck
+    - errcheck
+    - errname
     - errorlint
     - exhaustive
+    - fatcontext
     - gocheckcompilerdirectives
+    - gochecknoinits
     - gocritic
+    - godoclint
+    - godot
+    - gomoddirectives
+    - goprintffuncname
+    - gosec
+    - govet
+    - iface
+    - ineffassign
+    - intrange
+    - loggercheck
+    - makezero
+    - mirror
     - modernize
+    - musttag
     - nilerr
+    - nilnesserr
+    - noctx
     - nolintlint
+    - nosprintfhostport
+    - perfsprint
+    - predeclared
+    - reassign
+    - recvcheck
     - revive
     - sloglint
+    - staticcheck
+    - thelper
+    - unconvert
     - unparam
+    - unused
+    - usestdlibvars
     - usetesting
     - wastedassign
     - whitespace
+
+  exclusions:
+    rules:
+      # Fixtures intentionally create public payloads and invoke native format verifiers.
+      - path: _test\.go$
+        linters: [gosec]
+        text: "G(115|122|204|703|705):"
+      # Binary fixtures intentionally append to initialized prefixes and inventories.
+      - path: _test\.go$
+        linters: [makezero]
+      # Apple formats require SHA-1 for existing checksums and CodeDirectories.
+      - path: internal/apple/
+        linters: [gosec]
+        text: "G(401|505):"
+      # Direct macOS bindings require unsafe pointers.
+      - path: internal/(archive/metadata|icon/imageio)_darwin\.go$
+        linters: [gosec]
+        text: "G103:"
+      # Format bounds and entry/mode limits are validated before these conversions.
+      - path: internal/(apple/macho|diskimage/(extract|validate)|pkgbuild/pkgbuild)\.go$
+        linters: [gosec]
+        text: "G115:"
+
   settings:
+    gosec:
+      excludes:
+        - G304 # User-selected paths are the CLI's file input/output contract.
+        - G301 # Published directories and payload metadata need public permissions.
+        - G302
+        - G306
+
+    embeddedstructfieldcheck:
+      forbid-mutex: true
+
+    exhaustive:
+      check:
+        - switch
+        - map
+
+    gocritic:
+      settings:
+        captLocal:
+          paramsOnly: false
+        underef:
+          skipRecvDeref: false
+
+    godoclint:
+      enable:
+        - no-unused-link
+        - require-stdlib-doclink
+
     govet:
       enable-all: true
       disable:
         - fieldalignment
         - shadow
+
     nolintlint:
       require-explanation: true
       require-specific: true
+
+    # Two-item fixture loops do not need string builders.
+    perfsprint:
+      strconcat: false
+      concat-loop: false
+      error-format: false
+
+    reassign:
+      patterns:
+        - ".*"
+
     revive:
       enable-default-rules: true
       rules:
@@ -44,8 +147,33 @@ linters:
         - name: context-as-argument
           arguments:
             - allow-types-before: "*testing.T"
+
     sloglint:
       no-global: all
       context: scope
+
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+
+    thelper:
+      test:
+        begin: true
+        first: false
+        name: false
+      fuzz:
+        begin: true
+        first: false
+        name: false
+      benchmark:
+        begin: true
+        first: false
+        name: false
+      tb:
+        begin: true
+        first: false
+        name: false
+
     usetesting:
       os-temp-dir: true

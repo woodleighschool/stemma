@@ -20,7 +20,7 @@ func TestPublicationOrderTracksDistinctPayloadTransitions(t *testing.T) {
 	if got := history.Retained(2); len(got) != 2 || history.Sequence != 3 {
 		t.Fatalf("distinct payload history: %v, sequence %d", got, history.Sequence)
 	}
-	if got := (Publications{}).Retained(1); len(got) != 0 {
+	if got := new(Publications).Retained(1); len(got) != 0 {
 		t.Fatalf("unknown history invented a retention selection: %v", got)
 	}
 }

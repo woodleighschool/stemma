@@ -88,19 +88,33 @@ func TestAppRejectsTamperingAndUnsupportedScopes(t *testing.T) {
 		unsupported bool
 	}{
 		{"resource", func(t *testing.T, app string) {
+			t.Helper()
+
 			writeTestFile(t, filepath.Join(app, "Contents/Resources/message.txt"), []byte("modified"), 0644)
 		}, false},
-		{"executable", func(t *testing.T, app string) { corruptExecutable(t, filepath.Join(app, "Contents/MacOS/fixture"), 0) }, false},
-		{"second_architecture", func(t *testing.T, app string) { corruptExecutable(t, filepath.Join(app, "Contents/MacOS/fixture"), 1) }, false},
+		{"executable", func(t *testing.T, app string) {
+			t.Helper()
+			corruptExecutable(t, filepath.Join(app, "Contents/MacOS/fixture"), 0)
+		}, false},
+		{"second_architecture", func(t *testing.T, app string) {
+			t.Helper()
+			corruptExecutable(t, filepath.Join(app, "Contents/MacOS/fixture"), 1)
+		}, false},
 		{"info", func(t *testing.T, app string) {
+			t.Helper()
+
 			f := filepath.Join(app, "Contents/Info.plist")
 			data := readTestFile(t, f)
 			writeTestFile(t, f, bytes.ReplaceAll(data, []byte("1.2.3"), []byte("9.8.7")), 0644)
 		}, false},
 		{"unsealed_file", func(t *testing.T, app string) {
+			t.Helper()
+
 			writeTestFile(t, filepath.Join(app, "Contents/Resources/extra.txt"), []byte("unsealed"), 0644)
 		}, false},
 		{"symlink", func(t *testing.T, app string) {
+			t.Helper()
+
 			if err := os.Symlink("message.txt", filepath.Join(app, "Contents/Resources/link")); err != nil {
 				t.Fatal(err)
 			}

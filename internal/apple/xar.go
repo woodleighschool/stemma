@@ -41,7 +41,7 @@ type Entry struct {
 // PackageInfo contains receipt metadata from a component's PackageInfo XML.
 // InstalledSize is the declared payload size in KiB.
 type PackageInfo struct {
-	Path            string `json:"path"`
+	Path            string `json:"path" xml:"-"`
 	Identifier      string `json:"identifier" xml:"identifier,attr"`
 	Version         string `json:"version" xml:"version,attr"`
 	InstallLocation string `json:"install_location" xml:"install-location,attr"`

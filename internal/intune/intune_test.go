@@ -11,13 +11,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
-	"fmt"
 	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -275,7 +275,7 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Content-Encoding") == "gzip" {
 		reader, err := gzip.NewReader(r.Body)
 		if err != nil {
-			http.Error(w, "invalid gzip", 400)
+			http.Error(w, "invalid gzip", http.StatusBadRequest)
 			return
 		}
 		defer func() { _ = reader.Close() }()
@@ -284,18 +284,18 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 	var body object
 	if r.Method == http.MethodPost || r.Method == http.MethodPatch {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "invalid JSON", 400)
+			http.Error(w, "invalid JSON", http.StatusBadRequest)
 			return
 		}
 	}
 	if r.URL.Path == "/blob" {
 		if r.Header.Get("Authorization") != "" {
-			http.Error(w, "leaked Graph token", 400)
+			http.Error(w, "leaked Graph token", http.StatusBadRequest)
 			return
 		}
 		data, err := io.ReadAll(r.Body)
 		if err != nil {
-			http.Error(w, "read error", 400)
+			http.Error(w, "read error", http.StatusBadRequest)
 			return
 		}
 		switch r.URL.Query().Get("comp") {
@@ -309,7 +309,7 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 				Latest []string `xml:"Latest"`
 			}
 			if err := xml.Unmarshal(data, &list); err != nil {
-				http.Error(w, "bad block list", 400)
+				http.Error(w, "bad block list", http.StatusBadRequest)
 				return
 			}
 			f.uploaded = nil
@@ -318,7 +318,7 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 			}
 			f.blobLists++
 		}
-		w.WriteHeader(201)
+		w.WriteHeader(http.StatusCreated)
 		return
 	}
 	if r.Header.Get("Authorization") != "Bearer test-token" {
@@ -349,11 +349,11 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/updateRelationships") && r.Method == http.MethodPost:
 		f.relationshipWrites++
 		if f.failRelationships {
-			http.Error(w, "relationship failure", 400)
+			http.Error(w, "relationship failure", http.StatusBadRequest)
 			return
 		}
 		if f.app["publishingState"] != "published" {
-			http.Error(w, "references precede publication", 400)
+			http.Error(w, "references precede publication", http.StatusBadRequest)
 			return
 		}
 		id := strings.TrimSuffix(strings.TrimPrefix(path, appsPath+"/"), "/updateRelationships")
@@ -367,7 +367,7 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 			relationships = append(relationships, item.(object))
 		}
 		f.relations[id] = relationships
-		w.WriteHeader(204)
+		w.WriteHeader(http.StatusNoContent)
 	case strings.HasPrefix(path, appsPath+"/") && f.relatedApps[strings.TrimPrefix(path, appsPath+"/")] != nil && r.Method == http.MethodGet:
 		write(f.relatedApps[strings.TrimPrefix(path, appsPath+"/")])
 	case path == appsPath && r.Method == http.MethodGet:
@@ -389,7 +389,7 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		if body["committedContentVersion"] != nil {
 			f.app["publishingState"] = "published"
 		}
-		w.WriteHeader(204)
+		w.WriteHeader(http.StatusNoContent)
 	case strings.HasSuffix(path, "/contentVersions") && r.Method == http.MethodPost:
 		if f.app == nil || !strings.Contains(path, "/"+strings.TrimPrefix(text(f.app["@odata.type"]), "#microsoft.")+"/contentVersions") {
 			http.Error(w, "wrong subtype content path", http.StatusBadRequest)
@@ -397,8 +397,8 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.contentTypes = append(f.contentTypes, text(f.app["@odata.type"]))
 		f.versions++
-		f.contentVersions[fmt.Sprint(f.versions)] = true
-		write(object{"id": fmt.Sprint(f.versions)})
+		f.contentVersions[strconv.Itoa(f.versions)] = true
+		write(object{"id": strconv.Itoa(f.versions)})
 	case strings.HasSuffix(path, "/contentVersions") && r.Method == http.MethodGet:
 		items := []object{}
 		for id := range f.contentVersions {
@@ -408,12 +408,12 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.Contains(path, "/contentVersions/") && r.Method == http.MethodDelete:
 		id := path[strings.LastIndex(path, "/")+1:]
 		if id == f.app["committedContentVersion"] {
-			http.Error(w, "cannot delete active content", 400)
+			http.Error(w, "cannot delete active content", http.StatusBadRequest)
 			return
 		}
 		delete(f.contentVersions, id)
 		f.deletedVersions = append(f.deletedVersions, id)
-		w.WriteHeader(204)
+		w.WriteHeader(http.StatusNoContent)
 	case strings.HasSuffix(path, "/files") && r.Method == http.MethodPost:
 		f.file = body
 		f.file["id"] = "file-1"
@@ -425,19 +425,19 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/commit"):
 		info, ok := body["fileEncryptionInfo"].(object)
 		if !ok || len(f.uploaded) < 48 {
-			http.Error(w, "bad commit body", 400)
+			http.Error(w, "bad commit body", http.StatusBadRequest)
 			return
 		}
 		macKey, err := base64.StdEncoding.DecodeString(text(info["macKey"]))
 		if err != nil {
-			http.Error(w, "bad key", 400)
+			http.Error(w, "bad key", http.StatusBadRequest)
 			return
 		}
 		mac := hmac.New(sha256.New, macKey)
 		mac.Write(f.uploaded[32:])
 		recorded, err := base64.StdEncoding.DecodeString(text(info["mac"]))
 		if err != nil || !hmac.Equal(mac.Sum(nil), recorded) || !hmac.Equal(f.uploaded[:32], recorded) {
-			http.Error(w, "commit metadata does not authenticate uploaded bytes", 400)
+			http.Error(w, "commit metadata does not authenticate uploaded bytes", http.StatusBadRequest)
 			return
 		}
 		key, keyErr := base64.StdEncoding.DecodeString(text(info["encryptionKey"]))
@@ -467,18 +467,18 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.file["uploadState"] = "commitFileSuccess"
 		if f.failCommit {
 			f.failCommit = false
-			http.Error(w, "ambiguous commit", 500)
+			http.Error(w, "ambiguous commit", http.StatusInternalServerError)
 			return
 		}
-		w.WriteHeader(204)
+		w.WriteHeader(http.StatusNoContent)
 	case strings.HasSuffix(path, "/assignments"):
 		write(object{"value": f.assignments})
 	case strings.HasSuffix(path, "/assign"):
 		f.assigns++
 		f.assignments, _ = body["mobileAppAssignments"].([]any)
-		w.WriteHeader(204)
+		w.WriteHeader(http.StatusNoContent)
 	default:
-		http.Error(w, "unexpected route", 404)
+		http.Error(w, "unexpected route", http.StatusNotFound)
 	}
 }
 

@@ -72,7 +72,7 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 		requests.Add(1)
 		if r.Header.Get("Authorization") != "Bearer "+token.Load().(string) {
 			t.Error("wrong acquisition credential")
-			w.WriteHeader(401)
+			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
 		_, _ = w.Write([]byte(payload.Load().(string)))
