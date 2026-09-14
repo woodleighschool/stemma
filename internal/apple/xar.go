@@ -2,27 +2,18 @@ package apple
 
 import (
 	"bytes"
-	"compress/bzip2"
-	"compress/zlib"
 	"context"
-	"crypto"
-	"crypto/rsa"
-	"crypto/sha1"
 	"crypto/sha256"
-	"crypto/sha512"
 	"crypto/subtle"
 	"crypto/x509"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
-	"encoding/xml"
-	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"os"
-	"path"
 	"strings"
+
+	"github.com/deploymenttheory/go-macos-pkg/pkg/pkgsign"
+	"github.com/deploymenttheory/go-macos-pkg/pkg/xar"
 )
 
 const maxTOC = 8 << 20
@@ -58,53 +49,10 @@ type PackageFacts struct {
 	Applications []PackageApp  `json:"applications,omitempty"`
 }
 
-type xarChecksum struct {
-	Style  string `xml:"style,attr"`
-	Value  string `xml:",chardata"`
-	Offset int64  `xml:"offset"`
-	Size   int64  `xml:"size"`
-}
-
-type xarData struct {
-	Offset   int64 `xml:"offset"`
-	Size     int64 `xml:"size"`
-	Length   int64 `xml:"length"`
-	Encoding struct {
-		Style string `xml:"style,attr"`
-	} `xml:"encoding"`
-	Archived  xarChecksum `xml:"archived-checksum"`
-	Extracted xarChecksum `xml:"extracted-checksum"`
-}
-
-type xarFile struct {
-	Names []string  `xml:"name"`
-	Type  string    `xml:"type"`
-	Data  *xarData  `xml:"data"`
-	EA    []xarData `xml:"ea"`
-	Files []xarFile `xml:"file"`
-}
-
-type xarSignature struct {
-	Style        string   `xml:"style,attr"`
-	Offset       int64    `xml:"offset"`
-	Size         int64    `xml:"size"`
-	Certificates []string `xml:"KeyInfo>X509Data>X509Certificate"`
-}
-
 type xarArchive struct {
-	r      io.ReaderAt
-	size   int64
-	heap   int64
-	digest []byte
-	hash   crypto.Hash
-	toc    struct {
-		Checksum   xarChecksum    `xml:"checksum"`
-		Signatures []xarSignature `xml:"signature"`
-		Files      []xarFile      `xml:"file"`
-	}
-	entries        []Entry
-	files          map[string]xarFile
-	duplicateBytes int64
+	reader  *xar.Reader
+	entries []Entry
+	files   map[string]*xar.File
 }
 
 // InspectPackage reads a flat PKG/XAR table of contents and component receipt
@@ -113,7 +61,7 @@ func InspectPackage(filePath string) (PackageFacts, error) {
 	return InspectPackageMetadata(context.Background(), filePath)
 }
 
-// VerifyPackage checks all supported XAR data checksums and an RSA TOC signature
+// VerifyPackage checks XAR data checksums and package signatures
 // when requested. Identity is limited to an exact signer certificate pin.
 func VerifyPackage(filePath string, policy Policy) (Evidence, error) {
 	policy = policy.expanded()
@@ -150,8 +98,8 @@ func VerifyPackage(filePath string, policy Policy) (Evidence, error) {
 		var integrityErr error
 		for _, entry := range archive.entries {
 			file := archive.files[entry.Path]
-			for i, ea := range file.EA {
-				if integrityErr = archive.readData(fmt.Sprintf("%s extended attribute %d", entry.Path, i), ea, io.Discard, maxEntrySize); integrityErr != nil {
+			for _, ea := range file.EAs {
+				if integrityErr = archive.verifyEA(ea); integrityErr != nil {
 					break
 				}
 			}
@@ -165,6 +113,10 @@ func VerifyPackage(filePath string, policy Policy) (Evidence, error) {
 			if entry.Type != "file" {
 				continue
 			}
+			if file.Data == nil || !hasPackageChecksums(file.Data.ArchivedChecksum, file.Data.ExtractedChecksum) {
+				integrityErr = fmt.Errorf("XAR entry %q requires archived and extracted checksums", entry.Path)
+				break
+			}
 			if integrityErr = archive.readEntry(entry.Path, io.Discard, maxEntrySize); integrityErr != nil {
 				break
 			}
@@ -174,7 +126,7 @@ func VerifyPackage(filePath string, policy Policy) (Evidence, error) {
 	if policy.RequireSignature || policy.RequireIdentity || policy.CertificateSHA256 != "" {
 		cert, signatureErr := archive.verifySignature()
 		if policy.RequireSignature {
-			evidence.Signature = checkError(signatureErr, "RSA PKCS#1 v1.5 signature binds the TOC digest; no chain or timestamp assessment")
+			evidence.Signature = checkError(signatureErr, "XAR signatures verified by pkgsign; certificate chain trust is not required")
 		}
 		if policy.RequireIdentity || policy.CertificateSHA256 != "" {
 			identityErr := signatureErr
@@ -192,7 +144,7 @@ func VerifyPackage(filePath string, policy Policy) (Evidence, error) {
 					}
 				}
 			}
-			evidence.Identity = checkError(identityErr, "signing certificate matches exact configured SHA-256 pin; expiry, roots, revocation and timestamps not assessed")
+			evidence.Identity = checkError(identityErr, "signing certificate matches exact configured SHA-256 pin; platform trust is not asserted")
 		}
 	}
 	return evidence, evidence.required(policy)
@@ -210,325 +162,140 @@ func openXARFile(f *os.File) (*xarArchive, error) {
 }
 
 func openXAR(r io.ReaderAt, size int64) (*xarArchive, error) {
-	var header [28]byte
-	if _, err := r.ReadAt(header[:], 0); err != nil {
-		return nil, err
-	}
-	if string(header[:4]) != "xar!" {
-		return nil, fmt.Errorf("not a XAR archive")
-	}
-	if binary.BigEndian.Uint16(header[6:8]) != 1 {
-		return nil, fmt.Errorf("%w: XAR version", ErrUnsupported)
-	}
-	headerSize := int64(binary.BigEndian.Uint16(header[4:6]))
-	compressed := binary.BigEndian.Uint64(header[8:16])
-	uncompressed := binary.BigEndian.Uint64(header[16:24])
-	if headerSize != 28 {
-		return nil, fmt.Errorf("%w: extended XAR header", ErrUnsupported)
-	}
-	if compressed == 0 || compressed > maxTOC || uncompressed == 0 || uncompressed > maxTOC || int64(compressed) > size-headerSize {
-		return nil, fmt.Errorf("invalid or oversized XAR table of contents")
-	}
-	compression := make([]byte, compressed)
-	if _, err := r.ReadAt(compression, headerSize); err != nil {
-		return nil, err
-	}
-	compressedReader := bytes.NewReader(compression)
-	zr, err := zlib.NewReader(compressedReader)
-	if err != nil {
-		return nil, fmt.Errorf("XAR TOC: %w", err)
-	}
-	defer func() { _ = zr.Close() }()
-	toc, err := io.ReadAll(io.LimitReader(zr, int64(uncompressed)+1))
-	if err != nil {
-		return nil, fmt.Errorf("XAR TOC: %w", err)
-	}
-	if len(toc) != int(uncompressed) || compressedReader.Len() != 0 {
-		return nil, fmt.Errorf("XAR TOC lengths disagree")
-	}
-	if err := validateTOCXML(toc); err != nil {
-		return nil, err
-	}
-	archive := &xarArchive{r: r, size: size, heap: headerSize + int64(compressed), files: make(map[string]xarFile)}
-	var root struct {
-		XMLName xml.Name `xml:"xar"`
-		TOCs    []struct {
-			Checksum   xarChecksum    `xml:"checksum"`
-			Signatures []xarSignature `xml:"signature"`
-			Files      []xarFile      `xml:"file"`
-		} `xml:"toc"`
-	}
-	if err := xml.Unmarshal(toc, &root); err != nil {
-		return nil, fmt.Errorf("XAR TOC XML: %w", err)
-	}
-	if len(root.TOCs) != 1 {
-		return nil, fmt.Errorf("XAR must contain one TOC")
-	}
-	archive.toc = root.TOCs[0]
-	algorithm := binary.BigEndian.Uint32(header[24:28])
-	styles := map[uint32]string{1: "sha1", 3: "sha256", 4: "sha512"}
-	style, ok := styles[algorithm]
-	if !ok {
-		return nil, fmt.Errorf("%w: XAR TOC checksum algorithm %d", ErrUnsupported, algorithm)
-	}
-	if strings.ToLower(archive.toc.Checksum.Style) != style {
-		return nil, fmt.Errorf("XAR header and TOC checksum algorithms disagree")
-	}
-	h, hashID, _ := xarHash(style)
-	h.Write(compression)
-	archive.digest, archive.hash = h.Sum(nil), hashID
-	checksum := archive.toc.Checksum
-	if checksum.Size != int64(h.Size()) {
-		return nil, fmt.Errorf("invalid XAR TOC checksum length")
-	}
-	stored, err := archive.heapBytes(checksum.Offset, checksum.Size, 64)
+	header, err := xar.ReadHeader(r)
 	if err != nil {
 		return nil, err
 	}
-	if !bytes.Equal(stored, archive.digest) {
+	if header.TOCCompressed > maxTOC || header.TOCUncompressed > maxTOC {
+		return nil, fmt.Errorf("XAR table of contents exceeds read limit")
+	}
+	x, err := xar.Open(r, size)
+	if err != nil {
+		return nil, err
+	}
+	if !x.TOCDigestValid() {
 		return nil, fmt.Errorf("XAR TOC checksum mismatch")
 	}
-	if err := archive.addFiles("", archive.toc.Files, 0); err != nil {
+	if err := validatePackageXAR(x); err != nil {
 		return nil, err
 	}
-	return archive, nil
-}
-
-func validateTOCXML(data []byte) error {
-	decoder := xml.NewDecoder(bytes.NewReader(data))
-	var parents []map[string]bool
-	roots, nodes := 0, 0
-	singletons := map[string]bool{"toc": true, "checksum": true, "type": true, "data": true, "offset": true, "size": true, "length": true, "encoding": true, "archived-checksum": true, "extracted-checksum": true, "KeyInfo": true, "X509Data": true}
-	for {
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("XAR TOC XML: %w", err)
-		}
-		switch token := token.(type) {
-		case xml.StartElement:
-			nodes++
-			if nodes > 250000 || len(parents) >= 96 {
-				return fmt.Errorf("XAR TOC XML exceeds structural limits")
+	a := &xarArchive{reader: x, files: make(map[string]*xar.File)}
+	duplicateBytes := int64(0)
+	for _, file := range x.Files() {
+		name := file.Path()
+		if prior := a.files[name]; prior != nil {
+			// Vendor installers can repeat artwork. Accept identical bounded
+			// resources, while preserving a single unambiguous package inventory.
+			if prior.Type.Value != xar.TypeFile || file.Type.Value != xar.TypeFile ||
+				prior.Data == nil || file.Data == nil || len(prior.EAs)+len(file.EAs)+len(file.Children) != 0 ||
+				prior.Data.Size != file.Data.Size || file.Data.Size > maxMetadata-duplicateBytes {
+				return nil, fmt.Errorf("conflicting or oversized duplicate XAR path %q", name)
 			}
-			if len(parents) == 0 {
-				roots++
-			} else if singletons[token.Name.Local] {
-				parent := parents[len(parents)-1]
-				if parent[token.Name.Local] {
-					return fmt.Errorf("duplicate XAR element %q", token.Name.Local)
-				}
-				parent[token.Name.Local] = true
-			}
-			attributes := make(map[string]bool)
-			for _, attr := range token.Attr {
-				if attributes[attr.Name.Local] {
-					return fmt.Errorf("duplicate XAR attribute %q", attr.Name.Local)
-				}
-				attributes[attr.Name.Local] = true
-			}
-			parents = append(parents, make(map[string]bool))
-		case xml.EndElement:
-			parents = parents[:len(parents)-1]
-		case xml.CharData:
-			if len(parents) == 0 && len(bytes.TrimSpace(token)) != 0 {
-				return fmt.Errorf("trailing XAR XML content")
-			}
-		}
-	}
-	if roots != 1 {
-		return fmt.Errorf("XAR TOC requires exactly one XML root")
-	}
-	return nil
-}
-
-func (a *xarArchive) addFiles(parent string, files []xarFile, depth int) error {
-	if depth > 64 {
-		return fmt.Errorf("XAR nesting exceeds 64 levels")
-	}
-	for _, file := range files {
-		if len(file.Names) == 0 {
-			return fmt.Errorf("XAR entry has no filename")
-		}
-		baseName := file.Names[0]
-		for _, other := range file.Names[1:] {
-			if other != baseName {
-				return fmt.Errorf("contradictory XAR filenames %q and %q", baseName, other)
-			}
-		}
-		if baseName == "" || baseName == "." || baseName == ".." || strings.ContainsAny(baseName, "/\\\x00:") {
-			return fmt.Errorf("unsafe XAR filename %q", baseName)
-		}
-		name := path.Join(parent, baseName)
-		if prior, exists := a.files[name]; exists {
-			if prior.Type != "file" || file.Type != "file" || prior.Data == nil || file.Data == nil || len(prior.EA)+len(file.EA)+len(file.Files) != 0 || prior.Data.Size != file.Data.Size || file.Data.Size < 0 || file.Data.Size > maxMetadata-a.duplicateBytes {
-				return fmt.Errorf("conflicting or oversized duplicate XAR path %q", name)
-			}
-			a.duplicateBytes += file.Data.Size
+			duplicateBytes += file.Data.Size
 			var first, second bytes.Buffer
-			if err := a.readData(name, *prior.Data, &first, maxMetadata); err != nil {
-				return err
+			if err := a.readFile(prior, &first, maxMetadata); err != nil {
+				return nil, err
 			}
-			if err := a.readData(name, *file.Data, &second, maxMetadata); err != nil {
-				return err
+			if err := a.readFile(file, &second, maxMetadata); err != nil {
+				return nil, err
 			}
 			if !bytes.Equal(first.Bytes(), second.Bytes()) {
-				return fmt.Errorf("conflicting duplicate XAR path %q", name)
+				return nil, fmt.Errorf("conflicting duplicate XAR path %q", name)
 			}
 			continue
 		}
-		if len(a.files) >= 100000 {
-			return fmt.Errorf("too many XAR entries")
-		}
-		entry := Entry{Path: name, Type: file.Type}
-		if file.Data != nil {
-			data := file.Data
-			if data.Size < 0 || data.Length < 0 || !a.validHeapRange(data.Offset, data.Length) {
-				return fmt.Errorf("invalid XAR data range for %s", name)
-			}
-			entry.Size, entry.CompressedSize, entry.Encoding = data.Size, data.Length, data.Encoding.Style
-		}
 		a.files[name] = file
-		a.entries = append(a.entries, entry)
-		if len(file.Files) != 0 && file.Type != "directory" {
-			return fmt.Errorf("XAR children in non-directory %q", name)
+		entry := Entry{Path: name, Type: file.Type.Value}
+		if file.Data != nil {
+			entry.Size, entry.CompressedSize, entry.Encoding = file.Data.Size, file.Data.Length, file.Data.Encoding.Style
 		}
-		if err := a.addFiles(name, file.Files, depth+1); err != nil {
-			return err
+		a.entries = append(a.entries, entry)
+	}
+	return a, nil
+}
+
+func validatePackageXAR(x *xar.Reader) error {
+	if len(x.Files()) > 100000 {
+		return fmt.Errorf("too many XAR entries")
+	}
+	for _, file := range x.Files() {
+		name := file.Name()
+		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\\x00:") {
+			return fmt.Errorf("unsafe XAR filename %q", name)
+		}
+		if len(file.Children) != 0 && !file.IsDir() {
+			return fmt.Errorf("XAR children in non-directory %q", file.Path())
+		}
+		if file.Data != nil {
+			if file.Data.Size < 0 {
+				return fmt.Errorf("invalid XAR data size for %s", file.Path())
+			}
+			if _, err := x.HeapSection(file.Data.Offset, file.Data.Length); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
-}
-
-func (a *xarArchive) validHeapRange(offset, size int64) bool {
-	return offset >= 0 && size >= 0 && offset <= a.size-a.heap && size <= a.size-a.heap-offset
-}
-
-func (a *xarArchive) heapBytes(offset, size, limit int64) ([]byte, error) {
-	if !a.validHeapRange(offset, size) || size > limit {
-		return nil, fmt.Errorf("invalid or oversized XAR heap range")
-	}
-	data := make([]byte, size)
-	_, err := a.r.ReadAt(data, a.heap+offset)
-	return data, err
 }
 
 func (a *xarArchive) readEntry(name string, dst io.Writer, limit int64) error {
-	file, ok := a.files[name]
-	if !ok || file.Type != "file" {
+	file := a.files[name]
+	if file == nil || file.Type.Value != xar.TypeFile {
 		return fmt.Errorf("XAR entry %q is not a regular file", name)
 	}
+	return a.readFile(file, dst, limit)
+}
+
+func (a *xarArchive) readFile(file *xar.File, dst io.Writer, limit int64) error {
 	if file.Data == nil {
 		return fmt.Errorf("%w: XAR regular file without data descriptor", ErrUnsupported)
 	}
-	return a.readData(name, *file.Data, dst, limit)
+	if err := validatePackageData(file.Data, limit); err != nil {
+		return err
+	}
+	r, err := a.reader.OpenVerified(file)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	_, err = io.Copy(dst, r)
+	return err
 }
 
-func (a *xarArchive) readData(name string, data xarData, dst io.Writer, limit int64) error {
-	if data.Size < 0 || data.Length < 0 || !a.validHeapRange(data.Offset, data.Length) {
-		return fmt.Errorf("invalid XAR data range for %s", name)
-	}
-	if data.Size > limit || data.Length > maxEntrySize {
-		return fmt.Errorf("XAR entry %q exceeds read limit", name)
-	}
-	archived, _, err := xarHash(data.Archived.Style)
-	if err != nil {
-		return err
-	}
-	extracted, _, err := xarHash(data.Extracted.Style)
-	if err != nil {
-		return err
-	}
-	section := io.NewSectionReader(a.r, a.heap+data.Offset, data.Length)
-	compressed := io.TeeReader(section, archived)
-	source := compressed
-	switch data.Encoding.Style {
-	case "application/octet-stream":
-	case "application/x-gzip":
-		zr, err := zlib.NewReader(compressed)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = zr.Close() }()
-		source = zr
-	case "application/x-bzip2":
-		source = bzip2.NewReader(compressed)
-	default:
-		return fmt.Errorf("%w: XAR compression %q", ErrUnsupported, data.Encoding.Style)
-	}
-	n, err := io.Copy(io.MultiWriter(dst, extracted), io.LimitReader(source, data.Size+1))
-	if err != nil {
-		return fmt.Errorf("XAR entry %s: %w", name, err)
-	}
-	if n != data.Size {
-		return fmt.Errorf("XAR entry %s extracted size mismatch", name)
-	}
-	// Include any compressed-stream padding in the archive checksum as XAR does.
-	if _, err := io.Copy(io.Discard, compressed); err != nil {
-		return err
-	}
-	for _, sum := range []struct {
-		actual   []byte
-		expected string
-	}{{archived.Sum(nil), data.Archived.Value}, {extracted.Sum(nil), data.Extracted.Value}} {
-		expected, err := hex.DecodeString(strings.TrimSpace(sum.expected))
-		if err != nil || !bytes.Equal(expected, sum.actual) {
-			return fmt.Errorf("XAR entry %s checksum mismatch", name)
-		}
+func validatePackageData(data *xar.Data, limit int64) error {
+	if data.Size < 0 || data.Size > limit || data.Length > maxEntrySize {
+		return fmt.Errorf("XAR entry exceeds read limit")
 	}
 	return nil
 }
 
+func hasPackageChecksums(archived, extracted *xar.Digest) bool {
+	return archived != nil && archived.Value != "" && extracted != nil && extracted.Value != ""
+}
+
+func (a *xarArchive) verifyEA(ea *xar.EA) error {
+	if !hasPackageChecksums(ea.ArchivedChecksum, ea.ExtractedChecksum) {
+		return fmt.Errorf("XAR extended attribute requires archived and extracted checksums")
+	}
+	if err := validatePackageData(&xar.Data{Size: ea.Size, Length: ea.Length, ArchivedChecksum: ea.ArchivedChecksum, ExtractedChecksum: ea.ExtractedChecksum}, maxEntrySize); err != nil {
+		return err
+	}
+	r, err := a.reader.OpenEAVerified(ea)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	_, err = io.Copy(io.Discard, r)
+	return err
+}
+
 func (a *xarArchive) verifySignature() (*x509.Certificate, error) {
-	if len(a.toc.Signatures) == 0 {
-		return nil, fmt.Errorf("XAR archive is unsigned")
-	}
-	if len(a.toc.Signatures) != 1 {
-		return nil, fmt.Errorf("%w: multiple XAR signatures", ErrUnsupported)
-	}
-	sig := a.toc.Signatures[0]
-	if sig.Style != "RSA" {
-		return nil, fmt.Errorf("%w: XAR signature style %q", ErrUnsupported, sig.Style)
-	}
-	if len(sig.Certificates) == 0 {
-		return nil, fmt.Errorf("XAR signature has no signer certificate")
-	}
-	der, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(sig.Certificates[0]), ""))
-	if err != nil {
-		return nil, fmt.Errorf("XAR signer certificate: %w", err)
-	}
-	cert, err := x509.ParseCertificate(der)
-	if err != nil {
-		return nil, fmt.Errorf("XAR signer certificate: %w", err)
-	}
-	key, ok := cert.PublicKey.(*rsa.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("%w: XAR signer public-key type", ErrUnsupported)
-	}
-	if key.N.BitLen() < 2048 {
-		return nil, fmt.Errorf("%w: RSA keys below 2048 bits", ErrUnsupported)
-	}
-	signature, err := a.heapBytes(sig.Offset, sig.Size, 16384)
+	result, err := pkgsign.Verify(a.reader, pkgsign.VerifyOptions{AllowUntrusted: true})
 	if err != nil {
 		return nil, err
 	}
-	if err := rsa.VerifyPKCS1v15(key, a.hash, a.digest, signature); err != nil {
-		return nil, fmt.Errorf("XAR RSA signature invalid: %w", err)
+	if !result.Valid() {
+		return nil, fmt.Errorf("XAR signature invalid: %s", strings.Join(result.Errors, "; "))
 	}
-	return cert, nil
-}
-
-func xarHash(style string) (hash.Hash, crypto.Hash, error) {
-	switch strings.ToLower(style) {
-	case "sha1":
-		return sha1.New(), crypto.SHA1, nil
-	case "sha256":
-		return sha256.New(), crypto.SHA256, nil
-	case "sha512":
-		return sha512.New(), crypto.SHA512, nil
-	default:
-		return nil, 0, fmt.Errorf("%w: XAR checksum %q", ErrUnsupported, style)
-	}
+	return result.Signer, nil
 }

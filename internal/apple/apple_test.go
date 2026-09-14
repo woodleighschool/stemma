@@ -184,9 +184,9 @@ func TestResourceScopeRejectsNestedCode(t *testing.T) {
 	}
 }
 
-func TestXARRejectsAmbiguousXML(t *testing.T) {
-	for _, data := range []string{`<xar><toc><checksum><offset>0</offset><offset>20</offset></checksum></toc></xar>`, `<xar><toc/><toc/></xar>`, `<xar><toc><encoding style="a" style="b"/></toc></xar>`, `<xar/><xar/>`} {
-		if err := validateTOCXML([]byte(data)); err == nil {
+func TestPackageXMLRejectsAmbiguity(t *testing.T) {
+	for _, data := range []string{`<pkg-info><payload><size>0</size><size>20</size></payload></pkg-info>`, `<pkg-info identifier="a" identifier="b"/>`, `<pkg-info/><pkg-info/>`} {
+		if err := validatePackageXML([]byte(data)); err == nil {
 			t.Fatalf("accepted ambiguous XML %s", data)
 		}
 	}
@@ -221,7 +221,7 @@ func TestPackageInspectionAndIntegrity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	offset := archive.heap + archive.files["Payload"].Data.Offset
+	offset := archive.reader.HeapOffset() + archive.files["Payload"].Data.Offset
 	tampered := bytes.Clone(before)
 	tampered[offset] ^= 0x40
 	file := filepath.Join(t.TempDir(), "tampered.pkg")
@@ -253,10 +253,31 @@ func TestPackageRSASignatureAndPinnedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	archive[toc.heap+toc.toc.Signatures[0].Offset] ^= 1
+	archive[toc.reader.HeapOffset()+toc.reader.TOC().Signature.Offset] ^= 1
 	writeTestFile(t, file, archive, 0644)
 	if evidence, err := VerifyPackage(file, policy); err == nil || evidence.Signature.Status != Invalid || evidence.Identity.Status != Invalid {
 		t.Fatalf("tampered RSA signature accepted: %+v: %v", evidence, err)
+	}
+}
+
+func TestPackageRejectsCorruptCMSWithValidRSA(t *testing.T) {
+	data := readTestFile(t, "testdata/fixture.pkg")
+	archive, err := openXAR(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	toc := archive.reader.TOC()
+	if toc.Signature == nil || toc.XSignature == nil {
+		t.Fatal("fixture needs both RSA and CMS signatures")
+	}
+	// The CMS blob lives in the heap; changing it leaves the signed TOC and
+	// the independent RSA signature untouched.
+	data[archive.reader.HeapOffset()+toc.XSignature.Offset] ^= 1
+	file := filepath.Join(t.TempDir(), "corrupt-cms.pkg")
+	writeTestFile(t, file, data, 0o600)
+	evidence, err := VerifyPackage(file, Policy{RequireSignature: true})
+	if err == nil || evidence.Signature.Status != Invalid || evidence.Integrity.Status != Valid {
+		t.Fatalf("corrupt CMS accepted: %+v: %v", evidence, err)
 	}
 }
 
@@ -269,17 +290,6 @@ func TestXARRejectsTraversalAndCorruptTOC(t *testing.T) {
 	archive[30] ^= 1
 	if _, err := openXAR(bytes.NewReader(archive), int64(len(archive))); err == nil {
 		t.Fatal("accepted corrupt TOC")
-	}
-}
-
-func TestXARAllowsOnlyIdenticalRepeatedNames(t *testing.T) {
-	archive := &xarArchive{files: make(map[string]xarFile)}
-	if err := archive.addFiles("", []xarFile{{Names: []string{"Payload", "Payload"}, Type: "directory"}}, 0); err != nil {
-		t.Fatalf("identical repeated vendor filename rejected: %v", err)
-	}
-	archive = &xarArchive{files: make(map[string]xarFile)}
-	if err := archive.addFiles("", []xarFile{{Names: []string{"Payload", "Scripts"}, Type: "directory"}}, 0); err == nil {
-		t.Fatal("contradictory XAR filenames accepted")
 	}
 }
 

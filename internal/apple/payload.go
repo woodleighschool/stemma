@@ -13,9 +13,11 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"runtime"
 	"strconv"
 	"strings"
 
+	"github.com/deploymenttheory/go-macos-pkg/pkg/pbzx"
 	"github.com/mikelolasagasti/xz"
 	"github.com/woodleighschool/stemma/internal/fileio"
 )
@@ -23,7 +25,6 @@ import (
 const maxPayloadEntries = 1000000
 const maxPackageMetadata = 32 << 20
 const maxPayloadPadding = 1 << 20
-const pbzxChunkSize = 16 << 20
 
 type payloadBudget struct {
 	metadata  int64
@@ -47,7 +48,8 @@ type PackageApp struct {
 
 // InspectPackageContents reads receipts and application Info.plists in flat
 // packages. Payloads support ODC CPIO, optionally compressed with gzip, XZ or
-// 16 MiB PBZX chunks. Unsupported layouts fail without returning partial facts.
+// 16 MiB PBZX chunks decoded concurrently with bounded read-ahead. Unsupported
+// layouts fail without returning partial facts.
 // Inspection never extracts payloads, executes scripts or consults target paths.
 func InspectPackageContents(ctx context.Context, filePath string) (PackageFacts, error) {
 	return inspectPackage(ctx, filePath, true)
@@ -76,7 +78,7 @@ func inspectPackage(ctx context.Context, filePath string, contents bool) (Packag
 	if err != nil {
 		return PackageFacts{}, err
 	}
-	facts := PackageFacts{Format: "xar", Entries: archive.entries, HasSignature: len(archive.toc.Signatures) != 0}
+	facts := PackageFacts{Format: "xar", Entries: archive.entries, HasSignature: archive.reader.TOC().Signature != nil || archive.reader.TOC().XSignature != nil}
 	payloads := make(map[string]bool)
 	budget := newPayloadBudget()
 	for _, entry := range archive.entries {
@@ -141,7 +143,7 @@ func (a *xarArchive) validateDistribution(name string) error {
 	if err := a.readEntry(name, &data, maxMetadata); err != nil {
 		return err
 	}
-	if err := validateTOCXML(data.Bytes()); err != nil {
+	if err := validatePackageXML(data.Bytes()); err != nil {
 		return fmt.Errorf("distribution XML: %w", err)
 	}
 	decoder := xml.NewDecoder(&data)
@@ -171,7 +173,7 @@ func (a *xarArchive) validateDistribution(name string) error {
 		}
 		component := path.Join(path.Dir(name), reference)
 		file, exists := a.files[component]
-		if !exists || file.Type != "directory" {
+		if !exists || file.Type.Value != "directory" {
 			return fmt.Errorf("%w: Distribution package reference %q is not an embedded component directory", ErrUnsupported, reference)
 		}
 		if _, exists := a.files[path.Join(component, "PackageInfo")]; !exists {
@@ -185,7 +187,7 @@ func (a *xarArchive) packageInfo(name string) (PackageInfo, error) {
 	if err := a.readEntry(name, &data, maxMetadata); err != nil {
 		return PackageInfo{}, err
 	}
-	if err := validateTOCXML(data.Bytes()); err != nil {
+	if err := validatePackageXML(data.Bytes()); err != nil {
 		return PackageInfo{}, fmt.Errorf("PackageInfo XML: %w", err)
 	}
 	var document struct {
@@ -215,7 +217,7 @@ func (a *xarArchive) packageInfo(name string) (PackageInfo, error) {
 		return PackageInfo{}, fmt.Errorf("duplicate PackageInfo payload metadata")
 	}
 	payload, exists := a.files[path.Join(path.Dir(name), "Payload")]
-	if exists && payload.Type != "file" {
+	if exists && payload.Type.Value != "file" {
 		return PackageInfo{}, fmt.Errorf("component Payload is not a regular file")
 	}
 	metadata.HasPayload = exists
@@ -251,7 +253,7 @@ func (a *xarArchive) payloadApps(ctx context.Context, name string, budget *paylo
 		_ = w.CloseWithError(err)
 		done <- err
 	}()
-	apps, err := readPayload(fileio.Reader{Context: ctx, Reader: r}, budget, applicationRoot)
+	apps, err := readPayload(ctx, r, budget, applicationRoot)
 	_ = r.CloseWithError(err)
 	readErr := <-done
 	if err != nil {
@@ -260,8 +262,11 @@ func (a *xarArchive) payloadApps(ctx context.Context, name string, budget *paylo
 	return apps, readErr
 }
 
-func readPayload(source io.Reader, budget *payloadBudget, applicationRoot bool) ([]PackageApp, error) {
-	r := bufio.NewReader(source)
+func readPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudget, applicationRoot bool) ([]PackageApp, error) {
+	stop := context.AfterFunc(ctx, func() { _ = source.Close() })
+	defer stop()
+	defer func() { _ = source.Close() }()
+	r := bufio.NewReader(fileio.Reader{Context: ctx, Reader: source})
 	header, err := r.Peek(6)
 	if err != nil {
 		return nil, err
@@ -280,7 +285,23 @@ func readPayload(source io.Reader, budget *payloadBudget, applicationRoot bool) 
 	case string(header) == "\xfd7zXZ\x00":
 		content, err = xz.NewReader(r, 64<<20)
 	case string(header[:4]) == "pbzx":
-		content, err = newPBZXReader(r)
+		header, err := r.Peek(12)
+		if err != nil {
+			return nil, err
+		}
+		if binary.BigEndian.Uint64(header[4:]) != pbzx.DefaultBlockSize {
+			return nil, fmt.Errorf("%w: PBZX chunk size", ErrUnsupported)
+		}
+		reader, err := pbzx.NewConcurrentReader(ctx, r, min(runtime.GOMAXPROCS(0), 4))
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			// Unblock the library's source reader before joining its workers.
+			_ = source.Close()
+			_ = reader.Close()
+		}()
+		content = reader
 	default:
 		return nil, fmt.Errorf("%w: PKG payload compression or archive format", ErrUnsupported)
 	}
@@ -419,63 +440,52 @@ func readPadding(r io.Reader) error {
 	}
 }
 
-type pbzxReader struct {
-	source io.Reader
-	chunk  *bytes.Reader
-	more   bool
-}
-
-func newPBZXReader(r io.Reader) (*pbzxReader, error) {
-	var header [12]byte
-	if _, err := io.ReadFull(r, header[:]); err != nil {
-		return nil, err
-	}
-	if string(header[:4]) != "pbzx" || binary.BigEndian.Uint64(header[4:]) != pbzxChunkSize {
-		return nil, fmt.Errorf("%w: PBZX chunk size", ErrUnsupported)
-	}
-	return &pbzxReader{source: r, more: true}, nil
-}
-
-func (r *pbzxReader) Read(p []byte) (int, error) {
-	if len(p) == 0 {
-		return 0, nil
-	}
-	for r.chunk == nil || r.chunk.Len() == 0 {
-		if !r.more {
-			return 0, io.EOF
+func validatePackageXML(data []byte) error {
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	var parents []map[string]bool
+	roots, nodes := 0, 0
+	singletons := map[string]bool{"toc": true, "checksum": true, "type": true, "data": true, "offset": true, "size": true, "length": true, "encoding": true, "archived-checksum": true, "extracted-checksum": true, "KeyInfo": true, "X509Data": true}
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			break
 		}
-		var header [16]byte
-		if _, err := io.ReadFull(r.source, header[:]); err != nil {
-			return 0, fmt.Errorf("PBZX chunk header: %w", err)
+		if err != nil {
+			return fmt.Errorf("package XML: %w", err)
 		}
-		flags, size := binary.BigEndian.Uint64(header[:8]), binary.BigEndian.Uint64(header[8:])
-		if flags > pbzxChunkSize || size == 0 || size > pbzxChunkSize {
-			return 0, fmt.Errorf("invalid or oversized PBZX chunk")
-		}
-		r.more = flags&pbzxChunkSize != 0
-		data := make([]byte, size)
-		if _, err := io.ReadFull(r.source, data); err != nil {
-			return 0, err
-		}
-		if bytes.HasPrefix(data, []byte("\xfd7zXZ\x00")) {
-			xr, err := xz.NewReader(bytes.NewReader(data), 64<<20)
-			if err != nil {
-				return 0, err
+		switch token := token.(type) {
+		case xml.StartElement:
+			nodes++
+			if nodes > 250000 || len(parents) >= 96 {
+				return fmt.Errorf("package XML exceeds structural limits")
 			}
-			data, err = io.ReadAll(io.LimitReader(xr, pbzxChunkSize+1))
-			if err != nil {
-				return 0, err
+			if len(parents) == 0 {
+				roots++
+			} else if singletons[token.Name.Local] {
+				parent := parents[len(parents)-1]
+				if parent[token.Name.Local] {
+					return fmt.Errorf("duplicate package element %q", token.Name.Local)
+				}
+				parent[token.Name.Local] = true
 			}
-			if len(data) > pbzxChunkSize {
-				return 0, fmt.Errorf("PBZX chunk exceeds read limit")
+			attributes := make(map[string]bool)
+			for _, attr := range token.Attr {
+				if attributes[attr.Name.Local] {
+					return fmt.Errorf("duplicate package attribute %q", attr.Name.Local)
+				}
+				attributes[attr.Name.Local] = true
 			}
-		} else if size != pbzxChunkSize && size != flags {
-			return 0, fmt.Errorf("%w: PBZX raw chunk size", ErrUnsupported)
+			parents = append(parents, make(map[string]bool))
+		case xml.EndElement:
+			parents = parents[:len(parents)-1]
+		case xml.CharData:
+			if len(parents) == 0 && len(bytes.TrimSpace(token)) != 0 {
+				return fmt.Errorf("trailing package XML content")
+			}
 		}
-		if flags != 0 && uint64(len(data)) != flags {
-			return 0, fmt.Errorf("PBZX chunk expanded size mismatch")
-		}
-		r.chunk = bytes.NewReader(data)
 	}
-	return r.chunk.Read(p)
+	if roots != 1 {
+		return fmt.Errorf("package XML requires exactly one XML root")
+	}
+	return nil
 }

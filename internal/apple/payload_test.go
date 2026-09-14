@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/deploymenttheory/go-macos-pkg/pkg/cpio"
+	"github.com/deploymenttheory/go-macos-pkg/pkg/pbzx"
+	"github.com/deploymenttheory/go-macos-pkg/pkg/xar"
 	xzdecode "github.com/mikelolasagasti/xz"
 	"github.com/ulikunitz/xz"
 	"howett.net/plist"
@@ -110,14 +112,14 @@ func TestPackageContentsRejectsUnsafeAndIncompletePayloads(t *testing.T) {
 	t.Run("ancestor_symlink", func(t *testing.T) {
 		payload := cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example"), {cpio.Header{Name: "./Example.app", Mode: cpio.ModeSymlink | 0o777}, []byte("outside")}})
 		budget := newPayloadBudget()
-		if _, err := readPayload(bytes.NewReader(payload), budget, false); err == nil {
+		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), budget, false); err == nil {
 			t.Fatal("accepted symlink application ancestor")
 		}
 	})
 	t.Run("truncated", func(t *testing.T) {
 		payload := cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")})
 		budget := newPayloadBudget()
-		if _, err := readPayload(bytes.NewReader(payload[:90]), budget, false); err == nil {
+		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload[:90])), budget, false); err == nil {
 			t.Fatal("accepted truncated payload")
 		}
 	})
@@ -125,7 +127,7 @@ func TestPackageContentsRejectsUnsafeAndIncompletePayloads(t *testing.T) {
 		payload := compressPayload(t, "gzip", cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")}))
 		payload[len(payload)-5] ^= 1
 		budget := newPayloadBudget()
-		if _, err := readPayload(bytes.NewReader(payload), budget, false); err == nil {
+		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), budget, false); err == nil {
 			t.Fatal("accepted corrupt compression trailer after plist")
 		}
 	})
@@ -133,7 +135,7 @@ func TestPackageContentsRejectsUnsafeAndIncompletePayloads(t *testing.T) {
 		file := plistEntry(t, "./Example.app/Contents/Info.plist", "Example")
 		payload := cpioPayload(t, []payloadEntry{file, file})
 		budget := newPayloadBudget()
-		if _, err := readPayload(bytes.NewReader(payload), budget, false); err == nil {
+		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), budget, false); err == nil {
 			t.Fatal("accepted duplicate plist")
 		}
 	})
@@ -176,47 +178,17 @@ func TestPayloadBudgetsSpanComponents(t *testing.T) {
 		{"metadata", &payloadBudget{bytes: maxEntrySize, metadata: int64(len(plistEntry(t, "unused", "Example").body)), entries: maxPayloadEntries}},
 		{"entries", &payloadBudget{bytes: maxEntrySize, metadata: maxPackageMetadata, entries: 2}},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := readPayload(bytes.NewReader(payload), test.budget, false); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := readPayload(bytes.NewReader(payload), test.budget, false); err == nil {
-				t.Fatal("component reset aggregate inspection budget")
-			}
-		})
-	}
-}
-
-func TestPBZXRawAndCompressedChunks(t *testing.T) {
-	first := bytes.Repeat([]byte{'x'}, pbzxChunkSize)
-	last := []byte("last chunk")
-	for _, finalFlag := range []uint64{0, uint64(len(last))} {
-		var payload bytes.Buffer
-		payload.WriteString("pbzx")
-		for _, v := range []uint64{pbzxChunkSize, pbzxChunkSize, pbzxChunkSize} {
-			if err := binary.Write(&payload, binary.BigEndian, v); err != nil {
-				t.Fatal(err)
-			}
-		}
-		payload.Write(first)
-		compressed := compressPayload(t, "xz", last)
-		for _, v := range []uint64{finalFlag, uint64(len(compressed))} {
-			if err := binary.Write(&payload, binary.BigEndian, v); err != nil {
-				t.Fatal(err)
-			}
-		}
-		payload.Write(compressed)
-		r, err := newPBZXReader(&payload)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got := sha256.New()
-		n, err := io.Copy(got, r)
-		want := sha256.New()
-		want.Write(first)
-		want.Write(last)
-		if err != nil || n != int64(len(first)+len(last)) || !bytes.Equal(got.Sum(nil), want.Sum(nil)) {
-			t.Fatalf("PBZX chunk sequence: %d, %v", n, err)
+		for _, compression := range []string{"plain", "pbzx"} {
+			t.Run(test.name+"/"+compression, func(t *testing.T) {
+				budget := *test.budget
+				data := compressPayload(t, compression, payload)
+				if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(data)), &budget, false); err != nil {
+					t.Fatal(err)
+				}
+				if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(data)), &budget, false); err == nil {
+					t.Fatal("component reset aggregate inspection budget")
+				}
+			})
 		}
 	}
 }
@@ -229,7 +201,7 @@ func TestPayloadRejectsOversizedXZDictionary(t *testing.T) {
 	block := []byte{2, 0, 0x21, 1, 30, 0, 0, 0, 0, 0, 0, 0}
 	binary.LittleEndian.PutUint32(block[8:], crc32.ChecksumIEEE(block[:8]))
 	stream = append(stream, block...)
-	if _, err := readPayload(bytes.NewReader(stream), newPayloadBudget(), false); !errors.Is(err, xzdecode.ErrMemlimit) {
+	if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(stream)), newPayloadBudget(), false); !errors.Is(err, xzdecode.ErrMemlimit) {
 		t.Fatalf("XZ dictionary limit not enforced: %v", err)
 	}
 }
@@ -276,14 +248,17 @@ func compressPayload(t *testing.T, kind string, data []byte) []byte {
 	}
 	var result bytes.Buffer
 	var w io.WriteCloser
-	if kind == "gzip" {
+	var err error
+	switch kind {
+	case "gzip":
 		w = gzip.NewWriter(&result)
-	} else {
-		var err error
+	case "pbzx":
+		w, err = pbzx.NewWriter(&result, pbzx.XZ, 0)
+	default:
 		w, err = xz.NewWriter(&result)
-		if err != nil {
-			t.Fatal(err)
-		}
+	}
+	if err != nil {
+		t.Fatal(err)
 	}
 	if _, err := w.Write(data); err != nil {
 		t.Fatal(err)
@@ -291,15 +266,7 @@ func compressPayload(t *testing.T, kind string, data []byte) []byte {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if kind != "pbzx" {
-		return result.Bytes()
-	}
-	header := make([]byte, 28)
-	copy(header, "pbzx")
-	binary.BigEndian.PutUint64(header[4:], pbzxChunkSize)
-	binary.BigEndian.PutUint64(header[12:], uint64(len(data)))
-	binary.BigEndian.PutUint64(header[20:], uint64(result.Len()))
-	return append(header, result.Bytes()...)
+	return result.Bytes()
 }
 
 type payloadMember struct {
@@ -310,22 +277,19 @@ type payloadMember struct {
 func writePayloadPackage(t *testing.T, members []payloadMember) string {
 	t.Helper()
 	var heap bytes.Buffer
-	var files []xarFile
+	var files []*xar.File
 	for _, member := range members {
 		digest := sha256.Sum256(member.data)
-		data := &xarData{Offset: int64(32 + heap.Len()), Size: int64(len(member.data)), Length: int64(len(member.data)), Archived: xarChecksum{Style: "sha256", Value: hex.EncodeToString(digest[:])}, Extracted: xarChecksum{Style: "sha256", Value: hex.EncodeToString(digest[:])}}
+		data := &xar.Data{Offset: int64(32 + heap.Len()), Size: int64(len(member.data)), Length: int64(len(member.data)), ArchivedChecksum: &xar.Digest{Style: "sha256", Value: hex.EncodeToString(digest[:])}, ExtractedChecksum: &xar.Digest{Style: "sha256", Value: hex.EncodeToString(digest[:])}}
 		data.Encoding.Style = "application/octet-stream"
 		heap.Write(member.data)
 		insertPayloadMember(&files, strings.Split(member.name, "/"), data)
 	}
 	document := struct {
 		XMLName xml.Name `xml:"xar"`
-		TOC     struct {
-			Checksum xarChecksum `xml:"checksum"`
-			Files    []xarFile   `xml:"file"`
-		} `xml:"toc"`
+		TOC     xar.TOC  `xml:"toc"`
 	}{}
-	document.TOC.Checksum = xarChecksum{Style: "sha256", Size: 32}
+	document.TOC.Checksum = &xar.Checksum{Style: "sha256", Size: 32}
 	document.TOC.Files = files
 	toc, err := xml.Marshal(document)
 	if err != nil {
@@ -356,19 +320,24 @@ func writePayloadPackage(t *testing.T, members []payloadMember) string {
 	return name
 }
 
-func insertPayloadMember(files *[]xarFile, parts []string, data *xarData) {
-	if len(parts) == 1 {
-		*files = append(*files, xarFile{Names: []string{parts[0]}, Type: "file", Data: data})
-		return
-	}
-	for i := range *files {
-		if (*files)[i].Names[0] == parts[0] {
-			insertPayloadMember(&(*files)[i].Files, parts[1:], data)
-			return
+func insertPayloadMember(files *[]*xar.File, parts []string, data *xar.Data) {
+	if len(parts) > 1 {
+		for _, file := range *files {
+			if file.Name() == parts[0] {
+				insertPayloadMember(&file.Children, parts[1:], data)
+				return
+			}
 		}
 	}
-	*files = append(*files, xarFile{Names: []string{parts[0]}, Type: "directory"})
-	insertPayloadMember(&(*files)[len(*files)-1].Files, parts[1:], data)
+	file := &xar.File{}
+	file.SetName(parts[0])
+	*files = append(*files, file)
+	if len(parts) == 1 {
+		file.Type.Value, file.Data = xar.TypeFile, data
+	} else {
+		file.Type.Value = xar.TypeDirectory
+		insertPayloadMember(&file.Children, parts[1:], data)
+	}
 }
 
 func TestLargePackageInventory(t *testing.T) {
@@ -378,7 +347,7 @@ func TestLargePackageInventory(t *testing.T) {
 	}
 	entries = append(entries, plistEntry(t, "./Example.app/Contents/Info.plist", "Example"))
 	payload := cpioPayload(t, entries)
-	apps, err := readPayload(bytes.NewReader(payload), newPayloadBudget(), false)
+	apps, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), newPayloadBudget(), false)
 	if err != nil || len(apps) != 1 {
 		t.Fatalf("large inventory: %d apps, %v", len(apps), err)
 	}
@@ -412,5 +381,92 @@ func TestPackageRepeatedResources(t *testing.T) {
 				t.Fatal("corrupt duplicate escaped verification")
 			}
 		})
+	}
+}
+
+func TestPBZXPayloadPreservesLimitsAndTrailingChecks(t *testing.T) {
+	cpio := cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")})
+	payload := compressPayload(t, "pbzx", cpio)
+	for _, test := range []struct {
+		name  string
+		data  []byte
+		limit int64
+	}{
+		{"trailing data", append(bytes.Clone(payload), []byte("trailing")...), maxEntrySize},
+		{"aggregate payload limit", payload, int64(len(cpio) - 1)},
+		{"CPIO early failure", compressPayload(t, "pbzx", []byte("invalid CPIO payload")), maxEntrySize},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			budget := newPayloadBudget()
+			budget.bytes = test.limit
+			input, output := io.Pipe()
+			done := make(chan error, 1)
+			go func() {
+				_, err := output.Write(test.data)
+				_ = output.Close()
+				done <- err
+			}()
+			if _, err := readPayload(t.Context(), input, budget, false); err == nil {
+				t.Fatal("accepted invalid PBZX payload")
+			}
+			if err := <-done; err != nil && !errors.Is(err, io.ErrClosedPipe) {
+				t.Fatalf("payload producer: %v", err)
+			}
+		})
+	}
+}
+
+func TestPBZXPayloadCancellationClosesSource(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	input, output := io.Pipe()
+	defer func() { _ = output.Close() }()
+	var header [28]byte
+	copy(header[:], "pbzx")
+	binary.BigEndian.PutUint64(header[4:], pbzx.DefaultBlockSize)
+	binary.BigEndian.PutUint64(header[12:], 1024)
+	binary.BigEndian.PutUint64(header[20:], 256)
+	written := make(chan error, 1)
+	go func() { _, err := output.Write(header[:]); written <- err }()
+	done := make(chan error, 1)
+	go func() { _, err := readPayload(ctx, input, newPayloadBudget(), false); done <- err }()
+	if err := <-written; err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled payload: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("payload did not stop its blocked source and workers")
+	}
+	if _, err := output.Write([]byte{1}); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("source left open: %v", err)
+	}
+}
+
+func TestPBZXPayloadEarlyFailureClosesSource(t *testing.T) {
+	data := compressPayload(t, "pbzx", bytes.Repeat([]byte("invalid CPIO"), 100))
+	input, output := io.Pipe()
+	defer func() { _ = output.Close() }()
+	written := make(chan error, 1)
+	go func() { _, err := output.Write(data); written <- err }()
+	done := make(chan error, 1)
+	go func() { _, err := readPayload(t.Context(), input, newPayloadBudget(), false); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "CPIO") {
+			t.Fatalf("payload failure: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CPIO failure waited for the blocked PBZX source")
+	}
+	if err := <-written; err != nil && !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatal(err)
+	}
+	if _, err := output.Write([]byte{1}); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("source left open: %v", err)
 	}
 }
