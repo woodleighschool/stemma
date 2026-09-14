@@ -31,7 +31,7 @@ var commit = "unknown"
 var date = "unknown"
 
 func main() {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := interruptContext()
 	cmd, finish := command(os.Stdout, os.Stderr)
 	err := cmd.ExecuteContext(ctx)
 	finish(err)
@@ -42,6 +42,24 @@ func main() {
 	if err != nil {
 		os.Exit(1)
 	}
+}
+
+func interruptContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt)
+	go func() {
+		select {
+		case <-signals:
+			// Restore the OS action before publishing cancellation: a second
+			// interrupt can exit even if cleanup or a native call is blocked.
+			signal.Stop(signals)
+			cancel()
+		case <-ctx.Done():
+			signal.Stop(signals)
+		}
+	}()
+	return ctx, cancel
 }
 
 func command(out, errOut io.Writer) (*cobra.Command, func(error)) {

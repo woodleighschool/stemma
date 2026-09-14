@@ -42,7 +42,7 @@ func TestAppSymlinkIdentityDoesNotClaimResourceSealing(t *testing.T) {
 	if err := os.CopyFS(app, os.DirFS("testdata/SignedFixture.app")); err != nil {
 		t.Fatal(err)
 	}
-	baseline, err := VerifyApp(app, Policy{RequireIntegrity: true})
+	baseline, err := VerifyApp(t.Context(), app, Policy{RequireIntegrity: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestAppSymlinkIdentityDoesNotClaimResourceSealing(t *testing.T) {
 		if err := os.Symlink(target, link); err != nil {
 			t.Fatal(err)
 		}
-		evidence, err := VerifyApp(app, Policy{RequireSignature: true})
+		evidence, err := VerifyApp(t.Context(), app, Policy{RequireSignature: true})
 		if err != nil || evidence.Integrity.Status != Valid || evidence.Signature.Status != Valid || evidence.Resources.Status != NotRequested {
 			t.Fatalf("symlink changed independent verification scopes: %+v: %v", evidence, err)
 		}
@@ -66,7 +66,7 @@ func TestAppSymlinkIdentityDoesNotClaimResourceSealing(t *testing.T) {
 		}
 		previous = evidence.SubjectSHA256
 	}
-	evidence, err := VerifyApp(app, Policy{RequireResources: true})
+	evidence, err := VerifyApp(t.Context(), app, Policy{RequireResources: true})
 	if !errors.Is(err, ErrUnsupported) || evidence.Integrity.Status != Valid || evidence.Resources.Status != Unsupported {
 		t.Fatalf("symlink resource sealing was accepted: %+v: %v", evidence, err)
 	}
@@ -75,7 +75,7 @@ func TestAppSymlinkIdentityDoesNotClaimResourceSealing(t *testing.T) {
 	// The first architecture's code lies before its large CMS signature region.
 	data[16384+4096] ^= 0x40
 	writeTestFile(t, executable, data, 0o755)
-	if evidence, err := VerifyApp(app, Policy{RequireIntegrity: true}); err == nil || evidence.Integrity.Status != Invalid {
+	if evidence, err := VerifyApp(t.Context(), app, Policy{RequireIntegrity: true}); err == nil || evidence.Integrity.Status != Invalid {
 		t.Fatalf("symlink support bypassed executable verification: %+v: %v", evidence, err)
 	}
 }
@@ -87,7 +87,7 @@ func TestAppDigestRejectsUnsafeSymlinkTargets(t *testing.T) {
 			if err := os.Symlink(target, filepath.Join(app, "Contents/Resources/link")); err != nil {
 				t.Fatal(err)
 			}
-			evidence, err := VerifyApp(app, Policy{RequireIntegrity: true})
+			evidence, err := VerifyApp(t.Context(), app, Policy{RequireIntegrity: true})
 			if err == nil || evidence.SubjectSHA256 != "" || evidence.Integrity.Status == Valid {
 				t.Fatalf("unsafe symlink entered verified identity: %+v: %v", evidence, err)
 			}
@@ -107,7 +107,7 @@ func TestAppVerificationRejectsSymlinkedCriticalPaths(t *testing.T) {
 			if err := os.Symlink(filepath.Base(moved), original); err != nil {
 				t.Fatal(err)
 			}
-			evidence, err := VerifyApp(app, Policy{RequireIntegrity: true})
+			evidence, err := VerifyApp(t.Context(), app, Policy{RequireIntegrity: true})
 			if err == nil || evidence.Integrity.Status == Valid {
 				t.Fatalf("critical verification input traversed a symlink: %+v: %v", evidence, err)
 			}

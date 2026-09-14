@@ -49,7 +49,7 @@ func TestBuildMappedPayloadIsReproducibleAndScriptsAreNotRun(t *testing.T) {
 	if first.SHA256 != second.SHA256 || first.Size != second.Size || first.Version != "1.2.3" {
 		t.Fatalf("outputs differ: %+v %+v", first, second)
 	}
-	if _, err := apple.VerifyPackage(first.Path, apple.Policy{RequireIntegrity: true}); err != nil {
+	if _, err := apple.VerifyPackage(t.Context(), first.Path, apple.Policy{RequireIntegrity: true}); err != nil {
 		t.Fatal(err)
 	}
 	facts, err := apple.InspectPackage(first.Path)

@@ -32,7 +32,7 @@ func TestAppFixtureIntegrity(t *testing.T) {
 	if facts.BundleID != "au.edu.vic.woodleigh.stemma.fixture" || facts.Version != "1.2.3" || facts.Build != "42" {
 		t.Fatalf("wrong app facts: %+v", facts)
 	}
-	evidence, err := VerifyApp("testdata/Fixture.app", Policy{RequireIntegrity: true, RequireResources: true})
+	evidence, err := VerifyApp(t.Context(), "testdata/Fixture.app", Policy{RequireIntegrity: true, RequireResources: true})
 	if err != nil {
 		t.Fatalf("verification failed: %+v: %v", evidence, err)
 	}
@@ -58,7 +58,7 @@ func TestAppFixtureIntegrity(t *testing.T) {
 
 func TestSignedFixtures(t *testing.T) {
 	const installerPin = "e8bcd85f5b71188453845541f51b08e49f7262f10f3d79f5fe942a6735ae9760"
-	app, err := VerifyApp("testdata/SignedFixture.app", Policy{RequireIntegrity: true, RequireResources: true})
+	app, err := VerifyApp(t.Context(), "testdata/SignedFixture.app", Policy{RequireIntegrity: true, RequireResources: true})
 	if err != nil || app.Integrity.Status != Valid || app.Resources.Status != Valid {
 		t.Fatalf("signed app integrity: %+v: %v", app, err)
 	}
@@ -71,11 +71,11 @@ func TestSignedFixtures(t *testing.T) {
 			t.Fatalf("wrong company signature facts: %+v", arch)
 		}
 	}
-	app, err = VerifyApp("testdata/SignedFixture.app", Policy{RequireSignature: true, RequireResources: true})
+	app, err = VerifyApp(t.Context(), "testdata/SignedFixture.app", Policy{RequireSignature: true, RequireResources: true})
 	if err != nil || app.Signature.Status != Valid || app.Integrity.Status != Valid || app.Resources.Status != Valid || app.Identity.Status != NotRequested || app.Platform.Status != NotRequested {
 		t.Fatalf("CMS authentication lost independent scopes: %+v: %v", app, err)
 	}
-	pkg, err := VerifyPackage("testdata/fixture.pkg", Policy{RequireSignature: true, CertificateSHA256: installerPin})
+	pkg, err := VerifyPackage(t.Context(), "testdata/fixture.pkg", Policy{RequireSignature: true, CertificateSHA256: installerPin})
 	if err != nil || pkg.Signature.Status != Valid || pkg.Identity.Status != Valid || pkg.Integrity.Status != Valid {
 		t.Fatalf("company installer signature: %+v: %v", pkg, err)
 	}
@@ -123,7 +123,7 @@ func TestAppRejectsTamperingAndUnsupportedScopes(t *testing.T) {
 		t.Run(mutation.name, func(t *testing.T) {
 			app := copyApp(t)
 			mutation.apply(t, app)
-			evidence, err := VerifyApp(app, Policy{RequireIntegrity: true, RequireResources: true})
+			evidence, err := VerifyApp(t.Context(), app, Policy{RequireIntegrity: true, RequireResources: true})
 			if err == nil {
 				t.Fatalf("tampered app passed: %+v", evidence)
 			}
@@ -136,7 +136,7 @@ func TestAppRejectsTamperingAndUnsupportedScopes(t *testing.T) {
 		})
 	}
 	t.Run("authentication", func(t *testing.T) {
-		evidence, err := VerifyApp("testdata/Fixture.app", Policy{RequireIntegrity: true, RequireResources: true, RequireSignature: true, RequireIdentity: true, RequirePlatform: true})
+		evidence, err := VerifyApp(t.Context(), "testdata/Fixture.app", Policy{RequireIntegrity: true, RequireResources: true, RequireSignature: true, RequireIdentity: true, RequirePlatform: true})
 		if err == nil || !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("unsupported trust accepted: %+v: %v", evidence, err)
 		}
@@ -179,7 +179,7 @@ func TestResourceScopeRejectsNestedCode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyResources(root, "Contents/MacOS/fixture", data); !errors.Is(err, ErrUnsupported) {
+	if err := verifyResources(t.Context(), root, "Contents/MacOS/fixture", data); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("nested code did not block resource scope: %v", err)
 	}
 }
@@ -210,7 +210,7 @@ func TestPackageInspectionAndIntegrity(t *testing.T) {
 	if !seenPayload {
 		t.Fatal("fixture payload was not retained as an archive entry")
 	}
-	evidence, err := VerifyPackage("testdata/fixture.pkg", Policy{RequireIntegrity: true})
+	evidence, err := VerifyPackage(t.Context(), "testdata/fixture.pkg", Policy{RequireIntegrity: true})
 	if err != nil || evidence.Integrity.Status != Valid {
 		t.Fatalf("native package integrity: %+v: %v", evidence, err)
 	}
@@ -226,7 +226,7 @@ func TestPackageInspectionAndIntegrity(t *testing.T) {
 	tampered[offset] ^= 0x40
 	file := filepath.Join(t.TempDir(), "tampered.pkg")
 	writeTestFile(t, file, tampered, 0644)
-	if evidence, err := VerifyPackage(file, Policy{RequireIntegrity: true}); err == nil || evidence.Integrity.Status != Invalid {
+	if evidence, err := VerifyPackage(t.Context(), file, Policy{RequireIntegrity: true}); err == nil || evidence.Integrity.Status != Invalid {
 		t.Fatalf("tampered payload accepted: %+v: %v", evidence, err)
 	}
 }
@@ -236,16 +236,16 @@ func TestPackageRSASignatureAndPinnedIdentity(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "signed.pkg")
 	writeTestFile(t, file, archive, 0644)
 	policy := Policy{RequireIntegrity: true, RequireSignature: true, RequireIdentity: true, CertificateSHA256: pin}
-	evidence, err := VerifyPackage(file, policy)
+	evidence, err := VerifyPackage(t.Context(), file, policy)
 	if err != nil || evidence.Integrity.Status != Valid || evidence.Signature.Status != Valid || evidence.Identity.Status != Valid {
 		t.Fatalf("signed fixture: %+v: %v", evidence, err)
 	}
 	policy.CertificateSHA256 = strings.Repeat("0", 64)
-	if evidence, err := VerifyPackage(file, policy); err == nil || evidence.Identity.Status != Invalid || evidence.Signature.Status != Valid {
+	if evidence, err := VerifyPackage(t.Context(), file, policy); err == nil || evidence.Identity.Status != Invalid || evidence.Signature.Status != Valid {
 		t.Fatalf("wrong signer pin accepted: %+v: %v", evidence, err)
 	}
 	policy.CertificateSHA256 = ""
-	if evidence, err := VerifyPackage(file, policy); !errors.Is(err, ErrUnsupported) || evidence.Identity.Status != Unsupported {
+	if evidence, err := VerifyPackage(t.Context(), file, policy); !errors.Is(err, ErrUnsupported) || evidence.Identity.Status != Unsupported {
 		t.Fatalf("implicit trust accepted: %+v: %v", evidence, err)
 	}
 	policy.CertificateSHA256 = pin
@@ -255,7 +255,7 @@ func TestPackageRSASignatureAndPinnedIdentity(t *testing.T) {
 	}
 	archive[toc.reader.HeapOffset()+toc.reader.TOC().Signature.Offset] ^= 1
 	writeTestFile(t, file, archive, 0644)
-	if evidence, err := VerifyPackage(file, policy); err == nil || evidence.Signature.Status != Invalid || evidence.Identity.Status != Invalid {
+	if evidence, err := VerifyPackage(t.Context(), file, policy); err == nil || evidence.Signature.Status != Invalid || evidence.Identity.Status != Invalid {
 		t.Fatalf("tampered RSA signature accepted: %+v: %v", evidence, err)
 	}
 }
@@ -275,7 +275,7 @@ func TestPackageRejectsCorruptCMSWithValidRSA(t *testing.T) {
 	data[archive.reader.HeapOffset()+toc.XSignature.Offset] ^= 1
 	file := filepath.Join(t.TempDir(), "corrupt-cms.pkg")
 	writeTestFile(t, file, data, 0o600)
-	evidence, err := VerifyPackage(file, Policy{RequireSignature: true})
+	evidence, err := VerifyPackage(t.Context(), file, Policy{RequireSignature: true})
 	if err == nil || evidence.Signature.Status != Invalid || evidence.Integrity.Status != Valid {
 		t.Fatalf("corrupt CMS accepted: %+v: %v", evidence, err)
 	}

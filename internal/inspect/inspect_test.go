@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"os"
@@ -259,5 +260,36 @@ func writeFixture(t *testing.T, name string, data []byte) {
 	t.Helper()
 	if err := os.WriteFile(name, data, 0600); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReadFSMatchesLocalPayload(t *testing.T) {
+	for _, name := range []string{"../apple/testdata/Fixture.app", "../apple/testdata/fixture.pkg"} {
+		t.Run(filepath.Base(name), func(t *testing.T) {
+			local, err := Read(t.Context(), name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root, err := os.OpenRoot(filepath.Dir(name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = root.Close() }()
+			image, err := ReadFS(t.Context(), root.FS(), filepath.Base(name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := json.Marshal(local)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := json.Marshal(image)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, want) {
+				t.Fatalf("filesystem facts differ from local facts:\n%s\n%s", got, want)
+			}
+		})
 	}
 }

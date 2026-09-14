@@ -14,7 +14,7 @@ arbitrary plugin code.
 | Operation             | Supported scope                                                                                                       |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Mac PKG inspection    | Flat XAR packages and supported component payloads; streams file contents while retaining bounded inventory metadata  |
-| DMG inspection        | Raw, ADC, zlib, bzip2 and LZMA chunks; supported HFS+, HFSX and single-volume APFS filesystems                        |
+| DMG inspection        | Raw, ADC, zlib, bzip2, LZFSE and LZMA chunks; supported HFS+, HFSX and single-volume APFS filesystems                 |
 | Custom Mac packaging  | Unsigned component packages, payload layouts and endpoint installer scripts                                           |
 | MSI inspection        | Reads MSI database metadata without Windows or executing the installer                                                |
 | EXE preparation       | Preserves the vendor installer; commands, version-specific detection and other installation semantics remain authored |
@@ -26,9 +26,17 @@ a small total payload size. Exceptionally large inventories can still hit those
 bounds. Unsupported DMG layouts and codecs fail; not every image accepted by
 macOS is supported by the portable reader.
 
-DMG inspection creates a temporary sparse filesystem image. Published vendor
-installers retain their original bytes. Leave enough working disk space for
-inspection, extracted content and destination preparation.
+DMG inspection reads the filesystem through compressed chunks, without creating a
+raw filesystem image. Selected applications are extracted when verification or
+native icon rendering needs a local bundle. Published vendor installers retain
+their original bytes. Leave enough working disk space for extracted content and
+destination preparation.
+
+The pipeline consumes catalog-selected vendor artifacts. Inspection does not run
+installer contents, and extraction remains confined to its destination. File,
+entry and output limits catch malformed or unexpectedly large inputs; they do not
+provide a sandbox or guarantee bounded resource use for deliberately adversarial
+files.
 
 New payload trees retain bytes, modes and confined relative symlinks. Resource
 forks, ACLs, hardlinks and other unsupported payload metadata fail rather than

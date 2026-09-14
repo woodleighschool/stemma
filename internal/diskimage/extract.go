@@ -14,11 +14,14 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/deploymenttheory/go-apfs-v2/pkg/apfs"
 	"github.com/deploymenttheory/go-apfs-v2/pkg/hfsplus"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/plugin"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -33,38 +36,27 @@ const maxEntries = 100000
 // Filesystem metadata remains in the original DMG, which is the installer artifact.
 // This copy must not be used to repackage an application.
 func Extract(ctx context.Context, input, destination, selection string) (result string, err error) {
-	if err := ctx.Err(); err != nil {
-		return "", err
-	}
-	image, err := os.CreateTemp("", "stemma-dmg-*")
+	image, err := Open(ctx, input)
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = image.Close(); _ = os.Remove(image.Name()) }()
-	if err := decodeDMG(ctx, input, image); err != nil {
-		return "", fmt.Errorf("disk image: %w", err)
-	}
-	info, err := image.Stat()
+	defer func() { _ = image.Close() }()
+	return image.Extract(ctx, destination, selection)
+}
+
+// Extract copies a selected payload from the open image into a new directory.
+func (image *Image) Extract(ctx context.Context, destination, selection string) (result string, err error) {
+	selection, err = image.Select(ctx, selection)
 	if err != nil {
 		return "", err
-	}
-	reader := &imageReader{ctx: ctx, reader: image, remaining: 256 << 20}
-	volume, closeVolume, err := openVolume(reader, info.Size())
-	if err != nil {
-		return "", fmt.Errorf("disk image: %w", err)
-	}
-	defer closeVolume()
-	reader.remaining = maxBytes * 4
-	selection, err = selectPayload(ctx, volume, selection)
-	if err != nil {
-		return "", fmt.Errorf("disk image: %w", err)
 	}
 	if err := os.Mkdir(destination, 0o700); err != nil {
 		return "", err
 	}
 	defer func() {
 		if err != nil {
-			_ = os.RemoveAll(destination)
+			done := plugin.Stage(ctx, "Removing incomplete extraction")
+			done(os.RemoveAll(destination))
 		}
 	}()
 	root, err := os.OpenRoot(destination)
@@ -72,7 +64,7 @@ func Extract(ctx context.Context, input, destination, selection string) (result 
 		return "", err
 	}
 	defer func() { _ = root.Close() }()
-	if err := extract(ctx, volume, root, selection); err != nil {
+	if err := extract(ctx, image, root, selection); err != nil {
 		return "", fmt.Errorf("disk image: %w", err)
 	}
 	return filepath.Join(destination, filepath.FromSlash(selection)), nil
@@ -132,6 +124,7 @@ func openVolume(reader io.ReaderAt, size int64) (filesystem, func(), error) {
 }
 
 type imageReader struct {
+	mu        sync.Mutex
 	ctx       context.Context
 	reader    io.ReaderAt
 	remaining int64
@@ -141,10 +134,13 @@ func (r *imageReader) ReadAt(p []byte, offset int64) (int, error) {
 	if err := r.ctx.Err(); err != nil {
 		return 0, err
 	}
+	r.mu.Lock()
 	if int64(len(p)) > r.remaining {
+		r.mu.Unlock()
 		return 0, errors.New("filesystem read limit exceeded")
 	}
 	r.remaining -= int64(len(p))
+	r.mu.Unlock()
 	return r.reader.ReadAt(p, offset)
 }
 
@@ -266,9 +262,12 @@ func extract(ctx context.Context, volume filesystem, root *os.Root, selection st
 	spelling := map[string]string{}
 	var total int64
 	count := 0
+	buffer := make([]byte, 32<<10)
+	lastProgress := time.Now()
 	flatPackage := strings.EqualFold(path.Ext(selection), ".pkg")
+	finalizing := false
 	defer func() {
-		if err != nil {
+		if err != nil && finalizing {
 			// Restore searchable parents if finalizing original modes failed.
 			sort.Slice(dirs, func(i, j int) bool { return len(dirs[i].name) < len(dirs[j].name) })
 			for _, dir := range dirs {
@@ -276,10 +275,10 @@ func extract(ctx context.Context, volume filesystem, root *os.Root, selection st
 			}
 		}
 	}()
-	err = fs.WalkDir(volume, selection, func(name string, item fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
+	// A directory handle owns its children's writes. Reusing it avoids walking
+	// every ancestor again for each create, chmod and timestamp update.
+	var walk func(string, fs.FileInfo, *os.Root) error
+	walk = func(name string, info fs.FileInfo, parent *os.Root) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -287,6 +286,10 @@ func extract(ctx context.Context, volume filesystem, root *os.Root, selection st
 			return err
 		}
 		count++
+		if time.Since(lastProgress) >= 250*time.Millisecond {
+			plugin.Logger(ctx).InfoContext(ctx, "Extracting files", "progress", true, "current", count, "unit", "entries")
+			lastProgress = time.Now()
+		}
 		if count > maxEntries {
 			return errors.New("payload exceeds entry limit")
 		}
@@ -297,23 +300,38 @@ func extract(ctx context.Context, volume filesystem, root *os.Root, selection st
 			}
 			spelling[folded] = prefix
 		}
-		info, err := item.Info()
-		if err != nil {
-			return err
-		}
 		if info.Size() < 0 || info.Size() > maxBytes-total {
 			return errors.New("payload exceeds expanded size limit")
 		}
 		total += info.Size()
-		if err := root.MkdirAll(path.Dir(name), 0o700); err != nil {
-			return err
-		}
+		base := path.Base(name)
 		switch {
 		case info.IsDir():
-			if err := root.Mkdir(name, 0o700); err != nil {
+			if err := parent.Mkdir(base, 0o700); err != nil {
 				return err
 			}
 			dirs = append(dirs, entry{name: name, info: info})
+			directory, err := parent.OpenRoot(base)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = directory.Close() }()
+			children, err := volume.ReadDir(name)
+			if err != nil {
+				return err
+			}
+			for _, child := range children {
+				if err := safeName(child.Name()); err != nil || path.Base(child.Name()) != child.Name() {
+					return fmt.Errorf("invalid directory entry %q", child.Name())
+				}
+				childInfo, err := child.Info()
+				if err != nil {
+					return err
+				}
+				if err := walk(path.Join(name, child.Name()), childInfo, directory); err != nil {
+					return err
+				}
+			}
 		case info.Mode()&fs.ModeSymlink != 0:
 			if info.Size() > 4096 {
 				return errors.New("symlink target exceeds size limit")
@@ -328,22 +346,41 @@ func extract(ctx context.Context, volume filesystem, root *os.Root, selection st
 			}
 			links = append(links, entry{name: name, info: info, link: target})
 		case info.Mode().IsRegular():
-			return writeFile(ctx, volume, root, name, info, flatPackage)
+			return writeFile(ctx, volume, parent, name, info, flatPackage, buffer)
 		default:
 			return fmt.Errorf("unsupported file type in %q", name)
 		}
 		return nil
-	})
+	}
+	info, err := volume.Stat(selection)
 	if err != nil {
+		return err
+	}
+	if err := root.MkdirAll(path.Dir(selection), 0o700); err != nil {
+		return err
+	}
+	parent, err := root.OpenRoot(path.Dir(selection))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = parent.Close() }()
+	if err := walk(selection, info, parent); err != nil {
 		return err
 	}
 	// No payload write is permitted to traverse a payload-owned symlink.
 	for _, link := range links {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := root.Symlink(link.link, link.name); err != nil {
 			return err
 		}
 	}
+	finalizing = true
 	for _, dir := range slices.Backward(dirs) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if err := root.Chtimes(dir.name, dir.info.ModTime(), dir.info.ModTime()); err != nil {
 			return err
 		}
@@ -354,7 +391,7 @@ func extract(ctx context.Context, volume filesystem, root *os.Root, selection st
 	return ctx.Err()
 }
 
-func writeFile(ctx context.Context, volume filesystem, root *os.Root, name string, info fs.FileInfo, flatPackage bool) error {
+func writeFile(ctx context.Context, volume filesystem, root *os.Root, name string, info fs.FileInfo, flatPackage bool, buffer []byte) error {
 	source, err := volume.Open(name)
 	if err != nil {
 		return err
@@ -371,22 +408,23 @@ func writeFile(ctx context.Context, volume filesystem, root *os.Root, name strin
 		}
 		content = io.MultiReader(strings.NewReader("xar!"), source)
 	}
-	out, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	out, err := root.OpenFile(path.Base(name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
-	n, err := io.Copy(out, io.LimitReader(fileio.Reader{Context: ctx, Reader: content}, info.Size()+1))
+	// Hide ReadFrom so CopyBuffer reuses the extraction buffer for every file.
+	n, err := io.CopyBuffer(struct{ io.Writer }{out}, io.LimitReader(fileio.Reader{Context: ctx, Reader: content}, info.Size()+1), buffer)
+	if err == nil && n != info.Size() {
+		err = fmt.Errorf("file length mismatch for %q", name)
+	}
+	if err == nil {
+		err = out.Chmod(info.Mode().Perm())
+	}
 	if closeErr := out.Close(); err == nil {
 		err = closeErr
 	}
 	if err != nil {
 		return err
 	}
-	if n != info.Size() {
-		return fmt.Errorf("file length mismatch for %q", name)
-	}
-	if err := root.Chmod(name, info.Mode().Perm()); err != nil {
-		return err
-	}
-	return root.Chtimes(name, info.ModTime(), info.ModTime())
+	return root.Chtimes(path.Base(name), info.ModTime(), info.ModTime())
 }

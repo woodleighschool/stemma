@@ -74,7 +74,20 @@ func inspectPackage(ctx context.Context, filePath string, contents bool) (Packag
 	if !info.Mode().IsRegular() || info.Size() > maxEntrySize {
 		return PackageFacts{}, fmt.Errorf("PKG input must be a regular file no larger than 16 GiB")
 	}
-	archive, err := openXAR(contextReaderAt{ctx, f}, info.Size())
+	return inspectPackageReader(ctx, f, info.Size(), contents)
+}
+
+// InspectPackageReader inspects receipts and applications in a sized flat package
+// without requiring the package to be materialized as a local file.
+func InspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64) (PackageFacts, error) {
+	return inspectPackageReader(ctx, reader, size, true)
+}
+
+func inspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64, contents bool) (PackageFacts, error) {
+	if size < 0 || size > maxEntrySize {
+		return PackageFacts{}, fmt.Errorf("PKG exceeds size limit")
+	}
+	archive, err := openXAR(contextReaderAt{ctx, reader}, size)
 	if err != nil {
 		return PackageFacts{}, err
 	}

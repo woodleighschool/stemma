@@ -63,19 +63,22 @@ func InspectPackage(filePath string) (PackageFacts, error) {
 
 // VerifyPackage checks XAR data checksums and package signatures
 // when requested. Identity is limited to an exact signer certificate pin.
-func VerifyPackage(filePath string, policy Policy) (Evidence, error) {
+func VerifyPackage(ctx context.Context, filePath string, policy Policy) (Evidence, error) {
+	if err := ctx.Err(); err != nil {
+		return Evidence{}, err
+	}
 	policy = policy.expanded()
 	f, err := os.Open(filePath)
 	if err != nil {
 		return Evidence{}, err
 	}
 	defer func() { _ = f.Close() }()
-	digest, err := fileDigest(f)
+	digest, err := fileDigest(ctx, f, nil)
 	if err != nil {
 		return Evidence{}, err
 	}
 	evidence := newEvidence(digest, policy)
-	archive, parseErr := openXARFile(f)
+	archive, parseErr := openXARFile(ctx, f)
 	if policy.RequireResources {
 		evidence.Resources = Check{Status: Unsupported, Detail: "PKG container verification does not verify inner application resource seals"}
 	}
@@ -147,10 +150,13 @@ func VerifyPackage(filePath string, policy Policy) (Evidence, error) {
 			evidence.Identity = checkError(identityErr, "signing certificate matches exact configured SHA-256 pin; platform trust is not asserted")
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return evidence, err
+	}
 	return evidence, evidence.required(policy)
 }
 
-func openXARFile(f *os.File) (*xarArchive, error) {
+func openXARFile(ctx context.Context, f *os.File) (*xarArchive, error) {
 	info, err := f.Stat()
 	if err != nil {
 		return nil, err
@@ -158,7 +164,7 @@ func openXARFile(f *os.File) (*xarArchive, error) {
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("XAR input must be a regular file")
 	}
-	return openXAR(f, info.Size())
+	return openXAR(contextReaderAt{ctx, f}, info.Size())
 }
 
 func openXAR(r io.ReaderAt, size int64) (*xarArchive, error) {

@@ -51,11 +51,11 @@ func TestBuildIntegrityReproducibilityAndInputChanges(t *testing.T) {
 	if facts.Packages[0].Identifier != opts.Identifier || facts.Packages[0].Version != opts.Version {
 		t.Fatalf("wrong package facts: %+v", facts.Packages)
 	}
-	evidence, err := apple.VerifyPackage(output, apple.Policy{RequireIntegrity: true})
+	evidence, err := apple.VerifyPackage(t.Context(), output, apple.Policy{RequireIntegrity: true})
 	if err != nil || evidence.Integrity.Status != apple.Valid {
 		t.Fatalf("package integrity: %+v: %v", evidence, err)
 	}
-	if _, err := apple.VerifyPackage(output, apple.Policy{RequireSignature: true}); err == nil {
+	if _, err := apple.VerifyPackage(t.Context(), output, apple.Policy{RequireSignature: true}); err == nil {
 		t.Fatal("unsigned package authenticated")
 	}
 	first, err := os.ReadFile(output)
@@ -88,7 +88,7 @@ func TestBuildIntegrityReproducibilityAndInputChanges(t *testing.T) {
 	if err := os.WriteFile(tampered, first, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := apple.VerifyPackage(tampered, apple.Policy{RequireIntegrity: true}); err == nil {
+	if _, err := apple.VerifyPackage(t.Context(), tampered, apple.Policy{RequireIntegrity: true}); err == nil {
 		t.Fatal("tampered archive passed integrity")
 	}
 }
@@ -217,7 +217,7 @@ func TestBuildLargeAppStreamsAndRemainsReproducible(t *testing.T) {
 	if len(facts.Applications) != 1 || facts.Applications[0].App.BundleID != "org.example.large" || facts.Applications[0].InstalledPath != "/Applications/Fixture.app" {
 		t.Fatalf("wrong package app facts: %+v", facts.Applications)
 	}
-	if _, err := apple.VerifyPackage(first, apple.Policy{RequireIntegrity: true}); err != nil {
+	if _, err := apple.VerifyPackage(t.Context(), first, apple.Policy{RequireIntegrity: true}); err != nil {
 		t.Fatal(err)
 	}
 	second := filepath.Join(t.TempDir(), "second.pkg")

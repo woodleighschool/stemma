@@ -85,7 +85,7 @@ linters:
         linters: [gosec]
         text: "G103:"
       # Format bounds and entry/mode limits are validated before these conversions.
-      - path: internal/(apple/macho|diskimage/(extract|validate)|pkgbuild/pkgbuild)\.go$
+      - path: internal/(apple/macho|diskimage/extract|pkgbuild/pkgbuild)\.go$
         linters: [gosec]
         text: "G115:"
 
@@ -95,6 +95,7 @@ linters:
       replace-allow-list:
         - charm.land/bubbletea/v2
         - github.com/deploymenttheory/go-macos-pkg
+        - github.com/deploymenttheory/go-apfs-v2
 
     gosec:
       excludes:

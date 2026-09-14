@@ -71,6 +71,9 @@ for debug diagnostics, or `--log-level debug|info|warn|error`. `--no-progress`
 disables terminal animation. `NO_COLOR` disables colours. These choices do not
 suppress stdout reports.
 
+Ctrl-C requests cancellation and workspace cleanup. Press Ctrl-C again to exit
+immediately if cleanup or a native operation is taking too long.
+
 A failed run can return partial results with an `error`. Do not infer success
 solely from an artifact appearing in a report. An absent `lock_changed` means the
 lockfile comparison did not complete.

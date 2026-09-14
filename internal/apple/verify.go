@@ -2,13 +2,15 @@
 package apple
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"os"
+
+	"github.com/woodleighschool/stemma/internal/fileio"
 )
 
 // Verifier identifies the implementation whose supported subset produced evidence.
@@ -116,12 +118,9 @@ func checkError(err error, detail string) Check {
 	return Check{Status: status, Detail: err.Error()}
 }
 
-func fileDigest(f *os.File) (string, error) {
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return "", err
-	}
+func fileDigest(ctx context.Context, f io.Reader, buffer []byte) (string, error) {
 	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
+	if _, err := io.CopyBuffer(h, fileio.Reader{Context: ctx, Reader: f}, buffer); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil

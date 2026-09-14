@@ -91,30 +91,12 @@ func read(ctx context.Context, name string, contents bool) (plugin.Facts, error)
 		if err != nil {
 			return plugin.Facts{}, fmt.Errorf("inspect pkg: %w", err)
 		}
-		if len(pkg.Packages) == 0 {
-			return plugin.Facts{}, fmt.Errorf("inspect pkg: %w: no component receipts", apple.ErrUnsupported)
-		}
 		root.Kind = "container"
-		for _, receipt := range pkg.Packages {
-			facts.Subjects = append(facts.Subjects, plugin.Subject{
-				ID: receipt.Path, Parent: ".", Kind: "package", Path: receipt.Path,
-				Package: &plugin.PackageFacts{Identifier: receipt.Identifier, Version: receipt.Version, InstallLocation: receipt.InstallLocation, InstalledSize: receipt.InstalledSize, HasPayload: receipt.HasPayload},
-			})
+		facts.Subjects, err = packageSubjects(pkg)
+		if err != nil {
+			return plugin.Facts{}, err
 		}
-		appPaths := make(map[string]bool, len(pkg.Applications))
-		for _, app := range pkg.Applications {
-			appPaths[app.Path] = true
-		}
-		for _, app := range pkg.Applications {
-			parent := app.PackagePath
-			for outer := path.Dir(app.Path); outer != "."; outer = path.Dir(outer) {
-				if appPaths[outer] {
-					parent = outer
-					break
-				}
-			}
-			facts.Subjects = append(facts.Subjects, plugin.Subject{ID: app.Path, Parent: parent, Kind: "app", Path: app.Path, InstalledPath: app.InstalledPath, App: appFacts(app.App)})
-		}
+
 	case bytes.Equal(header[:n], []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1}):
 		metadata, err := msi.Read(name)
 		if err != nil {
@@ -153,25 +135,21 @@ func read(ctx context.Context, name string, contents bool) (plugin.Facts, error)
 }
 
 func readDMG(ctx context.Context, name string) ([]plugin.Subject, error) {
-	work, err := os.MkdirTemp("", "stemma-inspect-*")
+	image, err := diskimage.Open(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = os.RemoveAll(work) }()
-	destination := filepath.Join(work, "payload")
-	selected, err := diskimage.Extract(ctx, name, destination, "")
+	defer func() { _ = image.Close() }()
+	selected, err := image.Select(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	facts, err := Read(ctx, selected)
+	facts, err := ReadFS(ctx, image, selected)
 	if err != nil {
 		return nil, err
 	}
-	relative, err := filepath.Rel(destination, selected)
-	if err != nil {
-		return nil, err
-	}
-	prefix := filepath.ToSlash(relative)
+	prefix := selected
+
 	for i := range facts.Subjects {
 		subject := &facts.Subjects[i]
 		subject.ID = path.Join(prefix, subject.ID)
@@ -183,6 +161,85 @@ func readDMG(ctx context.Context, name string) ([]plugin.Subject, error) {
 		}
 	}
 	return facts.Subjects, nil
+}
+
+// ReadFS inspects an application or flat package within a filesystem. It reads
+// application metadata directly and does not materialize the selected payload.
+func ReadFS(ctx context.Context, fsys fs.FS, name string) (plugin.Facts, error) {
+	if err := ctx.Err(); err != nil {
+		return plugin.Facts{}, err
+	}
+	info, err := fs.Lstat(fsys, name)
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	facts := plugin.Facts{Version: plugin.FactsVersion}
+	if info.IsDir() {
+		app, err := apple.InspectAppFS(ctx, fsys, name)
+		if err != nil {
+			return plugin.Facts{}, err
+		}
+		facts.Subjects = []plugin.Subject{{ID: ".", Path: ".", Kind: "app", App: appFacts(app)}}
+		return facts, ctx.Err()
+	}
+	if !info.Mode().IsRegular() || info.Size() < 0 || info.Size() > maxInspectedBytes {
+		return plugin.Facts{}, fmt.Errorf("inspection requires a regular package within the size limit")
+	}
+	f, err := fsys.Open(name)
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	defer func() { _ = f.Close() }()
+	reader, ok := f.(io.ReaderAt)
+	if !ok {
+		return plugin.Facts{}, fmt.Errorf("package filesystem does not support random access")
+	}
+	pkg, err := apple.InspectPackageReader(ctx, reader, info.Size())
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	subjects, err := packageSubjects(pkg)
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	digest := sha256.New()
+	n, err := io.Copy(digest, fileio.Reader{Context: ctx, Reader: io.NewSectionReader(reader, 0, info.Size())})
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	if n != info.Size() {
+		return plugin.Facts{}, fmt.Errorf("package length mismatch")
+	}
+	facts.Subjects = append([]plugin.Subject{{ID: ".", Path: ".", Kind: "container", SHA256: hex.EncodeToString(digest.Sum(nil))}}, subjects...)
+	return facts, ctx.Err()
+}
+
+func packageSubjects(pkg apple.PackageFacts) ([]plugin.Subject, error) {
+	if len(pkg.Packages) == 0 {
+		return nil, fmt.Errorf("inspect pkg: %w: no component receipts", apple.ErrUnsupported)
+	}
+	var subjects []plugin.Subject
+	for _, receipt := range pkg.Packages {
+		subjects = append(subjects, plugin.Subject{
+			ID: receipt.Path, Parent: ".", Kind: "package", Path: receipt.Path,
+			Package: &plugin.PackageFacts{Identifier: receipt.Identifier, Version: receipt.Version, InstallLocation: receipt.InstallLocation, InstalledSize: receipt.InstalledSize, HasPayload: receipt.HasPayload},
+		})
+	}
+	appPaths := make(map[string]bool, len(pkg.Applications))
+	for _, app := range pkg.Applications {
+		appPaths[app.Path] = true
+	}
+	for _, app := range pkg.Applications {
+		parent := app.PackagePath
+		for outer := path.Dir(app.Path); outer != "."; outer = path.Dir(outer) {
+			if appPaths[outer] {
+				parent = outer
+				break
+			}
+		}
+		subjects = append(subjects, plugin.Subject{ID: app.Path, Parent: parent, Kind: "app", Path: app.Path, InstalledPath: app.InstalledPath, App: appFacts(app.App)})
+	}
+	return subjects, nil
 }
 
 func readDirectory(ctx context.Context, name string) (plugin.Facts, error) {

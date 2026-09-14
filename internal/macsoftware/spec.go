@@ -39,6 +39,10 @@ type Verification struct {
 	Platform          bool   `json:"platform,omitempty" yaml:"platform,omitempty"`
 }
 
+func (v Verification) enabled() bool {
+	return v.Integrity || v.Signature || v.Resources || v.Identity || v.Platform || v.CertificateSHA256 != ""
+}
+
 func (s Spec) Preparation() Spec {
 	s.Source, s.Destinations = nil, nil
 	return s

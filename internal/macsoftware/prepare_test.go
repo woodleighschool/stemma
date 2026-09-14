@@ -108,7 +108,7 @@ func TestZIPApplicationProducesPackageAndSelectedEvidence(t *testing.T) {
 	if installer.Format != "pkg" || installer.Version != "123" || app.App.BundleID != "org.example.app" || app.InstalledPath != "/Applications/Example.app" || outputs["icon"].Format != "png" {
 		t.Fatalf("outputs=%+v app=%+v", outputs, app)
 	}
-	if _, err := apple.VerifyPackage(installer.Path, apple.Policy{RequireIntegrity: true}); err != nil {
+	if _, err := apple.VerifyPackage(t.Context(), installer.Path, apple.Policy{RequireIntegrity: true}); err != nil {
 		t.Fatal(err)
 	}
 	again, err := Prepare(t.Context(), spec, input, t.TempDir(), time.Time{}, nil)
@@ -205,6 +205,98 @@ func TestPortableIconResources(t *testing.T) {
 			result, err := portableIcon(t.Context(), app, t.TempDir())
 			if err != nil || (result.Path != "") != test.want {
 				t.Fatalf("icon=%+v err=%v", result, err)
+			}
+		})
+	}
+}
+
+func TestDMGMetadataAndPortableIconDoNotExtract(t *testing.T) {
+	source := applicationFixture(t)
+	filename := filepath.Join(t.TempDir(), "Example.dmg")
+	if err := testdiskimage.Write(filename, source); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	selected, err := selectPayload(t.Context(), Spec{}, plugin.Artifact{Path: filename, Filename: "Example.dmg"}, workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer selected.close()
+	facts, err := selected.inspect(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts.Subjects) != 1 || facts.Subjects[0].App.BundleID != "org.example.app" {
+		t.Fatalf("metadata: %+v", facts)
+	}
+	icon, err := portableIconFS(t.Context(), selected.image, selected.name, workspace)
+	if err != nil || icon.Path == "" {
+		t.Fatalf("portable icon: %+v, %v", icon, err)
+	}
+	if string(icon.Evidence["macos.icon"]) != `{"renderer":"portable/1"}` {
+		t.Fatalf("icon evidence: %v", icon.Evidence)
+	}
+	entries, err := os.ReadDir(workspace)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "icon.png" {
+		t.Fatalf("metadata inspection materialized payload: %v, %v", entries, err)
+	}
+	local, err := selected.materialize(t.Context(), workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(local, "Contents/MacOS/example")); err != nil {
+		t.Fatal(err)
+	}
+	again, err := selected.materialize(t.Context(), workspace)
+	if err != nil || again != local {
+		t.Fatalf("repeated materialization: %q, %v", again, err)
+	}
+}
+
+func TestDMGVerificationReadsSelectedApplication(t *testing.T) {
+	for _, modified := range []bool{false, true} {
+		name := "valid"
+		if modified {
+			name = "modified executable"
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			app := filepath.Join(root, "SignedFixture.app")
+			if err := os.CopyFS(app, os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
+				t.Fatal(err)
+			}
+			if modified {
+				filename := filepath.Join(app, "Contents/MacOS/fixture")
+				data, err := os.ReadFile(filename)
+				if err != nil {
+					t.Fatal(err)
+				}
+				// Modify signed code inside the first Mach-O architecture.
+				data[16384+4096] ^= 0x40
+				if err := os.WriteFile(filename, data, 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			filename := filepath.Join(t.TempDir(), "Example.dmg")
+			if err := testdiskimage.Write(filename, root); err != nil {
+				t.Fatal(err)
+			}
+			outputs, err := Prepare(t.Context(), Spec{Verification: Verification{Subject: "application", Integrity: true}}, plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}, t.TempDir(), time.Time{}, nil)
+			if modified {
+				if err == nil {
+					t.Fatal("verification ignored modified executable")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var evidence apple.Evidence
+			if err := json.Unmarshal(outputs["installer"].Evidence["macos.verification"], &evidence); err != nil {
+				t.Fatal(err)
+			}
+			if evidence.Integrity.Status != apple.Valid {
+				t.Fatalf("verification evidence: %+v", evidence)
 			}
 		})
 	}

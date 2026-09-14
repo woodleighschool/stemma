@@ -371,7 +371,7 @@ func TestPackageRepeatedResources(t *testing.T) {
 			if err != nil || facts.Packages[0].InstallLocation != "/Applications" {
 				t.Fatalf("repeated artwork: %+v %v", facts, err)
 			}
-			if _, err := VerifyPackage(name, Policy{RequireIntegrity: true}); err != nil {
+			if _, err := VerifyPackage(t.Context(), name, Policy{RequireIntegrity: true}); err != nil {
 				t.Fatal(err)
 			}
 			data := readTestFile(t, name)

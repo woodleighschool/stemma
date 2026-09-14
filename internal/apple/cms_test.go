@@ -42,7 +42,7 @@ func TestCMSAuthenticatesEveryArchitecture(t *testing.T) {
 			}
 			data[offset] ^= 0x40
 			writeTestFile(t, executable, data, 0o755)
-			evidence, err := VerifyApp(app, Policy{RequireSignature: true})
+			evidence, err := VerifyApp(t.Context(), app, Policy{RequireSignature: true})
 			if err == nil || evidence.Integrity.Status != Valid || evidence.Signature.Status != Invalid || evidence.Resources.Status != NotRequested {
 				t.Fatalf("altered CMS signature accepted or scopes collapsed: %+v: %v", evidence, err)
 			}
@@ -55,7 +55,7 @@ func TestCMSSignatureAllocationStillBindsArtifactIdentity(t *testing.T) {
 	if err := os.CopyFS(app, os.DirFS("testdata/SignedFixture.app")); err != nil {
 		t.Fatal(err)
 	}
-	baseline, err := VerifyApp(app, Policy{RequireSignature: true})
+	baseline, err := VerifyApp(t.Context(), app, Policy{RequireSignature: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestCMSSignatureAllocationStillBindsArtifactIdentity(t *testing.T) {
 	}
 	data[end] ^= 0x40
 	writeTestFile(t, executable, data, 0o755)
-	evidence, err := VerifyApp(app, Policy{RequireSignature: true})
+	evidence, err := VerifyApp(t.Context(), app, Policy{RequireSignature: true})
 	if err != nil || evidence.Integrity.Status != Valid || evidence.Signature.Status != Valid || evidence.SubjectSHA256 == baseline.SubjectSHA256 {
 		t.Fatalf("signature allocation confused authentication and tree identity: %+v: %v", evidence, err)
 	}
@@ -129,13 +129,13 @@ func TestCMSSignerPinDoesNotClaimPlatformTrust(t *testing.T) {
 	}
 	digest := sha256.Sum256(certificate.Raw)
 	for _, pin := range []string{hex.EncodeToString(digest[:]), strings.Repeat("0", 64)} {
-		evidence, err := VerifyApp("testdata/SignedFixture.app", Policy{CertificateSHA256: pin})
+		evidence, err := VerifyApp(t.Context(), "testdata/SignedFixture.app", Policy{CertificateSHA256: pin})
 		valid := pin != strings.Repeat("0", 64)
 		if (err == nil) != valid || (evidence.Identity.Status == Valid) != valid || evidence.Signature.Status != Valid || evidence.Integrity.Status != Valid || evidence.Platform.Status != NotRequested || evidence.Resources.Status != NotRequested {
 			t.Fatalf("wrong certificate pin scope: %+v: %v", evidence, err)
 		}
 	}
-	evidence, err := VerifyApp("testdata/SignedFixture.app", Policy{RequireSignature: true, RequireIdentity: true, RequirePlatform: true})
+	evidence, err := VerifyApp(t.Context(), "testdata/SignedFixture.app", Policy{RequireSignature: true, RequireIdentity: true, RequirePlatform: true})
 	if !errors.Is(err, ErrUnsupported) || evidence.Signature.Status != Valid || evidence.Identity.Status != Unsupported || evidence.Platform.Status != Unsupported {
 		t.Fatalf("CMS authentication claimed unspecified trust: %+v: %v", evidence, err)
 	}

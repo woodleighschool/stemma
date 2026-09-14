@@ -8,6 +8,7 @@ import (
 	"errors"
 	"image/png"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -27,7 +28,11 @@ func portableIcon(ctx context.Context, app, workspace string) (plugin.Artifact, 
 		return plugin.Artifact{}, err
 	}
 	defer func() { _ = root.Close() }()
-	data, err := readAppFile(ctx, root, "Contents/Info.plist", 4<<20)
+	return portableIconFS(ctx, root.FS(), ".", workspace)
+}
+
+func portableIconFS(ctx context.Context, fsys fs.FS, app, workspace string) (plugin.Artifact, error) {
+	data, err := readAppFile(ctx, fsys, path.Join(app, "Contents/Info.plist"), 4<<20)
 	if err != nil {
 		return plugin.Artifact{}, err
 	}
@@ -46,7 +51,7 @@ func portableIcon(ctx context.Context, app, workspace string) (plugin.Artifact, 
 	if path.Ext(info.Icon) == "" {
 		info.Icon += ".icns"
 	}
-	data, err = readAppFile(ctx, root, "Contents/Resources/"+info.Icon, 32<<20)
+	data, err = readAppFile(ctx, fsys, path.Join(app, "Contents/Resources", info.Icon), 32<<20)
 	if errors.Is(err, os.ErrNotExist) {
 		return plugin.Artifact{}, nil
 	}
@@ -63,11 +68,15 @@ func portableIcon(ctx context.Context, app, workspace string) (plugin.Artifact, 
 	if err := fileio.Write(output, data, 0o644); err != nil {
 		return plugin.Artifact{}, err
 	}
-	return describeArtifact(ctx, output, "png")
+	artifact, err := describeArtifact(ctx, output, "png")
+	if artifact.Path != "" {
+		artifact.Evidence = map[string]json.RawMessage{"macos.icon": json.RawMessage(`{"renderer":"portable/1"}`)}
+	}
+	return artifact, err
 }
 
-func readAppFile(ctx context.Context, root *os.Root, name string, limit int64) ([]byte, error) {
-	file, err := root.Open(name)
+func readAppFile(ctx context.Context, fsys fs.FS, name string, limit int64) ([]byte, error) {
+	file, err := fsys.Open(name)
 	if err != nil {
 		return nil, err
 	}
@@ -144,9 +153,5 @@ func applicationIcon(ctx context.Context, app, workspace string) (plugin.Artifac
 			return artifact, err
 		}
 	}
-	artifact, err := portableIcon(ctx, app, workspace)
-	if artifact.Path != "" {
-		artifact.Evidence = map[string]json.RawMessage{"macos.icon": json.RawMessage(`{"renderer":"portable/1"}`)}
-	}
-	return artifact, err
+	return portableIcon(ctx, app, workspace)
 }

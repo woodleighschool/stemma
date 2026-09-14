@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/apple"
-	"github.com/woodleighschool/stemma/internal/archive"
-	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
@@ -36,19 +34,31 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 	if !filepath.IsAbs(workspace) || !filepath.IsAbs(input.Path) {
 		return nil, errors.New("preparation requires absolute workspace and leased input paths")
 	}
-	selected, archivePath, dmg, err := selectPayload(ctx, spec, input, workspace)
+	payload, err := selectPayload(ctx, spec, input, workspace)
 	if err != nil {
 		return nil, err
 	}
+	defer payload.close()
+	selected, archivePath, dmg := payload.local, payload.archivePath, payload.image != nil
 	if cached["installer"].Path != "" {
 		outputs := map[string]plugin.Artifact{"installer": cached["installer"]}
-		if info, err := os.Stat(selected); err == nil && info.IsDir() && strings.EqualFold(filepath.Ext(selected), ".app") {
-			addIcon(ctx, outputs, selected, workspace)
+		if info, err := payload.stat(); err == nil && info.IsDir() && strings.EqualFold(path.Ext(payload.name), ".app") {
+			payload.addIcon(ctx, outputs, workspace)
 		}
 		return outputs, ctx.Err()
 	}
+	info, err := payload.stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.IsDir() && dmg {
+		selected, err = payload.materialize(ctx, workspace)
+		if err != nil {
+			return nil, err
+		}
+	}
 	inspectionDone := plugin.Stage(ctx, "Inspecting application")
-	facts, err := inspect.Read(ctx, selected)
+	facts, err := payload.inspect(ctx)
 	inspectionDone(err)
 	if err != nil {
 		return nil, err
@@ -65,14 +75,16 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 	if err != nil {
 		return nil, err
 	}
-	info, err := os.Stat(selected)
-	if err != nil {
-		return nil, err
-	}
-	if info.IsDir() && (app == nil || !strings.EqualFold(filepath.Ext(selected), ".app")) {
+	if info.IsDir() && (app == nil || !strings.EqualFold(path.Ext(payload.name), ".app")) {
 		return nil, errors.New("selected tree must be one application bundle")
 	}
 	appPath := ""
+	if spec.Verification.enabled() {
+		selected, err = payload.materialize(ctx, workspace)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if info.IsDir() {
 		appPath = selected
 	}
@@ -81,13 +93,13 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 			app.InstalledPath = options.InstalledPath
 		}
 		if info.IsDir() && app.InstalledPath == "" {
-			app.InstalledPath = path.Join("/Applications", filepath.Base(selected))
+			app.InstalledPath = path.Join("/Applications", path.Base(payload.name))
 		}
 	}
 	var verification *apple.Evidence
 	if spec.Verification.Subject != "installer" {
 		done := plugin.Stage(ctx, "Verifying installer")
-		verification, err = verifySelected(spec.Verification, input.Path, selected, appPath)
+		verification, err = verifySelected(ctx, spec.Verification, input.Path, selected, appPath)
 		done(err)
 	}
 	if err != nil {
@@ -109,8 +121,12 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 			}
 		}
 	default:
-		if !strings.EqualFold(filepath.Ext(selected), ".pkg") {
+		if !strings.EqualFold(path.Ext(payload.name), ".pkg") {
 			return nil, errors.New("macOS software requires an application, PKG or DMG installer")
+		}
+		selected, err = payload.materialize(ctx, workspace)
+		if err != nil {
+			return nil, err
 		}
 		installer, err = retain(ctx, selected, filepath.Base(selected), workspace)
 		installer.Format = "pkg"
@@ -120,7 +136,7 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 	}
 	if spec.Verification.Subject == "installer" {
 		done := plugin.Stage(ctx, "Verifying installer")
-		verification, err = verifySelected(spec.Verification, input.Path, installer.Path, appPath)
+		verification, err = verifySelected(ctx, spec.Verification, input.Path, installer.Path, appPath)
 		done(err)
 		if err != nil {
 			return nil, err
@@ -141,52 +157,13 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 		installer.Evidence["macos.verification"], _ = json.Marshal(verification)
 	}
 	outputs := map[string]plugin.Artifact{"installer": installer}
-	if appPath != "" {
-		addIcon(ctx, outputs, appPath, workspace)
+	if info.IsDir() {
+		payload.addIcon(ctx, outputs, workspace)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return outputs, nil
-}
-
-func selectPayload(ctx context.Context, spec Spec, input plugin.Artifact, workspace string) (string, string, bool, error) {
-	selection := spec.PackagePath
-	if selection == "" && spec.Application != nil {
-		selection = spec.Application.Path
-	}
-	ext := strings.ToLower(filepath.Ext(input.Filename))
-	if input.Tree {
-		if strings.EqualFold(filepath.Ext(input.Path), ".app") && (selection == "" || selection == ".") {
-			return input.Path, "", false, nil
-		}
-		selected, err := archive.Select(input.Path, selection)
-		relative, _ := filepath.Rel(input.Path, selected)
-		return selected, filepath.ToSlash(relative), false, err
-	}
-	expanded := filepath.Join(workspace, "expanded")
-	if ext == ".dmg" || input.Format == "dmg" {
-		done := plugin.Stage(ctx, "Extracting disk image")
-		selected, err := diskimage.Extract(ctx, input.Path, expanded, selection)
-		done(err)
-		relative, _ := filepath.Rel(expanded, selected)
-		return selected, filepath.ToSlash(relative), true, err
-	}
-	if isArchive(input.Filename) {
-		done := plugin.Stage(ctx, "Extracting archive")
-		err := archive.Extract(ctx, input.Path, expanded)
-		done(err)
-		if err != nil {
-			return "", "", false, err
-		}
-		selected, err := archive.Select(expanded, selection)
-		relative, _ := filepath.Rel(expanded, selected)
-		return selected, filepath.ToSlash(relative), false, err
-	}
-	if spec.PackagePath != "" {
-		return "", "", false, errors.New("package_path requires an archive source")
-	}
-	return input.Path, "", false, nil
 }
 
 func selectApp(facts plugin.Facts, options *Application) (*plugin.Subject, error) {
@@ -308,8 +285,8 @@ func receiptVersion(facts plugin.Facts) string {
 	return version
 }
 
-func verifySelected(v Verification, source, selected, app string) (*apple.Evidence, error) {
-	if !v.Integrity && !v.Signature && !v.Resources && !v.Identity && !v.Platform && v.CertificateSHA256 == "" {
+func verifySelected(ctx context.Context, v Verification, source, selected, app string) (*apple.Evidence, error) {
+	if !v.enabled() {
 		return nil, nil
 	}
 	target := selected
@@ -327,9 +304,9 @@ func verifySelected(v Verification, source, selected, app string) (*apple.Eviden
 	var err error
 	switch strings.ToLower(filepath.Ext(target)) {
 	case ".pkg":
-		evidence, err = apple.VerifyPackage(target, policy)
+		evidence, err = apple.VerifyPackage(ctx, target, policy)
 	case ".app":
-		evidence, err = apple.VerifyApp(target, policy)
+		evidence, err = apple.VerifyApp(ctx, target, policy)
 	default:
 		return nil, fmt.Errorf("verification is unsupported for %s", filepath.Ext(target))
 	}

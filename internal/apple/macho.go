@@ -2,6 +2,7 @@ package apple
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -91,7 +92,7 @@ func InspectMachO(filePath string) (MachOFacts, error) {
 	return facts, nil
 }
 
-func verifyExecutable(f *os.File, policy Policy, external map[uint32][]byte, evidence *Evidence) error {
+func verifyExecutable(ctx context.Context, f *os.File, policy Policy, external map[uint32][]byte, evidence *Evidence) error {
 	if policy.RequirePlatform {
 		evidence.Platform = Check{Status: Unsupported, Detail: "macOS platform assessment requires native OS policy"}
 	}
@@ -105,12 +106,15 @@ func verifyExecutable(f *os.File, policy Policy, external map[uint32][]byte, evi
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("Mach-O subject must be a regular file")
 	}
-	slices, parseErr := machoSlices(f, info.Size())
+	slices, parseErr := machoSlices(contextReaderAt{ctx, f}, info.Size())
 	var integrityErr, signatureErr, identityErr error
 	if parseErr != nil {
 		integrityErr, signatureErr = parseErr, parseErr
 	}
 	for _, slice := range slices {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		signature, err := slice.signature()
 		if err != nil {
 			integrityErr, signatureErr = errors.Join(integrityErr, err), errors.Join(signatureErr, err)
@@ -148,7 +152,7 @@ func verifyExecutable(f *os.File, policy Policy, external map[uint32][]byte, evi
 	if policy.CertificateSHA256 != "" {
 		evidence.Identity = checkError(errors.Join(parseErr, identityErr), "every architecture's authenticated CMS signer matches the exact certificate SHA-256 pin")
 	}
-	return nil
+	return ctx.Err()
 }
 
 func machoSlices(r io.ReaderAt, size int64) ([]machoSlice, error) {
@@ -422,14 +426,16 @@ func (m machoSlice) verifyCodeDirectory(cd []byte, sig *codeSignature, external 
 		return fmt.Errorf("CodeDirectory page count disagrees with code limit")
 	}
 	hashOffset := int64(binary.BigEndian.Uint32(cd[16:20]))
+	buffer := make([]byte, min(pageSize, 32<<10))
+	digest := make([]byte, 0, h.Size())
 	for slot := range codeSlots {
 		h.Reset()
 		offset := slot * pageSize
-		if _, err := io.Copy(h, io.NewSectionReader(m.r, int64(offset), int64(min(pageSize, limit-offset)))); err != nil {
+		if _, err := io.CopyBuffer(h, io.NewSectionReader(m.r, int64(offset), int64(min(pageSize, limit-offset))), buffer); err != nil {
 			return err
 		}
 		start := hashOffset + int64(slot)*int64(size)
-		if !bytes.Equal(h.Sum(nil)[:size], cd[start:start+int64(size)]) {
+		if !bytes.Equal(h.Sum(digest[:0])[:size], cd[start:start+int64(size)]) {
 			return fmt.Errorf("Mach-O CPU %#x code page %d hash mismatch", m.cpu, slot)
 		}
 	}
@@ -451,7 +457,7 @@ func (m machoSlice) verifyCodeDirectory(cd []byte, sig *codeSignature, external 
 		}
 		h.Reset()
 		h.Write(value)
-		if !bytes.Equal(h.Sum(nil)[:size], expected) {
+		if !bytes.Equal(h.Sum(digest[:0])[:size], expected) {
 			return fmt.Errorf("Mach-O special slot %d hash mismatch", slot)
 		}
 	}

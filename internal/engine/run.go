@@ -242,9 +242,15 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	var workdirs []string
 	defer func() {
-		for _, work := range workdirs {
-			_ = os.RemoveAll(work)
+		if len(workdirs) == 0 {
+			return
 		}
+		cleanupDone := plugin.Stage(ctx, "Removing workspaces")
+		var cleanupErr error
+		for _, work := range workdirs {
+			cleanupErr = errors.Join(cleanupErr, os.RemoveAll(work))
+		}
+		cleanupDone(cleanupErr)
 	}()
 	var failures []error
 	var prepare func(string) error
