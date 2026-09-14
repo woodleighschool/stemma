@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 
@@ -27,18 +28,26 @@ import (
 
 type nativeConfig struct {
 	Type       string            `json:"-"`
-	Include    []string          `json:"include,omitempty"`
-	Base       string            `json:"base,omitempty"`
+	Include    []string          `json:"include,omitempty" jsonschema_description:"Local tree globs using doublestar semantics. Each pattern must match at least one entry."`
+	Base       string            `json:"base,omitempty" jsonschema_description:"Local tree root, relative to the resource file. Defaults to its directory."`
 	URL        string            `json:"url,omitempty" jsonschema_description:"Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."`
-	Match      string            `json:"match,omitempty"`
-	Path       string            `json:"path,omitempty"`
-	Repository string            `json:"repository,omitempty"`
-	Release    string            `json:"release,omitempty"`
-	Asset      string            `json:"asset,omitempty"`
-	Filename   string            `json:"filename,omitempty" jsonschema_description:"Optional input basename. Defaults to Content-Disposition, then the final URL basename, then the original URL basename. Independent of publication naming."`
-	SHA256     string            `json:"sha256,omitempty"`
+	Match      string            `json:"match,omitempty" jsonschema_description:"HTTP page regular expression whose full matches must identify one distinct absolute stable download URL."`
+	Path       string            `json:"path,omitempty" jsonschema_description:"Exact file or directory path relative to the resource file, confined to the project."`
+	Repository string            `json:"repository,omitempty" jsonschema_description:"GitHub repository in owner/name form."`
+	Release    string            `json:"release,omitempty" jsonschema_description:"GitHub release tag, or latest. Omitted or empty values select latest."`
+	Asset      string            `json:"asset,omitempty" jsonschema_description:"GitHub asset-name glob using doublestar semantics. Must match exactly one release asset; exact names also work."`
+	Filename   string            `json:"filename,omitempty" jsonschema_description:"Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."`
+	SHA256     string            `json:"sha256,omitempty" jsonschema_description:"Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."`
 	Token      string            `json:"token,omitempty" jsonschema_description:"Optional bearer token. Mutually exclusive with an Authorization header."`
 	Headers    map[string]string `json:"headers,omitempty" jsonschema_description:"HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin."`
+}
+
+// Native field sets also constrain the editor schema.
+var nativeFields = map[string][]string{
+	"http":   {"url", "match", "filename", "sha256", "token", "headers"},
+	"github": {"repository", "release", "asset", "filename", "sha256", "token"},
+	"file":   {"path", "filename", "sha256"},
+	"local":  {"base", "include", "filename", "sha256"},
 }
 
 type nativeObservation struct {
@@ -57,6 +66,11 @@ type nativeEntry struct {
 
 func native(input plugin.Input) (nativeConfig, error) {
 	var s nativeConfig
+	for field := range input.Config {
+		if !slices.Contains(nativeFields[input.Resolver], field) {
+			return s, fmt.Errorf("%s resolver does not support field %q", input.Resolver, field)
+		}
+	}
 	data, err := json.Marshal(input.Config)
 	if err != nil {
 		return s, err
@@ -194,9 +208,6 @@ func (s nativeConfig) Validate() error {
 	if s.Filename != "" && !validFilename(s.Filename) {
 		return errors.New("filename must be a basename")
 	}
-	if len(s.Headers) > 0 && s.Type != "http" {
-		return errors.New("headers are only supported for HTTP sources")
-	}
 	seen := map[string]bool{}
 	for name, value := range s.Headers {
 		if !httpguts.ValidHeaderFieldName(name) || !httpguts.ValidHeaderFieldValue(value) {
@@ -219,13 +230,7 @@ func (s nativeConfig) Validate() error {
 	if s.SHA256 != "" && !validDigest(s.SHA256) {
 		return errors.New("sha256 must be 64 lowercase hexadecimal characters")
 	}
-	if s.Type != "local" && (len(s.Include) > 0 || s.Base != "") {
-		return errors.New("include is only supported for local sources")
-	}
 	if s.Match != "" {
-		if s.Type != "http" {
-			return errors.New("match is only supported for HTTP sources")
-		}
 		if _, err := regexp.Compile(s.Match); err != nil {
 			return fmt.Errorf("source match: %w", err)
 		}
@@ -235,19 +240,20 @@ func (s nativeConfig) Validate() error {
 		if err := validateHTTPURL(s.URL); err != nil {
 			return err
 		}
-		if s.Path != "" || s.Repository != "" || s.Release != "" || s.Asset != "" {
-			return errors.New("HTTP source contains fields for another provider")
-		}
 	case "github":
-		if len(strings.Split(s.Repository, "/")) != 2 || strings.ContainsAny(s.Repository, " ?#\\") || s.Asset == "" || s.URL != "" || s.Path != "" {
-			return errors.New("GitHub source requires repository owner/name and an exact asset name")
+		owner, repo, ok := strings.Cut(s.Repository, "/")
+		if !ok || owner == "" || repo == "" || strings.ContainsAny(owner+repo, "/ ?#\\") || strings.IndexFunc(s.Repository, unicode.IsControl) >= 0 || owner == "." || owner == ".." || repo == "." || repo == ".." {
+			return errors.New("GitHub source requires repository owner/name")
+		}
+		if s.Asset == "" || !doublestar.ValidatePattern(s.Asset) {
+			return fmt.Errorf("invalid GitHub asset pattern %q", s.Asset)
 		}
 	case "file":
-		if !safeRelative(s.Path) || s.URL != "" || s.Repository != "" || s.Release != "" || s.Asset != "" || s.Token != "" {
+		if !safeRelative(s.Path) {
 			return errors.New("file source requires a project-relative path only")
 		}
 	case "local":
-		if len(s.Include) == 0 || s.Path != "" || s.URL != "" || s.Repository != "" || s.Release != "" || s.Asset != "" || s.Token != "" || (s.Base != "" && !safeRelative(s.Base)) {
+		if len(s.Include) == 0 || (s.Base != "" && !safeRelative(s.Base)) {
 			return errors.New("local source requires include patterns relative to its software-family file")
 		}
 		for _, pattern := range s.Include {
@@ -560,19 +566,42 @@ func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry
 	if release.Draft {
 		return errors.New("draft releases are not supported")
 	}
-	for _, asset := range release.Assets {
-		if asset.Name == s.Asset {
-			entry.URL = asset.URL
-			entry.ReleaseID = release.ID
-			entry.AssetID = asset.ID
-			if entry.Filename == "" {
-				entry.Filename = asset.Name
-			}
-			entry.Release = release.Tag
-			return nil
+	var matches []int
+	var names []string
+	for i, asset := range release.Assets {
+		if doublestar.MatchUnvalidated(s.Asset, asset.Name) {
+			matches = append(matches, i)
+			names = append(names, asset.Name)
 		}
 	}
-	return fmt.Errorf("GitHub release %s has no asset %q", release.Tag, s.Asset)
+	if len(matches) != 1 {
+		if len(matches) == 0 {
+			for _, asset := range release.Assets {
+				names = append(names, asset.Name)
+			}
+			return fmt.Errorf("GitHub release %s has no asset matching %q%s", release.Tag, s.Asset, assetNames("available assets", names))
+		}
+		return fmt.Errorf("GitHub release %s has %d assets matching %q; expected exactly one%s", release.Tag, len(matches), s.Asset, assetNames("matched assets", names))
+	}
+	asset := release.Assets[matches[0]]
+	entry.URL = asset.URL
+	entry.ReleaseID = release.ID
+	entry.AssetID = asset.ID
+	entry.Release = release.Tag
+	if entry.Filename == "" {
+		entry.Filename = asset.Name
+	}
+	return nil
+}
+
+func assetNames(label string, names []string) string {
+	if len(names) == 0 {
+		return "; " + label + ": none"
+	}
+	if len(names) > 10 {
+		return fmt.Sprintf("; %s: %d total", label, len(names))
+	}
+	return fmt.Sprintf("; %s: %q", label, names)
 }
 
 func validFilename(name string) bool {

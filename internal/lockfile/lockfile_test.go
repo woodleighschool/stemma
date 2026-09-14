@@ -181,6 +181,21 @@ func TestReleaseObservationChangesWithoutContentTimestampChurn(t *testing.T) {
 	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err != nil {
 		t.Fatal(err)
 	}
+	inputs[resource]["source"].Config["asset"] = "App-*.pkg"
+	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil || !strings.Contains(err.Error(), "stale") {
+		t.Fatalf("frozen run accepted changed asset pattern: %v", err)
+	}
+	inputs[resource]["source"].Config["asset"] = "App*.pkg"
+	updated, err := prepare(t, m, inputs, Options{Refresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Changed || entry(updated).Declaration == entry(current).Declaration || entry(updated).Content != entry(current).Content || !entry(updated).ResolvedAt.Equal(entry(current).ResolvedAt) {
+		t.Fatal("pattern update lost content identity or failed to replace declaration")
+	}
+	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 type releaseTransport struct{ server *httptest.Server }

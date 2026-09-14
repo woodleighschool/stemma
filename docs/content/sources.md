@@ -40,8 +40,14 @@ source:
   asset: Application-*-arm64.zip
 ```
 
-Replace the repository and asset pattern with the publisher's values. The asset
-must resolve unambiguously. `release` can select a particular release tag.
+Replace the repository and asset pattern with the publisher's values. `asset` is
+an asset-name glob using the same doublestar syntax as local input patterns, not
+a regular expression. Exact names work too. The pattern must match exactly one
+asset in the selected release; zero or multiple matches fail. For example,
+`SafeExamBrowser-*.dmg` selects `SafeExamBrowser-3.7.1.dmg` without declaring a version.
+
+`release: latest` and an omitted or empty `release` select GitHub's latest release.
+Any other value selects that exact release tag. Draft releases are rejected.
 
 For an HTTP page containing a download link, use `resolver: http` with `url` and a
 `match` regular expression. The full match must be an absolute download URL, and
@@ -66,6 +72,11 @@ source:
     - "**/*.ttf"
     - "**/*.otf"
 ```
+
+`include` uses doublestar globs; each pattern must match at least one entry.
+Overlapping patterns select each entry once. `base` defaults to the resource file's
+directory. `file.path` is an exact path, not a glob. Native resolvers reject fields
+belonging to another resolver.
 
 Files and trees have content identities. Tree identity also includes permission
 modes and supported symlinks. Packaging cannot silently discard required metadata;
@@ -96,7 +107,11 @@ their consumers even when only the consumer was selected on the command line.
 
 An unchanged input keeps its recorded timestamp. A lock records the resolver and
 its version, the relevant declaration, a resolver-owned observation and content
-identity. It is not merely a version number or download URL.
+identity. It is not merely a version number or download URL. GitHub locks retain
+the selected release ID, asset ID, release tag, download URL, filename and digest.
+Locked fetches replay that concrete selection without evaluating the asset glob
+or looking up the latest release again. Changing the pattern or release selector
+makes the declaration stale and requires a lock update, even with cached bytes.
 
 If a vendor replaces bytes at a stable URL, a cold locked run fails the content
 check. It does not silently accept today's download. Run `update` and review the
