@@ -254,6 +254,66 @@ func TestPayloadRejectsOversizedXZDictionary(t *testing.T) {
 	}
 }
 
+func TestPackageRestartActions(t *testing.T) {
+	for _, test := range []struct{ action, want string }{
+		{"none", ""}, {"logout", "RequireLogout"}, {"restart", "RequireRestart"}, {"shutdown", "RequireShutdown"}, {"unknown", ""},
+	} {
+		t.Run(test.action, func(t *testing.T) {
+			metadata := fmt.Sprintf(`<pkg-info identifier="org.example.app" version="1" postinstall-action="%s"/>`, test.action)
+			facts, err := InspectPackageMetadata(t.Context(), writePayloadPackage(t, []payloadMember{{"PackageInfo", []byte(metadata)}}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if facts.RestartAction != test.want {
+				t.Fatalf("restart action = %q, want %q", facts.RestartAction, test.want)
+			}
+		})
+	}
+}
+
+func TestDistributionDeclarations(t *testing.T) {
+	distribution := `<installer-gui-script>
+		<product id="org.example.suite" version="9.4"/>
+		<volume-check><allowed-os-versions><os-version min="12.9"/><os-version min="14.2"/></allowed-os-versions><allowed-os-versions><os-version min="99"/></allowed-os-versions></volume-check>
+		<choice id="one" selected="false" enabled="false"><pkg-ref id="org.example.one"/></choice>
+		<pkg-ref id="org.example.one" onConclusion="RecommendRestart" onConclusionScript="'RequireShutdown'">#One.pkg</pkg-ref>
+		<pkg-ref id="org.example.two" onConclusion="requirelogout">#Two.pkg</pkg-ref>
+	</installer-gui-script>`
+	name := writePayloadPackage(t, []payloadMember{
+		{"One.pkg/PackageInfo", []byte(`<pkg-info identifier="org.example.one" version="8" minimumSystemVersion="16" postinstall-action="shutdown"><payload installKBytes="75"/></pkg-info>`)},
+		{"One.pkg/Payload", cpioPayload(t, nil)},
+		{"Two.pkg/PackageInfo", []byte(`<pkg-info identifier="org.example.two" version="7"/>`)},
+		{"Distribution", []byte(distribution)},
+	})
+	for _, contents := range []bool{false, true} {
+		facts, err := inspectPackage(t.Context(), name, contents)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if facts.Version != "9.4" || facts.MinimumOS != "14.2" || facts.RestartAction != "RequireLogout" {
+			t.Fatalf("contents=%v: version %q, minimum OS %q, restart %q", contents, facts.Version, facts.MinimumOS, facts.RestartAction)
+		}
+	}
+}
+
+func TestPackageMinimumOSFallsBackToPayloadReceipts(t *testing.T) {
+	name := writePayloadPackage(t, []payloadMember{
+		{"One.pkg/PackageInfo", []byte(`<pkg-info identifier="org.example.one" version="8" minimumSystemVersion="16"/>`)},
+		{"Two.pkg/PackageInfo", []byte(`<pkg-info identifier="org.example.two" version="7" minimumSystemVersion="13.10"><payload installKBytes="0"/></pkg-info>`)},
+		{"Two.pkg/Payload", cpioPayload(t, nil)},
+		{"Three.pkg/PackageInfo", []byte(`<pkg-info identifier="org.example.three" version="6" minimumSystemVersion="13.9" postinstall-action="restart"><payload installKBytes="75"/></pkg-info>`)},
+		{"Three.pkg/Payload", cpioPayload(t, nil)},
+		{"Distribution", []byte(`<installer-gui-script><pkg-ref id="org.example.one">#One.pkg</pkg-ref><pkg-ref id="org.example.two">#Two.pkg</pkg-ref><pkg-ref id="org.example.three">#Three.pkg</pkg-ref></installer-gui-script>`)},
+	})
+	facts, err := InspectPackageMetadata(t.Context(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts.MinimumOS != "13.10" || facts.RestartAction != "" || facts.Version != "" {
+		t.Fatalf("minimum OS %q, restart %q, version %q", facts.MinimumOS, facts.RestartAction, facts.Version)
+	}
+}
+
 type payloadEntry struct {
 	header cpio.Header
 	body   []byte

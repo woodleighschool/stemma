@@ -102,15 +102,16 @@ type Facts struct {
 // Subject records containment and path provenance. Path belongs to the inspected
 // artifact; InstalledPath is an installation location, never a runner lookup path.
 type Subject struct {
-	ID            string        `json:"id"`
-	Parent        string        `json:"parent,omitempty"`
-	Kind          string        `json:"kind"`
-	Path          string        `json:"path,omitempty"`
-	InstalledPath string        `json:"installed_path,omitempty"`
-	SHA256        string        `json:"sha256,omitempty"`
-	App           *AppFacts     `json:"app,omitempty"`
-	Package       *PackageFacts `json:"package,omitempty"`
-	MSI           *MSIFacts     `json:"msi,omitempty"`
+	ID            string          `json:"id"`
+	Parent        string          `json:"parent,omitempty"`
+	Kind          string          `json:"kind"`
+	Path          string          `json:"path,omitempty"`
+	InstalledPath string          `json:"installed_path,omitempty"`
+	SHA256        string          `json:"sha256,omitempty"`
+	App           *AppFacts       `json:"app,omitempty"`
+	Package       *PackageFacts   `json:"package,omitempty"`
+	Installer     *InstallerFacts `json:"installer,omitempty"`
+	MSI           *MSIFacts       `json:"msi,omitempty"`
 }
 
 // AppFacts preserves an application's short version and build independently.
@@ -130,6 +131,14 @@ type PackageFacts struct {
 	InstallLocation string `json:"install_location,omitempty"`
 	InstalledSize   int64  `json:"installed_size,omitempty"`
 	HasPayload      bool   `json:"has_payload"`
+}
+
+// InstallerFacts records an installer's static declarations without evaluating
+// its scripts. Version is a Distribution's product version.
+type InstallerFacts struct {
+	Version       string `json:"version,omitempty"`
+	MinimumOS     string `json:"minimum_os,omitempty"`
+	RestartAction string `json:"restart_action,omitempty"`
 }
 
 // MSIFacts preserves MSI database identity and its native property names.

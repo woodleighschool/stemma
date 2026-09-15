@@ -38,15 +38,21 @@ type PackageInfo struct {
 	InstallLocation string `json:"install_location" xml:"install-location,attr"`
 	InstalledSize   int64  `json:"installed_size,omitempty" xml:"-"`
 	HasPayload      bool   `json:"has_payload" xml:"-"`
+	MinimumOS       string `json:"minimum_os,omitempty" xml:"minimumSystemVersion,attr"`
+	RestartAction   string `json:"restart_action,omitempty" xml:"-"`
 }
 
 // PackageFacts describes the installer container, not a verified inner application.
+// Version, MinimumOS and RestartAction are the installer's static declarations.
 type PackageFacts struct {
-	Format       string        `json:"format"`
-	Entries      []Entry       `json:"entries"`
-	Packages     []PackageInfo `json:"packages"`
-	HasSignature bool          `json:"has_signature"`
-	Applications []PackageApp  `json:"applications,omitempty"`
+	Format        string        `json:"format"`
+	Entries       []Entry       `json:"entries"`
+	Packages      []PackageInfo `json:"packages"`
+	HasSignature  bool          `json:"has_signature"`
+	Applications  []PackageApp  `json:"applications,omitempty"`
+	Version       string        `json:"version,omitempty"`
+	MinimumOS     string        `json:"minimum_os,omitempty"`
+	RestartAction string        `json:"restart_action,omitempty"`
 }
 
 type xarArchive struct {

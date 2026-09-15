@@ -91,7 +91,7 @@ func read(ctx context.Context, name string, contents bool) (plugin.Facts, error)
 		if err != nil {
 			return plugin.Facts{}, fmt.Errorf("inspect pkg: %w", err)
 		}
-		root.Kind = "container"
+		root.Kind, root.Installer = "container", installerFacts(pkg)
 		facts.Subjects, err = packageSubjects(pkg)
 		if err != nil {
 			return plugin.Facts{}, err
@@ -210,8 +210,15 @@ func ReadFS(ctx context.Context, fsys fs.FS, name string) (plugin.Facts, error) 
 	if n != info.Size() {
 		return plugin.Facts{}, fmt.Errorf("package length mismatch")
 	}
-	facts.Subjects = append([]plugin.Subject{{ID: ".", Path: ".", Kind: "container", SHA256: hex.EncodeToString(digest.Sum(nil))}}, subjects...)
+	facts.Subjects = append([]plugin.Subject{{ID: ".", Path: ".", Kind: "container", SHA256: hex.EncodeToString(digest.Sum(nil)), Installer: installerFacts(pkg)}}, subjects...)
 	return facts, ctx.Err()
+}
+
+func installerFacts(pkg apple.PackageFacts) *plugin.InstallerFacts {
+	if pkg.Version == "" && pkg.MinimumOS == "" && pkg.RestartAction == "" {
+		return nil
+	}
+	return &plugin.InstallerFacts{Version: pkg.Version, MinimumOS: pkg.MinimumOS, RestartAction: pkg.RestartAction}
 }
 
 func packageSubjects(pkg apple.PackageFacts) ([]plugin.Subject, error) {

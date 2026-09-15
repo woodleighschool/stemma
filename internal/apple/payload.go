@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -128,18 +129,24 @@ func inspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64, c
 	if len(facts.Packages) == 0 {
 		return PackageFacts{}, fmt.Errorf("%w: PKG contains no component PackageInfo", ErrUnsupported)
 	}
-	if !contents {
-		return facts, nil
-	}
+	distribution := false
 	for _, entry := range archive.entries {
 		if path.Base(entry.Path) == "Distribution" {
 			if entry.Size > budget.metadata {
 				return PackageFacts{}, fmt.Errorf("package metadata exceeds read limit")
 			}
 			budget.metadata -= entry.Size
-			if err := archive.validateDistribution(entry.Path); err != nil {
+			declared, err := archive.distribution(entry.Path, contents)
+			if err != nil {
 				return PackageFacts{}, err
 			}
+			if !distribution {
+				distribution = true
+				facts.Version, facts.MinimumOS, facts.RestartAction = declared.Version, declared.MinimumOS, declared.RestartAction
+			}
+		}
+		if !contents {
+			continue
 		}
 		if path.Base(entry.Path) == "Payload" && !payloads[entry.Path] {
 			return PackageFacts{}, fmt.Errorf("%w: payload %q has no component receipt", ErrUnsupported, entry.Path)
@@ -148,51 +155,24 @@ func inspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64, c
 			return PackageFacts{}, fmt.Errorf("%w: nested package file %q", ErrUnsupported, entry.Path)
 		}
 	}
+	var minimums []string
+	for _, pkg := range facts.Packages {
+		// Installer ignores component postinstall actions within a Distribution.
+		if !distribution {
+			facts.RestartAction = strongerRestartAction(facts.RestartAction, pkg.RestartAction)
+		}
+		// Without Distribution requirements, Munki uses receipt declarations;
+		// payload-free components record no receipt.
+		if pkg.HasPayload {
+			minimums = append(minimums, pkg.MinimumOS)
+		}
+	}
+	if facts.MinimumOS == "" {
+		if facts.MinimumOS, err = highestOSVersion(minimums...); err != nil {
+			return PackageFacts{}, fmt.Errorf("PackageInfo: %w", err)
+		}
+	}
 	return facts, ctx.Err()
-}
-
-func (a *xarArchive) validateDistribution(name string) error {
-	var data bytes.Buffer
-	if err := a.readEntry(name, &data, maxMetadata); err != nil {
-		return err
-	}
-	if err := validatePackageXML(data.Bytes()); err != nil {
-		return fmt.Errorf("distribution XML: %w", err)
-	}
-	decoder := xml.NewDecoder(&data)
-	for {
-		token, err := decoder.Token()
-		if errors.Is(err, io.EOF) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		element, ok := token.(xml.StartElement)
-		if !ok || element.Name.Local != "pkg-ref" {
-			continue
-		}
-		var reference string
-		if err := decoder.DecodeElement(&reference, &element); err != nil {
-			return err
-		}
-		reference = strings.TrimSpace(reference)
-		if reference == "" {
-			continue
-		}
-		reference, err = url.PathUnescape(strings.TrimPrefix(reference, "#"))
-		if err != nil || reference == "" || strings.ContainsAny(reference, ":\\\x00") || path.IsAbs(reference) || path.Clean(reference) != reference || reference == ".." || strings.HasPrefix(reference, "../") {
-			return fmt.Errorf("%w: Distribution package reference %q", ErrUnsupported, reference)
-		}
-		component := path.Join(path.Dir(name), reference)
-		file, exists := a.files[component]
-		if !exists || file.Type.Value != "directory" {
-			return fmt.Errorf("%w: Distribution package reference %q is not an embedded component directory", ErrUnsupported, reference)
-		}
-		if _, exists := a.files[path.Join(component, "PackageInfo")]; !exists {
-			return fmt.Errorf("%w: Distribution component %q has no receipt", ErrUnsupported, reference)
-		}
-	}
 }
 
 func (a *xarArchive) packageInfo(name string) (PackageInfo, error) {
@@ -206,8 +186,9 @@ func (a *xarArchive) packageInfo(name string) (PackageInfo, error) {
 	var document struct {
 		PackageInfo
 
-		XMLName  xml.Name `xml:"pkg-info"`
-		Payloads []struct {
+		XMLName           xml.Name `xml:"pkg-info"`
+		PostinstallAction string   `xml:"postinstall-action,attr"`
+		Payloads          []struct {
 			Size int64 `xml:"installKBytes,attr"`
 		} `xml:"payload"`
 	}
@@ -216,6 +197,14 @@ func (a *xarArchive) packageInfo(name string) (PackageInfo, error) {
 	}
 	metadata := document.PackageInfo
 	metadata.Path = name
+	switch strings.ToLower(document.PostinstallAction) {
+	case "logout":
+		metadata.RestartAction = "RequireLogout"
+	case "restart":
+		metadata.RestartAction = "RequireRestart"
+	case "shutdown":
+		metadata.RestartAction = "RequireShutdown"
+	}
 	if metadata.Identifier == "" || metadata.Version == "" {
 		return PackageInfo{}, fmt.Errorf("PackageInfo requires identifier and version")
 	}
@@ -244,6 +233,106 @@ func (a *xarArchive) packageInfo(name string) (PackageInfo, error) {
 		}
 	}
 	return metadata, nil
+}
+
+// Installer's restart query accepts these static values case-insensitively, in
+// ascending precedence. None and unknown values impose no requirement.
+var restartActions = []string{"RecommendRestart", "RequireLogout", "RequireRestart", "RequireShutdown"}
+
+func strongerRestartAction(current, declared string) string {
+	for i, action := range restartActions {
+		if strings.EqualFold(action, declared) && i > slices.Index(restartActions, current) {
+			return action
+		}
+	}
+	return current
+}
+
+// distribution reads a Distribution's static product declarations. Installer's
+// restart query uses every pkg-ref onConclusion, including deselected choices,
+// and ignores onConclusionScript.
+func (a *xarArchive) distribution(name string, confine bool) (PackageFacts, error) {
+	var data bytes.Buffer
+	if err := a.readEntry(name, &data, maxMetadata); err != nil {
+		return PackageFacts{}, err
+	}
+	if err := validatePackageXML(data.Bytes()); err != nil {
+		return PackageFacts{}, fmt.Errorf("distribution XML: %w", err)
+	}
+	var document struct {
+		Products []struct {
+			Version string `xml:"version,attr"`
+		} `xml:"product"`
+		VolumeChecks []struct {
+			AllowedOSVersions []struct {
+				OSVersions []struct {
+					Minimum string `xml:"min,attr"`
+				} `xml:"os-version"`
+			} `xml:"allowed-os-versions"`
+		} `xml:"volume-check"`
+	}
+	if err := xml.Unmarshal(data.Bytes(), &document); err != nil {
+		return PackageFacts{}, fmt.Errorf("distribution XML: %w", err)
+	}
+	var declared PackageFacts
+	if len(document.Products) > 0 {
+		declared.Version = document.Products[0].Version
+	}
+	// Munki uses the highest minimum within the first allowed version set.
+	if len(document.VolumeChecks) > 0 && len(document.VolumeChecks[0].AllowedOSVersions) > 0 {
+		var minimums []string
+		for _, version := range document.VolumeChecks[0].AllowedOSVersions[0].OSVersions {
+			minimums = append(minimums, version.Minimum)
+		}
+		var err error
+		if declared.MinimumOS, err = highestOSVersion(minimums...); err != nil {
+			return PackageFacts{}, fmt.Errorf("distribution: %w", err)
+		}
+	}
+	decoder := xml.NewDecoder(&data)
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return declared, nil
+		}
+		if err != nil {
+			return PackageFacts{}, err
+		}
+		element, ok := token.(xml.StartElement)
+		if !ok || element.Name.Local != "pkg-ref" {
+			continue
+		}
+		for _, attr := range element.Attr {
+			if attr.Name.Local == "onConclusion" {
+				declared.RestartAction = strongerRestartAction(declared.RestartAction, attr.Value)
+			}
+		}
+		var reference string
+		if err := decoder.DecodeElement(&reference, &element); err != nil {
+			return PackageFacts{}, err
+		}
+		if reference = strings.TrimSpace(reference); confine && reference != "" {
+			if err := a.confineReference(name, reference); err != nil {
+				return PackageFacts{}, err
+			}
+		}
+	}
+}
+
+func (a *xarArchive) confineReference(distribution, reference string) error {
+	reference, err := url.PathUnescape(strings.TrimPrefix(reference, "#"))
+	if err != nil || reference == "" || strings.ContainsAny(reference, ":\\\x00") || path.IsAbs(reference) || path.Clean(reference) != reference || reference == ".." || strings.HasPrefix(reference, "../") {
+		return fmt.Errorf("%w: Distribution package reference %q", ErrUnsupported, reference)
+	}
+	component := path.Join(path.Dir(distribution), reference)
+	file, exists := a.files[component]
+	if !exists || file.Type.Value != "directory" {
+		return fmt.Errorf("%w: Distribution package reference %q is not an embedded component directory", ErrUnsupported, reference)
+	}
+	if _, exists := a.files[path.Join(component, "PackageInfo")]; !exists {
+		return fmt.Errorf("%w: Distribution component %q has no receipt", ErrUnsupported, reference)
+	}
+	return nil
 }
 
 type contextReaderAt struct {

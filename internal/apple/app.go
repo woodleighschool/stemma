@@ -180,25 +180,32 @@ func ParseAppInfo(data []byte) (AppFacts, error) {
 		if _, err := plist.Unmarshal(data, &requirements); err != nil {
 			return facts, fmt.Errorf("app Info.plist minimum system versions: %w", err)
 		}
+		var versions []string
+		for _, architecture := range slices.Sorted(maps.Keys(requirements.Versions)) {
+			versions = append(versions, requirements.Versions[architecture])
+		}
 		var err error
-		facts.MinimumOS, err = minimumAppOS(requirements.Versions)
-		if err != nil {
-			return facts, err
+		if facts.MinimumOS, err = highestOSVersion(versions...); err != nil {
+			return facts, fmt.Errorf("app Info.plist: %w", err)
 		}
 	}
 	return facts, nil
 }
 
-func minimumAppOS(versions map[string]string) (string, error) {
+// highestOSVersion returns the latest dotted numeric macOS version, ignoring
+// absent values. Trailing zero components do not affect ordering.
+func highestOSVersion(versions ...string) (string, error) {
 	var maximum []int
-	minimum := ""
-	for _, architecture := range slices.Sorted(maps.Keys(versions)) {
-		version := versions[architecture]
+	highest := ""
+	for _, version := range versions {
+		if version == "" {
+			continue
+		}
 		var numbers []int
 		for part := range strings.SplitSeq(version, ".") {
 			number, err := strconv.Atoi(part)
 			if err != nil || number < 0 || strconv.Itoa(number) != part {
-				return "", fmt.Errorf("app Info.plist has invalid minimum system version %q for %s", version, architecture)
+				return "", fmt.Errorf("invalid minimum system version %q", version)
 			}
 			numbers = append(numbers, number)
 		}
@@ -206,10 +213,10 @@ func minimumAppOS(versions map[string]string) (string, error) {
 			numbers = numbers[:len(numbers)-1]
 		}
 		if slices.Compare(numbers, maximum) > 0 {
-			maximum, minimum = numbers, version
+			maximum, highest = numbers, version
 		}
 	}
-	return minimum, nil
+	return highest, nil
 }
 
 func rootRead(root *os.Root, name string, limit int64) ([]byte, error) {
