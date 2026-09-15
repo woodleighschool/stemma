@@ -103,6 +103,27 @@ type progressStep struct {
 	started time.Time
 }
 
+// finish ends the innermost step or the operation named by a stage result.
+func (row *progressLine) finish(a activity) bool {
+	for index, step := range slices.Backward(row.steps) {
+		if step.label == a.label {
+			row.steps = slices.Delete(row.steps, index, index+1)
+			return true
+		}
+	}
+	if row.label != a.label {
+		return false
+	}
+	row.ended, row.outcome, row.detail, row.steps = time.Now(), "done", a.detail, nil
+	if a.elapsed > 0 {
+		row.ended = row.started.Add(a.elapsed)
+	}
+	if a.err != "" {
+		row.outcome, row.err = "failed", a.err
+	}
+	return true
+}
+
 type progressGroup struct {
 	scope string
 	rows  []*progressLine
@@ -176,38 +197,17 @@ func (p *terminalProgress) update(a activity) {
 	case a.progress:
 		row.current, row.total, row.unit = a.current, a.total, a.unit
 	case a.status:
-		if !p.finish(group, row, a) {
+		if !row.finish(a) {
 			return
+		}
+		// Successful project setup disappears; resource trees keep their results.
+		if a.scope == "" && !slices.ContainsFunc(group.rows[1:], func(row *progressLine) bool { return row.outcome != "done" }) {
+			p.groups = slices.DeleteFunc(p.groups, func(other *progressGroup) bool { return other == group })
 		}
 	default:
 		return
 	}
 	p.show()
-}
-
-// finish ends the innermost step or the operation named by a stage result.
-func (p *terminalProgress) finish(group *progressGroup, row *progressLine, a activity) bool {
-	for index, step := range slices.Backward(row.steps) {
-		if step.label == a.label {
-			row.steps = slices.Delete(row.steps, index, index+1)
-			return true
-		}
-	}
-	if row.label != a.label {
-		return false
-	}
-	row.ended, row.outcome, row.detail, row.steps = time.Now(), "done", a.detail, nil
-	if a.elapsed > 0 {
-		row.ended = row.started.Add(a.elapsed)
-	}
-	if a.err != "" {
-		row.outcome, row.err = "failed", a.err
-	}
-	// Successful project setup disappears; resource trees keep their results.
-	if group.scope == "" && !slices.ContainsFunc(group.rows[1:], func(row *progressLine) bool { return row.outcome != "done" }) {
-		p.groups = slices.DeleteFunc(p.groups, func(other *progressGroup) bool { return other == group })
-	}
-	return true
 }
 
 func (p *terminalProgress) note(scope, message, err, outcome string) {
