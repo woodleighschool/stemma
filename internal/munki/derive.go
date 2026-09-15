@@ -2,12 +2,15 @@ package munki
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
+	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/invopop/jsonschema"
@@ -116,8 +119,12 @@ func Derive(request plugin.ReconcileRequest) (map[string]any, map[string]string,
 	}
 	values := map[string]any{}
 	origins := map[string]string{}
+	owned := func(key string) bool {
+		_, authored := explicit[key]
+		return authored || slices.Contains(metadata.Unmanaged, "pkginfo."+key)
+	}
 	put := func(key string, value any, origin string) {
-		if _, exists := explicit[key]; !exists && !slices.Contains(metadata.Unmanaged, "pkginfo."+key) {
+		if !owned(key) {
 			values[key] = value
 			origins["pkginfo."+key] = origin
 		}
@@ -130,9 +137,7 @@ func Derive(request plugin.ReconcileRequest) (map[string]any, map[string]string,
 		return values, origins, nil
 	}
 	icon := request.Inputs["icon"]
-	_, authoredName := explicit["icon_name"]
-	_, authoredHash := explicit["icon_hash"]
-	if icon.Path != "" && !authoredName && !authoredHash && !slices.Contains(metadata.Unmanaged, "pkginfo.icon_name") && !slices.Contains(metadata.Unmanaged, "pkginfo.icon_hash") {
+	if icon.Path != "" && !owned("icon_name") && !owned("icon_hash") {
 		digest, err := hex.DecodeString(icon.SHA256)
 		if err != nil || len(digest) != 32 || icon.Format != "png" || icon.Tree || icon.Size <= 0 || icon.Size > 32<<20 {
 			return nil, nil, errors.New("icon input requires a bounded PNG artifact with a SHA-256 digest")
@@ -202,24 +207,39 @@ func Derive(request plugin.ReconcileRequest) (map[string]any, map[string]string,
 		}
 	}
 	var receipts []Receipt
+	var installedSize int64
+	var installer plugin.InstallerFacts
 	versions := map[string]bool{}
 	for _, subject := range facts.Subjects {
+		if subject.Installer != nil {
+			installer = *subject.Installer
+		}
 		if pkg := subject.Package; pkg != nil {
 			if pkg.Version != "" {
 				versions[pkg.Version] = true
 			}
 			if pkg.HasPayload && pkg.Identifier != "" {
 				receipts = append(receipts, Receipt{PackageID: pkg.Identifier, Version: pkg.Version, InstalledSize: pkg.InstalledSize})
+				installedSize += pkg.InstalledSize
 			}
 		}
 	}
-	if len(receipts) > 0 && kind == "pkg" {
-		put("receipts", receipts, "installer.receipts")
+	if kind == "pkg" {
+		if len(receipts) > 0 {
+			put("receipts", receipts, "installer.receipts")
+		}
+		if installedSize > 0 {
+			put("installed_size", installedSize, "installer.receipts")
+		}
+		if installer.RestartAction != "" {
+			put("RestartAction", installer.RestartAction, "installer.restart_action")
+		}
 	}
+	minimumOS, minimumOrigin := installer.MinimumOS, "installer.minimum_os"
 	if selected != nil {
 		app := selected.App
 		version := app.Version
-		versionKey := "CFBundleShortVersionString"
+		versionKey := app.VersionKey()
 		if appOptions != nil && appOptions.VersionKey != "" {
 			versionKey = appOptions.VersionKey
 		}
@@ -275,9 +295,7 @@ func Derive(request plugin.ReconcileRequest) (map[string]any, map[string]string,
 		}
 		_, script := explicit["installcheck_script"]
 		_, authoredReceipts := explicit["receipts"]
-		_, authoredInstalls := explicit["installs"]
-		authoredInstalls = authoredInstalls || slices.Contains(metadata.Unmanaged, "pkginfo.installs")
-		if !script && !authoredReceipts && !authoredInstalls {
+		if !script && !authoredReceipts && !owned("installs") {
 			if endpoint == "" {
 				if appOptions != nil || kind == "copy_from_dmg" {
 					return nil, nil, errors.New("selected application has no known installed path; author derive.app.installed_path or installs")
@@ -289,15 +307,65 @@ func Derive(request plugin.ReconcileRequest) (map[string]any, map[string]string,
 				put("installs", []InstallItem{{Type: "application", Path: endpoint, BundleIdentifier: app.BundleID, BundleName: app.Name, BundleShortVersion: app.Version, BundleVersion: app.Build, VersionComparisonKey: versionKey, MinimumOSVersion: app.MinimumOS}}, "app.installed_path")
 			}
 		}
-		if app.MinimumOS != "" {
-			put("minimum_os_version", app.MinimumOS, "app.minimum_os")
+		// Munki takes the later of the installer and application requirements.
+		if compareVersions(app.MinimumOS, minimumOS) > 0 {
+			minimumOS, minimumOrigin = app.MinimumOS, "app.minimum_os"
 		}
-	} else if appOptions == nil {
-		if len(versions) == 1 {
+	} else if _, exists := values["version"]; !exists && appOptions == nil {
+		switch {
+		case installer.Version != "":
+			put("version", installer.Version, "installer.version")
+		case len(versions) == 1:
 			for version := range versions {
 				put("version", version, "installer.receipts")
 			}
+		case len(versions) > 1:
+			return nil, nil, errors.New("PKG components declare different versions; select an application or author pkginfo.version")
+		}
+	}
+	if minimumOS != "" {
+		put("minimum_os_version", minimumOS, minimumOrigin)
+	}
+	if !owned("uninstallable") && !owned("uninstall_method") {
+		switch {
+		case kind == "pkg" && hasEntries(values["receipts"]):
+			put("uninstallable", true, "installer.receipts")
+			put("uninstall_method", "removepackages", "installer.receipts")
+		case kind == "copy_from_dmg" && hasEntries(values["items_to_copy"]):
+			put("uninstallable", true, "app.copy")
+			put("uninstall_method", "remove_copied_items", "app.copy")
 		}
 	}
 	return values, origins, nil
+}
+
+func hasEntries(value any) bool {
+	list := reflect.ValueOf(value)
+	return list.Kind() == reflect.Slice && list.Len() > 0
+}
+
+// compareVersions orders dotted numeric versions such as macOS releases as Munki
+// does: empty components are ignored and missing components compare as zero.
+func compareVersions(a, b string) int {
+	dot := func(r rune) bool { return r == '.' }
+	left, right := strings.FieldsFunc(a, dot), strings.FieldsFunc(b, dot)
+	for i := range max(len(left), len(right)) {
+		x, y := "0", "0"
+		if i < len(left) {
+			x = left[i]
+		}
+		if i < len(right) {
+			y = right[i]
+		}
+		order := strings.Compare(x, y)
+		m, errM := strconv.ParseUint(x, 10, 64)
+		n, errN := strconv.ParseUint(y, 10, 64)
+		if errM == nil && errN == nil {
+			order = cmp.Compare(m, n)
+		}
+		if order != 0 {
+			return order
+		}
+	}
+	return 0
 }

@@ -2,6 +2,7 @@ package munki_test
 
 import (
 	"encoding/json"
+	"slices"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/munki"
@@ -43,6 +44,63 @@ func TestDestinationDerivesSelectedDMGAppAndNativeOverrides(t *testing.T) {
 	}
 	if values["version"] != "9" || len(values["installs"].([]any)) != 0 {
 		t.Fatal("native overrides did not win")
+	}
+}
+
+func TestDerivedApplicationUsesNativeDetectionKeys(t *testing.T) {
+	app := plugin.Subject{Kind: "app", Path: "Editor.app", App: &plugin.AppFacts{BundleID: "example.editor", Name: "Editor", Version: "banana", Build: "2349", MinimumOS: "13.2"}}
+	request := plugin.ReconcileRequest{Prepared: true, Identity: plugin.Identity{Software: "Editor"}, Artifact: plugin.Artifact{Path: "leased.dmg", Format: "dmg"}, Facts: plugin.Facts{Subjects: []plugin.Subject{app}}, Metadata: json.RawMessage(`{}`)}
+	values, _, err := munki.Derive(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(values)
+	var decoded map[string]any
+	_ = json.Unmarshal(data, &decoded)
+	installs := decoded["installs"].([]any)[0].(map[string]any)
+	if decoded["version"] != "2349" || installs["version_comparison_key"] != "CFBundleVersion" || installs["minosversion"] != "13.2" || installs["minimum_os_version"] != nil || decoded["minimum_os_version"] != "13.2" {
+		t.Fatalf("derived detection: %s", data)
+	}
+	if decoded["uninstallable"] != true || decoded["uninstall_method"] != "remove_copied_items" {
+		t.Fatalf("derived removal: %s", data)
+	}
+}
+
+func TestDerivedPackageMetadata(t *testing.T) {
+	facts := plugin.Facts{Subjects: []plugin.Subject{
+		{ID: ".", Kind: "container", Installer: &plugin.InstallerFacts{Version: "9.4", MinimumOS: "14.2", RestartAction: "RequireLogout"}},
+		{ID: "Alpha.pkg/PackageInfo", Kind: "package", Package: &plugin.PackageFacts{Identifier: "example.alpha", Version: "4.5.6", InstalledSize: 4, HasPayload: true}},
+		{ID: "Beta.pkg/PackageInfo", Kind: "package", Package: &plugin.PackageFacts{Identifier: "example.beta", Version: "7.8.9", InstalledSize: 10, HasPayload: true}},
+		{ID: "Scripts.pkg/PackageInfo", Kind: "package", Package: &plugin.PackageFacts{Identifier: "example.scripts", Version: "1.0"}},
+	}}
+	request := plugin.ReconcileRequest{Prepared: true, Identity: plugin.Identity{Software: "Suite"}, Artifact: plugin.Artifact{Path: "leased.pkg", Format: "pkg"}, Facts: facts, Metadata: json.RawMessage(`{}`)}
+	values, _, err := munki.Derive(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(values)
+	var decoded map[string]any
+	_ = json.Unmarshal(data, &decoded)
+	if decoded["version"] != "9.4" || len(decoded["receipts"].([]any)) != 2 || decoded["installed_size"] != float64(14) || decoded["RestartAction"] != "RequireLogout" || decoded["minimum_os_version"] != "14.2" || decoded["uninstallable"] != true || decoded["uninstall_method"] != "removepackages" {
+		t.Fatalf("derived package metadata: %s", data)
+	}
+	request.Metadata = json.RawMessage(`{"pkginfo":{"uninstallable":false}}`)
+	if values, _, err = munki.Derive(request); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := values["uninstall_method"]; exists {
+		t.Fatal("derived removal overrode authored uninstallable")
+	}
+	request.Metadata = json.RawMessage(`{}`)
+	for _, test := range []struct{ app, want string }{{"15.0", "15.0"}, {"13.0", "14.2"}} {
+		request.Facts.Subjects = slices.Concat(facts.Subjects, []plugin.Subject{{ID: "Suite.app", Kind: "app", InstalledPath: "/Applications/Suite.app", App: &plugin.AppFacts{BundleID: "example.suite", Version: "9.4.1", MinimumOS: test.app}}})
+		values, _, err := munki.Derive(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if values["minimum_os_version"] != test.want {
+			t.Fatalf("application minimum %s: minimum_os_version = %v, want %s", test.app, values["minimum_os_version"], test.want)
+		}
 	}
 }
 

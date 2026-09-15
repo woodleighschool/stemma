@@ -11,7 +11,7 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-const Version = "stemma.macsoftware/2"
+const Version = "stemma.macsoftware/3"
 
 type Spec struct {
 	Source      *plugin.Input `json:"source,omitempty" yaml:"source,omitempty"`

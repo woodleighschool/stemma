@@ -57,9 +57,14 @@ destinations:
 
 The provider writes pkginfo, installer objects, supported derived icons and catalog
 indexes. You do not need an intermediate pkginfo-rendering document. Application
-evidence supplies detection and DMG copy details where applicable. Explicit
-`installs`, `receipts`, `installcheck_script` and other supported native fields
-allow more specific behaviour.
+evidence supplies detection and DMG copy details where applicable. A PKG's static
+PackageInfo and Distribution declarations supply receipts, installed size, minimum
+macOS version and restart requirement; installer scripts are never evaluated.
+Receipts or copied items also make the item uninstallable unless removal is
+authored. Without a selected application, a PKG's version is its Distribution
+product version or the version shared by its components. Explicit `installs`,
+`receipts`, `installcheck_script` and other supported native fields allow more
+specific behaviour.
 
 Munki's `supported_architectures` is an optional pkginfo restriction. There is no
 core `spec.arch`: download selection, installation eligibility and runner

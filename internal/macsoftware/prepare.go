@@ -117,7 +117,7 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 		if err == nil {
 			facts, err = inspect.Read(ctx, installer.Path)
 			if err == nil {
-				app, err = selectApp(facts, &Application{BundleID: app.App.BundleID, InstalledPath: app.InstalledPath, VersionKey: versionKey(options)})
+				app, err = selectApp(facts, &Application{BundleID: app.App.BundleID, InstalledPath: app.InstalledPath})
 			}
 		}
 	default:
@@ -143,7 +143,7 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 		}
 	}
 	installer.Facts = facts
-	installer.Version = receiptVersion(facts)
+	installer.Version = installerVersion(facts)
 	installer.Evidence = maps.Clone(input.Evidence)
 	if installer.Evidence == nil {
 		installer.Evidence = map[string]json.RawMessage{}
@@ -151,7 +151,7 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 	if app != nil {
 		installer.Version = appVersion(*app, options)
 		installer.Evidence["macos.application"], _ = json.Marshal(app)
-		installer.Evidence["macos.version_key"], _ = json.Marshal(versionKey(options))
+		installer.Evidence["macos.version_key"], _ = json.Marshal(versionKey(options, *app))
 	}
 	if verification != nil {
 		installer.Evidence["macos.verification"], _ = json.Marshal(verification)
@@ -256,21 +256,28 @@ func isArchive(name string) bool {
 	return strings.HasSuffix(name, ".zip") || strings.HasSuffix(name, ".tar") || strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".tgz")
 }
 
-func versionKey(options *Application) string {
+func versionKey(options *Application, subject plugin.Subject) string {
 	if options != nil && options.VersionKey != "" {
 		return options.VersionKey
 	}
-	return "CFBundleShortVersionString"
+	return subject.App.VersionKey()
 }
 
 func appVersion(subject plugin.Subject, options *Application) string {
-	if versionKey(options) == "CFBundleVersion" {
+	if versionKey(options, subject) == "CFBundleVersion" {
 		return subject.App.Build
 	}
 	return subject.App.Version
 }
 
-func receiptVersion(facts plugin.Facts) string {
+// installerVersion uses a Distribution's product version, otherwise the version
+// shared by every component receipt.
+func installerVersion(facts plugin.Facts) string {
+	for _, subject := range facts.Subjects {
+		if subject.Installer != nil && subject.Installer.Version != "" {
+			return subject.Installer.Version
+		}
+	}
 	version := ""
 	for _, subject := range facts.Subjects {
 		if subject.Package == nil {

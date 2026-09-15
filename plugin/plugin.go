@@ -124,6 +124,17 @@ type AppFacts struct {
 	MinimumOS  string `json:"minimum_os,omitempty"`
 }
 
+// VersionKey selects the Info.plist key holding the application's comparable
+// version when none is configured. Like Munki, it prefers
+// CFBundleShortVersionString unless that value does not begin with a digit and
+// CFBundleVersion is available.
+func (a AppFacts) VersionKey() string {
+	if a.Build != "" && (a.Version == "" || a.Version[0] < '0' || a.Version[0] > '9') {
+		return "CFBundleVersion"
+	}
+	return "CFBundleShortVersionString"
+}
+
 // PackageFacts describes a package component without asserting installer-script effects.
 type PackageFacts struct {
 	Identifier      string `json:"identifier,omitempty"`

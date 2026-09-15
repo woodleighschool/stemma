@@ -11,7 +11,7 @@ import (
 // responsibility for translating that evidence to their own detection fields.
 func macEvidence(artifact plugin.Artifact) (*plugin.Subject, string, error) {
 	var app *plugin.Subject
-	versionKey := "CFBundleShortVersionString"
+	var versionKey string
 	if data, ok := artifact.Evidence["macos.application"]; ok {
 		if err := json.Unmarshal(data, &app); err != nil || app == nil || app.App == nil {
 			return nil, "", errors.New("macos.application evidence requires an application subject")

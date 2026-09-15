@@ -123,7 +123,7 @@ type InstallItem struct {
 	VersionComparisonKey  string `json:"version_comparison_key,omitempty" plist:"version_comparison_key,omitempty"`
 	MinimumUpdateVersion  string `json:"minimum_update_version,omitempty" plist:"minimum_update_version,omitempty"`
 	InstallerItemLocation string `json:"installer_item_location,omitempty" plist:"installer_item_location,omitempty"`
-	MinimumOSVersion      string `json:"minimum_os_version,omitempty" plist:"minimum_os_version,omitempty"`
+	MinimumOSVersion      string `json:"minosversion,omitempty" plist:"minosversion,omitempty"`
 	MD5Checksum           string `json:"md5checksum,omitempty" plist:"md5checksum,omitempty"`
 }
 

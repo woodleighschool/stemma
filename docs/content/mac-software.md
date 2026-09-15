@@ -60,8 +60,9 @@ application:
 
 `path` locates the application inside the input. `installed_path` describes its
 location on a managed Mac; it is not a path Stemma reads on the runner. The default
-version key is `CFBundleShortVersionString`. Select `CFBundleVersion` when the
-publisher's build number is the version you need to manage.
+version key is `CFBundleShortVersionString`, unless that value is missing or does
+not begin with a digit and `CFBundleVersion` is present. Select `CFBundleVersion`
+when the publisher's build number is the version you need to manage.
 
 For an existing PKG, Stemma does not rewrite its payload to implement an authored
 endpoint path. Keep that path consistent with the vendor installer.

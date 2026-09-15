@@ -459,6 +459,22 @@ func TestRegistryCancellation(t *testing.T) {
 	}
 }
 
+func TestAppVersionKey(t *testing.T) {
+	for _, test := range []struct{ name, short, build, want string }{
+		{"short", "2.3.4", "2349", "CFBundleShortVersionString"},
+		{"short with build suffix", "7.1.5 (84650)", "7.1.5.84650", "CFBundleShortVersionString"},
+		{"missing short", "", "2349", "CFBundleVersion"},
+		{"nonnumeric short", "banana", "2349", "CFBundleVersion"},
+		{"without build", "banana", "", "CFBundleShortVersionString"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := (plugin.AppFacts{Version: test.short, Build: test.build}).VersionKey(); got != test.want {
+				t.Fatalf("VersionKey() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func echoOperation(name string) plugin.Operation {
 	schema := json.RawMessage(`{"type":"object","properties":{"value":{"type":"integer"}},"required":["value"],"additionalProperties":false}`)
 	return plugin.Operation{Name: name, Kind: "inspect", InputSchema: schema, OutputSchema: schema, SideEffects: "none", Methods: []string{"validate", "run"}}
