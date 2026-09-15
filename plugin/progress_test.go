@@ -49,7 +49,8 @@ func TestProgressReaderPreservesBytesAndErrors(t *testing.T) {
 				records = append(records, record)
 			}
 			last := records[len(records)-1]
-			if records[0].Current != 0 || last.Current != 7 || last.Total != test.total || !last.Final {
+			// Unknown sizes omit the total rather than logging a sentinel.
+			if records[0].Current != 0 || last.Current != 7 || last.Total != max(test.total, 0) || !last.Final {
 				t.Fatalf("measurements: %+v", records)
 			}
 		})

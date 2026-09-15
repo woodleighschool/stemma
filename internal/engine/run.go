@@ -165,10 +165,8 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	if opts.Lock.Frozen {
 		// Verify every reviewed input before any destination can be written.
-		reviewCtx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("phase", "review"))
-		done = plugin.Stage(reviewCtx, "Verifying reviewed inputs")
 		for _, key := range selected {
-			if _, _, err := locked.Acquire(reviewCtx, key); err != nil {
+			if _, _, err := locked.Acquire(resourceContext(ctx, plans[key].Resource), key); err != nil {
 				return report, err
 			}
 		}
@@ -177,11 +175,10 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			return report, err
 		}
 		report.LockChanged = &result.Changed
-		done(nil)
 	}
 	if opts.Method == "update" {
 		for _, key := range selected {
-			_, hits, err := locked.Acquire(ctx, key)
+			_, hits, err := locked.Acquire(resourceContext(ctx, plans[key].Resource), key)
 			if err != nil {
 				return report, err
 			}
@@ -206,19 +203,22 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	statePath := filepath.Join(stateDir, p.Project+".json")
 	if opts.Method == "apply" {
-		done = plugin.Stage(ctx, "Acquiring destination state lock")
 		if err := os.MkdirAll(stateDir, 0o700); err != nil {
 			return report, err
 		}
 		lock := flock.New(filepath.Join(stateDir, p.Project+".lock"))
-		ok, err := lock.TryLockContext(ctx, 50*time.Millisecond)
+		ok, err := lock.TryLock()
+		if err == nil && !ok {
+			waited := plugin.Stage(ctx, "Waiting for destination state lock")
+			ok, err = lock.TryLockContext(ctx, 50*time.Millisecond)
+			waited(err)
+		}
 		if err != nil {
 			return report, err
 		}
 		if !ok {
 			return report, ctx.Err()
 		}
-		done(nil)
 		defer func() { _ = lock.Close() }()
 	}
 	current, err := loadState(statePath, p.Project)
@@ -271,7 +271,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 				}
 			}
 		}
-		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", plan.Resource.Kind+"/"+plan.Resource.Metadata.Name))
+		ctx := resourceContext(ctx, plan.Resource)
 		plugin.Logger(ctx).DebugContext(ctx, "Preparing resource")
 		started := time.Now()
 		item := ResourceReport{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Key: key}
@@ -644,6 +644,11 @@ func destinationReferences(metadata map[string]any) map[string]string {
 		}
 	}
 	return result
+}
+
+// resourceContext scopes logs and terminal progress to one resource tree.
+func resourceContext(ctx context.Context, resource config.Resource) context.Context {
+	return plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", resource.Kind+"/"+resource.Metadata.Name))
 }
 
 func sortedKeys[T any](values map[string]T) []string {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -402,6 +403,28 @@ func TestSelectedInputsPreserveOtherReviewedResources(t *testing.T) {
 	removed, err := prepare(t, m, inputs, Options{PreserveUnselected: true})
 	if err != nil || !removed.Changed || len(removed.File.Inputs) != 1 || !removed.File.Inputs[other]["payload"].Equal(first.File.Inputs[other]["payload"]) {
 		t.Fatalf("selected input removal lost another reviewed resource: %v", err)
+	}
+}
+
+func TestProjectLockReportsOnlyContention(t *testing.T) {
+	root := t.TempDir()
+	var logs bytes.Buffer
+	ctx := plugin.WithLogger(t.Context(), slog.New(slog.NewJSONHandler(&logs, nil)))
+	unlock, err := Lock(ctx, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = unlock() }()
+	if logs.Len() != 0 {
+		t.Fatalf("uncontended lock reported progress: %s", logs.String())
+	}
+	waiting, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	if _, err := Lock(waiting, root); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("contended lock: %v", err)
+	}
+	if !strings.Contains(logs.String(), `"msg":"Waiting for project lock","stage":true`) {
+		t.Fatalf("contended lock did not report waiting: %s", logs.String())
 	}
 }
 

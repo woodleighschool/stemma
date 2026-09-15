@@ -59,10 +59,13 @@ func Open(dir string) (*Store, error) {
 
 // Lease prevents garbage collection while a run is active. OS locks release after crashes.
 func (s *Store) Lease(ctx context.Context) (release func() error, err error) {
-	done := plugin.Stage(ctx, "Acquiring cache lease")
-	defer func() { done(err) }()
 	l := flock.New(filepath.Join(s.Dir, "cache.lock"))
-	ok, err := l.TryRLockContext(ctx, 50*time.Millisecond)
+	ok, err := l.TryRLock()
+	if err == nil && !ok {
+		done := plugin.Stage(ctx, "Waiting for cache prune")
+		ok, err = l.TryRLockContext(ctx, 50*time.Millisecond)
+		done(err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +224,12 @@ func (s *Store) Remember(key string, ref Ref) error {
 // Prune removes disposable cache contents only when no run holds a lease.
 func (s *Store) Prune(ctx context.Context) error {
 	l := flock.New(filepath.Join(s.Dir, "cache.lock"))
-	ok, err := l.TryLockContext(ctx, 50*time.Millisecond)
+	ok, err := l.TryLock()
+	if err == nil && !ok {
+		done := plugin.Stage(ctx, "Waiting for active runs")
+		ok, err = l.TryLockContext(ctx, 50*time.Millisecond)
+		done(err)
+	}
 	if err != nil {
 		return err
 	}

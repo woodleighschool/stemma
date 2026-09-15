@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -50,9 +49,12 @@ func Lock(ctx context.Context, root string) (unlock func() error, err error) {
 		return nil, err
 	}
 	l := flock.New(filepath.Join(dir, "project.lock"))
-	done := plugin.Stage(ctx, "Acquiring project lock")
-	defer func() { done(err) }()
-	ok, err := l.TryLockContext(ctx, 50*time.Millisecond)
+	ok, err := l.TryLock()
+	if err == nil && !ok {
+		done := plugin.Stage(ctx, "Waiting for project lock")
+		ok, err = l.TryLockContext(ctx, 50*time.Millisecond)
+		done(err)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -210,6 +212,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 }
 
 // Acquire obtains one resource's inputs. Repeated calls reuse the same observation.
+// Callers scope the logger to the resource.
 func (u *Update) Acquire(ctx context.Context, resource string) (map[string]source.Entry, map[string]bool, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -230,11 +233,7 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 		if name == "" {
 			return nil, nil, errors.New("input lock has an empty input name")
 		}
-		label := resource
-		if parts := strings.Split(resource, "/"); len(parts) >= 2 {
-			label = strings.Join(parts[len(parts)-2:], "/")
-		}
-		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", label, "input", name))
+		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("input", name))
 		done := plugin.Stage(ctx, "Acquiring input")
 		entry, hit, err := u.acquire(ctx, inputs[name], u.old.Inputs[resource][name])
 		done(err, "cached", hit)

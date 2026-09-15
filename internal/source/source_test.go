@@ -219,7 +219,7 @@ func TestDownloadReportsActualBytes(t *testing.T) {
 				}
 				if record.Final {
 					found = true
-					if record.Current != int64(len(payload)) || (known && record.Total != record.Current) || (!known && record.Total != -1) {
+					if record.Current != int64(len(payload)) || (known && record.Total != record.Current) || (!known && record.Total != 0) {
 						t.Fatalf("transfer: %+v", record)
 					}
 				}

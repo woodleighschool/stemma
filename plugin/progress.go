@@ -32,6 +32,10 @@ func (p *progressReader) Read(data []byte) (int, error) {
 }
 
 func (p *progressReader) report(final bool) {
-	Logger(p.ctx).InfoContext(p.ctx, "Transfer progress", "progress", true, "current", p.current, "total", p.total, "unit", "bytes", "progress_final", final)
+	args := []any{"progress", true, "current", p.current, "unit", "bytes", "progress_final", final}
+	if p.total > 0 {
+		args = append(args, "total", p.total)
+	}
+	Logger(p.ctx).InfoContext(p.ctx, "Transfer progress", args...)
 	p.last = time.Now()
 }

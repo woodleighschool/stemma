@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -217,6 +218,72 @@ func TestSourceFreeCannotSilentlySkipVerification(t *testing.T) {
 	}
 	if _, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"}); err == nil || !strings.Contains(err.Error(), "require a source") {
 		t.Fatalf("sourcefree verification was skipped: %v", err)
+	}
+}
+
+func TestResourceWorkStaysInItsResourceTree(t *testing.T) {
+	installer, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(installer) }))
+	defer server.Close()
+	filename := filepath.Join(t.TempDir(), "stemma.yaml")
+	if err := testproject.Write(filename, fmt.Appendf(nil, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: scopes}
+spec:
+  imports: ['*.software.yaml']
+  destinations:
+    repo: {operation: munki, config: {path: repo}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: app}
+spec:
+  source: {url: %s/app.pkg}
+  destinations:
+    repo: {pkginfo: {catalogs: [testing]}}
+`, server.URL)); err != nil {
+		t.Fatal(err)
+	}
+	cache := t.TempDir()
+	for _, method := range []string{"prepare", "plan"} {
+		var logs bytes.Buffer
+		ctx := plugin.WithLogger(t.Context(), slog.New(slog.NewJSONHandler(&logs, nil)))
+		if _, err := Run(ctx, Options{ConfigPath: filename, CacheDir: cache, Method: method}); err != nil {
+			t.Fatal(err)
+		}
+		// Terminal progress groups stages by resource; a project stage open
+		// around resource work would show one operation in two trees.
+		var project []string
+		acquired := false
+		for line := range bytes.SplitSeq(bytes.TrimSpace(logs.Bytes()), []byte{'\n'}) {
+			var record struct {
+				Message  string `json:"msg"`
+				Resource string `json:"resource"`
+				Start    bool   `json:"stage"`
+				End      bool   `json:"stage_result"`
+			}
+			if err := json.Unmarshal(line, &record); err != nil {
+				t.Fatal(err)
+			}
+			if bytes.Count(line, []byte(`"resource":`)) > 1 {
+				t.Fatalf("%s repeated the resource scope: %s", method, line)
+			}
+			switch {
+			case record.Resource == "" && record.Start:
+				project = append(project, record.Message)
+			case record.Resource == "" && record.End:
+				project = slices.DeleteFunc(project, func(message string) bool { return message == record.Message })
+			case record.Start && len(project) > 0:
+				t.Fatalf("%s started %s inside project stages %v", method, record.Message, project)
+			}
+			acquired = acquired || record.Start && record.Message == "Acquiring input" && record.Resource == "MacSoftware/app"
+		}
+		if !acquired {
+			t.Fatalf("%s did not acquire within the resource tree: %s", method, logs.String())
+		}
 	}
 }
 

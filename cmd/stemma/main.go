@@ -192,7 +192,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		return err
 	}})
 	cache.AddCommand(&cobra.Command{Use: "prune", Short: "Remove cached objects after active runs finish", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) (runErr error) {
-		done := plugin.Stage(cmd.Context(), "Pruning cache; waiting for active runs")
+		done := plugin.Stage(cmd.Context(), "Pruning cache")
 		defer func() { done(runErr) }()
 		store, err := cas.Open(cacheDir)
 		if err != nil {
