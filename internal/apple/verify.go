@@ -14,7 +14,7 @@ import (
 )
 
 // Verifier identifies the implementation whose supported subset produced evidence.
-const Verifier = "stemma.apple/0.2.0"
+const Verifier = "stemma.apple/0.3.0"
 
 // Verification result states are distinct from absence of a verification request.
 const (
@@ -58,7 +58,7 @@ type Check struct {
 }
 
 // Evidence binds verification results to exact bytes, implementation and policy.
-// For apps, SubjectSHA256 identifies the complete bundle tree (see VerifyApp).
+// For apps, SubjectSHA256 is the main executable's digest (see VerifyApp).
 type Evidence struct {
 	SubjectSHA256 string `json:"subject_sha256"`
 	Verifier      string `json:"verifier"`

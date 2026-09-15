@@ -37,7 +37,7 @@ func TestParseAppInfoMinimumSystemVersion(t *testing.T) {
 	}
 }
 
-func TestAppSymlinkIdentityDoesNotClaimResourceSealing(t *testing.T) {
+func TestAppSymlinkDoesNotClaimResourceSealing(t *testing.T) {
 	app := filepath.Join(t.TempDir(), "SignedFixture.app")
 	if err := os.CopyFS(app, os.DirFS("testdata/SignedFixture.app")); err != nil {
 		t.Fatal(err)
@@ -47,9 +47,8 @@ func TestAppSymlinkIdentityDoesNotClaimResourceSealing(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := filepath.Join(app, "Contents/Resources/link")
-	var previous string
-	for _, target := range []string{"message.txt", "missing.txt"} {
-		if previous != "" {
+	for i, target := range []string{"message.txt", "missing.txt"} {
+		if i > 0 {
 			if err := os.Remove(link); err != nil {
 				t.Fatal(err)
 			}
@@ -58,13 +57,9 @@ func TestAppSymlinkIdentityDoesNotClaimResourceSealing(t *testing.T) {
 			t.Fatal(err)
 		}
 		evidence, err := VerifyApp(t.Context(), app, Policy{RequireSignature: true})
-		if err != nil || evidence.Integrity.Status != Valid || evidence.Signature.Status != Valid || evidence.Resources.Status != NotRequested {
-			t.Fatalf("symlink changed independent verification scopes: %+v: %v", evidence, err)
+		if err != nil || evidence.Integrity.Status != Valid || evidence.Signature.Status != Valid || evidence.Resources.Status != NotRequested || evidence.SubjectSHA256 != baseline.SubjectSHA256 {
+			t.Fatalf("unrequested resource changed verification scopes or subject: %+v: %v", evidence, err)
 		}
-		if len(evidence.SubjectSHA256) != 64 || evidence.SubjectSHA256 == baseline.SubjectSHA256 || evidence.SubjectSHA256 == previous {
-			t.Fatalf("symlink target was not bound into tree identity: %+v", evidence)
-		}
-		previous = evidence.SubjectSHA256
 	}
 	evidence, err := VerifyApp(t.Context(), app, Policy{RequireResources: true})
 	if !errors.Is(err, ErrUnsupported) || evidence.Integrity.Status != Valid || evidence.Resources.Status != Unsupported {
@@ -77,21 +72,6 @@ func TestAppSymlinkIdentityDoesNotClaimResourceSealing(t *testing.T) {
 	writeTestFile(t, executable, data, 0o755)
 	if evidence, err := VerifyApp(t.Context(), app, Policy{RequireIntegrity: true}); err == nil || evidence.Integrity.Status != Invalid {
 		t.Fatalf("symlink support bypassed executable verification: %+v: %v", evidence, err)
-	}
-}
-
-func TestAppDigestRejectsUnsafeSymlinkTargets(t *testing.T) {
-	for _, target := range []string{"/outside", "../../../outside", "message.txt/../../outside", `..\outside`, "C:outside", "invalid\xff"} {
-		t.Run(target, func(t *testing.T) {
-			app := copyApp(t)
-			if err := os.Symlink(target, filepath.Join(app, "Contents/Resources/link")); err != nil {
-				t.Fatal(err)
-			}
-			evidence, err := VerifyApp(t.Context(), app, Policy{RequireIntegrity: true})
-			if err == nil || evidence.SubjectSHA256 != "" || evidence.Integrity.Status == Valid {
-				t.Fatalf("unsafe symlink entered verified identity: %+v: %v", evidence, err)
-			}
-		})
 	}
 }
 

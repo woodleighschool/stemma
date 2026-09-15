@@ -5,8 +5,6 @@ import (
 	"context"
 	"crypto/sha1"
 	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,11 +16,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
-	"unicode/utf8"
 
 	"github.com/woodleighschool/stemma/internal/fileio"
-	"github.com/woodleighschool/stemma/plugin"
 	"howett.net/plist"
 )
 
@@ -78,8 +73,8 @@ func InspectAppFS(ctx context.Context, fsys fs.FS, appPath string) (AppFacts, er
 
 // VerifyApp checks the executable and requested resource scope of a Contents-style
 // bundle. Resource sealing rejects symlinks, nested code and unsealed files.
-// SubjectSHA256 binds paths, modes, sizes, file hashes and relative symlink targets;
-// this verifier tree digest is not a CAS reference or a resource seal.
+// SubjectSHA256 is the main executable's digest. Its code signature seals
+// Info.plist and CodeResources, so other bundle files are read only for resources.
 func VerifyApp(ctx context.Context, appPath string, policy Policy) (Evidence, error) {
 	if err := ctx.Err(); err != nil {
 		return Evidence{}, err
@@ -90,27 +85,7 @@ func VerifyApp(ctx context.Context, appPath string, policy Policy) (Evidence, er
 		return Evidence{}, err
 	}
 	defer func() { _ = root.Close() }()
-	digest, err := appDigest(ctx, root)
-	if err != nil {
-		evidence := newEvidence("", policy)
-		if policy.RequireIntegrity {
-			evidence.Integrity = checkError(err, "")
-		}
-		if policy.RequireResources {
-			evidence.Resources = checkError(err, "")
-		}
-		if policy.RequireSignature {
-			evidence.Signature = Check{Status: Unsupported, Detail: "signature verification requires a supported immutable app tree"}
-		}
-		if policy.RequireIdentity || policy.CertificateSHA256 != "" {
-			evidence.Identity = Check{Status: Unsupported, Detail: "identity verification requires a supported immutable app tree"}
-		}
-		if policy.RequirePlatform {
-			evidence.Platform = Check{Status: Unsupported, Detail: "macOS platform assessment requires native OS policy"}
-		}
-		return evidence, err
-	}
-	evidence := newEvidence(digest, policy)
+	evidence := newEvidence("", policy)
 	facts, info, err := appInfo(root)
 	if err != nil {
 		return evidence, err
@@ -129,6 +104,9 @@ func VerifyApp(ctx context.Context, appPath string, policy Policy) (Evidence, er
 		return evidence, err
 	}
 	defer func() { _ = f.Close() }()
+	if evidence.SubjectSHA256, err = fileDigest(ctx, f, nil); err != nil {
+		return evidence, err
+	}
 	if err := verifyExecutable(ctx, f, policy, external, &evidence); err != nil {
 		return evidence, err
 	}
@@ -259,107 +237,6 @@ func openAppFile(root *os.Root, name string) (*os.File, error) {
 		}
 	}
 	return root.Open(name)
-}
-
-func appDigest(ctx context.Context, root *os.Root) (string, error) {
-	type record struct {
-		Path   string `json:"path"`
-		Mode   uint32 `json:"mode"`
-		Size   int64  `json:"size"`
-		SHA256 string `json:"sha256,omitempty"`
-		Target string `json:"target,omitempty"`
-	}
-	var records []record
-	buffer := make([]byte, 32<<10)
-	lastProgress := time.Now()
-	// Traverse from open parent directories rather than reopening the whole
-	// bundle-relative path for every file. Record order remains lexical DFS.
-	var walk func(*os.Root, string) error
-	walk = func(directory *os.Root, prefix string) error {
-		children, err := fs.ReadDir(directory.FS(), ".")
-		if err != nil {
-			return err
-		}
-		for _, child := range children {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if len(records) >= 100000 {
-				return fmt.Errorf("app contains too many entries")
-			}
-			name := path.Join(prefix, child.Name())
-			info, err := child.Info()
-			if err != nil {
-				return err
-			}
-			r := record{Path: name, Mode: uint32(info.Mode().Perm())}
-			switch {
-			case info.Mode()&fs.ModeSymlink != 0:
-				target, err := directory.Readlink(child.Name())
-				if err != nil {
-					return err
-				}
-				if target == "" || len(target) > 4096 || !utf8.ValidString(target) || path.IsAbs(target) || strings.ContainsAny(target, "\\:\x00\r\n") || !fs.ValidPath(path.Join(path.Dir(name), target)) {
-					return fmt.Errorf("unsafe app symlink %q", name)
-				}
-				component := false
-				for part := range strings.SplitSeq(target, "/") {
-					// A preceding named component may itself be a symlink, so lexical
-					// cleanup cannot prove a later parent traversal remains confined.
-					if part == ".." && component {
-						return fmt.Errorf("unsafe app symlink %q", name)
-					}
-					component = component || part != "" && part != "." && part != ".."
-				}
-				r.Mode |= uint32(fs.ModeSymlink)
-				r.Size, r.Target = int64(len(target)), target
-			case info.IsDir():
-				r.Mode |= uint32(fs.ModeDir)
-			case info.Mode().IsRegular():
-				if info.Size() > maxEntrySize {
-					return fmt.Errorf("app file %s exceeds limit", name)
-				}
-				f, err := directory.Open(child.Name())
-				if err != nil {
-					return err
-				}
-				r.SHA256, err = fileDigest(ctx, f, buffer)
-				_ = f.Close()
-				if err != nil {
-					return err
-				}
-				r.Size = info.Size()
-			default:
-				return fmt.Errorf("%w: nonregular app entry %q", ErrUnsupported, name)
-			}
-			records = append(records, r)
-			if time.Since(lastProgress) >= 250*time.Millisecond {
-				plugin.Logger(ctx).InfoContext(ctx, "Hashing application files", "progress", true, "current", len(records), "unit", "entries")
-				lastProgress = time.Now()
-			}
-			if info.IsDir() {
-				nested, err := directory.OpenRoot(child.Name())
-				if err != nil {
-					return err
-				}
-				err = walk(nested, name)
-				_ = nested.Close()
-				if err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	if err := walk(root, "."); err != nil {
-		return "", err
-	}
-	data, err := json.Marshal(records)
-	if err != nil {
-		return "", err
-	}
-	digest := sha256.Sum256(data)
-	return hex.EncodeToString(digest[:]), nil
 }
 
 func verifyResources(ctx context.Context, root *os.Root, executable string, data []byte) error {

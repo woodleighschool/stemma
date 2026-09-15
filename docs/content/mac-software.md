@@ -136,7 +136,10 @@ verification:
 `subject` selects `source`, `application` or `installer`. A certificate pin can be
 supplied with `certificate_sha256`. Signature verification checks supported
 artifact signatures; it does not assert Apple trust, notarisation or Gatekeeper
-acceptance. Unsupported requested checks fail. See [verification limits](limitations.md#verification).
+acceptance. For an application, `integrity` and `signature` cover its main
+executable, Info.plist and resource manifest; `resources` also checks every bundle
+file against that manifest, without support for nested code or symlinks.
+Unsupported requested checks fail. See [verification limits](limitations.md#verification).
 
 ## Application icons
 

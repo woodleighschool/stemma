@@ -73,7 +73,7 @@ func TestCMSSignatureAllocationStillBindsArtifactIdentity(t *testing.T) {
 	writeTestFile(t, executable, data, 0o755)
 	evidence, err := VerifyApp(t.Context(), app, Policy{RequireSignature: true})
 	if err != nil || evidence.Integrity.Status != Valid || evidence.Signature.Status != Valid || evidence.SubjectSHA256 == baseline.SubjectSHA256 {
-		t.Fatalf("signature allocation confused authentication and tree identity: %+v: %v", evidence, err)
+		t.Fatalf("signature allocation confused authentication and executable identity: %+v: %v", evidence, err)
 	}
 }
 

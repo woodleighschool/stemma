@@ -39,7 +39,8 @@ func TestAppFixtureIntegrity(t *testing.T) {
 	if evidence.Integrity.Status != Valid || evidence.Resources.Status != Valid || evidence.Signature.Status != NotRequested || evidence.Identity.Status != NotRequested {
 		t.Fatalf("wrong evidence: %+v", evidence)
 	}
-	if len(evidence.SubjectSHA256) != 64 || len(evidence.PolicySHA256) != 64 || evidence.Verifier != Verifier {
+	executable := sha256.Sum256(readTestFile(t, "testdata/Fixture.app/Contents/MacOS/fixture"))
+	if evidence.SubjectSHA256 != hex.EncodeToString(executable[:]) || len(evidence.PolicySHA256) != 64 || evidence.Verifier != Verifier {
 		t.Fatalf("unbound evidence: %+v", evidence)
 	}
 	macho, err := InspectMachO("testdata/Fixture.app/Contents/MacOS/fixture")
