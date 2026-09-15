@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.3.0](https://github.com/woodleighschool/stemma/compare/0.2.1...0.3.0) (2026-09-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* verify publisher signatures with one signature policy
+
+### Features
+
+* derive and refresh MacSoftware icons automatically ([d7ca830](https://github.com/woodleighschool/stemma/commit/d7ca830f455be35fec185b6b3fbc3c1293155393))
+* derive Munki pkginfo defaults like makepkginfo ([51175eb](https://github.com/woodleighschool/stemma/commit/51175eb32cbf4a5189e43501b37f2cedc13eefcf))
+* derive signers with stemma signature ([0c7168d](https://github.com/woodleighschool/stemma/commit/0c7168dff08f164bb8d6475fbf59a870a4dea176))
+* **npm:** update dependency oxlint (1.82.0 → 1.83.0) ([#21](https://github.com/woodleighschool/stemma/issues/21)) ([922da39](https://github.com/woodleighschool/stemma/commit/922da39f4bef5a8c549a7779004407a3e2838617))
+* record static PKG installer declarations ([4b755f7](https://github.com/woodleighschool/stemma/commit/4b755f798cb40038b7edd7f42b1394116f9d96a8))
+* verify publisher signatures with one signature policy ([145554a](https://github.com/woodleighschool/stemma/commit/145554a2f1382fb7c8e53849a3e28d2b44f1d737))
+
+
+### Bug Fixes
+
+* bubbletea bug ([aa4b726](https://github.com/woodleighschool/stemma/commit/aa4b726af1895010ef4e2c37082a9d2a8d9d6af1))
+* resolve GitHub assets with unambiguous globs ([ca0cf6e](https://github.com/woodleighschool/stemma/commit/ca0cf6e0c3d396cfb53681c6f15e5555e0c4a1e1))
+
+
+### Performance Improvements
+
+* read DMGs lazily and streamline app verification ([dbf714c](https://github.com/woodleighschool/stemma/commit/dbf714c46ad4be30f7f562ee03713d404a7bd5ee))
+* stream verified PKG payloads without a pipe ([323998a](https://github.com/woodleighschool/stemma/commit/323998a387984e4af8f9311550773f8064858798))
+* use concurrent package readers from fork ([16800d4](https://github.com/woodleighschool/stemma/commit/16800d4c93f3e5fc1f19f001c2e1e3432ea84865))
+* verify apps without hashing the whole bundle ([bc63065](https://github.com/woodleighschool/stemma/commit/bc6306599540ddbcf0968114646accb452d68372))
+
+
+### Miscellaneous Chores
+
+* **deps:** update xo/terminfo ([9cf6684](https://github.com/woodleighschool/stemma/commit/9cf668478ae0986b30c20074ac9c2332d53b3d6b))
+* fix temp lint exclusions ([cfc045a](https://github.com/woodleighschool/stemma/commit/cfc045ac35f016bc63cd0b45be0e934a1441a046))
+
 ## [0.2.1](https://github.com/woodleighschool/stemma/compare/0.2.0...0.2.1) (2026-09-13)
 
 
