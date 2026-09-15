@@ -16,38 +16,72 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func TestResourceTreeRetainsOperationResults(t *testing.T) {
+func TestNestedStagesReportOnTheirOperationRow(t *testing.T) {
 	var rows, logs bytes.Buffer
 	o := &commandOutput{out: &rows, interactive: true}
 	logger := slog.New(&stageHandler{Handler: slog.NewTextHandler(&logs, nil), output: o})
 	ctx := plugin.WithLogger(t.Context(), logger.With("resource", "MacSoftware/example"))
 	acquired := plugin.Stage(ctx, "Acquiring input")
+	downloaded := plugin.Stage(ctx, "Downloading input")
 	for current := range 8 {
 		plugin.Logger(ctx).Info("Transfer progress", "progress", true, "current", current, "total", 7, "unit", "bytes")
 	}
-	acquired(nil, "cached", true)
+	live := progressModel{groups: o.progress.snapshot(), width: 100, height: 20, spinner: spinner.New()}.View().Content
+	heading, row, _ := strings.Cut(live, "\n")
+	if heading != "MacSoftware/example" || strings.Contains(row, "\n") || !strings.Contains(row, "Downloading input  7 B / 7 B 100% (0s)") {
+		t.Fatalf("nested stage did not report on its operation row: %s", live)
+	}
+	downloaded(nil)
+	acquired(nil, "cached", false)
 	prepared := plugin.Stage(ctx, "Preparing outputs")
-	inspected := plugin.Stage(ctx, "Inspecting application")
-	inspected(nil)
+	plugin.Stage(ctx, "Inspecting application")(nil)
 	verified := plugin.Stage(ctx, "Verifying installer")
 	verified(errors.New("invalid signature"))
 	prepared(errors.New("invalid signature"))
+	plugin.Logger(ctx).Error("Preparation failed", "error", errors.New("invalid signature"))
 	plugin.Logger(ctx).Info("Provider notice")
 	if err := o.resourceDone(&bytes.Buffer{}, "json", "prepare", engine.ResourceReport{Kind: "MacSoftware", Name: "example", Error: "invalid signature"}); err != nil {
 		t.Fatal(err)
 	}
 	o.endProgress(errors.New("an earlier resource failed"))
 	text := rows.String()
-	for _, want := range []string{"✗ MacSoftware/example  failed", "    ✓ Acquiring input  cached", "100%", "    ✓ Inspecting application", "    ✗ Verifying installer", "    ✗ Preparing outputs", "invalid signature"} {
+	for _, want := range []string{"✗ MacSoftware/example  failed", "    ✓ Acquiring input  7 B / 7 B 100%", "    ✗ Preparing outputs\n      invalid signature"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q: %s", want, text)
 		}
 	}
-	if strings.Count(text, "MacSoftware/example") != 1 || strings.Count(text, "Acquiring input") != 1 || strings.Contains(text, "(0s)") || strings.Contains(text, "·") {
+	for _, step := range []string{"Downloading input", "Inspecting application", "Verifying installer"} {
+		if strings.Contains(text, step) {
+			t.Fatalf("step %q became a separate row: %s", step, text)
+		}
+	}
+	if strings.Count(text, "invalid signature") != 1 || strings.Count(text, "MacSoftware/example") != 1 || strings.Contains(text, "(0s)") {
 		t.Fatalf("duplicate or noisy rows: %s", text)
 	}
 	if strings.Contains(logs.String(), "Transfer progress") || !strings.Contains(logs.String(), "Provider notice") {
 		t.Fatalf("diagnostics: %s", logs.String())
+	}
+}
+
+func TestIdleResourcesLeaveTheLiveRegion(t *testing.T) {
+	var out bytes.Buffer
+	p := newTerminalProgress(&out)
+	p.update(activity{scope: "first", label: "Acquiring input", stage: true})
+	p.update(activity{scope: "first", label: "Acquiring input", status: true, elapsed: 2 * time.Second})
+	p.update(activity{scope: "second", label: "Acquiring input", stage: true})
+	if live := p.snapshot(); len(live) != 1 || live[0][0].label != "second" {
+		t.Fatalf("idle resource held the live region: %+v", live)
+	}
+	p.update(activity{scope: "second", label: "Acquiring input", status: true})
+	if live := p.snapshot(); len(live) != 1 || live[0][0].label != "second" {
+		t.Fatalf("gap between stages blanked the live region: %+v", live)
+	}
+	p.update(activity{scope: "first", label: "Planning destination", stage: true})
+	p.update(activity{scope: "first", label: "Planning destination", status: true, elapsed: time.Second})
+	p.complete("first", "unchanged", false)
+	p.stop("")
+	if !strings.Contains(out.String(), "✓ first  unchanged (3s)\n") {
+		t.Fatalf("heading did not report working time: %s", out.String())
 	}
 }
 
@@ -100,7 +134,7 @@ func TestSuccessfulResourceCollapsesButRetainsPlanChanges(t *testing.T) {
 	p := newTerminalProgress(&out)
 	p.update(activity{scope: "example", label: "Planning destination", stage: true})
 	p.update(activity{scope: "example", label: "Planning destination", status: true})
-	p.note("example", "repo: set description", "detail")
+	p.note("example", "repo: set description", "", "detail")
 	p.complete("example", "1 planned change", false)
 	p.stop("")
 	text := out.String()

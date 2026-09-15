@@ -248,7 +248,8 @@ and `Run` handle framing and validation.
 
 Reserve stdout for the protocol. Use `plugin.Logger(ctx)` for structured diagnostics
 and `plugin.Stage(ctx, "Preparing installer")` for progress; call the returned
-function with the operation error when the stage finishes. Raw subprocess stderr
+function with the operation error when the stage finishes. A stage started inside
+another shows as that operation's current step. Raw subprocess stderr
 is discarded by the host, so report operational failures through the protocol.
 Do not log credentials or request bodies.
 

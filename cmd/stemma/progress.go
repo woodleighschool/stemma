@@ -93,11 +93,30 @@ type progressLine struct {
 	started, ended time.Time
 	outcome        string
 	heading        bool
+	// Stages that start while this operation is open are its steps, innermost
+	// last. The row shows the current step until the operation finishes.
+	steps []progressStep
+}
+
+type progressStep struct {
+	label   string
+	started time.Time
 }
 
 type progressGroup struct {
 	scope string
 	rows  []*progressLine
+}
+
+// open returns the unfinished operation. Nested stages become its steps, so a
+// group has at most one.
+func (g *progressGroup) open() *progressLine {
+	for _, row := range slices.Backward(g.rows[1:]) {
+		if row.ended.IsZero() {
+			return row
+		}
+	}
+	return nil
 }
 
 // Completed groups become ordinary scrollback. Only unfinished groups remain
@@ -107,72 +126,103 @@ type terminalProgress struct {
 	out      io.Writer
 	style    textStyle
 	groups   []*progressGroup
+	recent   string
 }
 
 func newTerminalProgress(out io.Writer) *terminalProgress {
 	return &terminalProgress{out: out, style: newTextStyle(out)}
 }
 
-func (p *terminalProgress) group(scope string) *progressGroup {
+func (p *terminalProgress) find(scope string) *progressGroup {
 	for _, group := range p.groups {
 		if group.scope == scope {
 			return group
 		}
 	}
-	group := &progressGroup{scope: scope}
-	p.groups = append(p.groups, group)
+	return nil
+}
+
+func (p *terminalProgress) group(scope string) *progressGroup {
+	if group := p.find(scope); group != nil {
+		return group
+	}
 	label := scope
 	if label == "" {
 		label = "Project"
 	}
-	p.add(group, progressLine{label: label, detail: "working", started: time.Now(), heading: true})
+	group := &progressGroup{scope: scope, rows: []*progressLine{{label: label, heading: true}}}
+	p.groups = append(p.groups, group)
 	return group
 }
 
-func (p *terminalProgress) add(group *progressGroup, line progressLine) {
-	group.rows = append(group.rows, &line)
+func (p *terminalProgress) update(a activity) {
+	group := p.find(a.scope)
+	if a.stage {
+		group = p.group(a.scope)
+	}
+	if group == nil {
+		return
+	}
+	p.recent = a.scope
+	row := group.open()
+	switch {
+	case a.stage && row != nil:
+		row.steps = append(row.steps, progressStep{label: a.label, started: time.Now()})
+		row.current, row.total, row.unit = a.current, a.total, a.unit
+	case a.stage:
+		group.rows = append(group.rows, &progressLine{activity: a, started: time.Now()})
+	case row == nil:
+		return
+	case a.progress:
+		row.current, row.total, row.unit = a.current, a.total, a.unit
+	case a.status:
+		if !p.finish(group, row, a) {
+			return
+		}
+	default:
+		return
+	}
 	p.show()
 }
 
-func (p *terminalProgress) update(a activity) {
-	group := p.group(a.scope)
-	if a.stage {
-		p.add(group, progressLine{activity: a, started: time.Now()})
-		return
+// finish ends the innermost step or the operation named by a stage result.
+func (p *terminalProgress) finish(group *progressGroup, row *progressLine, a activity) bool {
+	for index, step := range slices.Backward(row.steps) {
+		if step.label == a.label {
+			row.steps = slices.Delete(row.steps, index, index+1)
+			return true
+		}
 	}
-	for _, row := range slices.Backward(group.rows[1:]) {
-		line := *row
-		if !line.ended.IsZero() || a.status && line.label != a.label {
-			continue
-		}
-		switch {
-		case a.progress:
-			line.current, line.total, line.unit = a.current, a.total, a.unit
-		case a.status:
-			line.ended, line.outcome, line.detail = time.Now(), "done", a.detail
-			if a.elapsed > 0 {
-				line.ended = line.started.Add(a.elapsed)
-			}
-			if a.err != "" {
-				line.outcome, line.err = "failed", a.err
-			}
-		default:
-			return
-		}
-		*row = line
-		if a.scope == "" && a.status && a.err == "" {
-			pending := slices.ContainsFunc(group.rows[1:], func(row *progressLine) bool { return row.ended.IsZero() })
-			if !pending {
-				p.groups = slices.DeleteFunc(p.groups, func(group *progressGroup) bool { return group.scope == "" })
-			}
-		}
-		p.show()
-		return
+	if row.label != a.label {
+		return false
 	}
+	row.ended, row.outcome, row.detail, row.steps = time.Now(), "done", a.detail, nil
+	if a.elapsed > 0 {
+		row.ended = row.started.Add(a.elapsed)
+	}
+	if a.err != "" {
+		row.outcome, row.err = "failed", a.err
+	}
+	// Successful project setup disappears; resource trees keep their results.
+	if group.scope == "" && !slices.ContainsFunc(group.rows[1:], func(row *progressLine) bool { return row.outcome != "done" }) {
+		p.groups = slices.DeleteFunc(p.groups, func(other *progressGroup) bool { return other == group })
+	}
+	return true
 }
 
-func (p *terminalProgress) note(scope, message, outcome string) {
-	p.add(p.group(scope), progressLine{label: message, started: time.Now(), ended: time.Now(), outcome: outcome})
+func (p *terminalProgress) note(scope, message, err, outcome string) {
+	group := p.group(scope)
+	// Failure logs repeat errors that an operation row already shows.
+	if err != "" && slices.ContainsFunc(group.rows[1:], func(row *progressLine) bool { return row.err != "" && strings.Contains(err, row.err) }) {
+		return
+	}
+	if err != "" {
+		message += ": " + err
+	}
+	now := time.Now()
+	group.rows = append(group.rows, &progressLine{label: message, started: now, ended: now, outcome: outcome})
+	p.recent = scope
+	p.show()
 }
 
 func (p *terminalProgress) complete(scope, status string, failed bool) {
@@ -186,15 +236,24 @@ func (p *terminalProgress) complete(scope, status string, failed bool) {
 		collapse := !failed && !slices.ContainsFunc(group.rows[1:], func(line *progressLine) bool {
 			return line.ended.IsZero() || line.outcome == "failed" || line.outcome == "warning"
 		})
+		// Groups can wait between phases, so headings report time spent working.
+		var active time.Duration
+		for _, row := range group.rows[1:] {
+			end := row.ended
+			if end.IsZero() {
+				end = now
+			}
+			active += end.Sub(row.started)
+		}
 		for _, row := range group.rows {
 			line := *row
 			if line.heading {
-				line.detail, line.outcome, line.ended = status, "done", now
+				line.detail, line.outcome, line.started, line.ended = status, "done", now.Add(-active), now
 				if failed {
 					line.outcome = "failed"
 				}
 			} else if line.ended.IsZero() {
-				line.ended, line.outcome = now, "unfinished"
+				line.ended, line.outcome, line.steps = now, "unfinished", nil
 			}
 			if collapse && !line.heading && line.outcome != "detail" {
 				continue
@@ -255,13 +314,27 @@ func (p *terminalProgress) show() {
 		p.progress = program
 		go func() { _, _ = program.Run() }()
 	}
-	groups := make(progressSnapshot, len(p.groups))
-	for index, group := range p.groups {
-		for _, row := range group.rows {
-			groups[index] = append(groups[index], *row)
+	p.progress.Send(p.snapshot())
+}
+
+// snapshot copies groups with an open operation. Idle groups wait off screen
+// until they complete, except the latest one, so gaps between stages do not
+// blank the display.
+func (p *terminalProgress) snapshot() progressSnapshot {
+	var groups progressSnapshot
+	for _, group := range p.groups {
+		if group.open() == nil && group.scope != p.recent {
+			continue
 		}
+		rows := make([]progressLine, 0, len(group.rows))
+		for _, row := range group.rows {
+			line := *row
+			line.steps = slices.Clone(row.steps)
+			rows = append(rows, line)
+		}
+		groups = append(groups, rows)
 	}
-	p.progress.Send(groups)
+	return groups
 }
 
 type progressSnapshot [][]progressLine
@@ -330,6 +403,11 @@ func progressText(style textStyle, line *progressLine, width int, now time.Time,
 			mark = ""
 		}
 	}
+	label, started := line.label, line.started
+	if len(line.steps) > 0 {
+		step := line.steps[len(line.steps)-1]
+		label, started = step.label, step.started
+	}
 	detail := line.detail
 	if line.unit != "" {
 		count := strconv.FormatInt(line.current, 10)
@@ -351,13 +429,16 @@ func progressText(style textStyle, line *progressLine, width int, now time.Time,
 		}
 		detail = strings.TrimSpace(detail + " " + count)
 	}
-	end := line.ended
-	if end.IsZero() {
-		end = now
-	}
-	elapsed := end.Sub(line.started).Round(time.Second)
-	if elapsed > 0 || line.ended.IsZero() {
-		detail = strings.TrimSpace(detail + " (" + elapsed.String() + ")")
+	// Live headings only name their group; operation rows carry the timing.
+	if !line.heading || !line.ended.IsZero() {
+		end := line.ended
+		if end.IsZero() {
+			end = now
+		}
+		elapsed := end.Sub(started).Round(time.Second)
+		if elapsed > 0 || line.ended.IsZero() {
+			detail = strings.TrimSpace(detail + " (" + elapsed.String() + ")")
+		}
 	}
 	if line.outcome == "unfinished" {
 		detail = strings.TrimSpace(detail + " not completed")
@@ -373,7 +454,7 @@ func progressText(style textStyle, line *progressLine, width int, now time.Time,
 	if labelWidth < len(tail) {
 		tail = ""
 	}
-	label := runewidth.Truncate(cleanLine(line.label), labelWidth, tail)
+	label = runewidth.Truncate(cleanLine(label), labelWidth, tail)
 	if line.heading {
 		label = style.paint(label, color.Bold)
 	}

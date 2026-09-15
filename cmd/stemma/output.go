@@ -164,15 +164,11 @@ func (h *stageHandler) Handle(ctx context.Context, record slog.Record) error {
 		if a.stage || a.progress || a.status {
 			o.progress.update(a)
 		} else {
-			message := a.label
-			if a.err != "" {
-				message += ": " + a.err
-			}
 			outcome := "warning"
 			if record.Level >= slog.LevelError {
 				outcome = "failed"
 			}
-			o.progress.note(a.scope, message, outcome)
+			o.progress.note(a.scope, a.label, a.err, outcome)
 		}
 		return nil
 	}
@@ -195,7 +191,7 @@ func (o *commandOutput) resourceDone(out io.Writer, format, method string, resou
 		if o.progress != nil {
 			for _, destination := range resource.Destinations {
 				for _, change := range destination.Changes {
-					o.progress.note(resourceName(resource), destination.Name+": "+change.Action+" "+change.Field, "detail")
+					o.progress.note(resourceName(resource), destination.Name+": "+change.Action+" "+change.Field, "", "detail")
 				}
 			}
 			o.progress.complete(resourceName(resource), resourceStatus(method, resource), resource.Error != "")
