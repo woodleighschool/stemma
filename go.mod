@@ -35,6 +35,7 @@ require (
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/pb33f/ordered-map/v2 v2.3.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
+	github.com/sassoftware/relic/v8 v8.2.0
 	github.com/smallstep/pkcs7 v0.2.3
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.16
@@ -50,9 +51,11 @@ require (
 )
 
 require (
+	al.essio.dev/pkg/shellescape v1.5.1 // indirect
 	charm.land/lipgloss/v2 v2.0.6 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.9.0 // indirect
+	github.com/ProtonMail/go-crypto v1.0.0 // indirect
 	github.com/STARRY-S/zip v0.2.3 // indirect
 	github.com/andybalholm/brotli v1.2.4 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
@@ -69,14 +72,18 @@ require (
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
 	github.com/clipperhouse/displaywidth v0.11.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
+	github.com/cloudflare/circl v1.6.3 // indirect
+	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-compressions/lzfse v0.3.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
+	github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
@@ -96,6 +103,7 @@ require (
 	github.com/stangelandcl/ppmd v0.1.1 // indirect
 	github.com/std-uritemplate/std-uritemplate/go/v2 v2.0.12 // indirect
 	github.com/xo/terminfo v1.2.0 // indirect
+	github.com/zalando/go-keyring v0.2.6 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0 // indirect
 	go.opentelemetry.io/otel v1.46.0 // indirect

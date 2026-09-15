@@ -13,17 +13,21 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/woodleighschool/stemma/internal/archive"
+	"github.com/woodleighschool/stemma/internal/authenticode"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
 type Spec struct {
-	Source       plugin.Input              `json:"source,omitzero" yaml:"source" jsonschema:"required"`
-	Content      *Content                  `json:"content,omitempty" yaml:"content,omitempty"`
+	Source  plugin.Input `json:"source,omitzero" yaml:"source" jsonschema:"required"`
+	Content *Content     `json:"content,omitempty" yaml:"content,omitempty"`
+	// Signature requires the setup file to carry a complete Authenticode
+	// signature from the expected publisher.
+	Signature    *signature.Policy         `json:"signature,omitempty" yaml:"signature,omitempty"`
 	Destinations map[string]map[string]any `json:"destinations" yaml:"destinations"`
 }
 
@@ -38,6 +42,15 @@ func (s Spec) Validate() error {
 	}
 	if err := validateContent(s.Content); err != nil {
 		return err
+	}
+	if s.Signature != nil {
+		signer, err := signature.Parse(s.Signature.Signer)
+		if err != nil {
+			return fmt.Errorf("signature: %w", err)
+		}
+		if signer.Scheme != signature.Authenticode {
+			return errors.New("signature.signer must name an Authenticode publisher")
+		}
 	}
 	if len(s.Destinations) == 0 {
 		return errors.New("WindowsSoftware requires destinations")
@@ -66,7 +79,9 @@ func relative(name string) bool {
 	return true
 }
 
-func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string, _ time.Time) (artifacts map[string]plugin.Artifact, err error) {
+// Prepare assembles the setup content. DeriveSignature verifies the setup
+// file against its observed publisher instead of the configured one.
+func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string, deriveSignature bool) (artifacts map[string]plugin.Artifact, err error) {
 	done := plugin.Stage(ctx, "Preparing Windows installer")
 	defer func() { done(err) }()
 	if err := ctx.Err(); err != nil {
@@ -118,11 +133,39 @@ func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, 
 		artifact.Size, artifact.SHA256, artifact.Mode = 0, "", 0
 	}
 	result, err := describe(ctx, artifact, setup)
+	if err == nil && (spec.Signature != nil || deriveSignature) {
+		err = verifySignature(ctx, spec, &result)
+	}
 	if err != nil {
 		cleanup()
 		return nil, err
 	}
 	return map[string]plugin.Artifact{"installer": result}, nil
+}
+
+func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact) error {
+	var want signature.Signer
+	if spec.Signature != nil {
+		var err error
+		if want, err = signature.Parse(spec.Signature.Signer); err != nil {
+			return err
+		}
+	}
+	setup := artifact.Path
+	if artifact.Tree {
+		setup = filepath.Join(artifact.Path, filepath.FromSlash(artifact.EntryPoint))
+	}
+	done := plugin.Stage(ctx, "Verifying signature")
+	result, err := authenticode.Verify(ctx, setup, want)
+	done(err)
+	if err != nil {
+		return err
+	}
+	if artifact.Evidence == nil {
+		artifact.Evidence = map[string]json.RawMessage{}
+	}
+	artifact.Evidence["signature"], err = json.Marshal(result)
+	return err
 }
 
 func assemble(ctx context.Context, root, workspace string, source plugin.Artifact, content *Content, inputs map[string]plugin.Artifact) error {

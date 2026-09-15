@@ -127,8 +127,11 @@ type ResourceKind struct {
 // run receives only locked, leased inputs and produces immutable outputs.
 type ResourceRequest struct {
 	// Cached contains leased outputs reusable during partial preparation.
-	Cached    map[string]Artifact `json:"cached,omitempty"`
-	Config    json.RawMessage     `json:"config"`
+	Cached map[string]Artifact `json:"cached,omitempty"`
+	Config json.RawMessage     `json:"config"`
+	// Derive names a policy to observe from the inputs instead of enforcing
+	// the configured value: "signature" reports the verified signer as evidence.
+	Derive    string              `json:"derive,omitempty"`
 	Identity  ResourceReference   `json:"identity"`
 	Inputs    map[string]Artifact `json:"inputs,omitempty"`
 	Workspace string              `json:"workspace,omitempty"`

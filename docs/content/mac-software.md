@@ -122,24 +122,25 @@ the endpoint through Munki, never during preparation. Other destinations must
 explicitly support a source-free deployment mode; accepting PKG files alone does
 not imply that support.
 
-## Verification
+## Signature
 
-Request checks appropriate to the source:
+Require the published artifact to carry a complete, valid Developer ID signature
+from an expected team:
 
 ```yaml
-verification:
-  subject: source
-  integrity: true
-  signature: true
+signature:
+  signer: apple:developer-id:UBF8T346G9 # Microsoft Corporation
 ```
 
-`subject` selects `source`, `application` or `installer`. A certificate pin can be
-supplied with `certificate_sha256`. Signature verification checks supported
-artifact signatures; it does not assert Apple trust, notarisation or Gatekeeper
-acceptance. For an application, `integrity` and `signature` cover its main
-executable, Info.plist and resource manifest; `resources` also checks every bundle
-file against that manifest, without support for nested code or symlinks.
-Unsupported requested checks fail. See [verification limits](limitations.md#verification).
+`stemma signature MacSoftware/<name>` derives the value from the acquired source,
+verifying it first, and prints this fragment to paste. The comment is display
+information only. The vendor PKG is verified when that is what Stemma publishes
+(a PKG source or `package_path`); otherwise the selected application is:
+every architecture's code, Info.plist, the resource envelope, symlinks and nested
+code by its exact recorded cdhash, chained to Apple's roots at the signature's
+trusted timestamp. A different team fails preparation until the document is
+updated. Notarisation and Gatekeeper policy are not assessed. See
+[signature limits](limitations.md#signatures).
 
 ## Application icons
 

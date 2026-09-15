@@ -2,12 +2,13 @@
 package macsoftware
 
 import (
-	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"path"
 	"strings"
 
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -17,8 +18,10 @@ type Spec struct {
 	Source      *plugin.Input `json:"source,omitempty" yaml:"source,omitempty"`
 	Application *Application  `json:"application,omitempty" yaml:"application,omitempty"`
 	// PackagePath selects one installer by archive-relative path or glob.
-	PackagePath  string                    `json:"package_path,omitempty" yaml:"package_path,omitempty"`
-	Verification Verification              `json:"verification,omitzero" yaml:"verification,omitempty"`
+	PackagePath string `json:"package_path,omitempty" yaml:"package_path,omitempty"`
+	// Signature requires the published PKG or selected application to carry a
+	// complete Developer ID signature from the expected team.
+	Signature    *signature.Policy         `json:"signature,omitempty" yaml:"signature,omitempty"`
 	Destinations map[string]map[string]any `json:"destinations,omitempty" yaml:"destinations,omitempty"`
 }
 
@@ -27,20 +30,6 @@ type Application struct {
 	InstalledPath string `json:"installed_path,omitempty" yaml:"installed_path,omitempty"`
 	BundleID      string `json:"bundle_id,omitempty" yaml:"bundle_id,omitempty"`
 	VersionKey    string `json:"version_key,omitempty" yaml:"version_key,omitempty" jsonschema:"enum=CFBundleShortVersionString,enum=CFBundleVersion"`
-}
-
-type Verification struct {
-	Subject           string `json:"subject,omitempty" yaml:"subject,omitempty" jsonschema:"enum=source,enum=application,enum=installer"`
-	Integrity         bool   `json:"integrity,omitempty" yaml:"integrity,omitempty"`
-	Signature         bool   `json:"signature,omitempty" yaml:"signature,omitempty"`
-	Resources         bool   `json:"resources,omitempty" yaml:"resources,omitempty"`
-	Identity          bool   `json:"identity,omitempty" yaml:"identity,omitempty"`
-	CertificateSHA256 string `json:"certificate_sha256,omitempty" yaml:"certificate_sha256,omitempty"`
-	Platform          bool   `json:"platform,omitempty" yaml:"platform,omitempty"`
-}
-
-func (v Verification) enabled() bool {
-	return v.Integrity || v.Signature || v.Resources || v.Identity || v.Platform || v.CertificateSHA256 != ""
 }
 
 func (s Spec) Preparation() Spec {
@@ -63,14 +52,13 @@ func (s Spec) Validate() error {
 			return errors.New("application.version_key must be CFBundleShortVersionString or CFBundleVersion")
 		}
 	}
-	v := s.Verification
-	if v.Subject != "" && v.Subject != "source" && v.Subject != "application" && v.Subject != "installer" {
-		return errors.New("verification.subject must be source, application or installer")
-	}
-	if v.CertificateSHA256 != "" {
-		digest, err := hex.DecodeString(v.CertificateSHA256)
-		if err != nil || len(digest) != 32 {
-			return errors.New("verification.certificate_sha256 must be a SHA-256 digest")
+	if s.Signature != nil {
+		signer, err := signature.Parse(s.Signature.Signer)
+		if err != nil {
+			return fmt.Errorf("signature: %w", err)
+		}
+		if signer.Scheme != signature.AppleDeveloperID {
+			return errors.New("signature.signer must name an Apple Developer ID team")
 		}
 	}
 	return nil

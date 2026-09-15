@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"testing"
+
+	"github.com/woodleighschool/stemma/internal/signature"
 )
 
 type cancelingReader struct {
@@ -37,10 +39,10 @@ func TestFileDigestStopsBetweenReads(t *testing.T) {
 func TestCanceledVerificationDoesNotReadInput(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := VerifyApp(ctx, "missing.app", Policy{RequireIntegrity: true}); !errors.Is(err, context.Canceled) {
+	if _, err := VerifyApp(ctx, "missing.app", signature.Signer{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("app: %v", err)
 	}
-	if _, err := VerifyPackage(ctx, "missing.pkg", Policy{RequireIntegrity: true}); !errors.Is(err, context.Canceled) {
+	if _, err := VerifyPackage(ctx, "missing.pkg", signature.Signer{}); !errors.Is(err, context.Canceled) {
 		t.Fatalf("pkg: %v", err)
 	}
 }

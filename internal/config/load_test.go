@@ -30,8 +30,8 @@ func TestLoadResourceFamiliesAndDiscoverRoot(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, "stemma.yaml", strings.Replace(projectFixture, "'*.software.yaml'", "software/**/*.yaml", 1)+`  components:
     mac:
-      verification:
-        integrity: true
+      signature:
+        signer: apple:developer-id:SMLKBTR495
 `)
 	writeConfigStream(t, root, "software/Branding/stemma.yaml", `apiVersion: stemma/v1alpha1
 kind: BuildMacPkg
@@ -79,7 +79,7 @@ spec:
 			t.Fatal("resource lost its authoring directory")
 		}
 	}
-	if p.Resources["stemma/v1alpha1/MacSoftware/branding"].Spec["verification"].(map[string]any)["integrity"] != true || p.Resources["stemma/v1alpha1/WindowsSoftware/branding"].Spec["source"].(map[string]any)["path"] != "../Shared/setup.exe" {
+	if p.Resources["stemma/v1alpha1/MacSoftware/branding"].Spec["signature"].(map[string]any)["signer"] != "apple:developer-id:SMLKBTR495" || p.Resources["stemma/v1alpha1/WindowsSoftware/branding"].Spec["source"].(map[string]any)["path"] != "../Shared/setup.exe" {
 		t.Fatal("composition or opaque resolver declaration changed")
 	}
 	if found, err := FindRoot(filepath.Join(root, "software", "Branding")); err != nil || found != root {

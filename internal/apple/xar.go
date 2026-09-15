@@ -3,17 +3,15 @@ package apple
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
-	"crypto/x509"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/deploymenttheory/go-macos-pkg/pkg/pkgsign"
 	"github.com/deploymenttheory/go-macos-pkg/pkg/xar"
+	"github.com/woodleighschool/stemma/internal/signature"
 )
 
 const maxTOC = 8 << 20
@@ -67,99 +65,60 @@ func InspectPackage(filePath string) (PackageFacts, error) {
 	return InspectPackageMetadata(context.Background(), filePath)
 }
 
-// VerifyPackage checks XAR data checksums and package signatures
-// when requested. Identity is limited to an exact signer certificate pin.
-func VerifyPackage(ctx context.Context, filePath string, policy Policy) (Evidence, error) {
+// VerifyPackage verifies a flat package's entry checksums and Developer ID
+// Installer signature and reports its signer. A zero want derives the signer.
+func VerifyPackage(ctx context.Context, filePath string, want signature.Signer) (signature.Result, error) {
 	if err := ctx.Err(); err != nil {
-		return Evidence{}, err
+		return signature.Result{}, err
 	}
-	policy = policy.expanded()
 	f, err := os.Open(filePath)
 	if err != nil {
-		return Evidence{}, err
+		return signature.Result{}, err
 	}
 	defer func() { _ = f.Close() }()
-	digest, err := fileDigest(ctx, f, nil)
+	archive, err := openXARFile(ctx, f)
 	if err != nil {
-		return Evidence{}, err
+		return signature.Result{}, err
 	}
-	evidence := newEvidence(digest, policy)
-	archive, parseErr := openXARFile(ctx, f)
-	if policy.RequireResources {
-		evidence.Resources = Check{Status: Unsupported, Detail: "PKG container verification does not verify inner application resource seals"}
-	}
-	if policy.RequirePlatform {
-		evidence.Platform = Check{Status: Unsupported, Detail: "macOS platform assessment requires native OS policy"}
-	}
-	if parseErr != nil {
-		if policy.RequireIntegrity {
-			evidence.Integrity = checkError(parseErr, "")
-		}
-		if policy.RequireSignature {
-			evidence.Signature = checkError(parseErr, "")
-		}
-		if policy.RequireIdentity || policy.CertificateSHA256 != "" {
-			evidence.Identity = checkError(parseErr, "")
-		}
-		return evidence, parseErr
-	}
-	if policy.RequireIntegrity {
-		var integrityErr error
-		for _, entry := range archive.entries {
-			file := archive.files[entry.Path]
-			for _, ea := range file.EAs {
-				if integrityErr = archive.verifyEA(ea); integrityErr != nil {
-					break
-				}
-			}
-			if integrityErr != nil {
-				break
-			}
-			if entry.Type != "file" && entry.Type != "directory" && entry.Type != "symlink" {
-				integrityErr = fmt.Errorf("%w: XAR entry type %q", ErrUnsupported, entry.Type)
-				break
-			}
-			if entry.Type != "file" {
-				continue
-			}
-			if file.Data == nil || !hasPackageChecksums(file.Data.ArchivedChecksum, file.Data.ExtractedChecksum) {
-				integrityErr = fmt.Errorf("XAR entry %q requires archived and extracted checksums", entry.Path)
-				break
-			}
-			if integrityErr = archive.readEntry(entry.Path, io.Discard, maxEntrySize); integrityErr != nil {
-				break
+	for _, entry := range archive.entries {
+		file := archive.files[entry.Path]
+		for _, ea := range file.EAs {
+			if err := archive.verifyEA(ea); err != nil {
+				return signature.Result{}, err
 			}
 		}
-		evidence.Integrity = checkError(integrityErr, "compressed TOC and every regular-file archived/extracted checksum match")
-	}
-	if policy.RequireSignature || policy.RequireIdentity || policy.CertificateSHA256 != "" {
-		cert, signatureErr := archive.verifySignature()
-		if policy.RequireSignature {
-			evidence.Signature = checkError(signatureErr, "XAR signatures verified by pkgsign; certificate chain trust is not required")
+		if entry.Type != "file" && entry.Type != "directory" && entry.Type != "symlink" {
+			return signature.Result{}, fmt.Errorf("%w: XAR entry type %q", ErrUnsupported, entry.Type)
 		}
-		if policy.RequireIdentity || policy.CertificateSHA256 != "" {
-			identityErr := signatureErr
-			if identityErr == nil {
-				pin, pinErr := hex.DecodeString(policy.CertificateSHA256)
-				switch {
-				case policy.CertificateSHA256 == "":
-					identityErr = fmt.Errorf("%w: identity requires an explicit certificate SHA-256 pin", ErrUnsupported)
-				case pinErr != nil || len(pin) != sha256.Size:
-					identityErr = fmt.Errorf("certificate pin must be 64 hexadecimal characters")
-				default:
-					actual := sha256.Sum256(cert.Raw)
-					if subtle.ConstantTimeCompare(pin, actual[:]) != 1 {
-						identityErr = fmt.Errorf("signer certificate SHA-256 does not match configured pin")
-					}
-				}
-			}
-			evidence.Identity = checkError(identityErr, "signing certificate matches exact configured SHA-256 pin; platform trust is not asserted")
+		if entry.Type != "file" {
+			continue
+		}
+		if file.Data == nil || !hasPackageChecksums(file.Data.ArchivedChecksum, file.Data.ExtractedChecksum) {
+			return signature.Result{}, fmt.Errorf("XAR entry %q requires archived and extracted checksums", entry.Path)
+		}
+		if err := archive.readEntry(entry.Path, io.Discard, maxEntrySize); err != nil {
+			return signature.Result{}, err
 		}
 	}
-	if err := ctx.Err(); err != nil {
-		return evidence, err
+	verified, err := pkgsign.Verify(archive.reader, pkgsign.VerifyOptions{RequireDeveloperID: true})
+	if err != nil {
+		return signature.Result{}, fmt.Errorf("package signature: %w", err)
 	}
-	return evidence, evidence.required(policy)
+	if !verified.Valid() {
+		return signature.Result{}, fmt.Errorf("package signature: %s", strings.Join(verified.Errors, "; "))
+	}
+	if verified.TeamID == "" {
+		return signature.Result{}, fmt.Errorf("%w: package signer has no team", ErrUnsupported)
+	}
+	identity := codeIdentity{teamID: verified.TeamID}
+	if len(verified.Signer.Subject.Organization) > 0 {
+		identity.name = verified.Signer.Subject.Organization[0]
+	}
+	result := signature.Result{Signer: identity.signer().String(), Name: identity.name, Authority: "Developer ID Installer", Target: filepath.Base(filePath), Verifier: signature.Verifier}
+	if err := signature.Check(identity.signer(), want); err != nil {
+		return result, err
+	}
+	return result, ctx.Err()
 }
 
 func openXARFile(ctx context.Context, f *os.File) (*xarArchive, error) {
@@ -315,15 +274,4 @@ func (a *xarArchive) verifyEA(ea *xar.EA) error {
 	defer func() { _ = r.Close() }()
 	_, err = io.Copy(io.Discard, r)
 	return err
-}
-
-func (a *xarArchive) verifySignature() (*x509.Certificate, error) {
-	result, err := pkgsign.Verify(a.reader, pkgsign.VerifyOptions{AllowUntrusted: true})
-	if err != nil {
-		return nil, err
-	}
-	if !result.Valid() {
-		return nil, fmt.Errorf("XAR signature invalid: %s", strings.Join(result.Errors, "; "))
-	}
-	return result.Signer, nil
 }

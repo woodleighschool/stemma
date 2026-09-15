@@ -19,15 +19,28 @@ import (
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
+// Request carries the leased input and workspace for one preparation.
+// DeriveSignature verifies the published artifact against its observed signer
+// instead of the configured one and reports it as evidence.
+type Request struct {
+	Input           plugin.Artifact
+	Workspace       string
+	Timestamp       time.Time
+	Cached          map[string]plugin.Artifact
+	DeriveSignature bool
+}
+
 // Prepare retains vendor installer bytes and wraps selected archive applications
 // in an unsigned component package. It never executes applications or hooks.
-func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace string, timestamp time.Time, cached map[string]plugin.Artifact) (map[string]plugin.Artifact, error) {
+func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin.Artifact, error) {
 	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
+	input, workspace, timestamp, cached := request.Input, request.Workspace, request.Timestamp, request.Cached
 	if input.Path == "" {
 		return map[string]plugin.Artifact{}, nil
 	}
@@ -78,15 +91,12 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 	if info.IsDir() && (app == nil || !strings.EqualFold(path.Ext(payload.name), ".app")) {
 		return nil, errors.New("selected tree must be one application bundle")
 	}
-	appPath := ""
-	if spec.Verification.enabled() {
+	verify := spec.Signature != nil || request.DeriveSignature
+	if verify {
 		selected, err = payload.materialize(ctx, workspace)
 		if err != nil {
 			return nil, err
 		}
-	}
-	if info.IsDir() {
-		appPath = selected
 	}
 	if app != nil {
 		if options != nil && options.InstalledPath != "" {
@@ -95,15 +105,6 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 		if info.IsDir() && app.InstalledPath == "" {
 			app.InstalledPath = path.Join("/Applications", path.Base(payload.name))
 		}
-	}
-	var verification *apple.Evidence
-	if spec.Verification.Subject != "installer" {
-		done := plugin.Stage(ctx, "Verifying installer")
-		verification, err = verifySelected(ctx, spec.Verification, input.Path, selected, appPath)
-		done(err)
-	}
-	if err != nil {
-		return nil, err
 	}
 	var installer plugin.Artifact
 	switch {
@@ -134,9 +135,10 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 	if err != nil {
 		return nil, err
 	}
-	if spec.Verification.Subject == "installer" {
-		done := plugin.Stage(ctx, "Verifying installer")
-		verification, err = verifySelected(ctx, spec.Verification, input.Path, installer.Path, appPath)
+	var verified *signature.Result
+	if verify {
+		done := plugin.Stage(ctx, "Verifying signature")
+		verified, err = verifySignature(ctx, spec, selected, info.IsDir())
 		done(err)
 		if err != nil {
 			return nil, err
@@ -153,8 +155,8 @@ func Prepare(ctx context.Context, spec Spec, input plugin.Artifact, workspace st
 		installer.Evidence["macos.application"], _ = json.Marshal(app)
 		installer.Evidence["macos.version_key"], _ = json.Marshal(versionKey(options, *app))
 	}
-	if verification != nil {
-		installer.Evidence["macos.verification"], _ = json.Marshal(verification)
+	if verified != nil {
+		installer.Evidence["signature"], _ = json.Marshal(verified)
 	}
 	outputs := map[string]plugin.Artifact{"installer": installer}
 	if info.IsDir() {
@@ -292,30 +294,29 @@ func installerVersion(facts plugin.Facts) string {
 	return version
 }
 
-func verifySelected(ctx context.Context, v Verification, source, selected, app string) (*apple.Evidence, error) {
-	if !v.enabled() {
-		return nil, nil
-	}
-	target := selected
-	if v.Subject == "source" {
-		target = source
-	}
-	if v.Subject == "application" {
-		if app == "" {
-			return nil, errors.New("application verification requires an extracted application")
+// verifySignature checks the vendor package when that is what we publish,
+// otherwise the selected application. A retained DMG is a container, so its
+// application carries the signature.
+func verifySignature(ctx context.Context, spec Spec, selected string, app bool) (*signature.Result, error) {
+	var want signature.Signer
+	if spec.Signature != nil {
+		var err error
+		if want, err = signature.Parse(spec.Signature.Signer); err != nil {
+			return nil, err
 		}
-		target = app
 	}
-	policy := apple.Policy{RequireIntegrity: v.Integrity, RequireSignature: v.Signature, RequireResources: v.Resources, RequireIdentity: v.Identity, RequirePlatform: v.Platform, CertificateSHA256: v.CertificateSHA256}
-	var evidence apple.Evidence
+	var result signature.Result
 	var err error
-	switch strings.ToLower(filepath.Ext(target)) {
-	case ".pkg":
-		evidence, err = apple.VerifyPackage(ctx, target, policy)
-	case ".app":
-		evidence, err = apple.VerifyApp(ctx, target, policy)
+	switch {
+	case app:
+		result, err = apple.VerifyApp(ctx, selected, want)
+	case strings.EqualFold(filepath.Ext(selected), ".pkg"):
+		result, err = apple.VerifyPackage(ctx, selected, want)
 	default:
-		return nil, fmt.Errorf("verification is unsupported for %s", filepath.Ext(target))
+		return nil, fmt.Errorf("signature verification requires an application or PKG, not %s", filepath.Base(selected))
 	}
-	return &evidence, err
+	if err != nil {
+		return nil, err
+	}
+	return &result, nil
 }

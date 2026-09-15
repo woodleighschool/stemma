@@ -211,7 +211,7 @@ func compactJSON(t *testing.T, data json.RawMessage) string {
 func TestSourceFreeCannotSilentlySkipVerification(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
-	manifest := strings.Replace(policyProject, "spec:\n  destinations:\n    first:\n      pkginfo:", "spec:\n  verification:\n    signature: true\n  destinations:\n    first:\n      pkginfo:", 1)
+	manifest := strings.Replace(policyProject, "spec:\n  destinations:\n    first:\n      pkginfo:", "spec:\n  signature:\n    signer: apple:developer-id:SMLKBTR495\n  destinations:\n    first:\n      pkginfo:", 1)
 	if err := testproject.Write(filename, []byte(manifest)); err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +257,6 @@ kind: MacSoftware
 metadata: {name: %s}
 spec:
   source: {url: %s/%s.pkg}
-  verification: {integrity: true}
   destinations:
     repo: {pkginfo: {catalogs: [testing]}}
 `, name, server.URL, name)

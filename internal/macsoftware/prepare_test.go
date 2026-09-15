@@ -6,15 +6,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/png"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/woodleighschool/stemma/internal/apple"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/testdiskimage"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -93,7 +95,7 @@ func TestZIPApplicationProducesPackageAndSelectedEvidence(t *testing.T) {
 	}
 	input := plugin.Artifact{Path: filename, Filename: "Example.zip", Format: "zip", Evidence: map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"release":"preview"}`)}}
 	spec := Spec{Application: &Application{Path: "Example.app", VersionKey: "CFBundleVersion"}}
-	outputs, err := Prepare(t.Context(), spec, input, t.TempDir(), time.Time{}, nil)
+	outputs, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,10 +110,10 @@ func TestZIPApplicationProducesPackageAndSelectedEvidence(t *testing.T) {
 	if installer.Format != "pkg" || installer.Version != "123" || app.App.BundleID != "org.example.app" || app.InstalledPath != "/Applications/Example.app" || outputs["icon"].Format != "png" {
 		t.Fatalf("outputs=%+v app=%+v", outputs, app)
 	}
-	if _, err := apple.VerifyPackage(t.Context(), installer.Path, apple.Policy{RequireIntegrity: true}); err != nil {
-		t.Fatal(err)
+	if _, err := apple.VerifyPackage(t.Context(), installer.Path, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "not signed") {
+		t.Fatalf("built package claimed a signer: %v", err)
 	}
-	again, err := Prepare(t.Context(), spec, input, t.TempDir(), time.Time{}, nil)
+	again, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()})
 	if err != nil || again["installer"].SHA256 != installer.SHA256 {
 		t.Fatalf("nondeterministic package: %v", err)
 	}
@@ -128,7 +130,7 @@ func TestDMGApplicationRetainsVendorBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	hash := sha256.Sum256(data)
-	outputs, err := Prepare(t.Context(), Spec{Application: &Application{InstalledPath: "/Applications/Renamed.app"}}, plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}, t.TempDir(), time.Time{}, nil)
+	outputs, err := Prepare(t.Context(), Spec{Application: &Application{InstalledPath: "/Applications/Renamed.app"}}, Request{Input: plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}, Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,12 +147,12 @@ func TestDMGApplicationRetainsVendorBytes(t *testing.T) {
 func TestIconRefreshReusesInstaller(t *testing.T) {
 	app := filepath.Join(applicationFixture(t), "Example.app")
 	input := plugin.Artifact{Path: app, Filename: "Example.app", Tree: true}
-	first, err := Prepare(t.Context(), Spec{}, input, t.TempDir(), time.Time{}, nil)
+	first, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	workspace := t.TempDir()
-	refreshed, err := Prepare(t.Context(), Spec{}, input, workspace, time.Time{}, first)
+	refreshed, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: workspace, Cached: first})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +172,7 @@ func TestVendorPackageRemainsIconless(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result, err := Prepare(t.Context(), Spec{}, plugin.Artifact{Path: name, Filename: "vendor.pkg"}, t.TempDir(), time.Time{}, nil)
+	result, err := Prepare(t.Context(), Spec{}, Request{Input: plugin.Artifact{Path: name, Filename: "vendor.pkg"}, Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +255,8 @@ func TestDMGMetadataAndPortableIconDoNotExtract(t *testing.T) {
 	}
 }
 
-func TestDMGVerificationReadsSelectedApplication(t *testing.T) {
+func TestDMGSignatureVerifiesSelectedApplication(t *testing.T) {
+	const signer = "apple:developer-id:SMLKBTR495"
 	for _, modified := range []bool{false, true} {
 		name := "valid"
 		if modified {
@@ -281,22 +284,36 @@ func TestDMGVerificationReadsSelectedApplication(t *testing.T) {
 			if err := testdiskimage.Write(filename, root); err != nil {
 				t.Fatal(err)
 			}
-			outputs, err := Prepare(t.Context(), Spec{Verification: Verification{Subject: "application", Integrity: true}}, plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}, t.TempDir(), time.Time{}, nil)
+			input := plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}
+			outputs, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: signer}}, Request{Input: input, Workspace: t.TempDir()})
 			if modified {
 				if err == nil {
 					t.Fatal("verification ignored modified executable")
+				}
+				if _, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir(), DeriveSignature: true}); err == nil {
+					t.Fatal("derivation ignored modified executable")
 				}
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			var evidence apple.Evidence
-			if err := json.Unmarshal(outputs["installer"].Evidence["macos.verification"], &evidence); err != nil {
+			var evidence signature.Result
+			if err := json.Unmarshal(outputs["installer"].Evidence["signature"], &evidence); err != nil {
 				t.Fatal(err)
 			}
-			if evidence.Integrity.Status != apple.Valid {
-				t.Fatalf("verification evidence: %+v", evidence)
+			if evidence.Signer != signer || evidence.Name != "Woodleigh School" || evidence.Target != "SignedFixture.app" {
+				t.Fatalf("signature evidence: %+v", evidence)
+			}
+			if _, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: "apple:developer-id:AAAAAAAAAA"}}, Request{Input: input, Workspace: t.TempDir()}); !errors.Is(err, signature.ErrMismatch) {
+				t.Fatalf("unexpected signer accepted: %v", err)
+			}
+			derived, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir(), DeriveSignature: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(derived["installer"].Evidence["signature"], &evidence); err != nil || evidence.Signer != signer {
+				t.Fatalf("derived evidence: %+v: %v", evidence, err)
 			}
 		})
 	}

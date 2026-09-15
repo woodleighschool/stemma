@@ -24,6 +24,7 @@ import (
 	"github.com/deploymenttheory/go-macos-pkg/pkg/xar"
 	xzdecode "github.com/mikelolasagasti/xz"
 	"github.com/ulikunitz/xz"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"howett.net/plist"
 )
 
@@ -485,8 +486,9 @@ func TestPackageRepeatedResources(t *testing.T) {
 			if err != nil || facts.Packages[0].InstallLocation != "/Applications" {
 				t.Fatalf("repeated artwork: %+v %v", facts, err)
 			}
-			if _, err := VerifyPackage(t.Context(), name, Policy{RequireIntegrity: true}); err != nil {
-				t.Fatal(err)
+			// Entry checksums are checked before the absent signature is reported.
+			if _, err := VerifyPackage(t.Context(), name, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "not signed") {
+				t.Fatalf("repeated artwork integrity: %v", err)
 			}
 			data := readTestFile(t, name)
 			data[len(data)-1] ^= 1

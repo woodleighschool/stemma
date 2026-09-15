@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/apple"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -49,8 +51,8 @@ func TestBuildMappedPayloadIsReproducibleAndScriptsAreNotRun(t *testing.T) {
 	if first.SHA256 != second.SHA256 || first.Size != second.Size || first.Version != "1.2.3" {
 		t.Fatalf("outputs differ: %+v %+v", first, second)
 	}
-	if _, err := apple.VerifyPackage(t.Context(), first.Path, apple.Policy{RequireIntegrity: true}); err != nil {
-		t.Fatal(err)
+	if _, err := apple.VerifyPackage(t.Context(), first.Path, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "not signed") {
+		t.Fatalf("built package claimed a signer: %v", err)
 	}
 	facts, err := apple.InspectPackage(first.Path)
 	if err != nil || len(facts.Packages) != 1 || facts.Packages[0].Identifier != spec.Package.Identifier {

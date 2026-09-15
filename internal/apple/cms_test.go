@@ -8,7 +8,6 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"math/big"
 	"os"
@@ -19,14 +18,16 @@ import (
 	"time"
 
 	"github.com/smallstep/pkcs7"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"howett.net/plist"
 )
 
 func TestCMSAuthenticatesEveryArchitecture(t *testing.T) {
+	portableOnly(t)
 	for _, arch := range []int{0, 1} {
 		t.Run([]string{"first", "second"}[arch], func(t *testing.T) {
-			signature := signedFixtureSignature(t, arch)
-			signed, err := pkcs7.Parse(signature.blobs[0x10000][8:])
+			sig := signedFixtureSignature(t, arch)
+			signed, err := pkcs7.Parse(sig.blobs[0x10000][8:])
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -42,21 +43,17 @@ func TestCMSAuthenticatesEveryArchitecture(t *testing.T) {
 			}
 			data[offset] ^= 0x40
 			writeTestFile(t, executable, data, 0o755)
-			evidence, err := VerifyApp(t.Context(), app, Policy{RequireSignature: true})
-			if err == nil || evidence.Integrity.Status != Valid || evidence.Signature.Status != Invalid || evidence.Resources.Status != NotRequested {
-				t.Fatalf("altered CMS signature accepted or scopes collapsed: %+v: %v", evidence, err)
+			if _, err := VerifyApp(t.Context(), app, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "CMS signature") {
+				t.Fatalf("altered CMS signature accepted: %v", err)
 			}
 		})
 	}
 }
 
-func TestCMSSignatureAllocationStillBindsArtifactIdentity(t *testing.T) {
+func TestCMSSignatureAllocationIsNotCode(t *testing.T) {
+	portableOnly(t)
 	app := filepath.Join(t.TempDir(), "SignedFixture.app")
 	if err := os.CopyFS(app, os.DirFS("testdata/SignedFixture.app")); err != nil {
-		t.Fatal(err)
-	}
-	baseline, err := VerifyApp(t.Context(), app, Policy{RequireSignature: true})
-	if err != nil {
 		t.Fatal(err)
 	}
 	executable := filepath.Join(app, "Contents/MacOS/fixture")
@@ -71,17 +68,16 @@ func TestCMSSignatureAllocationStillBindsArtifactIdentity(t *testing.T) {
 	}
 	data[end] ^= 0x40
 	writeTestFile(t, executable, data, 0o755)
-	evidence, err := VerifyApp(t.Context(), app, Policy{RequireSignature: true})
-	if err != nil || evidence.Integrity.Status != Valid || evidence.Signature.Status != Valid || evidence.SubjectSHA256 == baseline.SubjectSHA256 {
-		t.Fatalf("signature allocation confused authentication and executable identity: %+v: %v", evidence, err)
+	if _, err := VerifyApp(t.Context(), app, signature.Signer{}); err != nil {
+		t.Fatalf("unused signature allocation failed verification: %v", err)
 	}
 }
 
 func TestCMSRejectsUnboundedAndTrailingEncoding(t *testing.T) {
 	for _, name := range []string{"trailing", "depth", "indefinite-depth", "count", "size", "unterminated", "truncated-eoc", "unexpected-eoc", "primitive-indefinite"} {
 		t.Run(name, func(t *testing.T) {
-			signature := signedFixtureSignature(t, 0)
-			data := bytes.Clone(signature.blobs[0x10000][8:])
+			sig := signedFixtureSignature(t, 0)
+			data := bytes.Clone(sig.blobs[0x10000][8:])
 			switch name {
 			case "trailing":
 				data = append(data, 5, 0)
@@ -113,53 +109,57 @@ func TestCMSRejectsUnboundedAndTrailingEncoding(t *testing.T) {
 			case "primitive-indefinite":
 				data = []byte{0x04, 0x80, 0, 0}
 			}
-			signature.blobs[0x10000] = append(signature.blobs[0x10000][:8:8], data...)
-			if _, err := verifyCMS(signature); err == nil || !strings.Contains(err.Error(), "encoding") {
+			sig.blobs[0x10000] = append(sig.blobs[0x10000][:8:8], data...)
+			if _, err := verifyCMS(sig); err == nil || !strings.Contains(err.Error(), "encoding") {
 				t.Fatalf("unsafe CMS encoding reached the CMS parser: %v", err)
 			}
 		})
 	}
 }
 
-func TestCMSSignerPinDoesNotClaimPlatformTrust(t *testing.T) {
-	signature := signedFixtureSignature(t, 0)
-	certificate, err := verifyCMS(signature)
+func TestCMSChainMustAnchorAtApple(t *testing.T) {
+	sig := signedFixtureSignature(t, 0)
+	cms, err := verifyCMS(sig)
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := sha256.Sum256(certificate.Raw)
-	for _, pin := range []string{hex.EncodeToString(digest[:]), strings.Repeat("0", 64)} {
-		evidence, err := VerifyApp(t.Context(), "testdata/SignedFixture.app", Policy{CertificateSHA256: pin})
-		valid := pin != strings.Repeat("0", 64)
-		if (err == nil) != valid || (evidence.Identity.Status == Valid) != valid || evidence.Signature.Status != Valid || evidence.Integrity.Status != Valid || evidence.Platform.Status != NotRequested || evidence.Resources.Status != NotRequested {
-			t.Fatalf("wrong certificate pin scope: %+v: %v", evidence, err)
-		}
+	if _, err := identify(cms.certificate, cms.certificates, time.Time{}); err != nil {
+		t.Fatalf("Developer ID chain rejected: %v", err)
 	}
-	evidence, err := VerifyApp(t.Context(), "testdata/SignedFixture.app", Policy{RequireSignature: true, RequireIdentity: true, RequirePlatform: true})
-	if !errors.Is(err, ErrUnsupported) || evidence.Signature.Status != Valid || evidence.Identity.Status != Unsupported || evidence.Platform.Status != Unsupported {
-		t.Fatalf("CMS authentication claimed unspecified trust: %+v: %v", evidence, err)
+	// A signature by a certificate outside Apple's hierarchy authenticates the
+	// CodeDirectory but establishes no signer.
+	sig.blobs[0x10000] = signedCMS(t, sig.directories[0], pkcs7.OIDDigestAlgorithmSHA256)
+	cms, err = verifyCMS(sig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := identify(cms.certificate, cms.certificates, time.Time{}); err == nil || !strings.Contains(err.Error(), "not trusted") {
+		t.Fatalf("self-signed CMS certificate established a signer: %v", err)
+	}
+	if _, err := trustedTime(nil, cms.signatureValue); err != nil {
+		t.Fatalf("absent timestamp: %v", err)
 	}
 }
 
 func TestCMSRejectsUnboundCodeDirectories(t *testing.T) {
 	t.Run("modified-primary", func(t *testing.T) {
-		signature := signedFixtureSignature(t, 0)
-		cd := signature.directories[0]
+		sig := signedFixtureSignature(t, 0)
+		cd := sig.directories[0]
 		cd[len(cd)-1] ^= 1
-		if _, err := verifyCMS(signature); err == nil {
+		if _, err := verifyCMS(sig); err == nil {
 			t.Fatal("CMS authenticated a changed primary CodeDirectory")
 		}
 	})
 	t.Run("alternate", func(t *testing.T) {
-		signature := signedFixtureSignature(t, 0)
-		signature.directories = append(signature.directories, bytes.Clone(signature.directories[0]))
-		if _, err := verifyCMS(signature); err == nil {
+		sig := signedFixtureSignature(t, 0)
+		sig.directories = append(sig.directories, bytes.Clone(sig.directories[0]))
+		if _, err := verifyCMS(sig); err == nil {
 			t.Fatalf("alternate CodeDirectory authentication was claimed: %v", err)
 		}
 	})
 	for _, version := range []int{1, 2} {
 		t.Run([]string{"", "agility-v1", "agility-v2"}[version], func(t *testing.T) {
-			signature := signedFixtureSignature(t, 0)
+			sig := signedFixtureSignature(t, 0)
 			attribute := pkcs7.Attribute{Type: oidHashAgilityV2, Value: struct {
 				Algorithm asn1.ObjectIdentifier
 				Digest    []byte
@@ -171,16 +171,16 @@ func TestCMSRejectsUnboundCodeDirectories(t *testing.T) {
 				}
 				attribute = pkcs7.Attribute{Type: oidHashAgility, Value: data}
 			}
-			signature.blobs[0x10000] = signedCMS(t, signature.directories[0], pkcs7.OIDDigestAlgorithmSHA256, attribute)
-			if _, err := verifyCMS(signature); err == nil || !strings.Contains(err.Error(), "hash agility") {
+			sig.blobs[0x10000] = signedCMS(t, sig.directories[0], pkcs7.OIDDigestAlgorithmSHA256, attribute)
+			if _, err := verifyCMS(sig); err == nil || !strings.Contains(err.Error(), "hash agility") {
 				t.Fatalf("signed mismatching agility digest was accepted: %v", err)
 			}
 		})
 	}
 	t.Run("weak-cms-digest", func(t *testing.T) {
-		signature := signedFixtureSignature(t, 0)
-		signature.blobs[0x10000] = signedCMS(t, signature.directories[0], pkcs7.OIDDigestAlgorithmSHA1)
-		if _, err := verifyCMS(signature); !errors.Is(err, ErrUnsupported) {
+		sig := signedFixtureSignature(t, 0)
+		sig.blobs[0x10000] = signedCMS(t, sig.directories[0], pkcs7.OIDDigestAlgorithmSHA1)
+		if _, err := verifyCMS(sig); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("weak CMS digest authenticated a SHA-256 CodeDirectory: %v", err)
 		}
 	})
@@ -201,11 +201,11 @@ func signedFixtureSignature(t *testing.T, arch int) *codeSignature {
 	if err != nil || arch >= len(slices) {
 		t.Fatalf("missing fixture architecture: %v", err)
 	}
-	signature, err := slices[arch].signature()
+	sig, err := slices[arch].signature()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return signature
+	return sig
 }
 
 func signedCMS(t *testing.T, content []byte, digest asn1.ObjectIdentifier, attributes ...pkcs7.Attribute) []byte {
@@ -245,13 +245,13 @@ func signedCMS(t *testing.T, content []byte, digest asn1.ObjectIdentifier, attri
 func TestCMSBindsAlternateCodeDirectories(t *testing.T) {
 	for _, version := range []int{1, 2} {
 		t.Run(strconv.Itoa(version), func(t *testing.T) {
-			signature := signedFixtureSignature(t, 0)
-			alternate := bytes.Clone(signature.directories[0])
+			sig := signedFixtureSignature(t, 0)
+			alternate := bytes.Clone(sig.directories[0])
 			alternate[len(alternate)-1] ^= 1
-			signature.directories = append(signature.directories, alternate)
+			sig.directories = append(sig.directories, alternate)
 			var short [][]byte
 			var values []byte
-			for _, cd := range signature.directories {
+			for _, cd := range sig.directories {
 				digest := sha256.Sum256(cd)
 				short = append(short, digest[:20])
 				data, err := asn1.Marshal(struct {
@@ -271,12 +271,12 @@ func TestCMSBindsAlternateCodeDirectories(t *testing.T) {
 				}
 				attribute = pkcs7.Attribute{Type: oidHashAgility, Value: data}
 			}
-			signature.blobs[0x10000] = signedCMS(t, signature.directories[0], pkcs7.OIDDigestAlgorithmSHA256, attribute)
-			if _, err := verifyCMS(signature); err != nil {
+			sig.blobs[0x10000] = signedCMS(t, sig.directories[0], pkcs7.OIDDigestAlgorithmSHA256, attribute)
+			if _, err := verifyCMS(sig); err != nil {
 				t.Fatal(err)
 			}
 			alternate[len(alternate)-1] ^= 2
-			if _, err := verifyCMS(signature); err == nil {
+			if _, err := verifyCMS(sig); err == nil {
 				t.Fatal("CMS accepted a substituted alternate directory")
 			}
 		})

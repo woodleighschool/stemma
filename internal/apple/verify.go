@@ -1,121 +1,112 @@
-// Package apple inspects macOS artifacts and verifies explicitly bounded signature scopes.
+// Package apple inspects macOS artifacts and verifies their code signatures.
 package apple
 
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
+	"encoding/asn1"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"slices"
+	"time"
 
+	"github.com/deploymenttheory/go-macos-pkg/pkg/pkgsign"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/internal/signature"
 )
 
-// Verifier identifies the implementation whose supported subset produced evidence.
-const Verifier = "stemma.apple/0.3.0"
-
-// Verification result states are distinct from absence of a verification request.
-const (
-	Valid        = "valid"
-	Invalid      = "invalid"
-	Unsupported  = "unsupported"
-	NotRequested = "not_requested"
-)
-
-// ErrUnsupported means an artifact or requested check exceeds the supported subset.
+// ErrUnsupported means an artifact exceeds the supported signing subset.
 var ErrUnsupported = errors.New("unsupported Apple artifact verification")
 
-// Policy declares independent required checks. CertificateSHA256 is an exact DER
-// certificate pin; it neither implies certificate-chain trust nor a time policy.
-type Policy struct {
-	RequireIntegrity  bool   `json:"require_integrity"`
-	RequireSignature  bool   `json:"require_signature"`
-	RequireResources  bool   `json:"require_resources"`
-	RequireIdentity   bool   `json:"require_identity"`
-	CertificateSHA256 string `json:"certificate_sha256,omitempty"`
-	RequirePlatform   bool   `json:"require_platform"`
+// Apple marks certificate purposes with critical extensions that Go cannot
+// interpret; they are checked here instead.
+var oidAppleExtensions = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 6}
+
+// codeIdentity describes one authenticated signer of a code item.
+type codeIdentity struct {
+	identifier  string
+	teamID      string
+	name        string
+	application bool
+	installer   bool
+	// cdhashes lists every CodeDirectory hash across architectures.
+	cdhashes [][]byte
 }
 
-func (p Policy) expanded() Policy {
-	if p.CertificateSHA256 != "" {
-		p.RequireIdentity = true
-	}
-	if p.RequireIdentity {
-		p.RequireSignature = true
-	}
-	if p.RequireSignature || p.RequireResources {
-		p.RequireIntegrity = true
-	}
-	return p
+func (c codeIdentity) same(other codeIdentity) bool {
+	return c.identifier == other.identifier && c.teamID == other.teamID && c.name == other.name && c.application == other.application && c.installer == other.installer
 }
 
-// Check records one check without promoting inspection to verification.
-type Check struct {
-	Status string `json:"status"`
-	Detail string `json:"detail,omitempty"`
+func (c codeIdentity) signer() signature.Signer {
+	return signature.Signer{Scheme: signature.AppleDeveloperID, Value: c.teamID}
 }
 
-// Evidence binds verification results to exact bytes, implementation and policy.
-// For apps, SubjectSHA256 is the main executable's digest (see VerifyApp).
-type Evidence struct {
-	SubjectSHA256 string `json:"subject_sha256"`
-	Verifier      string `json:"verifier"`
-	PolicySHA256  string `json:"policy_sha256"`
-	Integrity     Check  `json:"integrity"`
-	Signature     Check  `json:"signature"`
-	Resources     Check  `json:"resources"`
-	Identity      Check  `json:"identity"`
-	Platform      Check  `json:"platform"`
-}
-
-func newEvidence(digest string, policy Policy) Evidence {
-	data, _ := json.Marshal(policy)
-	policyDigest := sha256.Sum256(data)
-	return Evidence{
-		SubjectSHA256: digest, Verifier: Verifier, PolicySHA256: hex.EncodeToString(policyDigest[:]),
-		Integrity: Check{Status: NotRequested}, Signature: Check{Status: NotRequested},
-		Resources: Check{Status: NotRequested}, Identity: Check{Status: NotRequested},
-		Platform: Check{Status: NotRequested},
-	}
-}
-
-func (e Evidence) required(policy Policy) error {
-	checks := []struct {
-		name     string
-		required bool
-		check    Check
-	}{
-		{"integrity", policy.RequireIntegrity, e.Integrity},
-		{"signature", policy.RequireSignature, e.Signature},
-		{"resources", policy.RequireResources, e.Resources},
-		{"identity", policy.RequireIdentity || policy.CertificateSHA256 != "", e.Identity},
-		{"platform", policy.RequirePlatform, e.Platform},
-	}
-	var failures []error
-	for _, c := range checks {
-		if !c.required || c.check.Status == Valid {
-			continue
-		}
-		if c.check.Status == Unsupported {
-			failures = append(failures, fmt.Errorf("%s: %w: %s", c.name, ErrUnsupported, c.check.Detail))
-		} else {
-			failures = append(failures, fmt.Errorf("%s %s: %s", c.name, c.check.Status, c.check.Detail))
+// identify authenticates a signing certificate against Apple's roots at the
+// signature's trusted time and reads the Developer ID team it belongs to.
+func identify(leaf *x509.Certificate, certificates []*x509.Certificate, at time.Time) (codeIdentity, error) {
+	intermediates := x509.NewCertPool()
+	for _, certificate := range certificates {
+		if !certificate.Equal(leaf) {
+			acceptAppleExtensions(certificate)
+			intermediates.AddCert(certificate)
 		}
 	}
-	return errors.Join(failures...)
+	acceptAppleExtensions(leaf)
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: pkgsign.AppleRoots(), Intermediates: intermediates, CurrentTime: at, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning}}); err != nil {
+		return codeIdentity{}, fmt.Errorf("signing certificate is not trusted by Apple's roots: %w", err)
+	}
+	if len(leaf.Subject.OrganizationalUnit) != 1 || leaf.Subject.OrganizationalUnit[0] == "" {
+		return codeIdentity{}, fmt.Errorf("%w: signing certificate has no team", ErrUnsupported)
+	}
+	identity := codeIdentity{teamID: leaf.Subject.OrganizationalUnit[0]}
+	if len(leaf.Subject.Organization) > 0 {
+		identity.name = leaf.Subject.Organization[0]
+	}
+	for _, extension := range leaf.Extensions {
+		switch {
+		case extension.Id.Equal(pkgsign.OIDDeveloperIDApplication):
+			identity.application = true
+		case extension.Id.Equal(pkgsign.OIDDeveloperIDInstaller):
+			identity.installer = true
+		}
+	}
+	return identity, nil
 }
 
-func checkError(err error, detail string) Check {
-	if err == nil {
-		return Check{Status: Valid, Detail: detail}
+func acceptAppleExtensions(certificate *x509.Certificate) {
+	certificate.UnhandledCriticalExtensions = slices.DeleteFunc(certificate.UnhandledCriticalExtensions, func(id asn1.ObjectIdentifier) bool {
+		return len(id) > len(oidAppleExtensions) && id[:len(oidAppleExtensions)].Equal(oidAppleExtensions)
+	})
+}
+
+// trustedTime returns the time a trusted timestamp authority saw the
+// signature, or zero to judge certificates now. A token that does not attest
+// to this signature is tampering.
+func trustedTime(token, signatureValue []byte) (time.Time, error) {
+	if len(token) == 0 {
+		return time.Time{}, nil
 	}
-	status := Invalid
-	if errors.Is(err, ErrUnsupported) {
-		status = Unsupported
+	at, err := pkgsign.VerifyTimestamp(token, signatureValue, pkgsign.AppleRoots())
+	if errors.Is(err, pkgsign.ErrTimestampInvalid) {
+		return time.Time{}, err
 	}
-	return Check{Status: status, Detail: err.Error()}
+	if err != nil {
+		// An authority Stemma cannot check leaves certificates judged now.
+		at = time.Time{}
+	}
+	return at, nil
+}
+
+func matchCDHash(identity codeIdentity, sealed []byte) bool {
+	for _, cdhash := range identity.cdhashes {
+		if slices.Equal(cdhash, sealed) {
+			return true
+		}
+	}
+	return false
 }
 
 func fileDigest(ctx context.Context, f io.Reader, buffer []byte) (string, error) {

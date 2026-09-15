@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/plugin"
@@ -37,7 +36,7 @@ func TestSetupTreePreservesFilesAndSelectsMSIEvidence(t *testing.T) {
 	companion := writeFixture(t, t.TempDir(), "settings.ini", []byte("[Install]\nSilent=1\n"), 0o604)
 	inputs := map[string]plugin.Artifact{"source": {Path: source, Tree: true, EntryPoint: "bin/vendor.msi", Version: "stale", Evidence: map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"channel":"stable"}`)}}, "file:settings.ini": {Path: companion}}
 	spec := Spec{Content: &Content{Files: map[string]plugin.Input{"settings.ini": {}}}}
-	outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), time.Time{})
+	outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +61,7 @@ func TestSetupTreePreservesFilesAndSelectsMSIEvidence(t *testing.T) {
 	if err != nil || !bytes.Equal(copied, msi) {
 		t.Fatal("vendor MSI bytes changed")
 	}
-	repeated, err := Prepare(t.Context(), spec, inputs, t.TempDir(), time.Now())
+	repeated, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +88,7 @@ func TestCompanionScriptReplacesSelectedMSIEvidence(t *testing.T) {
 	command := writeFixture(t, t.TempDir(), "install.cmd", script, 0o755)
 	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: "vendor.msi", Version: "1.2.3", Evidence: map[string]json.RawMessage{"windows.installer": json.RawMessage(`{"msi":{"productCode":"stale"}}`), "vendor.probe": json.RawMessage(`true`)}}, "file:install.cmd": {Path: command}}
 	spec := Spec{Content: &Content{SetupFile: "install.cmd", Files: map[string]plugin.Input{"install.cmd": {}}}}
-	outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), time.Time{})
+	outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +137,7 @@ func TestCompanionPathsFailBeforePublishing(t *testing.T) {
 				inputs["file:"+test.second] = plugin.Artifact{Path: companion}
 			}
 			workspace := t.TempDir()
-			if _, err := Prepare(t.Context(), Spec{Content: content}, inputs, workspace, time.Time{}); err == nil {
+			if _, err := Prepare(t.Context(), Spec{Content: content}, inputs, workspace, false); err == nil {
 				t.Fatal("unsafe content accepted")
 			}
 			entries, err := os.ReadDir(workspace)
@@ -180,7 +179,7 @@ func TestCompanionLinksAndUnsupportedMetadataAreRejected(t *testing.T) {
 			spec := Spec{Content: &Content{Files: map[string]plugin.Input{"settings.ini": {}}}}
 			inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: "setup.exe"}, "file:settings.ini": {Path: input}}
 			workspace := t.TempDir()
-			if _, err := Prepare(t.Context(), spec, inputs, workspace, time.Time{}); err == nil {
+			if _, err := Prepare(t.Context(), spec, inputs, workspace, false); err == nil {
 				t.Fatal("unrepresentable companion metadata accepted")
 			}
 			entries, err := os.ReadDir(workspace)

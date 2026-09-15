@@ -44,12 +44,19 @@ being silently discarded. On macOS, download provenance and tracking attributes
 are omitted, and transparent filesystem compression is imported as ordinary bytes.
 This is distinct from preserving an existing vendor PKG or DMG unchanged.
 
-## Verification
+## Signatures
 
-Supported PKG and Mach-O verification checks artifact integrity, signatures and
-optional exact certificate pins. It does not provide Apple certificate-chain
-trust, revocation checking, notarisation assessment or Gatekeeper policy. Requesting
-an unsupported verification mode fails.
+Signature verification establishes that acquired bytes are the content one
+expected publisher signed: Developer ID signatures over PKGs and application
+bundles, and Authenticode signatures over MSI and EXE files. Apple verification
+covers the shapes `codesign` writes today: `files2` envelopes, versioned and
+shallow frameworks, nested bundles and executables. Legacy envelopes, detached
+signature files and nested code replaced under Apple's requirement language are
+rejected rather than emulated. On macOS the system verifier establishes bundle
+validity, so it can accept what the portable verifier reports as unsupported.
+Windows verification anchors at the issuing authority recorded in the signer
+value and never consults the operating system's root store. Neither asserts
+notarisation, Gatekeeper, SmartScreen or WDAC policy, nor certificate revocation.
 
 Installer scripts and application executables are never run to infer their effects.
 An installer containing a downloader cannot prove what that downloader eventually

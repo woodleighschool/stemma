@@ -1290,6 +1290,18 @@
                 "package_path": {
                   "type": "string"
                 },
+                "signature": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "signer": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "signer"
+                  ],
+                  "type": "object"
+                },
                 "source": {
                   "allOf": [
                     {
@@ -1814,38 +1826,6 @@
                     }
                   ],
                   "type": "object"
-                },
-                "verification": {
-                  "additionalProperties": false,
-                  "properties": {
-                    "certificate_sha256": {
-                      "type": "string"
-                    },
-                    "identity": {
-                      "type": "boolean"
-                    },
-                    "integrity": {
-                      "type": "boolean"
-                    },
-                    "platform": {
-                      "type": "boolean"
-                    },
-                    "resources": {
-                      "type": "boolean"
-                    },
-                    "signature": {
-                      "type": "boolean"
-                    },
-                    "subject": {
-                      "enum": [
-                        "source",
-                        "application",
-                        "installer"
-                      ],
-                      "type": "string"
-                    }
-                  },
-                  "type": "object"
                 }
               },
               "type": "object"
@@ -1891,6 +1871,15 @@
                     },
                     "package_path": {
                       "type": "string"
+                    },
+                    "signature": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "signer": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
                     },
                     "source": {
                       "allOf": [
@@ -2366,38 +2355,6 @@
                           ]
                         }
                       ],
-                      "type": "object"
-                    },
-                    "verification": {
-                      "additionalProperties": false,
-                      "properties": {
-                        "certificate_sha256": {
-                          "type": "string"
-                        },
-                        "identity": {
-                          "type": "boolean"
-                        },
-                        "integrity": {
-                          "type": "boolean"
-                        },
-                        "platform": {
-                          "type": "boolean"
-                        },
-                        "resources": {
-                          "type": "boolean"
-                        },
-                        "signature": {
-                          "type": "boolean"
-                        },
-                        "subject": {
-                          "enum": [
-                            "source",
-                            "application",
-                            "installer"
-                          ],
-                          "type": "string"
-                        }
-                      },
                       "type": "object"
                     }
                   },
@@ -3128,6 +3085,18 @@
                   "additionalProperties": {
                     "type": "object"
                   },
+                  "type": "object"
+                },
+                "signature": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "signer": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "signer"
+                  ],
                   "type": "object"
                 },
                 "source": {
@@ -4166,6 +4135,15 @@
                     "extends": {
                       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
                       "type": "string"
+                    },
+                    "signature": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "signer": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
                     },
                     "source": {
                       "allOf": [

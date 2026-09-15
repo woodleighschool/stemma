@@ -91,7 +91,7 @@ kind: MacSoftware
 metadata: {name: missing-installer}
 spec:
   source: {path: missing.pkg}
-  verification: {integrity: true}
+  signature: {signer: apple:developer-id:SMLKBTR495}
 `)); err != nil {
 		t.Fatal(err)
 	}

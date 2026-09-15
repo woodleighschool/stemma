@@ -11,7 +11,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
@@ -21,27 +20,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/woodleighschool/stemma/internal/signature"
 	"howett.net/plist"
 )
 
-func TestAppFixtureIntegrity(t *testing.T) {
+func TestAppFixtureInspection(t *testing.T) {
 	facts, err := InspectApp("testdata/Fixture.app")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if facts.BundleID != "au.edu.vic.woodleigh.stemma.fixture" || facts.Version != "1.2.3" || facts.Build != "42" {
 		t.Fatalf("wrong app facts: %+v", facts)
-	}
-	evidence, err := VerifyApp(t.Context(), "testdata/Fixture.app", Policy{RequireIntegrity: true, RequireResources: true})
-	if err != nil {
-		t.Fatalf("verification failed: %+v: %v", evidence, err)
-	}
-	if evidence.Integrity.Status != Valid || evidence.Resources.Status != Valid || evidence.Signature.Status != NotRequested || evidence.Identity.Status != NotRequested {
-		t.Fatalf("wrong evidence: %+v", evidence)
-	}
-	executable := sha256.Sum256(readTestFile(t, "testdata/Fixture.app/Contents/MacOS/fixture"))
-	if evidence.SubjectSHA256 != hex.EncodeToString(executable[:]) || len(evidence.PolicySHA256) != 64 || evidence.Verifier != Verifier {
-		t.Fatalf("unbound evidence: %+v", evidence)
 	}
 	macho, err := InspectMachO("testdata/Fixture.app/Contents/MacOS/fixture")
 	if err != nil {
@@ -58,10 +47,9 @@ func TestAppFixtureIntegrity(t *testing.T) {
 }
 
 func TestSignedFixtures(t *testing.T) {
-	const installerPin = "e8bcd85f5b71188453845541f51b08e49f7262f10f3d79f5fe942a6735ae9760"
-	app, err := VerifyApp(t.Context(), "testdata/SignedFixture.app", Policy{RequireIntegrity: true, RequireResources: true})
-	if err != nil || app.Integrity.Status != Valid || app.Resources.Status != Valid {
-		t.Fatalf("signed app integrity: %+v: %v", app, err)
+	app, err := VerifyApp(t.Context(), "testdata/SignedFixture.app", signature.Signer{})
+	if err != nil || app.Signer != fixtureSigner || app.Name != "Woodleigh School" || app.Authority != "Developer ID Application" || app.Verifier != signature.Verifier {
+		t.Fatalf("signed app: %+v: %v", app, err)
 	}
 	facts, err := InspectMachO("testdata/SignedFixture.app/Contents/MacOS/fixture")
 	if err != nil {
@@ -72,79 +60,13 @@ func TestSignedFixtures(t *testing.T) {
 			t.Fatalf("wrong company signature facts: %+v", arch)
 		}
 	}
-	app, err = VerifyApp(t.Context(), "testdata/SignedFixture.app", Policy{RequireSignature: true, RequireResources: true})
-	if err != nil || app.Signature.Status != Valid || app.Integrity.Status != Valid || app.Resources.Status != Valid || app.Identity.Status != NotRequested || app.Platform.Status != NotRequested {
-		t.Fatalf("CMS authentication lost independent scopes: %+v: %v", app, err)
-	}
-	pkg, err := VerifyPackage(t.Context(), "testdata/fixture.pkg", Policy{RequireSignature: true, CertificateSHA256: installerPin})
-	if err != nil || pkg.Signature.Status != Valid || pkg.Identity.Status != Valid || pkg.Integrity.Status != Valid {
+	pkg, err := VerifyPackage(t.Context(), "testdata/fixture.pkg", signature.Signer{Scheme: signature.AppleDeveloperID, Value: "SMLKBTR495"})
+	if err != nil || pkg.Signer != fixtureSigner || pkg.Name != "Woodleigh School" || pkg.Authority != "Developer ID Installer" || pkg.Target != "fixture.pkg" {
 		t.Fatalf("company installer signature: %+v: %v", pkg, err)
 	}
-}
-
-func TestAppRejectsTamperingAndUnsupportedScopes(t *testing.T) {
-	for _, mutation := range []struct {
-		name        string
-		apply       func(*testing.T, string)
-		unsupported bool
-	}{
-		{"resource", func(t *testing.T, app string) {
-			t.Helper()
-
-			writeTestFile(t, filepath.Join(app, "Contents/Resources/message.txt"), []byte("modified"), 0644)
-		}, false},
-		{"executable", func(t *testing.T, app string) {
-			t.Helper()
-			corruptExecutable(t, filepath.Join(app, "Contents/MacOS/fixture"), 0)
-		}, false},
-		{"second_architecture", func(t *testing.T, app string) {
-			t.Helper()
-			corruptExecutable(t, filepath.Join(app, "Contents/MacOS/fixture"), 1)
-		}, false},
-		{"info", func(t *testing.T, app string) {
-			t.Helper()
-
-			f := filepath.Join(app, "Contents/Info.plist")
-			data := readTestFile(t, f)
-			writeTestFile(t, f, bytes.ReplaceAll(data, []byte("1.2.3"), []byte("9.8.7")), 0644)
-		}, false},
-		{"unsealed_file", func(t *testing.T, app string) {
-			t.Helper()
-
-			writeTestFile(t, filepath.Join(app, "Contents/Resources/extra.txt"), []byte("unsealed"), 0644)
-		}, false},
-		{"symlink", func(t *testing.T, app string) {
-			t.Helper()
-
-			if err := os.Symlink("message.txt", filepath.Join(app, "Contents/Resources/link")); err != nil {
-				t.Fatal(err)
-			}
-		}, true},
-	} {
-		t.Run(mutation.name, func(t *testing.T) {
-			app := copyApp(t)
-			mutation.apply(t, app)
-			evidence, err := VerifyApp(t.Context(), app, Policy{RequireIntegrity: true, RequireResources: true})
-			if err == nil {
-				t.Fatalf("tampered app passed: %+v", evidence)
-			}
-			if mutation.unsupported != errors.Is(err, ErrUnsupported) {
-				t.Fatalf("wrong error scope: %+v: %v", evidence, err)
-			}
-			if evidence.Resources.Status == Valid {
-				t.Fatalf("tampered resources passed: %+v", evidence)
-			}
-		})
+	if pkg, err := VerifyPackage(t.Context(), "testdata/fixture.pkg", signature.Signer{Scheme: signature.AppleDeveloperID, Value: "AAAAAAAAAA"}); !errors.Is(err, signature.ErrMismatch) || pkg.Signer != fixtureSigner {
+		t.Fatalf("unexpected installer signer accepted: %+v: %v", pkg, err)
 	}
-	t.Run("authentication", func(t *testing.T) {
-		evidence, err := VerifyApp(t.Context(), "testdata/Fixture.app", Policy{RequireIntegrity: true, RequireResources: true, RequireSignature: true, RequireIdentity: true, RequirePlatform: true})
-		if err == nil || !errors.Is(err, ErrUnsupported) {
-			t.Fatalf("unsupported trust accepted: %+v: %v", evidence, err)
-		}
-		if evidence.Integrity.Status != Valid || evidence.Resources.Status != Valid || evidence.Signature.Status != Invalid || evidence.Identity.Status != Unsupported || evidence.Platform.Status != Unsupported {
-			t.Fatalf("mixed scopes lost: %+v", evidence)
-		}
-	})
 }
 
 func TestBinaryPlistMetadataAndExecutableTraversal(t *testing.T) {
@@ -167,21 +89,6 @@ func TestBinaryPlistMetadataAndExecutableTraversal(t *testing.T) {
 	writeTestFile(t, filepath.Join(app, "Contents/Info.plist"), data, 0644)
 	if _, err := InspectApp(app); err == nil {
 		t.Fatal("accepted executable traversal")
-	}
-}
-
-func TestResourceScopeRejectsNestedCode(t *testing.T) {
-	root, err := os.OpenRoot("testdata/Fixture.app")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = root.Close() }()
-	data, err := plist.Marshal(map[string]any{"files2": map[string]any{"Frameworks/Nested.framework": map[string]any{"cdhash": make([]byte, 20), "requirement": "identifier org.example.nested"}}}, plist.XMLFormat)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := verifyResources(t.Context(), root, "Contents/MacOS/fixture", data); !errors.Is(err, ErrUnsupported) {
-		t.Fatalf("nested code did not block resource scope: %v", err)
 	}
 }
 
@@ -211,9 +118,8 @@ func TestPackageInspectionAndIntegrity(t *testing.T) {
 	if !seenPayload {
 		t.Fatal("fixture payload was not retained as an archive entry")
 	}
-	evidence, err := VerifyPackage(t.Context(), "testdata/fixture.pkg", Policy{RequireIntegrity: true})
-	if err != nil || evidence.Integrity.Status != Valid {
-		t.Fatalf("native package integrity: %+v: %v", evidence, err)
+	if _, err := VerifyPackage(t.Context(), "testdata/fixture.pkg", signature.Signer{}); err != nil {
+		t.Fatalf("native package: %v", err)
 	}
 	if !bytes.Equal(before, readTestFile(t, "testdata/fixture.pkg")) {
 		t.Fatal("inspection changed installer bytes")
@@ -227,37 +133,17 @@ func TestPackageInspectionAndIntegrity(t *testing.T) {
 	tampered[offset] ^= 0x40
 	file := filepath.Join(t.TempDir(), "tampered.pkg")
 	writeTestFile(t, file, tampered, 0644)
-	if evidence, err := VerifyPackage(t.Context(), file, Policy{RequireIntegrity: true}); err == nil || evidence.Integrity.Status != Invalid {
-		t.Fatalf("tampered payload accepted: %+v: %v", evidence, err)
+	if _, err := VerifyPackage(t.Context(), file, signature.Signer{}); err == nil {
+		t.Fatal("tampered payload accepted")
 	}
 }
 
-func TestPackageRSASignatureAndPinnedIdentity(t *testing.T) {
-	archive, pin := signedXAR(t, "PackageInfo")
+func TestPackageRequiresAppleAnchoredDeveloperID(t *testing.T) {
+	archive := signedXAR(t, "PackageInfo")
 	file := filepath.Join(t.TempDir(), "signed.pkg")
 	writeTestFile(t, file, archive, 0644)
-	policy := Policy{RequireIntegrity: true, RequireSignature: true, RequireIdentity: true, CertificateSHA256: pin}
-	evidence, err := VerifyPackage(t.Context(), file, policy)
-	if err != nil || evidence.Integrity.Status != Valid || evidence.Signature.Status != Valid || evidence.Identity.Status != Valid {
-		t.Fatalf("signed fixture: %+v: %v", evidence, err)
-	}
-	policy.CertificateSHA256 = strings.Repeat("0", 64)
-	if evidence, err := VerifyPackage(t.Context(), file, policy); err == nil || evidence.Identity.Status != Invalid || evidence.Signature.Status != Valid {
-		t.Fatalf("wrong signer pin accepted: %+v: %v", evidence, err)
-	}
-	policy.CertificateSHA256 = ""
-	if evidence, err := VerifyPackage(t.Context(), file, policy); !errors.Is(err, ErrUnsupported) || evidence.Identity.Status != Unsupported {
-		t.Fatalf("implicit trust accepted: %+v: %v", evidence, err)
-	}
-	policy.CertificateSHA256 = pin
-	toc, err := openXAR(bytes.NewReader(archive), int64(len(archive)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	archive[toc.reader.HeapOffset()+toc.reader.TOC().Signature.Offset] ^= 1
-	writeTestFile(t, file, archive, 0644)
-	if evidence, err := VerifyPackage(t.Context(), file, policy); err == nil || evidence.Signature.Status != Invalid || evidence.Identity.Status != Invalid {
-		t.Fatalf("tampered RSA signature accepted: %+v: %v", evidence, err)
+	if _, err := VerifyPackage(t.Context(), file, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "package signature") {
+		t.Fatalf("self-signed package accepted: %v", err)
 	}
 }
 
@@ -276,18 +162,17 @@ func TestPackageRejectsCorruptCMSWithValidRSA(t *testing.T) {
 	data[archive.reader.HeapOffset()+toc.XSignature.Offset] ^= 1
 	file := filepath.Join(t.TempDir(), "corrupt-cms.pkg")
 	writeTestFile(t, file, data, 0o600)
-	evidence, err := VerifyPackage(t.Context(), file, Policy{RequireSignature: true})
-	if err == nil || evidence.Signature.Status != Invalid || evidence.Integrity.Status != Valid {
-		t.Fatalf("corrupt CMS accepted: %+v: %v", evidence, err)
+	if _, err := VerifyPackage(t.Context(), file, signature.Signer{}); err == nil {
+		t.Fatal("corrupt CMS accepted")
 	}
 }
 
 func TestXARRejectsTraversalAndCorruptTOC(t *testing.T) {
-	archive, _ := signedXAR(t, "..")
+	archive := signedXAR(t, "..")
 	if _, err := openXAR(bytes.NewReader(archive), int64(len(archive))); err == nil {
 		t.Fatal("accepted unsafe XAR filename")
 	}
-	archive, _ = signedXAR(t, "PackageInfo")
+	archive = signedXAR(t, "PackageInfo")
 	archive[30] ^= 1
 	if _, err := openXAR(bytes.NewReader(archive), int64(len(archive))); err == nil {
 		t.Fatal("accepted corrupt TOC")
@@ -303,15 +188,34 @@ func copyApp(t *testing.T) string {
 	return app
 }
 
+// corruptExecutable flips a byte inside one architecture's sealed code pages.
 func corruptExecutable(t *testing.T, file string, arch int) {
 	t.Helper()
 	data := readTestFile(t, file)
 	entry := data[8+arch*20 : 28+arch*20]
 	offset := binary.BigEndian.Uint32(entry[8:12])
-	length := binary.BigEndian.Uint32(entry[12:16])
-	// The byte lies in the slice's signed region, after load commands.
-	data[int(offset)+int(length)/2] ^= 0x40
+	slice := data[offset : offset+binary.BigEndian.Uint32(entry[12:16])]
+	commands := slice[32 : 32+binary.LittleEndian.Uint32(slice[20:24])]
+	sealed := uint32(0)
+	for range binary.LittleEndian.Uint32(slice[16:20]) {
+		if binary.LittleEndian.Uint32(commands[:4]) == 0x1d {
+			sealed = binary.LittleEndian.Uint32(commands[8:12])
+		}
+		commands = commands[binary.LittleEndian.Uint32(commands[4:8]):]
+	}
+	if sealed == 0 {
+		t.Fatal("architecture is unsigned")
+	}
+	data[offset+sealed/2] ^= 0x40
 	writeTestFile(t, file, data, 0755)
+}
+
+// portableOnly disables the platform verifier so the test exercises Stemma's own checks.
+func portableOnly(t *testing.T) {
+	t.Helper()
+	native := nativeBundleValidity
+	nativeBundleValidity = nil
+	t.Cleanup(func() { nativeBundleValidity = native })
 }
 
 func readTestFile(t *testing.T, file string) []byte {
@@ -330,7 +234,7 @@ func writeTestFile(t *testing.T, file string, data []byte, mode os.FileMode) {
 	}
 }
 
-func signedXAR(t *testing.T, name string) ([]byte, string) {
+func signedXAR(t *testing.T, name string) []byte {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -341,7 +245,6 @@ func signedXAR(t *testing.T, name string) ([]byte, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pin := sha256.Sum256(der)
 	content := []byte(`<pkg-info identifier="org.example.test" version="1" install-location="/Applications"/>`)
 	contentHash := sha256.Sum256(content)
 	xml := fmt.Sprintf(`<xar><toc><checksum style="sha256"><offset>0</offset><size>32</size></checksum><signature style="RSA"><offset>32</offset><size>256</size><KeyInfo><X509Data><X509Certificate>%s</X509Certificate></X509Data></KeyInfo></signature><file><name>%s</name><type>file</type><data><offset>288</offset><length>%d</length><size>%d</size><encoding style="application/octet-stream"/><archived-checksum style="sha256">%x</archived-checksum><extracted-checksum style="sha256">%x</extracted-checksum></data></file></toc></xar>`, base64.StdEncoding.EncodeToString(der), name, len(content), len(content), contentHash, contentHash)
@@ -370,5 +273,5 @@ func signedXAR(t *testing.T, name string) ([]byte, string) {
 	archive = append(archive, digest[:]...)
 	archive = append(archive, signature...)
 	archive = append(archive, content...)
-	return archive, hex.EncodeToString(pin[:])
+	return archive
 }

@@ -12,10 +12,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/apple"
+	"github.com/woodleighschool/stemma/internal/signature"
 )
 
 func fixture(t *testing.T) (string, Options) {
@@ -51,12 +53,8 @@ func TestBuildIntegrityReproducibilityAndInputChanges(t *testing.T) {
 	if facts.Packages[0].Identifier != opts.Identifier || facts.Packages[0].Version != opts.Version {
 		t.Fatalf("wrong package facts: %+v", facts.Packages)
 	}
-	evidence, err := apple.VerifyPackage(t.Context(), output, apple.Policy{RequireIntegrity: true})
-	if err != nil || evidence.Integrity.Status != apple.Valid {
-		t.Fatalf("package integrity: %+v: %v", evidence, err)
-	}
-	if _, err := apple.VerifyPackage(t.Context(), output, apple.Policy{RequireSignature: true}); err == nil {
-		t.Fatal("unsigned package authenticated")
+	if _, err := apple.VerifyPackage(t.Context(), output, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "not signed") {
+		t.Fatalf("built package claimed a signer: %v", err)
 	}
 	first, err := os.ReadFile(output)
 	if err != nil {
@@ -88,8 +86,8 @@ func TestBuildIntegrityReproducibilityAndInputChanges(t *testing.T) {
 	if err := os.WriteFile(tampered, first, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := apple.VerifyPackage(t.Context(), tampered, apple.Policy{RequireIntegrity: true}); err == nil {
-		t.Fatal("tampered archive passed integrity")
+	if _, err := apple.VerifyPackage(t.Context(), tampered, signature.Signer{}); err == nil || strings.Contains(err.Error(), "not signed") {
+		t.Fatalf("tampered archive passed integrity: %v", err)
 	}
 }
 func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
@@ -217,8 +215,8 @@ func TestBuildLargeAppStreamsAndRemainsReproducible(t *testing.T) {
 	if len(facts.Applications) != 1 || facts.Applications[0].App.BundleID != "org.example.large" || facts.Applications[0].InstalledPath != "/Applications/Fixture.app" {
 		t.Fatalf("wrong package app facts: %+v", facts.Applications)
 	}
-	if _, err := apple.VerifyPackage(t.Context(), first, apple.Policy{RequireIntegrity: true}); err != nil {
-		t.Fatal(err)
+	if _, err := apple.VerifyPackage(t.Context(), first, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "not signed") {
+		t.Fatalf("large package integrity: %v", err)
 	}
 	second := filepath.Join(t.TempDir(), "second.pkg")
 	if err := Build(t.Context(), root, second, opts); err != nil {

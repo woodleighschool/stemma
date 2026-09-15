@@ -8,10 +8,10 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"hash"
 	"io"
+	"maps"
 	"os"
 	"sort"
 )
@@ -92,67 +92,91 @@ func InspectMachO(filePath string) (MachOFacts, error) {
 	return facts, nil
 }
 
-func verifyExecutable(ctx context.Context, f *os.File, policy Policy, external map[uint32][]byte, evidence *Evidence) error {
-	if policy.RequirePlatform {
-		evidence.Platform = Check{Status: Unsupported, Detail: "macOS platform assessment requires native OS policy"}
-	}
-	if policy.RequireIdentity && policy.CertificateSHA256 == "" {
-		evidence.Identity = Check{Status: Unsupported, Detail: "identity verification requires an exact certificate SHA-256 pin"}
-	}
+// verifyMachO authenticates every architecture of a signed Mach-O: each
+// CodeDirectory seals its code pages and special slots, its CMS signature
+// chains to Apple at the signature's trusted time, and all architectures
+// share one signer and identifier.
+func verifyMachO(ctx context.Context, f *os.File, external map[uint32][]byte) (codeIdentity, error) {
 	info, err := f.Stat()
 	if err != nil {
-		return err
+		return codeIdentity{}, err
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("Mach-O subject must be a regular file")
+		return codeIdentity{}, fmt.Errorf("Mach-O must be a regular file")
 	}
-	slices, parseErr := machoSlices(contextReaderAt{ctx, f}, info.Size())
-	var integrityErr, signatureErr, identityErr error
-	if parseErr != nil {
-		integrityErr, signatureErr = parseErr, parseErr
+	slices, err := machoSlices(contextReaderAt{ctx, f}, info.Size())
+	if err != nil {
+		return codeIdentity{}, err
 	}
-	for _, slice := range slices {
+	var identity codeIdentity
+	for i, slice := range slices {
 		if err := ctx.Err(); err != nil {
-			return err
+			return codeIdentity{}, err
 		}
-		signature, err := slice.signature()
+		current, err := slice.verify(external)
 		if err != nil {
-			integrityErr, signatureErr = errors.Join(integrityErr, err), errors.Join(signatureErr, err)
-			identityErr = errors.Join(identityErr, err)
-			break
+			return codeIdentity{}, fmt.Errorf("Mach-O CPU %#x: %w", slice.cpu, err)
 		}
-		if policy.RequireSignature {
-			certificate, err := verifyCMS(signature)
-			signatureErr = errors.Join(signatureErr, err)
-			if policy.CertificateSHA256 != "" {
-				if err == nil {
-					digest := sha256.Sum256(certificate.Raw)
-					if hex.EncodeToString(digest[:]) != policy.CertificateSHA256 {
-						err = fmt.Errorf("CMS signer certificate SHA-256 does not match pin")
-					}
-				}
-				identityErr = errors.Join(identityErr, err)
+		if i == 0 {
+			identity = current
+			continue
+		}
+		if !identity.same(current) {
+			return codeIdentity{}, fmt.Errorf("Mach-O architectures are signed by different identities")
+		}
+		identity.cdhashes = append(identity.cdhashes, current.cdhashes...)
+	}
+	return identity, ctx.Err()
+}
+
+func (m machoSlice) verify(external map[uint32][]byte) (codeIdentity, error) {
+	sig, err := m.signature()
+	if err != nil {
+		return codeIdentity{}, err
+	}
+	if external[1] == nil {
+		embedded, err := m.embeddedInfoPlist()
+		if err != nil {
+			return codeIdentity{}, err
+		}
+		if embedded != nil {
+			external = maps.Clone(external)
+			if external == nil {
+				external = map[uint32][]byte{}
 			}
-		}
-		if policy.RequireIntegrity || policy.RequireResources {
-			for _, directory := range signature.directories {
-				if err := slice.verifyCodeDirectory(directory, signature, external); err != nil {
-					integrityErr = errors.Join(integrityErr, err)
-					break
-				}
-			}
+			external[1] = embedded
 		}
 	}
-	if policy.RequireIntegrity || policy.RequireResources {
-		evidence.Integrity = checkError(integrityErr, "all architecture CodeDirectory page and special-slot hashes match")
+	for _, cd := range sig.directories {
+		if err := m.verifyCodeDirectory(cd, sig, external); err != nil {
+			return codeIdentity{}, err
+		}
 	}
-	if policy.RequireSignature {
-		evidence.Signature = checkError(signatureErr, "all architecture primary CodeDirectories authenticate against their embedded CMS signer certificates; chain trust, revocation and trusted timestamps are not assessed")
+	cms, err := verifyCMS(sig)
+	if err != nil {
+		return codeIdentity{}, err
 	}
-	if policy.CertificateSHA256 != "" {
-		evidence.Identity = checkError(errors.Join(parseErr, identityErr), "every architecture's authenticated CMS signer matches the exact certificate SHA-256 pin")
+	at, err := trustedTime(cms.timestampToken, cms.signatureValue)
+	if err != nil {
+		return codeIdentity{}, err
 	}
-	return ctx.Err()
+	identity, err := identify(cms.certificate, cms.certificates, at)
+	if err != nil {
+		return codeIdentity{}, err
+	}
+	if identity.identifier, err = codeString(sig.directories[0], binary.BigEndian.Uint32(sig.directories[0][20:24])); err != nil {
+		return codeIdentity{}, err
+	}
+	for _, cd := range sig.directories {
+		h, _, err := codeHash(cd[37])
+		if err != nil {
+			return codeIdentity{}, err
+		}
+		_, _ = h.Write(cd)
+		// A cdhash is the CodeDirectory hash truncated to 20 bytes.
+		identity.cdhashes = append(identity.cdhashes, h.Sum(nil)[:20])
+	}
+	return identity, nil
 }
 
 func machoSlices(r io.ReaderAt, size int64) ([]machoSlice, error) {
@@ -239,49 +263,111 @@ func machoOrder(magic uint32) (binary.ByteOrder, int64, error) {
 	}
 }
 
-func (m machoSlice) signature() (*codeSignature, error) {
+// loadCommands calls visit with each load command's kind and bytes.
+func (m machoSlice) loadCommands(visit func(order binary.ByteOrder, kind uint32, command []byte) error) (int64, error) {
 	var header [28]byte
 	if _, err := m.r.ReadAt(header[:], 0); err != nil {
-		return nil, err
+		return 0, err
 	}
 	order, headerSize, err := machoOrder(binary.BigEndian.Uint32(header[:4]))
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 	count, size := order.Uint32(header[16:20]), order.Uint32(header[20:24])
 	if count > 65536 || size > 16<<20 || int64(size) > m.size-headerSize {
-		return nil, fmt.Errorf("invalid Mach-O load commands")
+		return 0, fmt.Errorf("invalid Mach-O load commands")
 	}
 	commands := make([]byte, size)
 	if _, err := m.r.ReadAt(commands, headerSize); err != nil {
-		return nil, err
+		return 0, err
 	}
-	var offset, length int64
-	found := false
 	for range count {
 		if len(commands) < 8 {
-			return nil, fmt.Errorf("truncated Mach-O load command")
+			return 0, fmt.Errorf("truncated Mach-O load command")
 		}
 		kind, commandSize := order.Uint32(commands[:4]), order.Uint32(commands[4:8])
 		if commandSize < 8 || uint64(commandSize) > uint64(len(commands)) {
-			return nil, fmt.Errorf("invalid Mach-O load command size")
+			return 0, fmt.Errorf("invalid Mach-O load command size")
 		}
-		if kind == 0x1d {
-			if found || commandSize != 16 {
-				return nil, fmt.Errorf("invalid or duplicate LC_CODE_SIGNATURE")
-			}
-			found = true
-			offset, length = int64(order.Uint32(commands[8:12])), int64(order.Uint32(commands[12:16]))
+		if err := visit(order, kind, commands[:commandSize]); err != nil {
+			return 0, err
 		}
 		commands = commands[commandSize:]
 	}
 	if len(commands) != 0 {
-		return nil, fmt.Errorf("Mach-O command count and size disagree")
+		return 0, fmt.Errorf("Mach-O command count and size disagree")
+	}
+	return headerSize + int64(size), nil
+}
+
+// embeddedInfoPlist returns the __TEXT,__info_plist section that standalone
+// executables carry in place of a bundle Info.plist, sealed by special slot 1.
+func (m machoSlice) embeddedInfoPlist() ([]byte, error) {
+	var offset, size uint64
+	_, err := m.loadCommands(func(order binary.ByteOrder, kind uint32, command []byte) error {
+		headerSize, sectionSize, wide := 56, 68, false
+		switch kind {
+		case 0x1:
+		case 0x19:
+			headerSize, sectionSize, wide = 72, 80, true
+		default:
+			return nil
+		}
+		if len(command) < headerSize || string(bytes.TrimRight(command[8:24], "\x00")) != "__TEXT" {
+			return nil
+		}
+		sections := command[headerSize:]
+		for len(sections) >= sectionSize {
+			section := sections[:sectionSize]
+			sections = sections[sectionSize:]
+			if string(bytes.TrimRight(section[:16], "\x00")) != "__info_plist" {
+				continue
+			}
+			if size != 0 {
+				return fmt.Errorf("duplicate __info_plist section")
+			}
+			if wide {
+				size, offset = order.Uint64(section[40:48]), uint64(order.Uint32(section[48:52]))
+			} else {
+				size, offset = uint64(order.Uint32(section[36:40])), uint64(order.Uint32(section[40:44]))
+			}
+			if size == 0 || size > maxMetadata || offset > uint64(m.size) || size > uint64(m.size)-offset {
+				return fmt.Errorf("invalid __info_plist section")
+			}
+		}
+		return nil
+	})
+	if err != nil || size == 0 {
+		return nil, err
+	}
+	data := make([]byte, size)
+	if _, err := m.r.ReadAt(data, int64(offset)); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func (m machoSlice) signature() (*codeSignature, error) {
+	var offset, length int64
+	found := false
+	end, err := m.loadCommands(func(order binary.ByteOrder, kind uint32, command []byte) error {
+		if kind != 0x1d {
+			return nil
+		}
+		if found || len(command) != 16 {
+			return fmt.Errorf("invalid or duplicate LC_CODE_SIGNATURE")
+		}
+		found = true
+		offset, length = int64(order.Uint32(command[8:12])), int64(order.Uint32(command[12:16]))
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	if !found {
 		return nil, fmt.Errorf("Mach-O is unsigned")
 	}
-	if offset < headerSize+int64(size) || length < 12 || length > maxSignature || offset > m.size || length != m.size-offset {
+	if offset < end || length < 12 || length > maxSignature || offset > m.size || length != m.size-offset {
 		return nil, fmt.Errorf("%w: Mach-O signature must be a bounded final region", ErrUnsupported)
 	}
 	data := make([]byte, length)
@@ -436,7 +522,7 @@ func (m machoSlice) verifyCodeDirectory(cd []byte, sig *codeSignature, external 
 		}
 		start := hashOffset + int64(slot)*int64(size)
 		if !bytes.Equal(h.Sum(digest[:0])[:size], cd[start:start+int64(size)]) {
-			return fmt.Errorf("Mach-O CPU %#x code page %d hash mismatch", m.cpu, slot)
+			return fmt.Errorf("code page %d hash mismatch", slot)
 		}
 	}
 	for slot := uint32(1); slot <= binary.BigEndian.Uint32(cd[24:28]); slot++ {
@@ -458,7 +544,7 @@ func (m machoSlice) verifyCodeDirectory(cd []byte, sig *codeSignature, external 
 		h.Reset()
 		h.Write(value)
 		if !bytes.Equal(h.Sum(digest[:0])[:size], expected) {
-			return fmt.Errorf("Mach-O special slot %d hash mismatch", slot)
+			return fmt.Errorf("special slot %d hash mismatch", slot)
 		}
 	}
 	for slot := range external {

@@ -14,8 +14,18 @@ import (
 
 var oidHashAgility = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 9, 1}
 var oidHashAgilityV2 = asn1.ObjectIdentifier{1, 2, 840, 113635, 100, 9, 2}
+var oidTimestampToken = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 9, 16, 2, 14}
 
-func verifyCMS(signature *codeSignature) (*x509.Certificate, error) {
+// cmsSignature is an authenticated CMS signature over a CodeDirectory. The
+// certificate chain and timestamp token are not yet trusted.
+type cmsSignature struct {
+	certificate    *x509.Certificate
+	certificates   []*x509.Certificate
+	signatureValue []byte
+	timestampToken []byte
+}
+
+func verifyCMS(signature *codeSignature) (*cmsSignature, error) {
 	if len(signature.directories) == 0 {
 		return nil, fmt.Errorf("CMS has no CodeDirectory")
 	}
@@ -159,7 +169,18 @@ func verifyCMS(signature *codeSignature) (*x509.Certificate, error) {
 	if err := signed.Verify(); err != nil {
 		return nil, fmt.Errorf("CMS signature: %w", err)
 	}
-	return certificate, nil
+	result := &cmsSignature{certificate: certificate, certificates: signed.Certificates, signatureValue: signer.EncryptedDigest}
+	for _, attribute := range signer.UnauthenticatedAttributes {
+		if !attribute.Type.Equal(oidTimestampToken) {
+			continue
+		}
+		var token asn1.RawValue
+		if _, err := asn1.Unmarshal(attribute.Value.Bytes, &token); err != nil || result.timestampToken != nil {
+			return nil, fmt.Errorf("invalid or duplicate CMS timestamp token")
+		}
+		result.timestampToken = token.FullBytes
+	}
+	return result, nil
 }
 
 // Native signatures use both DER and indefinite-length BER. The CMS library

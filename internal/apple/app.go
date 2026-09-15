@@ -1,11 +1,7 @@
 package apple
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha1"
-	"crypto/sha256"
-	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -18,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"howett.net/plist"
 )
 
@@ -71,68 +68,33 @@ func InspectAppFS(ctx context.Context, fsys fs.FS, appPath string) (AppFacts, er
 	return ParseAppInfo(data)
 }
 
-// VerifyApp checks the executable and requested resource scope of a Contents-style
-// bundle. Resource sealing rejects symlinks, nested code and unsealed files.
-// SubjectSHA256 is the main executable's digest. Its code signature seals
-// Info.plist and CodeResources, so other bundle files are read only for resources.
-func VerifyApp(ctx context.Context, appPath string, policy Policy) (Evidence, error) {
+// VerifyApp verifies a Contents-style bundle's complete Developer ID signature
+// and reports its signer. A zero want derives the signer; otherwise it must match.
+func VerifyApp(ctx context.Context, appPath string, want signature.Signer) (signature.Result, error) {
 	if err := ctx.Err(); err != nil {
-		return Evidence{}, err
+		return signature.Result{}, err
 	}
-	policy = policy.expanded()
 	root, err := os.OpenRoot(appPath)
 	if err != nil {
-		return Evidence{}, err
+		return signature.Result{}, err
 	}
 	defer func() { _ = root.Close() }()
-	evidence := newEvidence("", policy)
-	facts, info, err := appInfo(root)
+	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10)}
+	if nativeBundleValidity != nil {
+		v.skipEnvelopes = nativeBundleValidity(ctx, appPath)
+	}
+	identity, err := v.verifyContents(root, filepath.Base(appPath))
 	if err != nil {
-		return evidence, err
+		return signature.Result{}, err
 	}
-	resources, resourcesErr := rootRead(root, "Contents/_CodeSignature/CodeResources", 32<<20)
-	if resourcesErr != nil && !errors.Is(resourcesErr, fs.ErrNotExist) {
-		return evidence, resourcesErr
+	if !identity.application {
+		return signature.Result{}, fmt.Errorf("%w: application is not signed with a Developer ID Application certificate", ErrUnsupported)
 	}
-	external := map[uint32][]byte{1: info}
-	if resourcesErr == nil {
-		external[3] = resources
+	result := signature.Result{Signer: identity.signer().String(), Name: identity.name, Authority: "Developer ID Application", Target: filepath.Base(appPath), Verifier: signature.Verifier}
+	if err := signature.Check(identity.signer(), want); err != nil {
+		return result, err
 	}
-	executable := "Contents/MacOS/" + facts.Executable
-	f, err := openAppFile(root, executable)
-	if err != nil {
-		return evidence, err
-	}
-	defer func() { _ = f.Close() }()
-	if evidence.SubjectSHA256, err = fileDigest(ctx, f, nil); err != nil {
-		return evidence, err
-	}
-	if err := verifyExecutable(ctx, f, policy, external, &evidence); err != nil {
-		return evidence, err
-	}
-	if policy.RequireResources {
-		switch {
-		case evidence.Integrity.Status != Valid:
-			evidence.Resources = Check{Status: evidence.Integrity.Status, Detail: "resource manifest binding failed: " + evidence.Integrity.Detail}
-		case resourcesErr != nil:
-			evidence.Resources = checkError(resourcesErr, "")
-		default:
-			evidence.Resources = checkError(verifyResources(ctx, root, executable, resources), "every regular resource is sealed and matches its recorded digest; no nested code or symlinks")
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return evidence, err
-	}
-	return evidence, evidence.required(policy)
-}
-
-func appInfo(root *os.Root) (AppFacts, []byte, error) {
-	data, err := rootRead(root, "Contents/Info.plist", maxMetadata)
-	if err != nil {
-		return AppFacts{}, nil, err
-	}
-	facts, err := ParseAppInfo(data)
-	return facts, data, err
+	return result, ctx.Err()
 }
 
 // ParseAppInfo reads conventional application metadata without accessing an
@@ -237,103 +199,4 @@ func openAppFile(root *os.Root, name string) (*os.File, error) {
 		}
 	}
 	return root.Open(name)
-}
-
-func verifyResources(ctx context.Context, root *os.Root, executable string, data []byte) error {
-	var manifest struct {
-		Files map[string]any `plist:"files2"`
-	}
-	if _, err := plist.Unmarshal(data, &manifest); err != nil {
-		return fmt.Errorf("CodeResources: %w", err)
-	}
-	if manifest.Files == nil {
-		return fmt.Errorf("%w: CodeResources requires version-2 files2 seals", ErrUnsupported)
-	}
-	if len(manifest.Files) > 100000 {
-		return fmt.Errorf("too many resource seals")
-	}
-	sealed := make(map[string]bool, len(manifest.Files))
-	buffer := make([]byte, 32<<10)
-	for name, value := range manifest.Files {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if !fs.ValidPath(name) || strings.ContainsAny(name, "\\\x00:") {
-			return fmt.Errorf("unsafe resource seal path %q", name)
-		}
-		if filepath.Ext(name) == ".app" || filepath.Ext(name) == ".framework" || filepath.Ext(name) == ".xpc" {
-			return fmt.Errorf("%w: nested code resource %q", ErrUnsupported, name)
-		}
-		seals, ok := value.(map[string]any)
-		if !ok {
-			return fmt.Errorf("%w: resource seal representation for %q", ErrUnsupported, name)
-		}
-		if _, nested := seals["cdhash"]; nested {
-			return fmt.Errorf("%w: nested code resource %q", ErrUnsupported, name)
-		}
-		if _, symlink := seals["symlink"]; symlink {
-			return fmt.Errorf("%w: symlink resource %q", ErrUnsupported, name)
-		}
-		for key := range seals {
-			if key != "hash" && key != "hash2" && key != "optional" {
-				return fmt.Errorf("%w: resource seal field %q", ErrUnsupported, key)
-			}
-		}
-		fullPath := "Contents/" + name
-		if fullPath == executable || fullPath == "Contents/Info.plist" || strings.HasPrefix(name, "_CodeSignature/") {
-			return fmt.Errorf("unsupported resource seal targets special file %q", name)
-		}
-		info, err := root.Lstat(fullPath)
-		if err != nil {
-			return fmt.Errorf("sealed resource %q: %w", name, err)
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("%w: nonregular resource %q", ErrUnsupported, name)
-		}
-		f, err := root.Open(fullPath)
-		if err != nil {
-			return err
-		}
-		sha1Hash, sha256Hash := sha1.New(), sha256.New()
-		_, err = io.CopyBuffer(io.MultiWriter(sha1Hash, sha256Hash), fileio.Reader{Context: ctx, Reader: f}, buffer)
-		_ = f.Close()
-		if err != nil {
-			return err
-		}
-		checked := false
-		for key, actual := range map[string][]byte{"hash": sha1Hash.Sum(nil), "hash2": sha256Hash.Sum(nil)} {
-			if value, present := seals[key]; present {
-				expected, ok := value.([]byte)
-				if !ok || !bytes.Equal(expected, actual) {
-					return fmt.Errorf("resource %q %s mismatch", name, key)
-				}
-				checked = true
-			}
-		}
-		if !checked {
-			return fmt.Errorf("%w: resource %q has no supported digest", ErrUnsupported, name)
-		}
-		sealed[fullPath] = true
-	}
-	return fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
-		if canceled := ctx.Err(); canceled != nil {
-			return canceled
-		}
-		if err != nil {
-			return err
-		}
-		if name == "." || entry.IsDir() {
-			return nil
-		}
-		if entry.Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("%w: app symlink %q", ErrUnsupported, name)
-		}
-		if name == executable || name == "Contents/Info.plist" || name == "Contents/_CodeSignature/CodeResources" {
-			return nil
-		}
-		if !strings.HasPrefix(name, "Contents/") || path.Clean(name) != name || !sealed[name] {
-			return fmt.Errorf("unsealed app resource %q", name)
-		}
-		return nil
-	})
 }
