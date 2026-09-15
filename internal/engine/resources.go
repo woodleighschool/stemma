@@ -183,7 +183,10 @@ func preflight(plans map[string]resourcePlan, selected []string, p config.Projec
 	return nil
 }
 
-func prepareResource(ctx context.Context, store *cas.Store, ops *operations, plan resourcePlan, inputs map[string]Prepared, work string, refreshIcons bool) (result map[string]Prepared, cacheHit bool, err error) {
+// prepareResource reuses cached outputs unless derive names a policy to
+// observe, which always runs the operation and keeps its outputs out of the
+// cache.
+func prepareResource(ctx context.Context, store *cas.Store, ops *operations, plan resourcePlan, inputs map[string]Prepared, work string, refreshIcons bool, derive string) (result map[string]Prepared, cacheHit bool, err error) {
 	done := plugin.Stage(ctx, "Checking preparation cache")
 	defer func() { done(err) }()
 	identityInputs := map[string]plugin.Artifact{}
@@ -212,6 +215,9 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	cached, complete, err := recallOutputs(ctx, store, key)
 	if err != nil {
 		return nil, false, err
+	}
+	if derive != "" {
+		cached, complete = map[string]Prepared{}, false
 	}
 	for name, variant := range plan.CacheVariants {
 		delete(cached, name)
@@ -253,7 +259,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	if err != nil {
 		return nil, false, err
 	}
-	request := plugin.ResourceRequest{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Cached: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp}
+	request := plugin.ResourceRequest{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Cached: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp, Derive: derive}
 	for name, input := range inputs {
 		leased, err := materialize(ctx, store, input, filepath.Join(work, "inputs", config.Fingerprint(name)))
 		if err != nil {

@@ -1,12 +1,16 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/fatih/color"
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/internal/signature"
 )
 
 func resourceName(resource engine.ResourceReport) string {
@@ -22,6 +26,9 @@ func resourceStatus(method string, resource engine.ResourceReport) string {
 	}
 	if method == "update" {
 		return "inputs resolved"
+	}
+	if method == "signature" {
+		return "signer derived"
 	}
 	if len(resource.Destinations) > 0 {
 		changes := 0
@@ -71,8 +78,31 @@ func printResource(out io.Writer, method string, resource engine.ResourceReport)
 		_, _ = fmt.Fprintf(&text, "  %s\n", resource.Error)
 	}
 	text.WriteString(details.String())
+	if method == "signature" && resource.Error == "" {
+		text.WriteString(signatureDetails(resource))
+	}
 	_, err := io.WriteString(out, text.String())
 	return err
+}
+
+// signatureDetails renders the derived signer and the fragment to author.
+func signatureDetails(resource engine.ResourceReport) string {
+	var text strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(resource.Artifacts)) {
+		data, ok := resource.Artifacts[name].Evidence["signature"]
+		if !ok {
+			continue
+		}
+		var result signature.Result
+		if err := json.Unmarshal(data, &result); err != nil {
+			continue
+		}
+		_, _ = fmt.Fprintf(&text, "  Signer:    %s (%s)\n  Target:    %s\n", result.Name, result.Authority, result.Target)
+		for line := range strings.SplitSeq(strings.TrimSuffix(result.Fragment(), "\n"), "\n") {
+			_, _ = fmt.Fprintf(&text, "  %s\n", line)
+		}
+	}
+	return text.String()
 }
 
 func printSummary(out io.Writer, method string, report engine.Report) error {
@@ -98,6 +128,8 @@ func printSummary(out io.Writer, method string, report engine.Report) error {
 		switch method {
 		case "prepare":
 			_, _ = fmt.Fprintf(&text, "%s %d prepared, %d cached, %d failed.\n", style.paint("Preparation:", color.Bold), prepared, cached, failed)
+		case "signature":
+			_, _ = fmt.Fprintf(&text, "%s %d derived, %d failed.\n", style.paint("Signatures:", color.Bold), prepared, failed)
 		case "plan":
 			_, _ = fmt.Fprintf(&text, "%s %d changes, %d failed resources.\n", style.paint("Plan:", color.Bold), changes, failed)
 		case "apply":

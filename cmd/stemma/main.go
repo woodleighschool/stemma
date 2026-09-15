@@ -142,9 +142,9 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	}}
 	operations.Flags().BoolVar(&operationsOffline, "offline", false, "Require verified cached plugin bundles")
 	root.AddCommand(operations)
-	for _, method := range []string{"update", "prepare", "plan", "apply"} {
+	for _, method := range []string{"update", "prepare", "signature", "plan", "apply"} {
 		var offline, refreshIcons bool
-		cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
+		cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "signature": "Derive the verified signer of each published artifact", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := resolve()
 			if err != nil {
 				return err

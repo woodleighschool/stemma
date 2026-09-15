@@ -86,10 +86,12 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	done := plugin.Stage(ctx, "Loading project")
 	defer func() { done(runErr) }()
 	switch opts.Method {
-	case "update", "prepare", "plan", "apply":
+	case "update", "prepare", "signature", "plan", "apply":
 	default:
 		return report, fmt.Errorf("unsupported run method %q", opts.Method)
 	}
+	// signature derives each resource's signer through the preparation path.
+	preparing := opts.Method == "prepare" || opts.Method == "signature"
 	p, err := config.Load(opts.ConfigPath)
 	done(err)
 	if err != nil {
@@ -307,7 +309,11 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		}
 		var outputs map[string]Prepared
 		if preparationErr == nil {
-			outputs, item.Cached, preparationErr = prepareResource(ctx, store, ops, plan, inputs, work, opts.RefreshIcons)
+			derive := ""
+			if opts.Method == "signature" {
+				derive = "signature"
+			}
+			outputs, item.Cached, preparationErr = prepareResource(ctx, store, ops, plan, inputs, work, opts.RefreshIcons, derive)
 		}
 		item.Artifacts = outputs
 		if preparationErr != nil {
@@ -343,7 +349,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		if reconciled[destination] {
 			return nil
 		}
-		if opts.Method != "prepare" {
+		if !preparing {
 			for _, dependency := range dependencies[destination] {
 				if _, selected := declarations[dependency.Resource]; selected {
 					if err := reconcile(dependency); err != nil {
@@ -363,7 +369,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			return nil
 		}
 		var destinationErr error
-		if opts.Method != "prepare" {
+		if !preparing {
 			for _, dependency := range dependencies[destination] {
 				if failed[dependency] {
 					destinationErr = fmt.Errorf("required publication %s/%s failed", dependency.Resource, dependency.Destination)
@@ -499,7 +505,7 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 	if err := verifyLeases(ctx, store, work, input.request); err != nil {
 		return err
 	}
-	if opts.Method == "prepare" {
+	if opts.Method == "prepare" || opts.Method == "signature" {
 		return nil
 	}
 	done(nil)

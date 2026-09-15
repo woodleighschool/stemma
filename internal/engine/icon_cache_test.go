@@ -48,7 +48,7 @@ func TestAuxiliaryCacheVariantsReuseInstaller(t *testing.T) {
 	run := func(refresh bool) (map[string]Prepared, bool) {
 		t.Helper()
 		plan.CacheVariants["icon"] = variant
-		result, hit, err := prepareResource(t.Context(), store, ops, plan, nil, t.TempDir(), refresh)
+		result, hit, err := prepareResource(t.Context(), store, ops, plan, nil, t.TempDir(), refresh, "")
 		if err != nil {
 			t.Fatal(err)
 		}

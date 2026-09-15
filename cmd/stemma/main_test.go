@@ -159,6 +159,13 @@ spec:
 	if downloads.Load() != 1 {
 		t.Fatal("unexpected acquisition count")
 	}
+	derived := run(true, "signature")
+	var signer struct {
+		Signer string `json:"signer"`
+	}
+	if len(derived.Resources) != 1 || json.Unmarshal(derived.Resources[0].Artifacts["installer"].Evidence["signature"], &signer) != nil || signer.Signer != "apple:developer-id:SMLKBTR495" {
+		t.Fatalf("signature derivation: %+v", derived.Resources)
+	}
 	plan := run(true, "plan")
 	if len(plan.Resources) != 1 || len(plan.Resources[0].Destinations) != 2 {
 		t.Fatalf("incomplete plan: %#v", plan)

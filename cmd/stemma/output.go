@@ -205,7 +205,7 @@ func (o *commandOutput) resourceDone(out io.Writer, format, method string, resou
 			return nil
 		}
 	}
-	if format != "json" && details {
+	if format != "json" && (details || method == "signature") {
 		return printResource(out, method, resource)
 	}
 	return nil
