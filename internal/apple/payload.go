@@ -3,7 +3,6 @@ package apple
 import (
 	"bufio"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/binary"
 	"encoding/xml"
@@ -18,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/deploymenttheory/go-macos-pkg/pkg/pbzx"
+	"github.com/klauspost/compress/gzip"
 	"github.com/mikelolasagasti/xz"
 	"github.com/woodleighschool/stemma/internal/fileio"
 )
@@ -259,20 +259,14 @@ func (r contextReaderAt) ReadAt(p []byte, off int64) (int, error) {
 }
 
 func (a *xarArchive) payloadApps(ctx context.Context, name string, budget *payloadBudget, applicationRoot bool) ([]PackageApp, error) {
-	r, w := io.Pipe()
-	done := make(chan error, 1)
-	go func() {
-		err := a.readEntry(name, w, maxEntrySize)
-		_ = w.CloseWithError(err)
-		done <- err
-	}()
-	apps, err := readPayload(ctx, r, budget, applicationRoot)
-	_ = r.CloseWithError(err)
-	readErr := <-done
+	entry, err := a.openEntry(name, maxEntrySize)
 	if err != nil {
 		return nil, err
 	}
-	return apps, readErr
+	defer func() { _ = entry.Close() }()
+	// Entry reads observe cancellation, so the decoder is released after reading
+	// stops rather than closed concurrently with a read.
+	return readPayload(ctx, io.NopCloser(entry), budget, applicationRoot)
 }
 
 func readPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudget, applicationRoot bool) ([]PackageApp, error) {

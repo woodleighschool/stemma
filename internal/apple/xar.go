@@ -245,27 +245,43 @@ func validatePackageXAR(x *xar.Reader) error {
 }
 
 func (a *xarArchive) readEntry(name string, dst io.Writer, limit int64) error {
-	file := a.files[name]
-	if file == nil || file.Type.Value != xar.TypeFile {
-		return fmt.Errorf("XAR entry %q is not a regular file", name)
-	}
-	return a.readFile(file, dst, limit)
-}
-
-func (a *xarArchive) readFile(file *xar.File, dst io.Writer, limit int64) error {
-	if file.Data == nil {
-		return fmt.Errorf("%w: XAR regular file without data descriptor", ErrUnsupported)
-	}
-	if err := validatePackageData(file.Data, limit); err != nil {
-		return err
-	}
-	r, err := a.reader.OpenVerified(file)
+	r, err := a.openEntry(name, limit)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = r.Close() }()
 	_, err = io.Copy(dst, r)
 	return err
+}
+
+// openEntry returns a regular file's decoded bytes. Checksums are verified when
+// reading reaches EOF.
+func (a *xarArchive) openEntry(name string, limit int64) (io.ReadCloser, error) {
+	file := a.files[name]
+	if file == nil || file.Type.Value != xar.TypeFile {
+		return nil, fmt.Errorf("XAR entry %q is not a regular file", name)
+	}
+	return a.openFile(file, limit)
+}
+
+func (a *xarArchive) readFile(file *xar.File, dst io.Writer, limit int64) error {
+	r, err := a.openFile(file, limit)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = r.Close() }()
+	_, err = io.Copy(dst, r)
+	return err
+}
+
+func (a *xarArchive) openFile(file *xar.File, limit int64) (io.ReadCloser, error) {
+	if file.Data == nil {
+		return nil, fmt.Errorf("%w: XAR regular file without data descriptor", ErrUnsupported)
+	}
+	if err := validatePackageData(file.Data, limit); err != nil {
+		return nil, err
+	}
+	return a.reader.OpenVerified(file)
 }
 
 func validatePackageData(data *xar.Data, limit int64) error {

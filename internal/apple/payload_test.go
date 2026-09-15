@@ -148,6 +148,54 @@ func TestPackageContentsRejectsUnsafeAndIncompletePayloads(t *testing.T) {
 	})
 }
 
+func TestPackageContentsVerifiesPayloadAtEOF(t *testing.T) {
+	sentinel := []byte("bytes sealed only by XAR checksums")
+	archive := cpioPayload(t, []payloadEntry{
+		plistEntry(t, "./Example.app/Contents/Info.plist", "Example"),
+		{cpio.Header{Name: "./Example.app/Contents/Resources/data", Mode: cpio.ModeRegular | 0o644, NLink: 1}, sentinel},
+	})
+	info := payloadMember{"PackageInfo", []byte(`<pkg-info identifier="org.example.app" version="1" install-location="/"/>`)}
+	zero := strings.Repeat("00", sha256.Size)
+	for _, compression := range []string{"plain", "gzip", "xz", "pbzx"} {
+		payload := compressPayload(t, compression, archive)
+		for _, test := range []struct {
+			name   string
+			tamper func(*xar.Data)
+			want   string
+		}{
+			{"intact", func(*xar.Data) {}, ""},
+			{"archived_checksum", func(data *xar.Data) { data.ArchivedChecksum.Value = zero }, "archived checksum mismatch"},
+			{"extracted_checksum", func(data *xar.Data) { data.ExtractedChecksum.Value = zero }, "extracted checksum mismatch"},
+			{"declared_size", func(data *xar.Data) { data.Size++ }, "short by 1 bytes"},
+		} {
+			t.Run(compression+"/"+test.name, func(t *testing.T) {
+				name := writeTamperedPayloadPackage(t, []payloadMember{info, {"Payload", payload}}, func(member string, data *xar.Data) {
+					if member == "Payload" {
+						test.tamper(data)
+					}
+				})
+				facts, err := InspectPackageContents(t.Context(), name)
+				if test.want == "" {
+					if err != nil || len(facts.Applications) != 1 {
+						t.Fatalf("intact payload: %+v, %v", facts, err)
+					}
+				} else if err == nil || !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("payload verification error = %v, want %q", err, test.want)
+				}
+			})
+		}
+	}
+	t.Run("plain/stored_bytes", func(t *testing.T) {
+		name := writePayloadPackage(t, []payloadMember{info, {"Payload", archive}})
+		content := readTestFile(t, name)
+		content[bytes.Index(content, sentinel)] ^= 1
+		writeTestFile(t, name, content, 0o600)
+		if _, err := InspectPackageContents(t.Context(), name); err == nil || !strings.Contains(err.Error(), "archived checksum mismatch") {
+			t.Fatalf("corrupt stored payload error = %v", err)
+		}
+	})
+}
+
 func TestPackageContentsRejectsUnsupportedLayouts(t *testing.T) {
 	for _, test := range []struct {
 		name    string
@@ -276,12 +324,18 @@ type payloadMember struct {
 
 func writePayloadPackage(t *testing.T, members []payloadMember) string {
 	t.Helper()
+	return writeTamperedPayloadPackage(t, members, func(string, *xar.Data) {})
+}
+
+func writeTamperedPayloadPackage(t *testing.T, members []payloadMember, tamper func(name string, data *xar.Data)) string {
+	t.Helper()
 	var heap bytes.Buffer
 	var files []*xar.File
 	for _, member := range members {
 		digest := sha256.Sum256(member.data)
 		data := &xar.Data{Offset: int64(32 + heap.Len()), Size: int64(len(member.data)), Length: int64(len(member.data)), ArchivedChecksum: &xar.Digest{Style: "sha256", Value: hex.EncodeToString(digest[:])}, ExtractedChecksum: &xar.Digest{Style: "sha256", Value: hex.EncodeToString(digest[:])}}
 		data.Encoding.Style = "application/octet-stream"
+		tamper(member.name, data)
 		heap.Write(member.data)
 		insertPayloadMember(&files, strings.Split(member.name, "/"), data)
 	}
