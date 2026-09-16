@@ -15,6 +15,7 @@ import (
 	"github.com/lmittmann/tint"
 	"github.com/spf13/cobra"
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/internal/reconcile"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -217,6 +218,18 @@ func (o *commandOutput) report(out io.Writer, format, method string, report engi
 		return nil
 	}
 	return printSummary(out, method, report)
+}
+
+func (o *commandOutput) reconciled(out io.Writer, format string, report reconcile.Report, runErr error) error {
+	o.endProgress(runErr)
+	o.reported = true
+	if format == "json" {
+		return writeJSON(out, report)
+	}
+	if errors.Is(runErr, context.Canceled) {
+		return nil
+	}
+	return printReconcile(out, report)
 }
 
 func (o *commandOutput) endProgress(err error) {

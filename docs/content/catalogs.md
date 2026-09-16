@@ -1,8 +1,9 @@
 # Writing a catalog
 
 A catalog is a Git repository with a `stemma.yaml` Project and imported resource
-documents. The Project owns composition, named destination connections and plugins.
-Resource documents describe individual builds or software items.
+documents. The Project owns composition, named destination connections, plugins
+and the [source-control integration](reconcile.md) of its repository. Resource
+documents describe individual builds or software items.
 
 ## Files and identities
 

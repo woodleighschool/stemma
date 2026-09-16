@@ -32,8 +32,10 @@ state. Their installation settings stay platform-specific. For example, an MSI
 ProductCode and a Mac bundle identifier describe different things.
 
 Stemma is under active development. Read the [current limitations](limitations.md)
-before relying on a format or deployment mode. It is a command you invoke; it does
-not watch Git repositories, schedule updates or continuously reconcile devices.
+before relying on a format or deployment mode. It is a command you invoke; it
+runs no service and does not continuously reconcile devices. A scheduler can
+invoke [`stemma reconcile`](reconcile.md) to keep a catalog repository published
+and propose updates as pull requests.
 
 ## Coming from AutoPkg
 

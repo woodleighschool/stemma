@@ -22,6 +22,7 @@ destination settings in YAML.
 - Extract application metadata and icons
 - Publish to Munki, Intune and Jamf
 - Preview destination changes before applying them
+- Keep a catalog repository published and propose updates as pull requests on a schedule
 - Add sources, builders and destinations through plugins
 
 ## 🚀 Usage

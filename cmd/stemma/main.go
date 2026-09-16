@@ -22,6 +22,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
+	"github.com/woodleighschool/stemma/internal/reconcile"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -163,6 +164,19 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		}
 		root.AddCommand(cmd)
 	}
+	root.AddCommand(&cobra.Command{Use: "reconcile", Short: "Apply the reviewed branch of this checkout and propose lock updates as pull requests", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		path, err := resolve()
+		if err != nil {
+			return err
+		}
+		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, ResourceDone: func(method string, resource engine.ResourceReport) error {
+			return display.resourceDone(out, output, method, resource)
+		}})
+		if err := display.reconciled(out, output, report, runErr); err != nil {
+			return errors.Join(runErr, err)
+		}
+		return runErr
+	}})
 	root.AddCommand(&cobra.Command{Use: "inspect FILE", Short: "Read artifact metadata without executing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		switch strings.ToLower(filepath.Ext(args[0])) {
 		case ".intunewin":

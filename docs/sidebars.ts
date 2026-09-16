@@ -14,6 +14,7 @@ const sidebars: SidebarsConfig = {
         "building-packages",
         "windows-software",
         "publishing",
+        "reconcile",
         "plugins",
       ],
     },

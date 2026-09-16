@@ -34,6 +34,17 @@ signer fails. See [macOS](mac-software.md#signature) and
 are still allowed. Only `plan` is the publication dry run. See
 [sources](sources.md) for lock behaviour.
 
+## Automation
+
+```sh
+stemma reconcile
+```
+
+`reconcile` publishes the reviewed branch of the checkout you run it in and
+proposes lock updates as pull requests in one finite run. The Project's
+`spec.reconcile.source_control` names the provider; see
+[automating updates](reconcile.md).
+
 ## Inspection and configuration
 
 ```sh

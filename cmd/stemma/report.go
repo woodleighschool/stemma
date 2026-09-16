@@ -10,6 +10,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/internal/reconcile"
 	"github.com/woodleighschool/stemma/internal/signature"
 )
 
@@ -152,8 +153,55 @@ func (s textStyle) outcome(text string) string {
 	switch text {
 	case "failed":
 		attribute = color.FgHiRed
-	case "interrupted", "not completed":
+	case "interrupted", "not completed", "skipped", "declined":
 		attribute = color.FgHiYellow
+	case "unchanged", "already applied":
+		attribute = color.Faint
 	}
 	return s.paint(text, attribute)
+}
+
+// printReconcile summarises a reconcile run: the reviewed commit's publication
+// and one line per proposal branch.
+func printReconcile(out io.Writer, report reconcile.Report) error {
+	style := newTextStyle(out)
+	var text strings.Builder
+	head := report.Head
+	if len(head) > 12 {
+		head = head[:12]
+	}
+	if report.Branch != "" {
+		head = report.Branch + "@" + head
+	}
+	if apply := report.Apply; apply != nil {
+		outcome := "applied"
+		switch {
+		case apply.Skipped:
+			outcome = "already applied"
+		case apply.Error != "":
+			outcome = "failed"
+		}
+		_, _ = fmt.Fprintf(&text, "%s %s %s", style.paint("Reviewed:", color.Bold), head, style.outcome(outcome))
+		if apply.Summary != "" {
+			_, _ = fmt.Fprintf(&text, " (%s)", apply.Summary)
+		}
+		text.WriteString("\n")
+	}
+	if len(report.Updates) > 0 {
+		text.WriteString(style.paint("Updates:", color.Bold) + "\n")
+	}
+	for _, update := range report.Updates {
+		_, _ = fmt.Fprintf(&text, "  %s: %s", update.Resource, style.outcome(update.Action))
+		if update.PullRequest != "" {
+			_, _ = fmt.Fprintf(&text, " %s", update.PullRequest)
+		}
+		if update.Error != "" {
+			_, _ = fmt.Fprintf(&text, " %s", style.paint(update.Error, color.FgHiRed))
+		} else if update.Summary != "" {
+			_, _ = fmt.Fprintf(&text, " %s", update.Summary)
+		}
+		text.WriteString("\n")
+	}
+	_, err := io.WriteString(out, text.String())
+	return err
 }
