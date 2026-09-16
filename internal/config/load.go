@@ -18,19 +18,11 @@ import (
 // Load resolves Software documents from imported family files. Acquisition paths
 // remain relative to the owning file; project identity survives directory moves.
 func Load(filename string) (Project, error) {
-	data, err := os.ReadFile(filename)
+	document, raw, err := loadDocument(filename)
 	if err != nil {
 		return Project{}, err
 	}
-	var document ProjectDocument
-	raw, err := parseConfig(data, &document)
-	if err != nil {
-		return Project{}, err
-	}
-	if err := validateHeader(document.APIVersion, document.Kind, "Project", document.Metadata); err != nil {
-		return Project{}, err
-	}
-	p := Project{Project: document.Metadata.Name, Imports: document.Spec.Imports, Components: document.Spec.Components, Destinations: document.Spec.Destinations, Plugins: document.Spec.Plugins, Resources: map[string]Resource{}}
+	p := Project{Project: document.Metadata.Name, Imports: document.Spec.Imports, Components: document.Spec.Components, Destinations: document.Spec.Destinations, Plugins: document.Spec.Plugins, Reconcile: document.Spec.Reconcile, Resources: map[string]Resource{}}
 	spec, _ := raw["spec"].(map[string]any)
 	components, _ := spec["components"].(map[string]any)
 	root, err := os.OpenRoot(filepath.Dir(filename))
@@ -85,6 +77,29 @@ func Load(filename string) (Project, error) {
 		}
 	}
 	return p, p.Validate()
+}
+
+// LoadDocument reads the Project document with its environment placeholders
+// expanded, without loading the resource documents it imports.
+func LoadDocument(filename string) (ProjectDocument, error) {
+	document, _, err := loadDocument(filename)
+	return document, err
+}
+
+func loadDocument(filename string) (ProjectDocument, map[string]any, error) {
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return ProjectDocument{}, nil, err
+	}
+	var document ProjectDocument
+	raw, err := parseConfig(data, &document)
+	if err != nil {
+		return ProjectDocument{}, nil, err
+	}
+	if err := validateHeader(document.APIVersion, document.Kind, "Project", document.Metadata); err != nil {
+		return ProjectDocument{}, nil, err
+	}
+	return document, raw, nil
 }
 
 func validateHeader(version, kind, expected string, metadata Metadata) error {

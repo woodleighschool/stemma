@@ -25,6 +25,7 @@ type Project struct {
 	Components   map[string]map[string]any `json:"components,omitempty"`
 	Destinations map[string]Destination    `json:"destinations,omitempty"`
 	Plugins      map[string]Plugin         `json:"plugins,omitempty"`
+	Reconcile    *Reconcile                `json:"reconcile,omitempty"`
 	Resources    map[string]Resource       `json:"resources"`
 }
 
@@ -47,6 +48,18 @@ type ProjectSpec struct {
 	Components   map[string]map[string]any `yaml:"components,omitempty" json:"components,omitempty" jsonschema_description:"Reusable software defaults. Maps merge recursively; lists and null replace inherited values."`
 	Destinations map[string]Destination    `yaml:"destinations,omitempty" json:"destinations,omitempty" jsonschema_description:"Named connections, separate from each resource document's native destination metadata."`
 	Plugins      map[string]Plugin         `yaml:"plugins,omitempty" json:"plugins,omitempty" jsonschema_description:"Trusted local executables or OCI plugin images."`
+	Reconcile    *Reconcile                `yaml:"reconcile,omitempty" json:"reconcile,omitempty" jsonschema_description:"How stemma reconcile integrates the repository holding this project with its source-control host."`
+}
+
+// Reconcile configures reconciliation of the repository holding the project.
+type Reconcile struct {
+	SourceControl SourceControl `yaml:"source_control" json:"source_control" jsonschema_description:"The host that reviews proposed lock changes and records publication of the reviewed branch."`
+}
+
+// SourceControl selects a source-control provider and its connection settings.
+type SourceControl struct {
+	Type   string         `yaml:"type" json:"type" jsonschema_description:"Source-control provider. github covers GitHub and GitHub Enterprise Server."`
+	Config map[string]any `yaml:"config,omitempty" json:"config,omitempty" jsonschema_description:"Provider-specific connection configuration. Reference credential environment variables instead of embedding secrets."`
 }
 
 // Resource is one authored contract; the registered kind owns its spec.
@@ -224,6 +237,9 @@ func (p Project) Validate() error {
 		if err := validateOperation(d.Operation); err != nil {
 			return fmt.Errorf("destination %s: %w", name, err)
 		}
+	}
+	if p.Reconcile != nil && !namePattern.MatchString(p.Reconcile.SourceControl.Type) {
+		return errors.New("reconcile: source_control.type must name a provider")
 	}
 	for name, plugin := range p.Plugins {
 		if !namePattern.MatchString(name) || !plugin.Trusted {

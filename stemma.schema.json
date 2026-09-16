@@ -2508,10 +2508,44 @@
           },
           "description": "Trusted local executables or OCI plugin images.",
           "type": "object"
+        },
+        "reconcile": {
+          "$ref": "#/$defs/Reconcile",
+          "description": "How stemma reconcile integrates the repository holding this project with its source-control host."
         }
       },
       "required": [
         "imports"
+      ],
+      "type": "object"
+    },
+    "Reconcile": {
+      "additionalProperties": false,
+      "properties": {
+        "source_control": {
+          "$ref": "#/$defs/SourceControl",
+          "description": "The host that reviews proposed lock changes and records publication of the reviewed branch."
+        }
+      },
+      "required": [
+        "source_control"
+      ],
+      "type": "object"
+    },
+    "SourceControl": {
+      "additionalProperties": false,
+      "properties": {
+        "config": {
+          "description": "Provider-specific connection configuration. Reference credential environment variables instead of embedding secrets.",
+          "type": "object"
+        },
+        "type": {
+          "description": "Source-control provider. github covers GitHub and GitHub Enterprise Server.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
       ],
       "type": "object"
     },
