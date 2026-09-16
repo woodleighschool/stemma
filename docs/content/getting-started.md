@@ -5,6 +5,16 @@ Install a binary for your runner's operating system and architecture from
 (`stemma.exe` on Windows) on your `PATH`. To use the current source checkout, see
 [development](development.md).
 
+A catalog repository can pin the release with [Mise](https://mise.jdx.dev) instead,
+so local runs and CI install the same verified binary:
+
+```sh
+mise use github:woodleighschool/stemma
+mise lock
+```
+
+Commit the Mise configuration and `mise.lock`.
+
 The runner is the computer executing Stemma. It can prepare software for a different
 operating system; see [runtime requirements](limitations.md).
 
