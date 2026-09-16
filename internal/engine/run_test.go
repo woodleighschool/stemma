@@ -17,6 +17,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -184,6 +185,30 @@ func TestNativeValidationBeforeAcquisition(t *testing.T) {
 	_, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"})
 	if err == nil || !strings.Contains(err.Error(), "unattended_install") {
 		t.Fatalf("invalid native field reached acquisition: %v", err)
+	}
+}
+
+// TestOpenReleasesAPartialSessionOnFailure covers a project whose trusted
+// plugin is missing from the checkout: opening fails before any operation
+// runs and releases what it had acquired instead of panicking.
+func TestOpenReleasesAPartialSessionOnFailure(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	manifest := strings.Replace(policyProject, "  imports:\n", "  plugins:\n    missing:\n      path: plugins/missing\n      trusted: true\n  imports:\n", 1)
+	if err := testproject.Write(filename, []byte(manifest)); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"})
+	if err == nil || !strings.Contains(err.Error(), "plugin missing") {
+		t.Fatalf("missing plugin: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".stemma", "project.lock")); err != nil {
+		t.Fatalf("project lock was not created: %v", err)
+	}
+	if unlock, err := lockfile.Lock(t.Context(), root); err != nil {
+		t.Fatalf("project lock still held after the failed open: %v", err)
+	} else {
+		_ = unlock()
 	}
 }
 

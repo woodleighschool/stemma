@@ -18,7 +18,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/fileio"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -83,8 +82,6 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			report.Error = runErr.Error()
 		}
 	}()
-	done := plugin.Stage(ctx, "Loading project")
-	defer func() { done(runErr) }()
 	switch opts.Method {
 	case "update", "prepare", "signature", "plan", "apply":
 	default:
@@ -92,43 +89,17 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	// signature derives each resource's signer through the preparation path.
 	preparing := opts.Method == "prepare" || opts.Method == "signature"
-	p, err := config.Load(opts.ConfigPath)
-	done(err)
-	if err != nil {
-		return report, err
-	}
-	root, err := filepath.Abs(filepath.Dir(opts.ConfigPath))
-	if err != nil {
-		return report, err
-	}
-	unlock, err := lockfile.Lock(ctx, root)
-	if err != nil {
-		return report, err
-	}
-	defer func() { _ = unlock() }()
-	store, err := cas.Open(opts.CacheDir)
-	if err != nil {
-		return report, err
-	}
-	release, err := store.Lease(ctx)
-	if err != nil {
-		return report, err
-	}
-	defer func() { _ = release() }()
-	manager := source.New(store, root, opts.Lock.Offline)
-	pluginWork, err := os.MkdirTemp(filepath.Join(store.Dir, "work"), "operations-*")
-	if err != nil {
-		return report, err
-	}
-	defer func() { _ = os.RemoveAll(pluginWork) }()
 	if opts.Method == "plan" || opts.Method == "apply" {
 		opts.Lock.Frozen = true
 	}
-	ops, err := loadOperations(ctx, p, manager, pluginWork, opts.Handlers, opts.Lock.Frozen || opts.Lock.Offline)
+	s, err := open(ctx, opts, opts.Lock.Frozen || opts.Lock.Offline)
 	if err != nil {
 		return report, err
 	}
-	done = plugin.Stage(ctx, "Validating operation contracts")
+	defer s.close()
+	p, root, store, manager, ops := s.project, s.root, s.store, s.manager, s.ops
+	done := plugin.Stage(ctx, "Validating operation contracts")
+	defer func() { done(runErr) }()
 	plans, err := discover(ctx, p, ops)
 	if err != nil {
 		return report, err
@@ -140,7 +111,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err := preflight(plans, selected, p, ops); err != nil {
 		return report, err
 	}
-	if err := registerResolvers(manager, ops, pluginWork); err != nil {
+	if err := registerResolvers(manager, ops, s.work); err != nil {
 		return report, err
 	}
 	destinations, dependencies, err := orderDestinations(ctx, p, plans, ops, root, selected)
@@ -149,15 +120,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	done(nil)
 	plugin.Logger(ctx).DebugContext(ctx, "Resources selected", "count", len(selected))
-	declarations := map[string]map[string]plugin.Input{}
-	for _, key := range selected {
-		declarations[key] = map[string]plugin.Input{}
-		for name, input := range plans[key].Inputs {
-			if input.Resource == nil {
-				declarations[key][name] = input
-			}
-		}
-	}
+	declarations := declarations(plans, selected)
 	opts.Lock.PreserveUnselected = len(opts.Resources) > 0
 	locked, err := lockfile.Begin(ctx, root, declarations, ops.plugins, manager, opts.Lock)
 	if err != nil {

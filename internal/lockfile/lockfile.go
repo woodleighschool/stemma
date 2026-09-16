@@ -70,6 +70,11 @@ func Load(path string) (File, error) {
 	if err != nil {
 		return File{}, err
 	}
+	return Parse(data)
+}
+
+// Parse validates lockfile bytes read from somewhere other than the project.
+func Parse(data []byte) (File, error) {
 	if len(data) > 8<<20 {
 		return File{}, errors.New("lockfile exceeds 8 MiB")
 	}
@@ -105,12 +110,12 @@ func Load(path string) (File, error) {
 // Update stages input observations until Commit replaces the lockfile atomically.
 // Callers hold the project lock for its lifetime.
 type Update struct {
-	result   Result
-	old      File
-	filename string
-	opts     Options
-	inputs   map[string]map[string]plugin.Input
-	acquire  func(context.Context, plugin.Input, source.Entry) (source.Entry, bool, error)
+	result  Result
+	old     File
+	root    string
+	opts    Options
+	inputs  map[string]map[string]plugin.Input
+	acquire func(context.Context, plugin.Input, source.Entry) (source.Entry, bool, error)
 }
 
 // Begin loads reviewed inputs without acquiring resource content.
@@ -129,7 +134,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 	if opts.Offline && (opts.Refresh || opts.Ignore) {
 		return nil, errors.New("offline requires a lockfile and cannot refresh")
 	}
-	filename := filepath.Join(root, "stemma.lock.yaml")
+	filename := Filename(root)
 	old := File{}
 	requiresLock := len(pluginEntries) != 0
 	for _, named := range inputs {
@@ -208,7 +213,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		}
 	}
 	result.File.Plugins = pluginEntries
-	return &Update{result: result, old: old, filename: filename, opts: opts, inputs: inputs, acquire: acquire}, nil
+	return &Update{result: result, old: old, root: root, opts: opts, inputs: inputs, acquire: acquire}, nil
 }
 
 // Acquire obtains one resource's inputs. Repeated calls reuse the same observation.
@@ -251,7 +256,7 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 
 // Commit replaces the lockfile only after every selected input was acquired.
 func (u *Update) Commit(ctx context.Context) (Result, error) {
-	result, old, opts, filename := u.result, u.old, u.opts, u.filename
+	result, old, opts := u.result, u.old, u.opts
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
@@ -280,23 +285,45 @@ func (u *Update) Commit(ctx context.Context) (Result, error) {
 		return result, errors.New("lockfile contains stale entries; run stemma update")
 	}
 	if result.Changed && !opts.Ignore {
-		if empty {
-			return result, os.Remove(filename)
-		}
-		var data bytes.Buffer
-		encoder := yaml.NewEncoder(&data)
-		encoder.SetIndent(2)
-		if err := encoder.Encode(result.File); err != nil {
-			return result, err
-		}
-		if err := encoder.Close(); err != nil {
-			return result, err
-		}
-		if err := fileio.Write(filename, data.Bytes(), 0o644); err != nil {
+		if err := Save(u.root, result.File); err != nil {
 			return result, err
 		}
 	}
 	return result, nil
+}
+
+// Filename locates the lockfile of a project root.
+func Filename(root string) string { return filepath.Join(root, "stemma.lock.yaml") }
+
+// Encode renders the canonical lockfile document that Save and Commit write.
+func Encode(file File) ([]byte, error) {
+	var data bytes.Buffer
+	encoder := yaml.NewEncoder(&data)
+	encoder.SetIndent(2)
+	if err := encoder.Encode(file); err != nil {
+		return nil, err
+	}
+	if err := encoder.Close(); err != nil {
+		return nil, err
+	}
+	return data.Bytes(), nil
+}
+
+// Save replaces the lockfile atomically, removing it when nothing is locked.
+func Save(root string, file File) error {
+	filename := Filename(root)
+	if len(file.Inputs) == 0 && len(file.Plugins) == 0 {
+		err := os.Remove(filename)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	data, err := Encode(file)
+	if err != nil {
+		return err
+	}
+	return fileio.Write(filename, data, 0o644)
 }
 
 // Prepare acquires all selected inputs and commits their observations atomically.

@@ -239,7 +239,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 				return err
 			}
 			defer func() { _ = release() }()
-			previous, err := lockfile.Load(filepath.Join(projectRoot, "stemma.lock.yaml"))
+			previous, err := lockfile.Load(lockfile.Filename(projectRoot))
 			if err != nil && !errors.Is(err, os.ErrNotExist) {
 				return err
 			}
