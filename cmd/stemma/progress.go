@@ -80,10 +80,6 @@ func activityCount(value slog.Value) int64 {
 	if value.Kind() == slog.KindDuration {
 		return int64(value.Duration())
 	}
-	// JSON plugin records carry numeric attributes as float64.
-	if value.Kind() == slog.KindFloat64 {
-		return int64(value.Float64())
-	}
 	return 0
 }
 

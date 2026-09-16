@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -40,7 +41,7 @@ func TestExecutableProtocol(t *testing.T) {
 		}))
 		defer server.Close()
 		logs := &notifyingWriter{seen: make(chan struct{})}
-		ctx = plugin.WithLogger(ctx, slog.New(slog.NewJSONHandler(logs, nil)).With("resource", "fixture"))
+		ctx = plugin.WithLogger(ctx, slog.New(slog.NewTextHandler(logs, nil)).With("resource", "fixture"))
 		result := make(chan error, 1)
 		go func() {
 			_, err := plugin.Run(ctx, binary, reconcileRequest(t, plugin.ReconcileRequest{Method: "plan", Config: raw(t, map[string]string{"wait_url": server.URL})}))
@@ -56,8 +57,12 @@ func TestExecutableProtocol(t *testing.T) {
 		if err := <-result; err != nil {
 			t.Fatal(err)
 		}
-		if text := logs.String(); strings.Contains(text, "Fixture request") || !strings.Contains(text, `"resource":"fixture"`) || !strings.Contains(text, `"current":3`) || !strings.Contains(text, `"total":7`) {
+		if text := logs.String(); strings.Contains(text, "Fixture request") || !strings.Contains(text, "resource=fixture") {
 			t.Fatalf("plugin lost caller scope or log filtering: %s", text)
+		}
+		// Forwarded records keep the integer and duration types JSON erases.
+		if text := logs.String(); !strings.Contains(text, "current=3145728 ") || !strings.Contains(text, "total=7340032 ") || !regexp.MustCompile(`elapsed=[0-9.]+[µm]?s `).MatchString(text) {
+			t.Fatalf("plugin measurements lost their types: %s", text)
 		}
 		var debug bytes.Buffer
 		debugCtx := plugin.WithLogger(t.Context(), slog.New(slog.NewTextHandler(&debug, &slog.HandlerOptions{Level: slog.LevelDebug})))

@@ -74,7 +74,7 @@ func reconcile(ctx context.Context, envelope plugin.Request) (plugin.Response, e
 	if config.WaitURL != "" {
 		done := plugin.Stage(ctx, "Waiting for fixture")
 		defer func() { done(ctx.Err()) }()
-		plugin.Logger(ctx).InfoContext(ctx, "Transfer progress", "progress", true, "current", 3, "total", 7, "unit", "bytes")
+		plugin.Logger(ctx).InfoContext(ctx, "Transfer progress", "progress", true, "current", 3<<20, "total", 7<<20, "unit", "bytes")
 		if err := waitForResponse(ctx, config.WaitURL); err != nil {
 			return plugin.Response{}, err
 		}

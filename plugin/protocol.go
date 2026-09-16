@@ -226,7 +226,9 @@ func (r *responseReader) accept(data []byte) error {
 		return errors.New("log record requires time and message")
 	}
 	var fields map[string]any
-	if err := json.Unmarshal(message.Log, &fields); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(message.Log))
+	decoder.UseNumber()
+	if err := decoder.Decode(&fields); err != nil {
 		return err
 	}
 	delete(fields, "time")
@@ -234,8 +236,26 @@ func (r *responseReader) accept(data []byte) error {
 	delete(fields, "msg")
 	attrs := make([]slog.Attr, 0, len(fields))
 	for _, key := range slices.Sorted(maps.Keys(fields)) {
-		attrs = append(attrs, slog.Any(key, fields[key]))
+		attrs = append(attrs, slog.Any(key, logValue(key, fields[key])))
 	}
 	Logger(r.ctx).LogAttrs(r.ctx, record.Level, record.Message, attrs...)
 	return nil
+}
+
+// logValue restores the integer and duration types that JSON erases, so plugin
+// records read like the host's own.
+func logValue(key string, value any) any {
+	number, ok := value.(json.Number)
+	if !ok {
+		return value
+	}
+	if n, err := number.Int64(); err == nil {
+		if key == "elapsed" {
+			// Stage durations are encoded as nanoseconds.
+			return time.Duration(n)
+		}
+		return n
+	}
+	f, _ := number.Float64()
+	return f
 }
