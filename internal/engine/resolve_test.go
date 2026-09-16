@@ -97,6 +97,22 @@ spec:
     repo:
       pkginfo:
         catalogs: [testing]
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: private
+suspend: true
+spec:
+  source:
+    resource:
+      kind: BuildMacPkg
+      name: branding
+      output: installer
+  destinations:
+    repo:
+      pkginfo:
+        catalogs: [testing]
 `
 	if err := testproject.Write(filename, []byte(manifest)); err != nil {
 		t.Fatal(err)
@@ -109,7 +125,7 @@ spec:
 	if _, err := os.Stat(lockfile.Filename(root)); !os.IsNotExist(err) {
 		t.Fatal("candidate resolution wrote the lockfile")
 	}
-	if candidate.Lock.Version != 0 || len(candidate.Resources) != 4 {
+	if candidate.Lock.Version != 0 || len(candidate.Resources) != 5 {
 		t.Fatalf("unexpected candidate: %+v", candidate)
 	}
 	const alpha, broken, build, consumer = "stemma/v1alpha1/MacSoftware/alpha", "stemma/v1alpha1/MacSoftware/broken", "stemma/v1alpha1/BuildMacPkg/branding", "stemma/v1alpha1/MacSoftware/branding"
@@ -124,6 +140,10 @@ spec:
 	}
 	if resource := candidate.Resources[consumer]; len(resource.Inputs) != 0 || len(resource.Producers) != 1 || resource.Producers[0] != build {
 		t.Fatalf("output reference was not recorded as a producer: %+v", resource)
+	}
+	const private = "stemma/v1alpha1/MacSoftware/private"
+	if resource := candidate.Resources[private]; !resource.Suspended || resource.Inputs != nil || resource.Error != "" || len(resource.Producers) != 1 || resource.Producers[0] != build {
+		t.Fatalf("suspended resource was resolved or lost its producers: %+v", resource)
 	}
 	if dependents := candidate.Dependents(build); len(dependents) != 1 || dependents[0] != consumer {
 		t.Fatalf("dependents of the build: %v", dependents)

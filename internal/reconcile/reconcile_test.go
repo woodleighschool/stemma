@@ -29,6 +29,7 @@ import (
 	githttp "github.com/go-git/go-git/v6/plumbing/transport/http"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/woodleighschool/stemma/internal/cas"
+	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/source"
@@ -722,5 +723,73 @@ func TestDiffAndBranchNames(t *testing.T) {
 	}
 	if !equalEntries(nil, nil) || equalEntries(nil, map[string]source.Entry{"source": {Version: 1}}) {
 		t.Fatal("entry comparison")
+	}
+}
+
+// suspended is software whose package the repository does not carry.
+const suspended = `apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: private
+suspend: true
+spec:
+  source:
+    path: private.pkg
+  destinations:
+    repo:
+      pkginfo:
+        catalogs: [testing]
+`
+
+func TestDiffLeavesSuspendedResourcesAlone(t *testing.T) {
+	const key = "stemma/v1alpha1/MacSoftware/private"
+	entries := map[string]source.Entry{"source": {Version: 1}}
+	candidate := engine.Candidate{Lock: lockfile.File{Version: 2, Inputs: map[string]map[string]source.Entry{key: entries}}, Resources: map[string]engine.CandidateResource{key: {Name: "private", Kind: "MacSoftware", Suspended: true}}}
+	if changes := diff(candidate); len(changes) != 0 {
+		t.Fatalf("suspended resource was proposed: %+v", changes)
+	}
+}
+
+func TestRunLeavesSuspendedResourcesAlone(t *testing.T) {
+	t.Setenv("GITHUB_APP_CLIENT_ID", "Iv1.fixture")
+	t.Setenv("GITHUB_APP_INSTALLATION_ID", "7")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY", testKey(t))
+	munki := filepath.Join(t.TempDir(), "munki")
+	files := map[string]string{"stemma.yaml": project(munki), "policy.software.yaml": policy, "private.software.yaml": suspended}
+	// The private package is locked where it exists; the repository carries
+	// the lock without the package.
+	local := t.TempDir()
+	for name, content := range files {
+		if err := os.WriteFile(filepath.Join(local, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(local, "private.pkg"), buildPackage(t, "1.0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.Run(t.Context(), engine.Options{ConfigPath: filepath.Join(local, "stemma.yaml"), CacheDir: t.TempDir(), Method: "update", Resources: []string{"MacSoftware/private"}}); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := os.ReadFile(lockfile.Filename(local))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files["stemma.lock.yaml"] = string(lock)
+	o := newOrigin(t, files)
+	gh := newFakeGitHub(t, o)
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	if _, err := gogit.PlainCloneContext(t.Context(), checkout, &gogit.CloneOptions{URL: gh.remote(), ClientOptions: []client.Option{gh.auth()}}); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()}
+	report, err := Run(t.Context(), opts)
+	if err != nil || report.Apply.Skipped || report.Apply.Error != "" || len(report.Updates) != 0 || len(gh.open()) != 0 {
+		t.Fatalf("suspended resource disturbed the run: %v\n%+v\n%+v", err, report, report.Apply)
+	}
+	if status := gh.status(o.tip("main"), applyContext); status["state"] != "success" {
+		t.Fatalf("apply status: %v", status)
+	}
+	if published, _ := filepath.Glob(filepath.Join(munki, "pkgsinfo", "stemma", "*")); len(published) != 1 {
+		t.Fatalf("published identities: %v", published)
 	}
 }

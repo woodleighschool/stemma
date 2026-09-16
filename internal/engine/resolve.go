@@ -30,13 +30,20 @@ type CandidateResource struct {
 	Kind      string                  `json:"kind"`
 	Inputs    map[string]source.Entry `json:"inputs,omitempty"`
 	Producers []string                `json:"producers,omitempty"`
-	Error     string                  `json:"error,omitempty"`
+	// Suspended marks a resource left unresolved on purpose. Its lock entries
+	// stay as they are and nothing implicit runs it.
+	Suspended bool   `json:"suspended,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // Dependents returns every resource that transitively consumes key's outputs.
+// Suspended consumers are left out: nothing implicit ever runs them.
 func (c Candidate) Dependents(key string) []string {
 	consumers := map[string][]string{}
 	for name, resource := range c.Resources {
+		if resource.Suspended {
+			continue
+		}
 		for _, producer := range resource.Producers {
 			consumers[producer] = append(consumers[producer], name)
 		}
@@ -94,14 +101,7 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 	candidate.Resources = map[string]CandidateResource{}
 	for _, key := range selected {
 		plan := plans[key]
-		resource := CandidateResource{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind}
-		for _, name := range sortedKeys(plan.Inputs) {
-			if ref := plan.Inputs[name].Resource; ref != nil {
-				resource.Producers = append(resource.Producers, ref.Key())
-			}
-		}
-		slices.Sort(resource.Producers)
-		resource.Producers = slices.Compact(resource.Producers)
+		resource := CandidateResource{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Producers: producers(plan)}
 		ctx := resourceContext(ctx, plan.Resource)
 		entries, _, err := locked.Acquire(ctx, key)
 		if err != nil {
@@ -115,5 +115,21 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 		}
 		candidate.Resources[key] = resource
 	}
+	for _, key := range suspended(plans) {
+		plan := plans[key]
+		candidate.Resources[key] = CandidateResource{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Producers: producers(plan), Suspended: true}
+	}
 	return candidate, nil
+}
+
+// producers lists the resources whose outputs a plan consumes.
+func producers(plan resourcePlan) []string {
+	var keys []string
+	for _, name := range sortedKeys(plan.Inputs) {
+		if ref := plan.Inputs[name].Resource; ref != nil {
+			keys = append(keys, ref.Key())
+		}
+	}
+	slices.Sort(keys)
+	return slices.Compact(keys)
 }

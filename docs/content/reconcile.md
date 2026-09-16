@@ -62,6 +62,8 @@ Further behaviour of the update phase:
 
 - A resource the catalog no longer declares gets a lock-cleanup proposal that is
   validated rather than prepared.
+- A [suspended](catalogs.md#suspend-a-resource) resource keeps its reviewed lock
+  entries and is neither applied nor proposed; run it locally with a selector.
 - A proposal a person closed without merging stays declined until its content
   changes.
 - Branches whose resource no longer differs from the reviewed lock, including
