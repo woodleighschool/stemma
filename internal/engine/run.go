@@ -119,9 +119,10 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		return report, err
 	}
 	done(nil)
-	plugin.Logger(ctx).DebugContext(ctx, "Resources selected", "count", len(selected))
 	declarations := declarations(plans, selected)
 	opts.Lock.PreserveUnselected = len(opts.Resources) > 0
+	opts.Lock.Retain = suspended(plans)
+	plugin.Logger(ctx).DebugContext(ctx, "Resources selected", "count", len(selected), "suspended", len(opts.Lock.Retain))
 	locked, err := lockfile.Begin(ctx, root, declarations, ops.plugins, manager, opts.Lock)
 	if err != nil {
 		return report, err

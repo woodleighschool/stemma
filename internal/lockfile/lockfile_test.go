@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -499,5 +500,33 @@ func TestRefreshConfirmsLockedContentWithoutDownloading(t *testing.T) {
 	}
 	if !bytes.Equal(before, lockedBytes(t, m)) || !entry(refreshed).ResolvedAt.Equal(original.ResolvedAt) {
 		t.Fatal("confirmed content rewrote the lock")
+	}
+}
+
+func TestRetainedResourcesKeepReviewedEntries(t *testing.T) {
+	m := manager(t)
+	for _, name := range []string{"first", "other", "gone"} {
+		if err := os.WriteFile(filepath.Join(m.Root, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inputs := inputset("file", map[string]any{"path": "first"})
+	const other, gone = "stemma/v1alpha1/BuildMacPkg/other", "stemma/v1alpha1/BuildMacPkg/gone"
+	for _, name := range []string{other, gone} {
+		inputs[name] = map[string]plugin.Input{"payload": {Resolver: "file", Config: map[string]any{"path": path.Base(name)}}}
+	}
+	first, err := prepare(t, m, inputs, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	delete(inputs, other)
+	delete(inputs, gone)
+	frozen, err := prepare(t, m, inputs, Options{Frozen: true, Retain: []string{other, gone}})
+	if err != nil || frozen.Changed || len(frozen.File.Inputs) != 3 {
+		t.Fatalf("retained resources changed a frozen lock: %v %+v", err, frozen.File.Inputs)
+	}
+	retained, err := prepare(t, m, inputs, Options{Retain: []string{other}})
+	if err != nil || !retained.Changed || len(retained.File.Inputs) != 2 || !retained.File.Inputs[other]["payload"].Equal(first.File.Inputs[other]["payload"]) {
+		t.Fatalf("retention kept the wrong entries: %v %+v", err, retained.File.Inputs)
 	}
 }

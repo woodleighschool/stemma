@@ -63,8 +63,12 @@ func discover(ctx context.Context, p config.Project, ops *operations) (map[strin
 			result.Inputs[inputName] = input
 			if input.Resource != nil {
 				ref := input.Resource
-				if _, ok := p.Resources[ref.Key()]; !ok {
+				producer, ok := p.Resources[ref.Key()]
+				if !ok {
 					return nil, fmt.Errorf("resource %s input %s: unknown resource %s", key, inputName, ref.Key())
+				}
+				if producer.Suspend && !r.Suspend {
+					return nil, fmt.Errorf("resource %s input %s: depends on suspended resource %s; suspend %s as well", key, inputName, ref.Key(), key)
 				}
 				if ref.Output != "" && !safeOutputName(ref.Output) {
 					return nil, errors.New("invalid resource output name")
@@ -99,7 +103,13 @@ func discover(ctx context.Context, p config.Project, ops *operations) (map[strin
 func orderResources(plans map[string]resourcePlan, selected []string) ([]string, error) {
 	var roots []string
 	if len(selected) == 0 {
-		roots = sortedKeys(plans)
+		// A suspended resource runs only through a selector naming it or a
+		// selected resource consuming its outputs.
+		for _, key := range sortedKeys(plans) {
+			if !plans[key].Resource.Suspend {
+				roots = append(roots, key)
+			}
+		}
 	} else {
 		for _, selection := range selected {
 			if _, ok := plans[selection]; ok {

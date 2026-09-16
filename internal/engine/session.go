@@ -91,3 +91,15 @@ func declarations(plans map[string]resourcePlan, selected []string) map[string]m
 	}
 	return result
 }
+
+// suspended lists the resources implicit runs leave alone. Their reviewed
+// lock entries outlive every run that does not select them.
+func suspended(plans map[string]resourcePlan) []string {
+	var keys []string
+	for _, key := range sortedKeys(plans) {
+		if plans[key].Resource.Suspend {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}

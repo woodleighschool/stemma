@@ -16,7 +16,9 @@ Run commands from a catalog. Stemma discovers its Git root and `stemma.yaml`.
 
 For example, `stemma plan MacSoftware/chrome` selects one document. Required build
 references are prepared first. Use `apiVersion/Kind/name` when needed to resolve an
-ambiguous identity. Omitting selectors processes the catalog.
+ambiguous identity. Omitting selectors processes every resource that is not
+[suspended](catalogs.md#suspend-a-resource); a selector runs a suspended resource
+and the builds it references.
 
 `apply --refresh-icons` refreshes application icons across the catalog; resource
 selectors compose with it. Run it on macOS to use the current native system artwork.

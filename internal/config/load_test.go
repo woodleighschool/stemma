@@ -232,3 +232,20 @@ func parseTest(t *testing.T, data []byte) (Project, error) {
 	}
 	return Load(filename)
 }
+
+func TestSuspendIsAResourceEnvelopeField(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, "stemma.yaml", projectFixture)
+	writeConfig(t, root, "app.software.yaml", strings.Replace(resourceFixture, "spec:", "suspend: true\nspec:", 1))
+	p, err := Load(filepath.Join(root, "stemma.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Resources["stemma/v1alpha1/MacSoftware/app"].Suspend {
+		t.Fatal("suspend was not read from the resource envelope")
+	}
+	writeConfig(t, root, "stemma.yaml", strings.Replace(projectFixture, "spec:", "suspend: true\nspec:", 1))
+	if _, err := Load(filepath.Join(root, "stemma.yaml")); err == nil {
+		t.Fatal("a Project accepted suspend")
+	}
+}

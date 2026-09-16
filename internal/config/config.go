@@ -64,11 +64,14 @@ type SourceControl struct {
 
 // Resource is one authored contract; the registered kind owns its spec.
 type Resource struct {
-	APIVersion string         `yaml:"apiVersion" json:"apiVersion"`
-	Kind       string         `yaml:"kind" json:"kind"`
-	Metadata   Metadata       `yaml:"metadata" json:"metadata"`
-	Spec       map[string]any `yaml:"spec" json:"spec"`
-	Base       string         `yaml:"-" json:"-"`
+	APIVersion string   `yaml:"apiVersion" json:"apiVersion"`
+	Kind       string   `yaml:"kind" json:"kind"`
+	Metadata   Metadata `yaml:"metadata" json:"metadata"`
+	// Suspend keeps the resource declared and validated but out of every run
+	// that does not select it.
+	Suspend bool           `yaml:"suspend,omitempty" json:"suspend,omitempty"`
+	Spec    map[string]any `yaml:"spec" json:"spec"`
+	Base    string         `yaml:"-" json:"-"`
 }
 
 func (r Resource) Reference() plugin.ResourceReference {

@@ -92,6 +92,8 @@ func resourceSchema(version, kind string, spec map[string]any) (map[string]any, 
 	authored := map[string]any{"anyOf": []any{complete, map[string]any{"allOf": []any{partial, map[string]any{"required": []string{"extends"}}}}}}
 	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"apiVersion", "kind", "metadata", "spec"}, "properties": map[string]any{
 		"apiVersion": map[string]any{"const": version}, "kind": map[string]any{"const": kind},
-		"metadata": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"name"}, "properties": map[string]any{"name": map[string]any{"type": "string", "pattern": namePattern.String()}}}, "spec": authored,
+		"metadata": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"name"}, "properties": map[string]any{"name": map[string]any{"type": "string", "pattern": namePattern.String()}}},
+		"suspend":  map[string]any{"type": "boolean", "description": "Keep the resource out of every run that does not select it. It still validates and keeps its reviewed lock entries; selecting it, or a suspended resource consuming its outputs, runs it."},
+		"spec":     authored,
 	}}, nil
 }

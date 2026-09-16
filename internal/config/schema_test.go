@@ -81,6 +81,12 @@ func TestResourceEditorSchema(t *testing.T) {
 	if err := plugin.ValidateSchema(schema, []byte(`{"apiVersion":"example.test/v1","kind":"Transform","metadata":{"name":"fixture"},"spec":{}}`)); err == nil {
 		t.Fatal("base schema accepted an unregistered external kind")
 	}
+	for value, valid := range map[string]bool{"true": true, "false": true, `"yes"`: false} {
+		document := []byte(`{"apiVersion":"stemma/v1alpha1","kind":"MacSoftware","metadata":{"name":"fixture"},"suspend":` + value + `,"spec":{"destinations":{"external":{"title":"Policy"}}}}`)
+		if err := plugin.ValidateSchema(schema, document); (err == nil) != valid {
+			t.Fatalf("suspend=%s valid=%v: %v", value, err == nil, err)
+		}
+	}
 }
 
 func TestProjectEnvelopeSchema(t *testing.T) {

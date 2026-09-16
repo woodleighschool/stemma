@@ -103,6 +103,36 @@ values in the individual document when sharing them would obscure the app's inte
 Inspect the result with `stemma validate --resolved`. Treat resolved output as
 configuration: it may contain values supplied through your environment.
 
+## Suspend a resource
+
+Some resources need files the repository does not carry, such as licensed fonts
+or a vendor package kept out of version control. Declare them and set
+`suspend: true` beside `metadata`:
+
+```yaml
+apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata:
+  name: fonts
+suspend: true
+spec:
+  inputs:
+    fonts:
+      path: Fonts
+  package:
+    identifier: edu.example.fonts
+    version: "1.0"
+  payload:
+    /Library/Fonts:
+      $input: fonts
+```
+
+A suspended resource still validates and keeps its reviewed lock entries, but runs
+without selectors and [reconciliation](reconcile.md) leave it alone. On a machine
+holding the files, `stemma apply MacSoftware/fonts` runs it together with the
+builds it references. A resource that is not suspended cannot consume a suspended
+resource's outputs: suspend both and select the consumer.
+
 ## Environment and editor support
 
 Use a whole-value placeholder such as `client_secret: ${INTUNE_CLIENT_SECRET}` for

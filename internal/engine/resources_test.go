@@ -1,13 +1,16 @@
 package engine
 
 import (
-	"github.com/woodleighschool/stemma/internal/cas"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/cas"
+	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/internal/testproject"
 )
 
@@ -160,5 +163,171 @@ func TestResourceFileImportRejectsUnrepresentableMetadata(t *testing.T) {
 	}
 	if _, err := importPath(t.Context(), store, filename, false, work); err == nil {
 		t.Fatal("resource artifact silently discarded setuid metadata")
+	}
+}
+
+// suspendedProject keeps a private build and the software consuming it out of
+// implicit runs while a vendor package stays in them.
+const suspendedProject = `apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: suspension
+spec:
+  imports:
+    - '*.software.yaml'
+  destinations:
+    repo:
+      operation: munki
+      config:
+        path: repo
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: vendor
+spec:
+  source:
+    path: vendor.pkg
+  destinations:
+    repo:
+      pkginfo:
+        catalogs: [testing]
+---
+apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata:
+  name: private
+suspend: true
+spec:
+  inputs:
+    payload:
+      path: private.txt
+  payload:
+    /Library/Example/private.txt:
+      $input: payload
+      mode: '0644'
+  package:
+    identifier: edu.example.private
+    version: '1.0'
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: private
+suspend: true
+spec:
+  source:
+    resource:
+      kind: BuildMacPkg
+      name: private
+      output: installer
+  destinations:
+    repo:
+      pkginfo:
+        catalogs: [testing]
+`
+
+func TestSuspendedResourcesRunOnlyWhenSelected(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	installer, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "vendor.pkg"), installer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(root, "private.txt")
+	if err := os.WriteFile(private, []byte("private"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := testproject.Write(filename, []byte(suspendedProject)); err != nil {
+		t.Fatal(err)
+	}
+	const vendor, build = "stemma/v1alpha1/MacSoftware/vendor", "stemma/v1alpha1/BuildMacPkg/private"
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	keys := func(report Report) []string {
+		var keys []string
+		for _, resource := range report.Resources {
+			keys = append(keys, resource.Key)
+		}
+		return keys
+	}
+	locked := func() map[string]map[string]source.Entry {
+		t.Helper()
+		file, err := lockfile.Load(lockfile.Filename(root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return file.Inputs
+	}
+	report, err := Run(t.Context(), options)
+	if err != nil || !slices.Equal(keys(report), []string{vendor}) {
+		t.Fatalf("implicit update touched suspended resources: %v %v", keys(report), err)
+	}
+	if _, ok := locked()[build]; ok {
+		t.Fatal("implicit update acquired a suspended resource")
+	}
+	options.Resources = []string{"BuildMacPkg/private"}
+	if report, err = Run(t.Context(), options); err != nil || !slices.Equal(keys(report), []string{build}) {
+		t.Fatalf("selecting a suspended resource did not run it: %v %v", keys(report), err)
+	}
+	entry := locked()[build]["payload"]
+	if entry.Content.Filename != "private.txt" {
+		t.Fatalf("selected suspended resource was not locked: %+v", locked())
+	}
+	// The private input is absent from every fresh checkout.
+	if err := os.Remove(private); err != nil {
+		t.Fatal(err)
+	}
+	options.Resources = nil
+	if report, err = Run(t.Context(), options); err != nil || !slices.Equal(keys(report), []string{vendor}) || !locked()[build]["payload"].Equal(entry) {
+		t.Fatalf("implicit update lost the suspended resource's lock: %v %v %+v", keys(report), err, locked())
+	}
+	options.Method = "apply"
+	report, err = Run(t.Context(), options)
+	if err != nil || !slices.Equal(keys(report), []string{vendor}) || len(report.Resources[0].Destinations) != 1 || *report.LockChanged {
+		t.Fatalf("implicit apply did not skip suspended resources: %v %+v", err, report)
+	}
+	if err := os.WriteFile(private, []byte("private"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	options.Resources = []string{"MacSoftware/private"}
+	report, err = Run(t.Context(), options)
+	if err != nil || !slices.Equal(keys(report), []string{build, "stemma/v1alpha1/MacSoftware/private"}) || len(report.Resources[1].Destinations) != 1 {
+		t.Fatalf("explicit selection did not run the suspended closure: %v %+v", err, report)
+	}
+	// A resource the catalog no longer declares still loses its lock implicitly.
+	if err := os.Remove(filepath.Join(root, "1.software.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	options.Method, options.Resources = "update", nil
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	if inputs := locked(); len(inputs) != 1 || !inputs[build]["payload"].Equal(entry) {
+		t.Fatalf("removed resource kept its lock or suspended resource lost it: %+v", inputs)
+	}
+}
+
+func TestActiveResourceCannotConsumeSuspendedOutputs(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	for name, content := range map[string]string{"vendor.pkg": "", "private.txt": "private"} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manifest := strings.Replace(suspendedProject, "suspend: true\nspec:\n  source:", "spec:\n  source:", 1)
+	if err := testproject.Write(filename, []byte(manifest)); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update", Resources: []string{"MacSoftware/private"}}
+	const want = "resource stemma/v1alpha1/MacSoftware/private input source: depends on suspended resource stemma/v1alpha1/BuildMacPkg/private; suspend stemma/v1alpha1/MacSoftware/private as well"
+	if _, err := ValidateProject(t.Context(), options); err == nil || err.Error() != want {
+		t.Fatalf("validation accepted an active consumer of a suspended build: %v", err)
+	}
+	if _, err := Run(t.Context(), options); err == nil || err.Error() != want {
+		t.Fatalf("explicit selection ran an active consumer of a suspended build: %v", err)
 	}
 }

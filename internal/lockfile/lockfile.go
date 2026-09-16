@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"time"
 
@@ -32,7 +33,10 @@ type File struct {
 type Options struct {
 	Frozen, Refresh, Ignore, Offline bool
 	PluginsOnly                      bool
-	PreserveUnselected               bool
+	// PreserveUnselected keeps every reviewed resource the run did not select.
+	PreserveUnselected bool
+	// Retain keeps these reviewed resources when the run did not select them.
+	Retain []string
 }
 
 // Result reports acquisition separately from downstream metadata changes.
@@ -147,11 +151,9 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		}
 		old = loaded
 	}
-	if opts.PreserveUnselected {
-		for resource, entries := range old.Inputs {
-			if _, selected := inputs[resource]; !selected {
-				result.File.Inputs[resource] = entries
-			}
+	for resource, entries := range old.Inputs {
+		if _, selected := inputs[resource]; !selected && (opts.PreserveUnselected || slices.Contains(opts.Retain, resource)) {
+			result.File.Inputs[resource] = entries
 		}
 	}
 	resolved := map[string]source.Entry{}

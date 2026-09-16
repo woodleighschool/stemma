@@ -1191,6 +1191,10 @@
               ]
             }
           ]
+        },
+        "suspend": {
+          "description": "Keep the resource out of every run that does not select it. It still validates and keeps its reviewed lock entries; selecting it, or a suspended resource consuming its outputs, runs it.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -2368,6 +2372,10 @@
               ]
             }
           ]
+        },
+        "suspend": {
+          "description": "Keep the resource out of every run that does not select it. It still validates and keeps its reviewed lock entries; selecting it, or a suspended resource consuming its outputs, runs it.",
+          "type": "boolean"
         }
       },
       "required": [
@@ -4666,6 +4674,10 @@
               ]
             }
           ]
+        },
+        "suspend": {
+          "description": "Keep the resource out of every run that does not select it. It still validates and keeps its reviewed lock entries; selecting it, or a suspended resource consuming its outputs, runs it.",
+          "type": "boolean"
         }
       },
       "required": [
