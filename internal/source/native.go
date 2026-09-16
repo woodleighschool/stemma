@@ -50,19 +50,31 @@ var nativeFields = map[string][]string{
 	"local":  {"base", "include", "filename", "sha256"},
 }
 
+// nativeObservation records where locked content came from. ETag and
+// Last-Modified are refresh hints: they let a later refresh ask the server
+// whether the same bytes still stand, and never identify content themselves.
 type nativeObservation struct {
-	URL       string `json:"url,omitempty"`
-	Release   string `json:"release,omitempty"`
-	ReleaseID int64  `json:"release_id,omitempty"`
-	AssetID   int64  `json:"asset_id,omitempty"`
+	URL          string `json:"url,omitempty"`
+	Release      string `json:"release,omitempty"`
+	ReleaseID    int64  `json:"release_id,omitempty"`
+	AssetID      int64  `json:"asset_id,omitempty"`
+	ETag         string `json:"etag,omitempty"`
+	LastModified string `json:"last_modified,omitempty"`
 }
+
+func (o nativeObservation) hints() bool { return o.ETag != "" || o.LastModified != "" }
 
 type nativeEntry struct {
 	nativeObservation
 
 	Filename string
 	Tree     bool
+	// revalidate carries the previous hints a refresh may send conditionally.
+	revalidate nativeObservation
 }
+
+// errNotModified reports that a conditional download confirmed the previous content.
+var errNotModified = errors.New("source content not modified")
 
 func native(input plugin.Input) (nativeConfig, error) {
 	var s nativeConfig
@@ -115,16 +127,48 @@ func relativeTo(base, name string) (string, error) {
 }
 
 func (m *Manager) resolveNative(ctx context.Context, input plugin.Input) (Content, json.RawMessage, error) {
+	content, observation, _, err := m.observeNative(ctx, input, nil)
+	return content, observation, err
+}
+
+// refreshNative asks the source whether previous still stands before
+// downloading: GitHub identifies assets by release and asset ID, HTTP by a
+// conditional request with the recorded hints. Unchanged bytes keep the
+// previous hints so a rotated validator alone never changes a lock; entries
+// locked without hints adopt them once.
+func (m *Manager) refreshNative(ctx context.Context, input plugin.Input, previous Entry) (Content, json.RawMessage, bool, error) {
+	var observed nativeObservation
+	if err := decode(previous.Observation, &observed); err != nil {
+		return Content{}, nil, false, fmt.Errorf("locked observation: %w", err)
+	}
+	content, observation, unchanged, err := m.observeNative(ctx, input, &observed)
+	if err != nil || unchanged {
+		return content, observation, unchanged, err
+	}
+	if content.Artifact == previous.Content.Artifact && observed.hints() {
+		var current nativeObservation
+		if err := decode(observation, &current); err != nil {
+			return Content{}, nil, false, err
+		}
+		current.ETag, current.LastModified = observed.ETag, observed.LastModified
+		observation, err = json.Marshal(current)
+	}
+	return content, observation, false, err
+}
+
+// observeNative resolves a declaration, or with a previous observation of the
+// same declaration reports unchanged when the source confirms its content.
+func (m *Manager) observeNative(ctx context.Context, input plugin.Input, previous *nativeObservation) (Content, json.RawMessage, bool, error) {
 	s, err := native(input)
 	if err != nil {
-		return Content{}, nil, err
+		return Content{}, nil, false, err
 	}
 	entry := nativeEntry{URL: s.URL, Filename: s.Filename, Tree: s.Type == "local"}
 	mode := uint32(0o644)
 	if s.Type == "file" || s.Type == "local" {
 		root, err := os.OpenRoot(m.Root)
 		if err != nil {
-			return Content{}, nil, err
+			return Content{}, nil, false, err
 		}
 		defer func() { _ = root.Close() }()
 		name := s.Path
@@ -136,23 +180,29 @@ func (m *Manager) resolveNative(ctx context.Context, input plugin.Input) (Conten
 		}
 		info, err := root.Lstat(name)
 		if err != nil {
-			return Content{}, nil, err
+			return Content{}, nil, false, err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return Content{}, nil, errors.New("input root must not be a symlink")
+			return Content{}, nil, false, errors.New("input root must not be a symlink")
 		}
 		entry.Tree = info.IsDir()
 		mode = uint32(info.Mode().Perm())
 	}
 	if s.Type == "github" {
 		if err := m.github(ctx, s, &entry); err != nil {
-			return Content{}, nil, err
+			return Content{}, nil, false, err
+		}
+		if previous != nil && entry.nativeObservation == *previous {
+			return Content{}, nil, true, nil
 		}
 	}
 	if s.Type == "http" && s.Match != "" {
 		if err := m.discover(ctx, s, &entry); err != nil {
-			return Content{}, nil, err
+			return Content{}, nil, false, err
 		}
+	}
+	if s.Type == "http" && previous != nil && previous.URL == entry.URL {
+		entry.revalidate = *previous
 	}
 	if entry.Filename == "" {
 		switch s.Type {
@@ -166,14 +216,17 @@ func (m *Manager) resolveNative(ctx context.Context, input plugin.Input) (Conten
 		}
 	}
 	if s.Type != "http" && !validFilename(entry.Filename) {
-		return Content{}, nil, errors.New("input has no safe filename; set filename explicitly")
+		return Content{}, nil, false, errors.New("input has no safe filename; set filename explicitly")
 	}
 	ref, err := m.download(ctx, s, &entry, s.SHA256)
+	if errors.Is(err, errNotModified) {
+		return Content{}, nil, true, nil
+	}
 	observation, encodeErr := json.Marshal(entry.nativeObservation)
 	if err != nil {
-		return Content{}, nil, err
+		return Content{}, nil, false, err
 	}
-	return Content{Artifact: ref, Filename: entry.Filename, Tree: entry.Tree, Mode: mode}, observation, encodeErr
+	return Content{Artifact: ref, Filename: entry.Filename, Tree: entry.Tree, Mode: mode}, observation, false, encodeErr
 }
 
 func (m *Manager) fetchNative(ctx context.Context, input plugin.Input, entry Entry) (Content, error) {
@@ -392,21 +445,44 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry *nativeEnt
 		return cas.Ref{}, errors.New("locked asset does not belong to the configured GitHub repository")
 	}
 	done := plugin.Stage(ctx, "Downloading input")
-	defer func() { done(err) }()
+	defer func() {
+		if errors.Is(err, errNotModified) {
+			done(nil, "unchanged", true)
+			return
+		}
+		done(err)
+	}()
 	req, err := m.request(ctx, entry.URL, s)
 	if err != nil {
 		return cas.Ref{}, err
+	}
+	if entry.revalidate.ETag != "" {
+		req.Header.Set("If-None-Match", entry.revalidate.ETag)
+	}
+	if entry.revalidate.LastModified != "" {
+		req.Header.Set("If-Modified-Since", entry.revalidate.LastModified)
 	}
 	res, err := m.Client.Do(req)
 	if err != nil {
 		return cas.Ref{}, transportError("download", err)
 	}
 	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode == http.StatusNotModified && entry.revalidate.hints() {
+		return cas.Ref{}, errNotModified
+	}
 	if res.StatusCode != http.StatusOK {
 		return cas.Ref{}, fmt.Errorf("download returned HTTP %d", res.StatusCode)
 	}
+	// Hosts that ignore conditional requests still send validators; the same
+	// strong ETag confirms the locked bytes without transferring them.
+	if s.Type == "http" && entry.revalidate.ETag != "" && !strings.HasPrefix(entry.revalidate.ETag, "W/") && res.Header.Get("ETag") == entry.revalidate.ETag && res.Header.Get("Last-Modified") == entry.revalidate.LastModified {
+		return cas.Ref{}, errNotModified
+	}
 	if res.ContentLength > cas.MaxObjectSize {
 		return cas.Ref{}, errors.New("download exceeds 16 GiB")
+	}
+	if s.Type == "http" {
+		entry.ETag, entry.LastModified = res.Header.Get("ETag"), res.Header.Get("Last-Modified")
 	}
 	if entry.Filename == "" {
 		entry.Filename = responseFilename(res, entry.URL)
@@ -479,7 +555,7 @@ func sameOrigin(a, b *url.URL) bool {
 func stripPrivateHeaders(headers http.Header) {
 	for name := range headers {
 		switch http.CanonicalHeaderKey(name) {
-		case "Accept", "Accept-Encoding", "Accept-Language", "User-Agent":
+		case "Accept", "Accept-Encoding", "Accept-Language", "User-Agent", "If-None-Match", "If-Modified-Since":
 		default:
 			headers.Del(name)
 		}

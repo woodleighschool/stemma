@@ -113,6 +113,15 @@ Locked fetches replay that concrete selection without evaluating the asset glob
 or looking up the latest release again. Changing the pattern or release selector
 makes the declaration stale and requires a lock update, even with cached bytes.
 
+`update` asks a source whether locked content still stands before downloading
+it again. GitHub compares the locked release and asset IDs; HTTP sends the
+recorded `etag` and `last_modified` hints as a conditional request, after
+rediscovering a `match` link. Hints never identify content: a confirmed answer
+keeps the locked digest and timestamp, a changed answer downloads and hashes
+the bytes, and a source without validators downloads every time. Unchanged
+bytes keep their recorded hints, so a rotated validator alone never changes the
+lock; entries locked without hints record them once.
+
 If a vendor replaces bytes at a stable URL, a cold locked run fails the content
 check. It does not silently accept today's download. Run `update` and review the
 change, or restore the locked bytes to the cache from a trusted copy.

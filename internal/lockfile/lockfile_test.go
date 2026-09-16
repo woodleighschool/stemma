@@ -466,3 +466,38 @@ func TestIncrementalAcquisitionCommitsOnlyCompleteUncancelledUpdates(t *testing.
 		t.Fatalf("complete acquisition did not commit: %v", err)
 	}
 }
+
+func TestRefreshConfirmsLockedContentWithoutDownloading(t *testing.T) {
+	var bodies, conditionals atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", `"stable"`)
+		if r.Header.Get("If-None-Match") == `"stable"` {
+			conditionals.Add(1)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		bodies.Add(1)
+		_, _ = w.Write([]byte("installer"))
+	}))
+	t.Cleanup(server.Close)
+	m := manager(t)
+	inputs := inputset("http", map[string]any{"url": server.URL + "/app.pkg"})
+	// A second resource declaring the same source shares the one observation.
+	inputs["stemma/v1alpha1/Software/twin"] = map[string]plugin.Input{"source": {Resolver: "http", Config: map[string]any{"url": server.URL + "/app.pkg"}}}
+	first, err := prepare(t, m, inputs, Options{Refresh: true})
+	if err != nil || bodies.Load() != 1 {
+		t.Fatalf("initial resolution: %v bodies=%d", err, bodies.Load())
+	}
+	original := entry(first)
+	original.ResolvedAt = time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
+	first.File.Inputs[resource]["source"] = original
+	save(t, m, first.File)
+	before := lockedBytes(t, m)
+	refreshed, err := prepare(t, m, inputs, Options{Refresh: true})
+	if err != nil || refreshed.Changed || bodies.Load() != 1 || conditionals.Load() != 1 {
+		t.Fatalf("refresh downloaded confirmed content: %v changed=%v bodies=%d conditionals=%d", err, refreshed.Changed, bodies.Load(), conditionals.Load())
+	}
+	if !bytes.Equal(before, lockedBytes(t, m)) || !entry(refreshed).ResolvedAt.Equal(original.ResolvedAt) {
+		t.Fatal("confirmed content rewrote the lock")
+	}
+}

@@ -163,7 +163,9 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		key := input.Resolver + "\x00" + version + "\x00" + declaration
 		current, ok := resolved[key]
 		if !ok {
-			current, err = m.Resolve(ctx, input)
+			// Inputs sharing a declaration share one observation; a source that
+			// confirms the first input's locked bytes confirms them for all.
+			current, err = m.Refresh(ctx, input, previous)
 			if err != nil {
 				return current, err
 			}

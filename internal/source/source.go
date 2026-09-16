@@ -169,6 +169,28 @@ func (m *Manager) IsLocal(name string) bool {
 
 // Resolve observes a declaration once and imports its exact content into CAS.
 func (m *Manager) Resolve(ctx context.Context, input plugin.Input) (Entry, error) {
+	return m.observe(ctx, input, nil)
+}
+
+// Refresh observes a declaration again, keeping the previous entry when the
+// source confirms its locked content still stands. Sources without a
+// trustworthy answer are downloaded and hashed like Resolve: a wrong answer
+// can delay noticing an update but never changes what a lock identifies.
+// Previous entries for another declaration or a local or plugin resolver are
+// resolved in full.
+func (m *Manager) Refresh(ctx context.Context, input plugin.Input, previous Entry) (Entry, error) {
+	version, declaration, err := m.Declaration(input)
+	if err != nil {
+		return Entry{}, err
+	}
+	resolver, _ := m.resolver(input.Resolver)
+	if resolver.Resolve != nil || resolver.Local || previous.Validate() != nil || previous.Resolver != input.Resolver || previous.ResolverVersion != version || previous.Declaration != declaration {
+		return m.Resolve(ctx, input)
+	}
+	return m.observe(ctx, input, &previous)
+}
+
+func (m *Manager) observe(ctx context.Context, input plugin.Input, previous *Entry) (Entry, error) {
 	version, declaration, err := m.Declaration(input)
 	if err != nil {
 		return Entry{}, err
@@ -178,9 +200,19 @@ func (m *Manager) Resolve(ctx context.Context, input plugin.Input) (Entry, error
 		return Entry{}, errors.New("offline mode cannot resolve inputs")
 	}
 	entry := Entry{Version: 1, Resolver: input.Resolver, ResolverVersion: version, Declaration: declaration, ResolvedAt: time.Now().UTC().Truncate(time.Second)}
-	if resolver.Resolve == nil {
+	switch {
+	case previous != nil:
+		var unchanged bool
+		entry.Content, entry.Observation, unchanged, err = m.refreshNative(ctx, input, *previous)
+		if err == nil && unchanged {
+			return *previous, nil
+		}
+		if err == nil && entry.Content.Artifact == previous.Content.Artifact {
+			entry.ResolvedAt = previous.ResolvedAt
+		}
+	case resolver.Resolve == nil:
 		entry.Content, entry.Observation, err = m.resolveNative(ctx, input)
-	} else {
+	default:
 		var result Resolution
 		result, err = resolver.Resolve(ctx, input)
 		if err == nil {
