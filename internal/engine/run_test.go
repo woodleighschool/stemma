@@ -437,6 +437,40 @@ func TestApplyKeepsCrossedPublicationDependenciesIndependent(t *testing.T) {
 	}
 }
 
+func TestApplyOrdersRequiredResourcesAndLeavesOthersToDestinations(t *testing.T) {
+	parts := strings.Split(policyProject, "\n---\n")
+	manifest := parts[0]
+	for _, name := range []string{"agent", "suite"} {
+		manifest += "\n---\n" + strings.Replace(parts[1], "name: policy", "name: "+name, 1)
+	}
+	filename := filepath.Join(t.TempDir(), "stemma.yaml")
+	if err := testproject.Write(filename, []byte(manifest)); err != nil {
+		t.Fatal(err)
+	}
+	var applied []string
+	report, err := Run(t.Context(), Options{
+		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply",
+		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+			identity := request.Identity.Software + "/" + request.Identity.Destination
+			if request.Method == "validate" && !request.Prepared && request.Identity.Software == "agent" {
+				// The suite is a catalog resource; GarageBand is published
+				// outside the catalog and stays the destination's concern.
+				return plugin.ReconcileResponse{Requires: []string{"suite", "GarageBand"}}, nil
+			}
+			if request.Method == "apply" {
+				applied = append(applied, identity)
+			}
+			return plugin.ReconcileResponse{}, nil
+		}},
+	})
+	if err != nil || len(report.Resources) != 2 {
+		t.Fatalf("external reference blocked execution: %+v %v", report, err)
+	}
+	if got := strings.Join(applied, ", "); got != "suite/first, agent/first, suite/second, agent/second" {
+		t.Fatalf("required resource not reconciled first: %s", got)
+	}
+}
+
 func TestApplyChecksEveryReviewedInputBeforeWriting(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")

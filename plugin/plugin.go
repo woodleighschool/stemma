@@ -74,6 +74,10 @@ type ReconcileRequest struct {
 
 // ReconcileResponse carries changes and recovered durable bindings. An omitted
 // Binding preserves it, null clears it, and a value replaces it, including on error.
+//
+// Validation may list in Requires the resources, by name, that the same
+// connection has to reconcile before this document so their bindings exist when
+// it applies. A resource the run does not reconcile is left to the destination.
 type ReconcileResponse struct {
 	Changes  []Change          `json:"changes,omitempty"`
 	Binding  json.RawMessage   `json:"binding,omitempty"`

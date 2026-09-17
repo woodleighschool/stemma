@@ -32,7 +32,10 @@ type destinationRef struct {
 	Destination string
 }
 
-// Providers declare software references on their own connection during validation.
+// Destinations declare, while validating, the resources their own connection
+// has to reconcile first. Ordering ranks the selected run only: a required
+// resource the run does not reconcile is left to the destination, which
+// resolves published software from its binding or its own state.
 func orderDestinations(ctx context.Context, project config.Project, plans map[string]resourcePlan, ops *operations, root string, selected []string) ([]destinationRef, map[destinationRef][]destinationRef, error) {
 	dependencies := map[destinationRef][]destinationRef{}
 	var nodes []destinationRef
@@ -50,23 +53,12 @@ func orderDestinations(ctx context.Context, project config.Project, plans map[st
 				return nil, nil, fmt.Errorf("%s/%s: %w", name, destination, err)
 			}
 			for _, required := range response.Requires {
-				var requiredKey string
-				for key, target := range plans {
-					if target.Resource.Metadata.Name == required {
-						if _, ok := target.Destinations[destination]; ok {
-							requiredKey = key
-						}
-					}
+				ref, found := peer(plans, selected, destination, required)
+				if !found {
+					plugin.Logger(ctx).DebugContext(ctx, "Required resource is not reconciled in this run", "resource", name, "destination", destination, "requires", required)
+					continue
 				}
-				target, exists := plans[requiredKey]
-				if !exists {
-					return nil, nil, fmt.Errorf("%s/%s references unknown software %q", name, destination, required)
-				}
-				if _, exists := target.Destinations[destination]; !exists {
-					return nil, nil, fmt.Errorf("%s/%s requires %s on the same connection", name, destination, required)
-				}
-				ref := destinationRef{requiredKey, destination}
-				if !slices.Contains(dependencies[node], ref) {
+				if ref != node && !slices.Contains(dependencies[node], ref) {
 					dependencies[node] = append(dependencies[node], ref)
 				}
 			}
@@ -80,7 +72,7 @@ func orderDestinations(ctx context.Context, project config.Project, plans map[st
 		if visiting[node] {
 			return fmt.Errorf("software reference cycle at %s/%s", node.Resource, node.Destination)
 		}
-		if visited[node] || !slices.Contains(selected, node.Resource) {
+		if visited[node] {
 			return nil
 		}
 		visiting[node] = true
@@ -100,6 +92,19 @@ func orderDestinations(ctx context.Context, project config.Project, plans map[st
 		}
 	}
 	return ordered, dependencies, nil
+}
+
+// peer finds the selected resource with a name that publishes to a destination.
+func peer(plans map[string]resourcePlan, selected []string, destination, name string) (destinationRef, bool) {
+	for _, key := range selected {
+		if plans[key].Resource.Metadata.Name != name {
+			continue
+		}
+		if _, ok := plans[key].Destinations[destination]; ok {
+			return destinationRef{key, destination}, true
+		}
+	}
+	return destinationRef{}, false
 }
 
 func staticMetadata(value map[string]any) map[string]any {

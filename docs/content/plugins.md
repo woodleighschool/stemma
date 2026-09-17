@@ -77,6 +77,15 @@ working files but are not a security sandbox. Review plugin code and lock change
 as executable code. See [writing plugins](writing-plugins.md) for the SDK and wire
 contract.
 
+## Reconciliation order
+
+A destination may name, while validating a document, the resources the same
+connection has to reconcile first, such as the software an Intune app depends on.
+Stemma applies those peers before the document and fails validation on a cycle.
+A named resource the run does not reconcile is left to the destination, which
+resolves it from its published binding or its own state. How native fields refer
+to other software remains each destination's contract.
+
 ## Auxiliary icons
 
 `MacSoftware` supplies its optional immutable PNG as the named `icon` artifact in
