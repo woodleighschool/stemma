@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/url"
 	"os"
 	"path"
@@ -359,13 +360,24 @@ func (a *xarArchive) payloadApps(ctx context.Context, name string, budget *paylo
 }
 
 func readPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudget, applicationRoot bool) ([]PackageApp, error) {
+	var apps []PackageApp
+	err := streamPayload(ctx, source, budget, func(content io.Reader) (err error) {
+		apps, err = readCPIO(content, budget, applicationRoot)
+		return err
+	})
+	return apps, err
+}
+
+// streamPayload decodes a component payload, hands the CPIO stream to consume
+// and then verifies the stream ended within budget without trailing data.
+func streamPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudget, consume func(io.Reader) error) error {
 	stop := context.AfterFunc(ctx, func() { _ = source.Close() })
 	defer stop()
 	defer func() { _ = source.Close() }()
 	r := bufio.NewReader(fileio.Reader{Context: ctx, Reader: source})
 	header, err := r.Peek(6)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	var content io.Reader
 	switch {
@@ -374,7 +386,7 @@ func readPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudge
 	case header[0] == 0x1f && header[1] == 0x8b:
 		gz, err := gzip.NewReader(r)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		defer func() { _ = gz.Close() }()
 		content = gz
@@ -383,14 +395,14 @@ func readPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudge
 	case string(header[:4]) == "pbzx":
 		header, err := r.Peek(12)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if binary.BigEndian.Uint64(header[4:]) != pbzx.DefaultBlockSize {
-			return nil, fmt.Errorf("%w: PBZX chunk size", ErrUnsupported)
+			return fmt.Errorf("%w: PBZX chunk size", ErrUnsupported)
 		}
 		reader, err := pbzx.NewConcurrentReader(ctx, r, min(runtime.GOMAXPROCS(0), 4))
 		if err != nil {
-			return nil, err
+			return err
 		}
 		defer func() {
 			// Unblock the library's source reader before joining its workers.
@@ -399,118 +411,173 @@ func readPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudge
 		}()
 		content = reader
 	default:
-		return nil, fmt.Errorf("%w: PKG payload compression or archive format", ErrUnsupported)
+		return fmt.Errorf("%w: PKG payload compression or archive format", ErrUnsupported)
 	}
 	if err != nil {
-		return nil, err
+		return err
 	}
 	limited := &io.LimitedReader{R: content, N: budget.bytes + 1}
-	apps, err := readCPIO(limited, budget, applicationRoot)
+	err = consume(limited)
 	budget.bytes = limited.N - 1
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if limited.N == 0 {
-		return nil, fmt.Errorf("PKG payload exceeds read limit")
+		return fmt.Errorf("PKG payload exceeds read limit")
 	}
 	if _, err := r.Peek(1); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return nil, fmt.Errorf("trailing PKG payload data")
+			return fmt.Errorf("trailing PKG payload data")
 		}
-		return nil, err
+		return err
 	}
-	return apps, nil
+	return nil
+}
+
+const (
+	cpioDirectory = 0040000
+	cpioRegular   = 0100000
+	cpioSymlink   = 0120000
+)
+
+// cpioEntry is one ODC header whose payload-relative name has been validated.
+type cpioEntry struct {
+	name  string
+	mode  uint64
+	links uint64
+	size  int64
+}
+
+func (e cpioEntry) kind() uint64 { return e.mode & 0170000 }
+
+func (e cpioEntry) perm() fs.FileMode { return fs.FileMode(e.mode & 0o777) }
+
+// cpioReader walks an ODC stream within the payload budget, remembering each
+// path's type so callers can check bundle ancestry.
+type cpioReader struct {
+	r      io.Reader
+	budget *payloadBudget
+	seen   map[string]uint64
+}
+
+func newCPIOReader(r io.Reader, budget *payloadBudget) *cpioReader {
+	return &cpioReader{r: r, budget: budget, seen: map[string]uint64{}}
+}
+
+// next returns the following entry header; the trailer returns [io.EOF].
+func (c *cpioReader) next() (cpioEntry, error) {
+	if c.budget.entries <= 0 {
+		return cpioEntry{}, fmt.Errorf("PKG payload exceeds entry limit")
+	}
+	c.budget.entries--
+	var header [76]byte
+	if _, err := io.ReadFull(c.r, header[:]); err != nil {
+		return cpioEntry{}, fmt.Errorf("CPIO header: %w", err)
+	}
+	if string(header[:6]) != "070707" {
+		return cpioEntry{}, fmt.Errorf("%w: PKG requires ODC CPIO payload", ErrUnsupported)
+	}
+	var fields [10]uint64
+	offset := 6
+	for i, width := range []int{6, 6, 6, 6, 6, 6, 6, 11, 6, 11} {
+		v, err := strconv.ParseUint(string(header[offset:offset+width]), 8, 64)
+		if err != nil {
+			return cpioEntry{}, fmt.Errorf("CPIO header: %w", err)
+		}
+		fields[i] = v
+		offset += width
+	}
+	nameSize, size := fields[8], fields[9]
+	if nameSize < 2 || nameSize > 4096 || size > maxEntrySize {
+		return cpioEntry{}, fmt.Errorf("invalid or oversized CPIO entry")
+	}
+	entry := cpioEntry{mode: fields[2], links: fields[5], size: int64(size)}
+	nameData := make([]byte, nameSize)
+	if _, err := io.ReadFull(c.r, nameData); err != nil {
+		return cpioEntry{}, err
+	}
+	if nameData[len(nameData)-1] != 0 {
+		return cpioEntry{}, fmt.Errorf("CPIO path lacks terminator")
+	}
+	name := string(nameData[:len(nameData)-1])
+	if name == "TRAILER!!!" {
+		if entry.size != 0 {
+			return cpioEntry{}, fmt.Errorf("CPIO trailer has content")
+		}
+		if err := readPadding(c.r); err != nil {
+			return cpioEntry{}, err
+		}
+		return cpioEntry{}, io.EOF
+	}
+	name = strings.TrimPrefix(name, "./")
+	if name == "" || path.IsAbs(name) || strings.ContainsAny(name, "\\\x00") || path.Clean(name) != name || name == ".." || strings.HasPrefix(name, "../") {
+		return cpioEntry{}, fmt.Errorf("unsafe CPIO path %q", name)
+	}
+	if _, exists := c.seen[name]; exists {
+		return cpioEntry{}, fmt.Errorf("duplicate CPIO path %q", name)
+	}
+	if name == "." && entry.kind() != cpioDirectory {
+		return cpioEntry{}, fmt.Errorf("CPIO root is not a directory")
+	}
+	c.budget.pathBytes += int64(len(name))
+	if c.budget.pathBytes > 128<<20 {
+		return cpioEntry{}, fmt.Errorf("PKG payload paths exceed memory limit")
+	}
+	c.seen[name] = entry.kind()
+	entry.name = name
+	return entry, nil
+}
+
+// skip discards an entry's content.
+func (c *cpioReader) skip(entry cpioEntry) error {
+	if _, err := io.CopyN(io.Discard, c.r, entry.size); err != nil {
+		return fmt.Errorf("CPIO %s: %w", entry.name, err)
+	}
+	return nil
 }
 
 func readCPIO(r io.Reader, budget *payloadBudget, applicationRoot bool) ([]PackageApp, error) {
 	var apps []PackageApp
-	seen := make(map[string]uint64)
+	entries := newCPIOReader(r, budget)
 	for {
-		if budget.entries <= 0 {
-			return nil, fmt.Errorf("PKG payload exceeds entry limit")
-		}
-		budget.entries--
-		var header [76]byte
-		if _, err := io.ReadFull(r, header[:]); err != nil {
-			return nil, fmt.Errorf("CPIO header: %w", err)
-		}
-		if string(header[:6]) != "070707" {
-			return nil, fmt.Errorf("%w: PKG requires ODC CPIO payload", ErrUnsupported)
-		}
-		var fields [10]uint64
-		offset := 6
-		for i, width := range []int{6, 6, 6, 6, 6, 6, 6, 11, 6, 11} {
-			v, err := strconv.ParseUint(string(header[offset:offset+width]), 8, 64)
-			if err != nil {
-				return nil, fmt.Errorf("CPIO header: %w", err)
-			}
-			fields[i] = v
-			offset += width
-		}
-		mode, links, nameSize, size := fields[2]&0170000, fields[5], fields[8], fields[9]
-		if nameSize < 2 || nameSize > 4096 || size > maxEntrySize {
-			return nil, fmt.Errorf("invalid or oversized CPIO entry")
-		}
-		nameData := make([]byte, nameSize)
-		if _, err := io.ReadFull(r, nameData); err != nil {
-			return nil, err
-		}
-		if nameData[len(nameData)-1] != 0 {
-			return nil, fmt.Errorf("CPIO path lacks terminator")
-		}
-		name := string(nameData[:len(nameData)-1])
-		if name == "TRAILER!!!" {
-			if size != 0 {
-				return nil, fmt.Errorf("CPIO trailer has content")
-			}
-			if err := readPadding(r); err != nil {
-				return nil, err
-			}
+		entry, err := entries.next()
+		if errors.Is(err, io.EOF) {
 			break
 		}
-		name = strings.TrimPrefix(name, "./")
-		if name == "" || path.IsAbs(name) || strings.ContainsAny(name, "\\\x00") || path.Clean(name) != name || name == ".." || strings.HasPrefix(name, "../") {
-			return nil, fmt.Errorf("unsafe CPIO path %q", name)
+		if err != nil {
+			return nil, err
 		}
-		if _, exists := seen[name]; exists {
-			return nil, fmt.Errorf("duplicate CPIO path %q", name)
-		}
-		if name == "." && mode != 0040000 {
-			return nil, fmt.Errorf("CPIO root is not a directory")
-		}
-		budget.pathBytes += int64(len(name))
-		if budget.pathBytes > 128<<20 {
-			return nil, fmt.Errorf("PKG payload paths exceed memory limit")
-		}
-		seen[name] = mode
-		if strings.HasSuffix(name, ".app/Contents/Info.plist") || applicationRoot && name == "Contents/Info.plist" {
-			if mode != 0100000 || links > 1 {
-				return nil, fmt.Errorf("%w: application Info.plist must be a regular, unlinked file", ErrUnsupported)
-			}
-			if size > maxMetadata || int64(size) > budget.metadata {
-				return nil, fmt.Errorf("application metadata exceeds read limit")
-			}
-			budget.metadata -= int64(size)
-			data := make([]byte, size)
-			if _, err := io.ReadFull(r, data); err != nil {
+		name := entry.name
+		if metadata := strings.HasSuffix(name, ".app/Contents/Info.plist") || applicationRoot && name == "Contents/Info.plist"; !metadata {
+			if err := entries.skip(entry); err != nil {
 				return nil, err
 			}
-			facts, err := ParseAppInfo(data)
-			if err != nil {
-				return nil, fmt.Errorf("%s: %w", name, err)
-			}
-			appPath := strings.TrimSuffix(name, "/Contents/Info.plist")
-			if name == "Contents/Info.plist" {
-				appPath = "."
-			}
-			apps = append(apps, PackageApp{Path: appPath, App: facts})
-		} else if _, err := io.CopyN(io.Discard, r, int64(size)); err != nil {
-			return nil, fmt.Errorf("CPIO %s: %w", name, err)
+			continue
 		}
+		if entry.kind() != cpioRegular || entry.links > 1 {
+			return nil, fmt.Errorf("%w: application Info.plist must be a regular, unlinked file", ErrUnsupported)
+		}
+		if entry.size > maxMetadata || entry.size > budget.metadata {
+			return nil, fmt.Errorf("application metadata exceeds read limit")
+		}
+		budget.metadata -= entry.size
+		data := make([]byte, entry.size)
+		if _, err := io.ReadFull(r, data); err != nil {
+			return nil, err
+		}
+		facts, err := ParseAppInfo(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", name, err)
+		}
+		appPath := strings.TrimSuffix(name, "/Contents/Info.plist")
+		if name == "Contents/Info.plist" {
+			appPath = "."
+		}
+		apps = append(apps, PackageApp{Path: appPath, App: facts})
 	}
 	for _, app := range apps {
 		for parent := path.Join(app.Path, "Contents"); parent != "."; parent = path.Dir(parent) {
-			if mode, exists := seen[parent]; exists && mode != 0040000 {
+			if kind, exists := entries.seen[parent]; exists && kind != cpioDirectory {
 				return nil, fmt.Errorf("%w: application ancestor %q is not a directory", ErrUnsupported, parent)
 			}
 		}
