@@ -66,7 +66,7 @@ func (c Candidate) Dependents(key string) []string {
 // resource independently, so one unreachable source cannot hide the others.
 // Plugins must match the lockfile: their code runs before anything is observed.
 func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr error) {
-	opts.Lock = lockfile.Options{Refresh: true}
+	opts.Lock = lockfile.Options{Refresh: true, Hints: opts.Lock.Hints}
 	s, err := open(ctx, opts, true)
 	if err != nil {
 		return candidate, err

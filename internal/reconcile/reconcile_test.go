@@ -486,6 +486,7 @@ func testKey(t *testing.T) string {
 
 func TestRunProposesAppliesAndRetires(t *testing.T) {
 	var payload atomic.Value
+	var downloads atomic.Int32
 	payload.Store(buildPackage(t, "1.0"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data := payload.Load().([]byte)
@@ -494,6 +495,7 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}
+		downloads.Add(1)
 		_, _ = w.Write(data)
 	}))
 	t.Cleanup(server.Close)
@@ -604,6 +606,13 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	}
 	if pull := gh.open()[0]; !strings.Contains(pull.Body, "`fixture.pkg`") || !strings.Contains(pull.Body, "prepares `fixture-2.0.pkg` (2.0)") {
 		t.Fatalf("release body: %s", pull.Body)
+	}
+
+	// While the release awaits review, its proposal's observation confirms
+	// the bytes conditionally instead of downloading them again.
+	served := downloads.Load()
+	if again := run(""); again.Updates[0].Action != "unchanged" || downloads.Load() != served {
+		t.Fatalf("pending release downloaded again: %+v downloads=%d", again.Updates, downloads.Load()-served)
 	}
 
 	// A person's commit on the branch ends the reconciler's ownership.

@@ -503,6 +503,49 @@ func TestRefreshConfirmsLockedContentWithoutDownloading(t *testing.T) {
 	}
 }
 
+func TestHintsConfirmPendingBytesWithoutDownloading(t *testing.T) {
+	var bodies atomic.Int32
+	var release atomic.Value
+	release.Store("one")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		current := release.Load().(string)
+		w.Header().Set("ETag", `"`+current+`"`)
+		if r.Header.Get("If-None-Match") == `"`+current+`"` {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		bodies.Add(1)
+		_, _ = w.Write([]byte(current))
+	}))
+	t.Cleanup(server.Close)
+	m := manager(t)
+	inputs := inputset("http", map[string]any{"url": server.URL + "/app.pkg"})
+	reviewed, err := prepare(t, m, inputs, Options{Refresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	release.Store("two")
+	proposed, err := prepare(t, m, inputs, Options{Refresh: true})
+	if err != nil || bodies.Load() != 2 {
+		t.Fatalf("release resolution: %v bodies=%d", err, bodies.Load())
+	}
+
+	// The reviewed lock still records the first release while the proposal waits.
+	save(t, m, reviewed.File)
+	hinted, err := prepare(t, m, inputs, Options{Refresh: true, Hints: proposed.File.Inputs})
+	if err != nil || bodies.Load() != 2 || !entry(hinted).Equal(entry(proposed)) || !entry(hinted).ResolvedAt.Equal(entry(proposed).ResolvedAt) {
+		t.Fatalf("pending bytes were downloaded again: %v bodies=%d %+v", err, bodies.Load(), entry(hinted))
+	}
+
+	// A source back at the reviewed bytes keeps the reviewed timestamp.
+	release.Store("one")
+	save(t, m, reviewed.File)
+	reverted, err := prepare(t, m, inputs, Options{Refresh: true, Hints: proposed.File.Inputs})
+	if err != nil || reverted.Changed || !entry(reverted).ResolvedAt.Equal(entry(reviewed).ResolvedAt) {
+		t.Fatalf("reverted source rewrote the reviewed entry: %v changed=%v %+v", err, reverted.Changed, entry(reverted))
+	}
+}
+
 func TestRetainedResourcesKeepReviewedEntries(t *testing.T) {
 	m := manager(t)
 	for _, name := range []string{"first", "other", "gone"} {

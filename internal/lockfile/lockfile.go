@@ -37,6 +37,11 @@ type Options struct {
 	PreserveUnselected bool
 	// Retain keeps these reviewed resources when the run did not select them.
 	Retain []string
+	// Hints are entries pending review, keyed like inputs. A refresh sends
+	// their validators, so a source still serving proposed bytes confirms
+	// them without another download; the reviewed entries still decide what
+	// changed.
+	Hints map[string]map[string]source.Entry
 }
 
 // Result reports acquisition separately from downstream metadata changes.
@@ -119,7 +124,7 @@ type Update struct {
 	root    string
 	opts    Options
 	inputs  map[string]map[string]plugin.Input
-	acquire func(context.Context, plugin.Input, source.Entry) (source.Entry, bool, error)
+	acquire func(ctx context.Context, input plugin.Input, entry, hint source.Entry) (source.Entry, bool, error)
 }
 
 // Begin loads reviewed inputs without acquiring resource content.
@@ -179,7 +184,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		}
 		return current, nil
 	}
-	acquire := func(ctx context.Context, input plugin.Input, entry source.Entry) (source.Entry, bool, error) {
+	acquire := func(ctx context.Context, input plugin.Input, entry, hint source.Entry) (source.Entry, bool, error) {
 		version, declaration, err := m.Declaration(input)
 		if err != nil {
 			return source.Entry{}, false, err
@@ -207,7 +212,14 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		if opts.Frozen || opts.Offline {
 			return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 		}
-		current, err := resolve(ctx, input, entry)
+		previous := entry
+		if hint.Version != 0 {
+			previous = hint
+		}
+		current, err := resolve(ctx, input, previous)
+		if err == nil && current.Content.Artifact == entry.Content.Artifact && !entry.ResolvedAt.IsZero() {
+			current.ResolvedAt = entry.ResolvedAt
+		}
 		return current, false, err
 	}
 	if opts.PluginsOnly {
@@ -244,7 +256,7 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 		}
 		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("input", name))
 		done := plugin.Stage(ctx, "Acquiring input")
-		entry, hit, err := u.acquire(ctx, inputs[name], u.old.Inputs[resource][name])
+		entry, hit, err := u.acquire(ctx, inputs[name], u.old.Inputs[resource][name], u.opts.Hints[resource][name])
 		done(err, "cached", hit)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s input %s: %w", resource, name, err)
