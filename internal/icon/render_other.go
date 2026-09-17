@@ -1,12 +1,10 @@
 //go:build !darwin
 
-package macsoftware
+package icon
 
-import (
-	"context"
-	"errors"
-)
+import "context"
 
-func nativeIcon(context.Context, string, int) ([]byte, string, string, error) {
-	return nil, "", "", errors.New("native rendering requires macOS")
+// Render is unavailable off macOS; committed assets still publish everywhere.
+func Render(context.Context, string, int) ([]byte, error) {
+	return nil, ErrUnsupportedHost
 }

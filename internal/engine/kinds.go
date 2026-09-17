@@ -86,9 +86,9 @@ func macSoftware(ctx context.Context, request plugin.Request) (plugin.Response, 
 			declarations["source"] = *spec.Source
 		}
 		config, err := json.Marshal(spec.Preparation())
-		return resourceResponse(plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: spec.Destinations, CacheVariants: map[string]string{"icon": macsoftware.IconVariant()}}, err)
+		return resourceResponse(plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: spec.Destinations, Icon: spec.Icon}, err)
 	}
-	artifacts, err := macsoftware.Prepare(ctx, spec, macsoftware.Request{Input: input.Inputs["source"], Workspace: input.Workspace, Timestamp: input.Timestamp, Cached: input.Cached, DeriveSignature: input.Derive == "signature"})
+	artifacts, err := macsoftware.Prepare(ctx, spec, macsoftware.Request{Input: input.Inputs["source"], Workspace: input.Workspace, Timestamp: input.Timestamp, DeriveSignature: input.Derive == "signature"})
 	if installer, ok := artifacts["installer"]; err == nil && ok {
 		installer.Filename = artifactname.Filename(input.Identity.Name, installer.Version, installer.SHA256, installer.Format)
 		artifacts["installer"] = installer
@@ -111,14 +111,13 @@ func windowsSoftware(ctx context.Context, request plugin.Request) (plugin.Respon
 				declarations["file:"+name] = value
 			}
 		}
-		destinations := spec.Destinations
-		spec.Source = plugin.Input{}
-		spec.Destinations = nil
+		destinations, iconName := spec.Destinations, spec.Icon
+		spec.Source, spec.Destinations, spec.Icon = plugin.Input{}, nil, ""
 		if spec.Content != nil {
 			spec.Content.Files = nil
 		}
 		config, err := json.Marshal(spec)
-		return resourceResponse(plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: destinations}, err)
+		return resourceResponse(plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: destinations, Icon: iconName}, err)
 	}
 	if spec.Content != nil {
 		spec.Content.Files = map[string]plugin.Input{}

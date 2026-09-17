@@ -107,7 +107,7 @@ func TestZIPApplicationProducesPackageAndSelectedEvidence(t *testing.T) {
 	if err := json.Unmarshal(installer.Evidence["macos.application"], &app); err != nil {
 		t.Fatal(err)
 	}
-	if installer.Format != "pkg" || installer.Version != "123" || app.App.BundleID != "org.example.app" || app.InstalledPath != "/Applications/Example.app" || outputs["icon"].Format != "png" {
+	if installer.Format != "pkg" || installer.Version != "123" || app.App.BundleID != "org.example.app" || app.InstalledPath != "/Applications/Example.app" || len(outputs) != 1 {
 		t.Fatalf("outputs=%+v app=%+v", outputs, app)
 	}
 	if _, err := apple.VerifyPackage(t.Context(), installer.Path, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "not signed") {
@@ -144,75 +144,7 @@ func TestDMGApplicationRetainsVendorBytes(t *testing.T) {
 	}
 }
 
-func TestIconRefreshReusesInstaller(t *testing.T) {
-	app := filepath.Join(applicationFixture(t), "Example.app")
-	input := plugin.Artifact{Path: app, Filename: "Example.app", Tree: true}
-	first, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	workspace := t.TempDir()
-	refreshed, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: workspace, Cached: first})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if refreshed["installer"].Path != first["installer"].Path || refreshed["installer"].SHA256 != first["installer"].SHA256 || refreshed["installer"].Version != first["installer"].Version {
-		t.Fatal("refresh rebuilt installer")
-	}
-	if refreshed["icon"].Path == "" || refreshed["icon"].Path == first["icon"].Path {
-		t.Fatal("refresh did not derive an icon in the new workspace")
-	}
-	if _, err := os.Stat(filepath.Join(workspace, "Example.pkg")); !os.IsNotExist(err) {
-		t.Fatal("refresh repackaged the installer")
-	}
-}
-
-func TestVendorPackageRemainsIconless(t *testing.T) {
-	name, err := filepath.Abs("../apple/testdata/fixture.pkg")
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := Prepare(t.Context(), Spec{}, Request{Input: plugin.Artifact{Path: name, Filename: "vendor.pkg"}, Workspace: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result["installer"].Path == "" || result["icon"].Path != "" {
-		t.Fatal("package metadata was treated as a renderable application")
-	}
-}
-
-func TestPortableIconResources(t *testing.T) {
-	app := filepath.Join(applicationFixture(t), "Example.app")
-	iconPath := filepath.Join(app, "Contents/Resources/icon.png")
-	valid, err := os.ReadFile(iconPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, test := range []struct {
-		name string
-		data []byte
-		want bool
-	}{
-		{"png", valid, true}, {"unsupported", []byte("unsupported icon"), false}, {"missing", nil, false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if err := os.WriteFile(iconPath, test.data, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if test.data == nil {
-				if err := os.Remove(iconPath); err != nil {
-					t.Fatal(err)
-				}
-			}
-			result, err := portableIcon(t.Context(), app, t.TempDir())
-			if err != nil || (result.Path != "") != test.want {
-				t.Fatalf("icon=%+v err=%v", result, err)
-			}
-		})
-	}
-}
-
-func TestDMGMetadataAndPortableIconDoNotExtract(t *testing.T) {
+func TestDMGMetadataDoesNotExtract(t *testing.T) {
 	source := applicationFixture(t)
 	filename := filepath.Join(t.TempDir(), "Example.dmg")
 	if err := testdiskimage.Write(filename, source); err != nil {
@@ -231,15 +163,8 @@ func TestDMGMetadataAndPortableIconDoNotExtract(t *testing.T) {
 	if len(facts.Subjects) != 1 || facts.Subjects[0].App.BundleID != "org.example.app" {
 		t.Fatalf("metadata: %+v", facts)
 	}
-	icon, err := portableIconFS(t.Context(), selected.image, selected.name, workspace)
-	if err != nil || icon.Path == "" {
-		t.Fatalf("portable icon: %+v, %v", icon, err)
-	}
-	if string(icon.Evidence["macos.icon"]) != `{"renderer":"portable/1"}` {
-		t.Fatalf("icon evidence: %v", icon.Evidence)
-	}
 	entries, err := os.ReadDir(workspace)
-	if err != nil || len(entries) != 1 || entries[0].Name() != "icon.png" {
+	if err != nil || len(entries) != 0 {
 		t.Fatalf("metadata inspection materialized payload: %v, %v", entries, err)
 	}
 	local, err := selected.materialize(t.Context(), workspace)

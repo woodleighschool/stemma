@@ -214,6 +214,13 @@ script detection when the vendor's installed state needs more than a native rule
 Dependencies and supersedence are [publication relationships](publishing.md#intune-relationships),
 not setup-directory inputs.
 
+## Icon
+
+`spec.icon` names a catalog asset exactly as it does for
+[macOS software](mac-software.md#icons): `icon: microsoft-word` publishes
+`icons/microsoft-word.png`. Windows installers are not rendered, so share the asset
+rendered from the macOS document or commit a square PNG.
+
 ## Signature
 
 Require the setup file to carry a complete, valid Authenticode signature from an

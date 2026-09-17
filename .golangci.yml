@@ -81,7 +81,7 @@ linters:
         linters: [gosec]
         text: "G(401|505):"
       # Direct macOS bindings require unsafe pointers.
-      - path: internal/(archive/metadata|macsoftware/imageio)_darwin\.go$
+      - path: internal/(archive/metadata|icon/imageio)_darwin\.go$
         linters: [gosec]
         text: "G103:"
       # Format bounds and entry/mode limits are validated before these conversions.

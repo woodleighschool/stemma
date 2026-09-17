@@ -8,11 +8,12 @@ import (
 	"path"
 	"strings"
 
+	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-const Version = "stemma.macsoftware/3"
+const Version = "stemma.macsoftware/4"
 
 type Spec struct {
 	Source      *plugin.Input `json:"source,omitempty" yaml:"source,omitempty"`
@@ -21,7 +22,9 @@ type Spec struct {
 	PackagePath string `json:"package_path,omitempty" yaml:"package_path,omitempty"`
 	// Signature requires the published PKG or selected application to carry a
 	// complete Developer ID signature from the expected team.
-	Signature    *signature.Policy         `json:"signature,omitempty" yaml:"signature,omitempty"`
+	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty"`
+	// Icon names the catalog asset icons/<name>.png that destinations publish.
+	Icon         string                    `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Render it with stemma icon or commit a square PNG."`
 	Destinations map[string]map[string]any `json:"destinations,omitempty" yaml:"destinations,omitempty"`
 }
 
@@ -32,8 +35,10 @@ type Application struct {
 	VersionKey    string `json:"version_key,omitempty" yaml:"version_key,omitempty" jsonschema:"enum=CFBundleShortVersionString,enum=CFBundleVersion"`
 }
 
+// Preparation keeps the fields that shape the installer; publication settings
+// and the icon asset change without invalidating prepared outputs.
 func (s Spec) Preparation() Spec {
-	s.Source, s.Destinations = nil, nil
+	s.Source, s.Destinations, s.Icon = nil, nil, ""
 	return s
 }
 
@@ -60,6 +65,9 @@ func (s Spec) Validate() error {
 		if signer.Scheme != signature.AppleDeveloperID {
 			return errors.New("signature.signer must name an Apple Developer ID team")
 		}
+	}
+	if s.Icon != "" && !icon.ValidName(s.Icon) {
+		return fmt.Errorf("icon must name an asset under %s/ without directories or extension", icon.Directory)
 	}
 	return nil
 }

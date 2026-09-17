@@ -142,33 +142,45 @@ trusted timestamp. A different team fails preparation until the document is
 updated. Notarisation and Gatekeeper policy are not assessed. See
 [signature limits](limitations.md#signatures).
 
-## Application icons
+## Icons
 
-A selected application produces an immutable `icon` PNG artifact whenever supported.
-macOS runners use the native system renderer for the best current macOS appearance,
-including system styling. Linux and Windows runners use supported plist, PNG and
-ICNS resources from the application bundle, so ordinary CI can bootstrap a catalog
-with icons without per-application configuration.
+An icon is a committed catalog asset, not something a run derives. Declare it by
+name:
 
-Native rendering is an optional enhancement. If it is unavailable, preparation
-uses a supported portable icon or omits the output. Unsupported applications and
-installers may legitimately have no icon. A vendor PKG with application metadata
-but no selected application directory is not rendered as an application icon.
-
-Destinations normally create an icon only when one is missing, even if the software
-object already exists. Existing artwork is retained across normal runs and software
-updates, so a portable runner does not replace a native icon. To improve the catalog's
-artwork intentionally, run on a current Mac:
-
-```sh
-stemma apply --refresh-icons
-stemma apply MacSoftware/firefox --refresh-icons
+```yaml
+spec:
+  icon: microsoft-word
 ```
 
-Use `stemma plan --refresh-icons` to preview publication changes. Refresh derives
-icons again on this runner and permits destinations to replace their existing icons.
-Installer preparation remains cached; icon changes do not change installer bytes,
-versions or content identity. Native and portable icon preparations have separate
-cache entries. Munki keeps immutable icon objects and updates their references.
-External destinations must implement the icon reconciliation contract described in
-[plugins](plugins.md).
+`icon: microsoft-word` means `icons/microsoft-word.png` at the project root. Every
+destination publishes those exact bytes on any runner, and a changed file is
+ordinary drift that the next run replaces. Without `icon`, published artwork is
+unmanaged and stays as it is. A declared icon without its file fails `validate`,
+`plan` and `apply`.
+
+Render the asset on a Mac:
+
+```sh
+stemma icon MacSoftware/microsoft-word
+stemma icon
+```
+
+`stemma icon` prepares the locked source like any other run, takes the application
+that [selection](#select-an-application-once) identifies and draws it with the macOS
+system renderer at 512 pixels, so the artwork carries the current system
+presentation. Disk images, archives and vendor packages all work; a package holding
+several applications needs `application.bundle_id` or `application.path` first.
+Without selectors it fills in every declared icon that has no file yet and leaves
+existing files alone, so a run across the catalog is safe. `--force` renders them
+again.
+
+The renderer draws what that Mac would show in Finder. Render on a Mac that can
+launch the application, because macOS overlays its prohibited badge on software the
+host cannot run, and review the image like any other change. A large bundle takes
+as long to extract from its installer as it would to install.
+
+`icons/` holds plain PNG files. Software without an application, such as a
+script-only item or a driver package, uses artwork you commit yourself: any square
+PNG between 128 and 1024 pixels, up to 1 MiB. Resources share an asset by naming
+it, which lets a `WindowsSoftware` document publish the icon rendered from its macOS
+counterpart.

@@ -510,29 +510,3 @@ func TestApplyChecksEveryReviewedInputBeforeWriting(t *testing.T) {
 		t.Fatalf("apply wrote before checking the later resource: writes=%d error=%v", writes, err)
 	}
 }
-
-func TestRefreshIconsReachesSelectedDestinations(t *testing.T) {
-	root := t.TempDir()
-	filename := filepath.Join(root, "stemma.yaml")
-	if err := testproject.Write(filename, []byte(policyProject)); err != nil {
-		t.Fatal(err)
-	}
-	seen := map[string]int{}
-	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Resources: []string{"MacSoftware/policy"}, RefreshIcons: true,
-		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, req plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
-			if req.Method != "validate" {
-				if !req.RefreshIcons {
-					t.Fatal("refresh intent lost in protocol")
-				}
-				seen[req.Method]++
-			}
-			return plugin.ReconcileResponse{}, nil
-		}},
-	}
-	if _, err := Run(t.Context(), opts); err != nil {
-		t.Fatal(err)
-	}
-	if seen["plan"] != 2 || seen["apply"] != 2 {
-		t.Fatalf("selected destination calls: %v", seen)
-	}
-}

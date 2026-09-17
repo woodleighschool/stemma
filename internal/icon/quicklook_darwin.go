@@ -1,4 +1,4 @@
-package macsoftware
+package icon
 
 import (
 	"context"

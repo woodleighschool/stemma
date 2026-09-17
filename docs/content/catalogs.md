@@ -12,6 +12,8 @@ Keep related definitions and their assets together. For example:
 ```text
 stemma.yaml
 stemma.lock.yaml
+icons/
+  chrome.png
 software/
   chrome.yaml
   fonts/
@@ -22,7 +24,9 @@ software/
 
 Names and directories are your choice. `spec.imports` accepts paths and globs such
 as `software/**/*.yaml`; every pattern must match. Asset paths are relative to the
-document containing the declaration and must remain inside the project.
+document containing the declaration and must remain inside the project. `icons/` is
+the one fixed name: a resource's `icon: chrome` publishes `icons/chrome.png`. See
+[icons](mac-software.md#icons).
 
 Each document has a literal `apiVersion`, `kind`, `metadata.name` and `spec`.
 Kinds are case-sensitive: use `MacSoftware`, not `macsoftware`. Lowercase filenames

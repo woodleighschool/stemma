@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/archive"
@@ -51,26 +50,6 @@ func (p *payload) materialize(ctx context.Context, workspace string) (string, er
 	p.local, err = p.image.Extract(ctx, filepath.Join(workspace, "expanded"), p.name)
 	done(err)
 	return p.local, err
-}
-
-func (p *payload) addIcon(ctx context.Context, outputs map[string]plugin.Artifact, workspace string) {
-	if p.image == nil || runtime.GOOS == "darwin" {
-		local, err := p.materialize(ctx, workspace)
-		if err != nil {
-			plugin.Logger(ctx).DebugContext(ctx, "Application icon unavailable", "error", err)
-			return
-		}
-		addIcon(ctx, outputs, local, workspace)
-		return
-	}
-	artwork, err := portableIconFS(ctx, p.image, p.name, workspace)
-	if err != nil {
-		plugin.Logger(ctx).DebugContext(ctx, "Application icon unavailable", "error", err)
-		return
-	}
-	if artwork.Path != "" {
-		outputs["icon"] = artwork
-	}
 }
 
 func selectPayload(ctx context.Context, spec Spec, input plugin.Artifact, workspace string) (*payload, error) {

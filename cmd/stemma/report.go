@@ -31,6 +31,9 @@ func resourceStatus(method string, resource engine.ResourceReport) string {
 	if method == "signature" {
 		return "signer derived"
 	}
+	if method == "icon" && resource.Icon != "" {
+		return resource.Icon
+	}
 	if len(resource.Destinations) > 0 {
 		changes := 0
 		for _, destination := range resource.Destinations {
@@ -109,7 +112,7 @@ func signatureDetails(resource engine.ResourceReport) string {
 func printSummary(out io.Writer, method string, report engine.Report) error {
 	style := newTextStyle(out)
 	var text strings.Builder
-	prepared, cached, failed, changes := 0, 0, 0, 0
+	prepared, cached, failed, changes, rendered, skipped := 0, 0, 0, 0, 0, 0
 	for _, resource := range report.Resources {
 		switch {
 		case resource.Error != "":
@@ -118,6 +121,13 @@ func printSummary(out io.Writer, method string, report engine.Report) error {
 			cached++
 		default:
 			prepared++
+		}
+		switch resource.Icon {
+		case "rendered", "replaced":
+			rendered++
+		case "":
+		default:
+			skipped++
 		}
 		for _, destination := range resource.Destinations {
 			if method == "plan" || destination.Applied {
@@ -131,6 +141,8 @@ func printSummary(out io.Writer, method string, report engine.Report) error {
 			_, _ = fmt.Fprintf(&text, "%s %d prepared, %d cached, %d failed.\n", style.paint("Preparation:", color.Bold), prepared, cached, failed)
 		case "signature":
 			_, _ = fmt.Fprintf(&text, "%s %d derived, %d failed.\n", style.paint("Signatures:", color.Bold), prepared, failed)
+		case "icon":
+			_, _ = fmt.Fprintf(&text, "%s %d rendered, %d left alone, %d failed.\n", style.paint("Icons:", color.Bold), rendered, skipped, failed)
 		case "plan":
 			_, _ = fmt.Fprintf(&text, "%s %d changes, %d failed resources.\n", style.paint("Plan:", color.Bold), changes, failed)
 		case "apply":
@@ -155,7 +167,7 @@ func (s textStyle) outcome(text string) string {
 		attribute = color.FgHiRed
 	case "interrupted", "not completed", "skipped", "declined":
 		attribute = color.FgHiYellow
-	case "unchanged", "already applied":
+	case "unchanged", "already applied", "exists", "no application", "no icon declared":
 		attribute = color.Faint
 	}
 	return s.paint(text, attribute)

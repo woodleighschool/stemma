@@ -71,6 +71,9 @@ func ValidateProject(ctx context.Context, opts Options) (result config.Project, 
 	if err != nil {
 		return p, err
 	}
+	if err := verifyIcons(root, plans, sortedKeys(plans)); err != nil {
+		return p, err
+	}
 	_, _, err = orderDestinations(ctx, p, plans, ops, root, selected)
 	return p, err
 }

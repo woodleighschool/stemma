@@ -343,7 +343,7 @@ func TestPreparedIconPublishesAndRetainsExplicitOverride(t *testing.T) {
 	}
 }
 
-func TestIconBootstrapRefreshAndRetention(t *testing.T) {
+func TestDeclaredIconReplacesOnChangeAndStaysWhenUndeclared(t *testing.T) {
 	root, request := repositoryRequest(t, "Example.pkg", `{}`)
 	pkginfo := apply(t, root, &request)
 	icon := func(value uint8) plugin.Artifact {
@@ -361,8 +361,8 @@ func TestIconBootstrapRefreshAndRetention(t *testing.T) {
 		digest := sha256.Sum256(content.Bytes())
 		return plugin.Artifact{Path: name, Filename: "icon.png", Format: "png", Size: int64(content.Len()), SHA256: hex.EncodeToString(digest[:])}
 	}
-	portable, native := icon(10), icon(200)
-	request.Inputs = map[string]plugin.Artifact{"icon": portable}
+	first, second := icon(10), icon(200)
+	request.Inputs = map[string]plugin.Artifact{"icon": first}
 	apply(t, root, &request)
 	check := func(want plugin.Artifact) {
 		t.Helper()
@@ -374,37 +374,37 @@ func TestIconBootstrapRefreshAndRetention(t *testing.T) {
 			t.Fatal("icon changed installer identity")
 		}
 	}
-	check(portable)
-	request.Inputs["icon"] = native
-	apply(t, root, &request)
-	check(portable)
-	request.RefreshIcons = true
+	check(first)
+	// Changed bytes are ordinary drift: planning reports them, applying replaces them.
+	request.Inputs["icon"] = second
 	request.Method = "plan"
 	response, err := munkirepo.Handle(t.Context(), request)
 	if err != nil || len(response.Changes) == 0 {
-		t.Fatalf("refresh plan: %+v %v", response, err)
+		t.Fatalf("changed icon plan: %+v %v", response, err)
 	}
-	check(portable)
+	check(first)
 	apply(t, root, &request)
-	check(native)
-	request.RefreshIcons = false
-	request.Inputs["icon"] = portable
-	apply(t, root, &request)
-	check(native)
-	// A new software version retains the existing artwork too.
+	check(second)
+	assertConverged(t, request)
+	// A new software version publishes the declared artwork again.
 	request.Artifact.Version = "2.0"
 	pkginfo = apply(t, root, &request)
-	check(native)
+	check(second)
+	// Without a declared icon the artwork is unmanaged and stays.
 	request.Artifact.Version = "3.0"
 	request.Inputs = nil
 	pkginfo = apply(t, root, &request)
-	check(native)
-	request.Inputs = map[string]plugin.Artifact{"icon": portable}
+	check(second)
 	// Remote absence is authoritative even when the software and binding exist.
-	if err := os.Remove(filepath.Join(root, "icons", "stemma", native.SHA256+".png")); err != nil {
+	request.Inputs = map[string]plugin.Artifact{"icon": second}
+	content := filepath.Join(root, "icons", "stemma", second.SHA256+".png")
+	if err := os.Remove(content); err != nil {
 		t.Fatal(err)
 	}
 	apply(t, root, &request)
-	check(portable)
+	check(second)
+	if _, err := os.Stat(content); err != nil {
+		t.Fatalf("missing icon content was not republished: %v", err)
+	}
 	assertConverged(t, request)
 }

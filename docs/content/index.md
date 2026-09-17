@@ -42,15 +42,15 @@ and propose updates as pull requests.
 The [AutoPkg wiki](https://github.com/autopkg/autopkg/wiki) remains the reference for
 AutoPkg. These are useful starting points when writing a Stemma catalog:
 
-| In AutoPkg                            | In Stemma                                                  |
-| ------------------------------------- | ---------------------------------------------------------- |
-| Recipe repository                     | Catalog: a Project plus imported YAML documents and assets |
-| Download recipe and version discovery | A source resolver and its reviewed lock entry              |
-| Application inspection processors     | One application selection with derived metadata and icons  |
-| Package construction recipe           | `BuildMacPkg`, when you need to construct a payload        |
-| Munki import recipe                   | Native destination settings on `MacSoftware`               |
-| Shared recipe inputs and overrides    | Optional components and explicit values                    |
-| Custom processors                     | Trusted plugins registering operations or resource kinds   |
+| In AutoPkg                            | In Stemma                                                                   |
+| ------------------------------------- | --------------------------------------------------------------------------- |
+| Recipe repository                     | Catalog: a Project plus imported YAML documents and assets                  |
+| Download recipe and version discovery | A source resolver and its reviewed lock entry                               |
+| Application inspection processors     | One application selection with derived metadata; icons are committed assets |
+| Package construction recipe           | `BuildMacPkg`, when you need to construct a payload                         |
+| Munki import recipe                   | Native destination settings on `MacSoftware`                                |
+| Shared recipe inputs and overrides    | Optional components and explicit values                                     |
+| Custom processors                     | Trusted plugins registering operations or resource kinds                    |
 
 An AutoPkg processor chain need not become a chain of Stemma documents. A vendor
 application normally needs one software document. Custom package construction is

@@ -86,19 +86,10 @@ A named resource the run does not reconcile is left to the destination, which
 resolves it from its published binding or its own state. How native fields refer
 to other software remains each destination's contract.
 
-## Auxiliary icons
+## Icons
 
-`MacSoftware` supplies its optional immutable PNG as the named `icon` artifact in
-reconciliation `inputs`. The core passes the run's `refresh_icons` boolean in both
-plan and apply requests. Destination plugins observe icon presence independently
-of software creation: normally create missing icons and retain existing ones;
-when refresh is requested, replace or upsert the prepared icon. Missing input does
-not clear a published icon. Icon publication must not trigger installer uploads.
-The destination owns API calls, content storage and icon presence detection.
-
-Resource operations can declare `cache_variants` for optional outputs during
-validation. The cache stores those outputs independently of the base preparation.
-On a partial cache miss, `run` receives verified leased `cached` artifacts so the
-resource can reuse completed work. MacSoftware uses this for native and portable
-icons; renderer details are not catalog configuration. Refresh invalidates only the
-icon cache entry for this run, preserving reusable installer preparation.
+A resource that declares an icon supplies the committed PNG as the `icon` artifact in
+reconciliation `inputs`. Publish those exact bytes: create a missing icon, replace
+one whose content differs and leave the published icon alone when the input is
+absent. Icon publication must not trigger installer uploads. The destination owns
+API calls, content storage and icon presence detection.

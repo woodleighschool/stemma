@@ -93,7 +93,7 @@ locked inputs into an empty cache, but does not write destination content or
 publication bindings. It is the dry run.
 
 The selected bundle supplies application metadata. You do not need to repeat its
-version, bundle identifier and icon as separate extraction steps.
+version and bundle identifier as separate extraction steps.
 
 Commit `stemma.yaml`, `software/` and `stemma.lock.yaml` when the inputs are right.
 

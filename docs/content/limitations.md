@@ -2,7 +2,7 @@
 
 Stemma's runner and the software's target platform are separate. The CLI builds
 for macOS, Linux and Windows on amd64 and arm64. Built-in inspection and packaging
-use portable Go implementations, except native icon rendering.
+use portable Go implementations. Only `stemma icon`, an authoring command, needs macOS.
 
 Plugins can impose additional runner or tool requirements. Stemma checks declared
 requirements before expensive processing or destination mutation and reports the
@@ -19,7 +19,7 @@ arbitrary plugin code.
 | MSI inspection        | Reads MSI database metadata without Windows or executing the installer                                                |
 | EXE preparation       | Preserves the vendor installer; commands, version-specific detection and other installation semantics remain authored |
 | Intune Win32 wrapping | Portable `.intunewin` preparation with a 2 GiB implementation bound                                                   |
-| Automatic icons       | Native system rendering on macOS; supported embedded PNG and PNG-backed ICNS elsewhere                                |
+| Icon rendering        | `stemma icon` draws application icons with the macOS system renderer; publishing committed icons is portable          |
 
 PKG inspection bounds entry counts and retained path metadata, rather than imposing
 a small total payload size. Exceptionally large inventories can still hit those
@@ -28,7 +28,7 @@ macOS is supported by the portable reader.
 
 DMG inspection reads the filesystem through compressed chunks, without creating a
 raw filesystem image. Selected applications are extracted when verification or
-native icon rendering needs a local bundle. Published vendor installers retain
+icon rendering needs a local bundle. Published vendor installers retain
 their original bytes. Leave enough working disk space for extracted content and
 destination preparation.
 
@@ -82,6 +82,5 @@ Retention is provider-owned and reference-aware. It is not a hard storage ceilin
 an app retirement policy or an automatic rollback mechanism. See
 [publishing](publishing.md#identity-and-retention).
 
-Native application icon rendering is a macOS enhancement. Other supported runners
-use portable application icon resources. Preparation remains usable without an icon;
-vendor packages are not rendered as substitutes for their installed applications.
+Icon rendering is an authoring step on macOS. Reconciliation publishes committed PNG
+files and never renders, so every runner produces the same result.

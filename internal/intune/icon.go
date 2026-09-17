@@ -22,9 +22,6 @@ func (c *client) reconcileIcon(ctx context.Context, req plugin.ReconcileRequest,
 		return nil, nil
 	}
 	existing, _ := current["largeIcon"].(object)
-	if text(existing["value"]) != "" && !req.RefreshIcons {
-		return nil, nil
-	}
 	if artifact.Tree || artifact.Format != "png" || artifact.Size <= 0 || artifact.Size > 32<<20 {
 		return nil, errors.New("intune icon requires a bounded PNG artifact")
 	}

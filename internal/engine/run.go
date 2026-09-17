@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/internal/icon"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/plugin"
@@ -25,9 +27,9 @@ import (
 type Options struct {
 	ConfigPath, CacheDir, StateDir string
 	Method                         string
-	RefreshIcons                   bool
 	Resources                      []string
 	Lock                           lockfile.Options
+	Icons                          IconOptions
 	Handlers                       map[string]reconcileHandler
 	// ResourceDone receives each final resource result, including failures.
 	ResourceDone func(ResourceReport) error
@@ -49,7 +51,9 @@ type ResourceReport struct {
 	Artifacts      map[string]Prepared `json:"artifacts,omitempty"`
 	Cached         bool                `json:"cached"`
 	Destinations   []DestinationReport `json:"destinations,omitempty"`
-	Error          string              `json:"error,omitempty"`
+	// Icon reports what the icon method did for the resource's declared asset.
+	Icon  string `json:"icon,omitempty"`
+	Error string `json:"error,omitempty"`
 }
 
 // DestinationReport describes semantic drift independently of cache hits.
@@ -83,13 +87,18 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		}
 	}()
 	switch opts.Method {
-	case "update", "prepare", "signature", "plan", "apply":
+	case "update", "prepare", "signature", "plan", "apply", "icon":
 	default:
 		return report, fmt.Errorf("unsupported run method %q", opts.Method)
 	}
-	// signature derives each resource's signer through the preparation path.
-	preparing := opts.Method == "prepare" || opts.Method == "signature"
-	if opts.Method == "plan" || opts.Method == "apply" {
+	if opts.Method == "icon" && opts.Icons.Renderer == nil && runtime.GOOS != "darwin" {
+		// Fail before acquiring anything rather than once per prepared resource.
+		return report, icon.ErrUnsupportedHost
+	}
+	// signature derives each resource's signer through the preparation path;
+	// icon renders declared assets from prepared applications the same way.
+	preparing := opts.Method == "prepare" || opts.Method == "signature" || opts.Method == "icon"
+	if opts.Method == "plan" || opts.Method == "apply" || opts.Method == "icon" {
 		opts.Lock.Frozen = true
 	}
 	s, err := open(ctx, opts, opts.Lock.Frozen || opts.Lock.Offline)
@@ -111,6 +120,13 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err := preflight(plans, selected, p, ops); err != nil {
 		return report, err
 	}
+	if opts.Method == "plan" || opts.Method == "apply" {
+		// Locking and rendering come first for a new declaration, so only
+		// publication requires the asset.
+		if err := verifyIcons(root, plans, selected); err != nil {
+			return report, err
+		}
+	}
 	if err := registerResolvers(manager, ops, s.work); err != nil {
 		return report, err
 	}
@@ -127,7 +143,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err != nil {
 		return report, err
 	}
-	if opts.Lock.Frozen {
+	if opts.Lock.Frozen && opts.Method != "icon" {
 		// Verify every reviewed input before any destination can be written.
 		for _, key := range selected {
 			if _, _, err := locked.Acquire(resourceContext(ctx, plans[key].Resource), key); err != nil {
@@ -277,7 +293,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			if opts.Method == "signature" {
 				derive = "signature"
 			}
-			outputs, item.Cached, preparationErr = prepareResource(ctx, store, ops, plan, inputs, work, opts.RefreshIcons, derive)
+			outputs, item.Cached, preparationErr = prepareResource(ctx, store, ops, plan, inputs, work, derive)
 		}
 		item.Artifacts = outputs
 		if preparationErr != nil {
@@ -371,6 +387,61 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		}
 		return nil
 	}
+	if opts.Method == "icon" {
+		// Only a missing or forced asset costs a preparation, so a run across the
+		// catalog is cheap; rendering then completes the resource in place of
+		// publication.
+		clear(pending)
+		outcomes, building := map[string]string{}, map[string]bool{}
+		var builds func(string)
+		builds = func(key string) {
+			for _, input := range plans[key].Inputs {
+				if ref := input.Resource; ref != nil && !building[ref.Key()] {
+					building[ref.Key()] = true
+					builds(ref.Key())
+				}
+			}
+		}
+		for _, key := range selected {
+			if outcomes[key] = iconOutcome(opts.Icons, root, plans[key]); outcomes[key] == "" {
+				pending[key] = 1
+				builds(key)
+			}
+		}
+		for _, key := range selected {
+			if outcome := outcomes[key]; outcome != "" {
+				if building[key] {
+					continue // Preparing the resource that consumes it reports it.
+				}
+				resource := plans[key].Resource
+				item := ResourceReport{Name: resource.Metadata.Name, Kind: resource.Kind, Key: key, Icon: outcome}
+				report.Resources = append(report.Resources, item)
+				if err := complete(item); err != nil {
+					return report, errors.Join(append(failures, err)...)
+				}
+				continue
+			}
+			if err := prepare(key); err != nil {
+				return report, errors.Join(append(failures, err)...)
+			}
+			prepared := preparedItems[key]
+			if !prepared.ready {
+				continue
+			}
+			item := &report.Resources[prepared.report]
+			item.Icon, err = renderIcon(resourceContext(ctx, plans[key].Resource), opts.Icons, root, plans[key], prepared.outputs, prepared.work)
+			if err != nil {
+				item.Error = err.Error()
+				if ctx.Err() == nil {
+					failures = append(failures, fmt.Errorf("%s: %w", key, err))
+				}
+			}
+			if err := complete(*item); err != nil {
+				return report, errors.Join(append(failures, err)...)
+			}
+		}
+		return report, errors.Join(failures...)
+	}
 	for _, key := range selected {
 		if len(plans[key].Destinations) == 0 {
 			if err := prepare(key); err != nil {
@@ -443,7 +514,6 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 	if err != nil {
 		return err
 	}
-	input.request.RefreshIcons = opts.RefreshIcons
 	input.request.Inputs = map[string]plugin.Artifact{}
 	references := map[string]string{}
 	for output := range outputs {
@@ -462,6 +532,13 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 			return err
 		}
 		input.request.Inputs[inputName] = artifact.artifact()
+	}
+	if software.Icon != "" && (opts.Method == "plan" || opts.Method == "apply") {
+		artifact, err := iconInput(root, software.Icon, filepath.Join(work, "destinations", destination, "inputs", "icon"))
+		if err != nil {
+			return fmt.Errorf("destination %s: %w", destination, err)
+		}
+		input.request.Inputs["icon"] = artifact
 	}
 	if err := ops.call(ctx, d.Operation, "validate", input.request, nil); err != nil {
 		return fmt.Errorf("destination %s: %w", destination, err)

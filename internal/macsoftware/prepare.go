@@ -30,7 +30,6 @@ type Request struct {
 	Input           plugin.Artifact
 	Workspace       string
 	Timestamp       time.Time
-	Cached          map[string]plugin.Artifact
 	DeriveSignature bool
 }
 
@@ -40,7 +39,7 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
-	input, workspace, timestamp, cached := request.Input, request.Workspace, request.Timestamp, request.Cached
+	input, workspace, timestamp := request.Input, request.Workspace, request.Timestamp
 	if input.Path == "" {
 		return map[string]plugin.Artifact{}, nil
 	}
@@ -53,13 +52,6 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	}
 	defer payload.close()
 	selected, archivePath, dmg := payload.local, payload.archivePath, payload.image != nil
-	if cached["installer"].Path != "" {
-		outputs := map[string]plugin.Artifact{"installer": cached["installer"]}
-		if info, err := payload.stat(); err == nil && info.IsDir() && strings.EqualFold(path.Ext(payload.name), ".app") {
-			payload.addIcon(ctx, outputs, workspace)
-		}
-		return outputs, ctx.Err()
-	}
 	info, err := payload.stat()
 	if err != nil {
 		return nil, err
@@ -158,14 +150,10 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	if verified != nil {
 		installer.Evidence["signature"], _ = json.Marshal(verified)
 	}
-	outputs := map[string]plugin.Artifact{"installer": installer}
-	if info.IsDir() {
-		payload.addIcon(ctx, outputs, workspace)
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return outputs, nil
+	return map[string]plugin.Artifact{"installer": installer}, nil
 }
 
 func selectApp(facts plugin.Facts, options *Application) (*plugin.Subject, error) {

@@ -156,12 +156,13 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	}
 	_, managedName := managed["icon_name"]
 	_, managedHash := managed["icon_hash"]
-	preparedIcon := origins["pkginfo.icon_name"] == "input.icon"
-	retainIcon := preparedIcon || !managedName && !managedHash
+	// A declared icon publishes its exact bytes; without one the artwork is
+	// unmanaged and the previous reference stays.
+	retainIcon := origins["pkginfo.icon_name"] != "input.icon" && !managedName && !managedHash
 	retainIcon = retainIcon && !slices.Contains(destinationMetadata.Unmanaged, "pkginfo.icon_name") && !slices.Contains(destinationMetadata.Unmanaged, "pkginfo.icon_hash")
 	if retainIcon {
 		name, _ := previous["icon_name"].(string)
-		if name != "" && filepath.IsLocal(name) && (!request.RefreshIcons || !preparedIcon || !strings.HasPrefix(name, "stemma/")) {
+		if name != "" && filepath.IsLocal(name) {
 			if info, err := os.Stat(filepath.Join(root, "icons", filepath.FromSlash(name))); err == nil && info.Mode().IsRegular() {
 				managed["icon_name"], managed["icon_hash"] = name, previous["icon_hash"]
 				origins["pkginfo.icon_name"], origins["pkginfo.icon_hash"] = "retained", "retained"

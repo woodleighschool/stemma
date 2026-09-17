@@ -11,6 +11,7 @@ Run commands from a catalog. Stemma discovers its Git root and `stemma.yaml`.
 | `stemma update [Kind/name...]`    | Discover current inputs and update their locks                               |
 | `stemma prepare [Kind/name...]`   | Lock and prepare inputs without publication                                  |
 | `stemma signature [Kind/name...]` | Derive the verified signer of each published artifact                        |
+| `stemma icon [Kind/name...]`      | Render missing declared icons from prepared applications on macOS            |
 | `stemma plan [Kind/name...]`      | Read destinations and report proposed changes                                |
 | `stemma apply [Kind/name...]`     | Re-read and reconcile destinations once                                      |
 
@@ -20,11 +21,12 @@ ambiguous identity. Omitting selectors processes every resource that is not
 [suspended](catalogs.md#suspend-a-resource); a selector runs a suspended resource
 and the builds it references.
 
-`apply --refresh-icons` refreshes application icons across the catalog; resource
-selectors compose with it. Run it on macOS to use the current native system artwork.
-`plan --refresh-icons` previews those changes without publishing. These flags
-rerender icons and permit their replacement without forcing installer or unrelated
-metadata writes. Normal runs retain existing icons and create missing ones.
+`icon` renders the [declared icon](mac-software.md#icons) of each selected resource from
+the application its locked source prepares, using the macOS system renderer, and writes
+`icons/<name>.png`. It fills in missing files, preparing only the resources it renders,
+and leaves existing artwork alone; `--force` renders it again and `--size` changes the
+512-pixel edge. It never updates the lockfile or contacts a destination. Commit the
+result: publication on any runner sends those exact bytes.
 
 `signature` acquires and prepares inputs like `prepare`, verifies each published
 artifact against the signer it observes and prints the `signature` fragment to

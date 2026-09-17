@@ -126,9 +126,7 @@ type ResourceKind struct {
 // ResourceRequest uses validate to discover inputs and publication intentions;
 // run receives only locked, leased inputs and produces immutable outputs.
 type ResourceRequest struct {
-	// Cached contains leased outputs reusable during partial preparation.
-	Cached map[string]Artifact `json:"cached,omitempty"`
-	Config json.RawMessage     `json:"config"`
+	Config json.RawMessage `json:"config"`
 	// Derive names a policy to observe from the inputs instead of enforcing
 	// the configured value: "signature" reports the verified signer as evidence.
 	Derive    string              `json:"derive,omitempty"`
@@ -141,14 +139,15 @@ type ResourceRequest struct {
 // ResourceResult separates preparation configuration from destination metadata,
 // so changing native publication fields cannot invalidate build outputs.
 type ResourceResult struct {
-	// CacheVariants separates optional outputs from the portable preparation cache.
-	CacheVariants map[string]string          `json:"cache_variants,omitempty"`
-	Inputs        map[string]Input           `json:"inputs,omitempty"`
-	Config        json.RawMessage            `json:"config,omitempty"`
-	Destinations  map[string]map[string]any  `json:"destinations,omitempty"`
-	Artifacts     map[string]Artifact        `json:"artifacts,omitempty"`
-	Subjects      map[string]SubjectSelector `json:"subjects,omitempty"`
-	Requirements  []Requirement              `json:"requirements,omitempty"`
+	Inputs       map[string]Input          `json:"inputs,omitempty"`
+	Config       json.RawMessage           `json:"config,omitempty"`
+	Destinations map[string]map[string]any `json:"destinations,omitempty"`
+	// Icon names the catalog asset icons/<name>.png that destinations receive
+	// as the icon input. Its bytes never take part in preparation.
+	Icon         string                     `json:"icon,omitempty"`
+	Artifacts    map[string]Artifact        `json:"artifacts,omitempty"`
+	Subjects     map[string]SubjectSelector `json:"subjects,omitempty"`
+	Requirements []Requirement              `json:"requirements,omitempty"`
 }
 
 // ContentContract constrains delivered content independently of its originating kind.

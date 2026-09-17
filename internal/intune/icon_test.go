@@ -49,40 +49,40 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 		digest := sha256.Sum256(data.Bytes())
 		return plugin.Artifact{Path: name, Filename: "icon.png", Format: "png", Size: int64(data.Len()), SHA256: hex.EncodeToString(digest[:])}
 	}
-	portable, native := icon(10), icon(200)
-	req.Inputs = map[string]plugin.Artifact{"icon": portable}
+	first, second := icon(10), icon(200)
+	req.Inputs = map[string]plugin.Artifact{"icon": first}
 	run()
 	original := text(fake.app["largeIcon"].(object)["value"])
 	if original == "" {
 		t.Fatal("existing app did not acquire missing icon")
 	}
-	req.Inputs["icon"] = native
 	if result := run(); len(result.Changes) != 0 {
-		t.Fatal("normal apply changed existing icon")
+		t.Fatalf("unchanged icon planned writes: %+v", result.Changes)
 	}
-	req.RefreshIcons = true
+	// Changed bytes are ordinary drift: planning reports them, applying replaces them.
+	req.Inputs["icon"] = second
 	req.Method = "plan"
 	if result := run(); len(result.Changes) != 1 || result.Changes[0].Field != "largeIcon" {
-		t.Fatalf("refresh plan: %+v", result.Changes)
+		t.Fatalf("changed icon plan: %+v", result.Changes)
 	}
 	if text(fake.app["largeIcon"].(object)["value"]) != original {
 		t.Fatal("plan wrote icon")
 	}
 	req.Method = "apply"
 	run()
-	improved := text(fake.app["largeIcon"].(object)["value"])
-	if improved == original {
-		t.Fatal("refresh retained portable icon")
+	replaced := text(fake.app["largeIcon"].(object)["value"])
+	if replaced == original {
+		t.Fatal("changed icon was not published")
 	}
-	req.RefreshIcons = false
-	req.Inputs["icon"] = portable
-	run()
-	if text(fake.app["largeIcon"].(object)["value"]) != improved {
-		t.Fatal("portable runner downgraded icon")
+	// Without a declared icon the published artwork is unmanaged and stays.
+	req.Inputs = nil
+	if result := run(); len(result.Changes) != 0 || text(fake.app["largeIcon"].(object)["value"]) != replaced {
+		t.Fatalf("undeclared icon changed the app: %+v", result.Changes)
 	}
+	req.Inputs = map[string]plugin.Artifact{"icon": second}
 	delete(fake.app, "largeIcon")
 	run()
-	if text(fake.app["largeIcon"].(object)["value"]) != original {
+	if text(fake.app["largeIcon"].(object)["value"]) != replaced {
 		t.Fatal("missing icon was not repaired")
 	}
 	if fake.creates != 1 || fake.versions != 1 || fake.commits != 1 {

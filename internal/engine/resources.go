@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -196,7 +195,7 @@ func preflight(plans map[string]resourcePlan, selected []string, p config.Projec
 // prepareResource reuses cached outputs unless derive names a policy to
 // observe, which always runs the operation and keeps its outputs out of the
 // cache.
-func prepareResource(ctx context.Context, store *cas.Store, ops *operations, plan resourcePlan, inputs map[string]Prepared, work string, refreshIcons bool, derive string) (result map[string]Prepared, cacheHit bool, err error) {
+func prepareResource(ctx context.Context, store *cas.Store, ops *operations, plan resourcePlan, inputs map[string]Prepared, work string, derive string) (result map[string]Prepared, cacheHit bool, err error) {
 	done := plugin.Stage(ctx, "Checking preparation cache")
 	defer func() { done(err) }()
 	identityInputs := map[string]plugin.Artifact{}
@@ -226,36 +225,19 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	if err != nil {
 		return nil, false, err
 	}
-	if derive != "" {
-		cached, complete = map[string]Prepared{}, false
-	}
-	for name, variant := range plan.CacheVariants {
-		delete(cached, name)
-		extra, hit, err := recallOutputs(ctx, store, config.Fingerprint([]string{key, name, variant}))
-		if err != nil {
-			return nil, false, err
+	if complete && derive == "" {
+		for name, artifact := range cached {
+			artifact.Cached = true
+			artifact, err = materialize(ctx, store, artifact, filepath.Join(work, "cached", name))
+			if err != nil {
+				return nil, false, err
+			}
+			artifact.Path, err = filepath.EvalSymlinks(artifact.Path)
+			if err != nil {
+				return nil, false, err
+			}
+			cached[name] = artifact
 		}
-		if refreshIcons && name == "icon" {
-			hit = false
-		}
-		complete = complete && hit
-		if hit {
-			maps.Copy(cached, extra)
-		}
-	}
-	for name, artifact := range cached {
-		artifact.Cached = true
-		artifact, err = materialize(ctx, store, artifact, filepath.Join(work, "cached", name))
-		if err != nil {
-			return nil, false, err
-		}
-		artifact.Path, err = filepath.EvalSymlinks(artifact.Path)
-		if err != nil {
-			return nil, false, err
-		}
-		cached[name] = artifact
-	}
-	if complete {
 		return cached, true, nil
 	}
 
@@ -269,7 +251,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	if err != nil {
 		return nil, false, err
 	}
-	request := plugin.ResourceRequest{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Cached: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp, Derive: derive}
+	request := plugin.ResourceRequest{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp, Derive: derive}
 	for name, input := range inputs {
 		leased, err := materialize(ctx, store, input, filepath.Join(work, "inputs", config.Fingerprint(name)))
 		if err != nil {
@@ -280,9 +262,6 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			return nil, false, err
 		}
 		request.Inputs[name] = leased.artifact()
-	}
-	for name, artifact := range cached {
-		request.Cached[name] = artifact.artifact()
 	}
 	var response plugin.ResourceResult
 	done(nil)
@@ -301,11 +280,6 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		}
 		if ref != inputs[name].Payload || uint32(info.Mode().Perm()) != inputs[name].Mode {
 			return nil, false, errors.Join(runErr, fmt.Errorf("resource %s modified immutable input %s", plan.Resource.Reference().Key(), name))
-		}
-	}
-	for _, artifact := range cached {
-		if err := verifyLeases(ctx, store, work, plugin.ReconcileRequest{Artifact: artifact.artifact()}); err != nil {
-			return nil, false, errors.Join(runErr, err)
 		}
 	}
 	done(nil)
@@ -331,11 +305,6 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		allowed := within(workspace, resolved)
 		for _, input := range request.Inputs {
 			if resolved == input.Path {
-				allowed = true
-			}
-		}
-		for _, artifact := range request.Cached {
-			if resolved == artifact.Path {
 				allowed = true
 			}
 		}
@@ -374,7 +343,6 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			observed.Facts = artifact.Facts
 			observed.SuppliedFacts = true
 		}
-		observed.Cached = cached[name].Path == resolved
 		observed.EntryPoint = artifact.EntryPoint
 		observed.Evidence = artifact.Evidence
 		observed.Timestamp = timestamp
@@ -384,23 +352,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		}{identityInputs, modes})
 		outputs[name] = observed
 	}
-	for name, artifact := range cached {
-		if _, exists := outputs[name]; !exists {
-			outputs[name] = artifact
-		}
-	}
-	base := maps.Clone(outputs)
-	for name, variant := range plan.CacheVariants {
-		extra := map[string]Prepared{}
-		if artifact, exists := base[name]; exists {
-			extra[name] = artifact
-		}
-		delete(base, name)
-		if err := rememberOutputs(ctx, store, config.Fingerprint([]string{key, name, variant}), extra); err != nil {
-			return nil, false, err
-		}
-	}
-	return outputs, false, rememberOutputs(ctx, store, key, base)
+	return outputs, false, rememberOutputs(ctx, store, key, outputs)
 }
 
 func rememberOutputs(ctx context.Context, store *cas.Store, key string, outputs map[string]Prepared) error {

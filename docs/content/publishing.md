@@ -55,7 +55,7 @@ destinations:
       keep: 1
 ```
 
-The provider writes pkginfo, installer objects, supported derived icons and catalog
+The provider writes pkginfo, installer objects, declared icons and catalog
 indexes. You do not need an intermediate pkginfo-rendering document. Application
 evidence supplies detection and DMG copy details where applicable. A PKG's static
 PackageInfo and Distribution declarations supply receipts, installed size, minimum
@@ -70,14 +70,12 @@ Munki's `supported_architectures` is an optional pkginfo restriction. There is n
 core `spec.arch`: download selection, installation eligibility and runner
 architecture are separate decisions.
 
-Custom icons already in the Munki repository can be referenced with
-`pkginfo.icon_name`. That path is relative to the repository's `icons/` directory;
-it is not an instruction to read an arbitrary catalog file. Automatic application
-icons arrive as artifact inputs. Munki publishes them by content hash and retains
-existing artwork unless `--refresh-icons` is requested. A missing icon can be added
-to an existing software publication. Intune reconciles the same artifact through
-its app icon field, independently of installer uploads. External destinations receive
-the same refresh intent and implement their native icon handling.
+A [declared icon](mac-software.md#icons) arrives as an artifact input. Munki
+publishes it by content hash and Intune through its app icon field, both
+independently of installer uploads. Changed bytes replace the published icon and a
+missing one is added to an existing publication. Icons already in the Munki
+repository can be referenced with `pkginfo.icon_name` instead; that path is relative
+to the repository's `icons/` directory, not to the catalog.
 
 For source-free script items, see [nopkg](mac-software.md#publish-without-an-installer).
 Native endpoint behaviour is described in the
