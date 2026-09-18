@@ -14,7 +14,7 @@ require (
 	github.com/deploymenttheory/go-apfs-v2 v0.3.0
 	github.com/deploymenttheory/go-macos-pkg v0.5.0
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
-	github.com/dustin/go-humanize v1.0.1
+	github.com/dustin/go-humanize v1.1.0
 	github.com/ebitengine/purego v0.11.0
 	github.com/fatih/color v1.19.0
 	github.com/gofrs/flock v0.13.1
