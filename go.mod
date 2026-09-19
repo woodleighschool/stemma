@@ -41,7 +41,7 @@ require (
 	github.com/sassoftware/relic/v8 v8.2.0
 	github.com/smallstep/pkcs7 v0.2.3
 	github.com/spf13/cobra v1.10.2
-	github.com/ulikunitz/xz v0.5.16
+	github.com/ulikunitz/xz v0.5.17
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
 	golang.org/x/net v0.59.0
