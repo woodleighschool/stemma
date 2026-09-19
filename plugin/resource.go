@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -27,14 +28,26 @@ func (r ResourceReference) Key() string {
 	return version + "/" + r.Kind + "/" + r.Name
 }
 
-// Input selects a resolver or a resource output. Resolver configuration stays
-// opaque to the resource scheduler. URL and path declarations select the shared
-// HTTP and filesystem resolvers without an extra configuration wrapper.
+// Input selects a resolver or a resource output. Every field beside resolver
+// is the resolver's configuration, which stays opaque to the resource
+// scheduler. A url or path alone selects the HTTP or filesystem resolver.
 type Input struct {
-	Base     string             `json:"-" yaml:"-"`
-	Resolver string             `json:"resolver,omitempty" yaml:"resolver,omitempty"`
-	Config   map[string]any     `json:"config,omitempty" yaml:"config,omitempty"`
-	Resource *ResourceReference `json:"resource,omitempty" yaml:"resource,omitempty"`
+	Base     string
+	Resolver string
+	Config   map[string]any
+	Resource *ResourceReference
+}
+
+func (input Input) MarshalJSON() ([]byte, error) {
+	if input.Resource != nil {
+		return json.Marshal(map[string]any{"resource": input.Resource})
+	}
+	fields := maps.Clone(input.Config)
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["resolver"] = input.Resolver
+	return json.Marshal(fields)
 }
 
 func (input *Input) UnmarshalJSON(data []byte) error {
@@ -66,18 +79,9 @@ func (input *Input) UnmarshalJSON(data []byte) error {
 		}
 		delete(fields, "resolver")
 	}
-	if value, ok := fields["config"]; ok {
-		if len(fields) != 1 {
-			return errors.New("input config cannot be mixed with flat resolver fields")
-		}
-		if err := json.Unmarshal(value, &input.Config); err != nil {
-			return err
-		}
-	} else {
-		encoded, _ := json.Marshal(fields)
-		if err := json.Unmarshal(encoded, &input.Config); err != nil {
-			return err
-		}
+	encoded, _ := json.Marshal(fields)
+	if err := json.Unmarshal(encoded, &input.Config); err != nil {
+		return err
 	}
 	if input.Resolver == "" {
 		_, hasURL := input.Config["url"]

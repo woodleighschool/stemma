@@ -21,19 +21,15 @@ func TestNativeInputSchemaAndValidation(t *testing.T) {
 		valid             bool
 	}{
 		{"GitHub glob", `{"resolver":"github","repository":"company/application","asset":"Application-*-arm64.zip"}`, true},
-		{"GitHub wrapped", `{"resolver":"github","config":{"repository":"company/application","release":"latest","asset":"App.pkg"}}`, true},
 		{"GitHub missing asset", `{"resolver":"github","repository":"company/application"}`, false},
 		{"GitHub empty asset", `{"resolver":"github","repository":"company/application","asset":""}`, false},
 		{"GitHub foreign regex", `{"resolver":"github","repository":"company/application","asset":"App.pkg","match":""}`, false},
-		{"GitHub wrapped foreign", `{"resolver":"github","config":{"repository":"company/application","asset":"App.pkg","headers":{}}}`, false},
-		{"GitHub mixed", `{"resolver":"github","config":{"repository":"company/application","asset":"App.pkg"},"release":"latest"}`, false},
 		{"HTTP regex", `{"resolver":"http","url":"https://example.test/download","match":"https://example[.]test/App-[0-9]+[.]pkg"}`, true},
 		{"HTTP foreign", `{"url":"https://example.test/download","asset":null}`, false},
 		{"local globs", `{"resolver":"local","include":["**/*.ttf","**/*.otf"]}`, true},
 		{"local empty", `{"resolver":"local","include":[]}`, false},
 		{"local foreign", `{"resolver":"local","include":["*.ttf"],"token":""}`, false},
 		{"file exact", `{"path":"Assets/App.pkg"}`, true},
-		{"file wrapped", `{"resolver":"file","config":{"path":"Assets/App.pkg"}}`, true},
 		{"file foreign", `{"path":"Assets/App.pkg","release":""}`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

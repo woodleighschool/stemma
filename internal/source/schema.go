@@ -57,18 +57,13 @@ func InputSchema(t reflect.Type) *jsonschema.Schema {
 		}
 		explicit := &jsonschema.Schema{Type: "object", Required: []string{"resolver"}, Properties: orderedmap.New[string, *jsonschema.Schema]()}
 		explicit.Properties.Set("resolver", &jsonschema.Schema{Const: resolver})
-		wrapped := &jsonschema.Schema{Type: "object", AdditionalProperties: jsonschema.FalseSchema, Properties: orderedmap.New[string, *jsonschema.Schema]()}
-		wrapped.Properties.Set("resolver", &jsonschema.Schema{Const: resolver})
-		wrapped.Properties.Set("config", config)
 		flat := *config
 		flat.Properties = orderedmap.New[string, *jsonschema.Schema]()
 		for name, property := range config.Properties.FromOldest() {
 			flat.Properties.Set(name, property)
 		}
 		flat.Properties.Set("resolver", &jsonschema.Schema{Const: resolver})
-		schema.AllOf = append(schema.AllOf, &jsonschema.Schema{
-			If: explicit, Then: &jsonschema.Schema{If: &jsonschema.Schema{Required: []string{"config"}}, Then: wrapped, Else: &flat},
-		})
+		schema.AllOf = append(schema.AllOf, &jsonschema.Schema{If: explicit, Then: &flat})
 	}
 	return schema
 }

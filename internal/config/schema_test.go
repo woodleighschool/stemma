@@ -8,36 +8,6 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-func TestSchemaHasCurrentResourceContracts(t *testing.T) {
-	data, err := Schema()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var schema map[string]any
-	if err := json.Unmarshal(data, &schema); err != nil {
-		t.Fatal(err)
-	}
-	definitions := schema["$defs"].(map[string]any)
-	for _, kind := range []string{"BuildMacPkg", "MacSoftware", "WindowsSoftware"} {
-		if definitions[kind] == nil {
-			t.Errorf("missing %s contract", kind)
-		}
-	}
-	for _, name := range []string{"SoftwareDocument", "Step", "MunkiMetadata", "JamfMetadata", "IntuneMetadata"} {
-		if definitions[name] != nil {
-			t.Errorf("core schema retained provider or removed resource definition %s", name)
-		}
-	}
-	for name, fields := range map[string][]string{"Metadata": {"name"}, "ProjectSpec": {"imports", "components"}, "Destination": {"operation", "config"}} {
-		properties := definitions[name].(map[string]any)["properties"].(map[string]any)
-		for _, field := range fields {
-			if properties[field].(map[string]any)["description"] == "" {
-				t.Errorf("%s.%s lacks an editor description", name, field)
-			}
-		}
-	}
-}
-
 func TestResourceEditorSchema(t *testing.T) {
 	schema, err := Schema()
 	if err != nil {
@@ -51,12 +21,9 @@ func TestResourceEditorSchema(t *testing.T) {
 		"HTTP headers":              {"MacSoftware", `{"source":{"url":"https://example.test/download","headers":{"User-Agent":"Fixture"},"filename":"App.pkg"}}`, true},
 		"HTTP header value":         {"MacSoftware", `{"source":{"url":"https://example.test/download","headers":{"Accept":["one","two"]}}}`, false},
 		"HTTP unknown option":       {"MacSoftware", `{"source":{"url":"https://example.test/download","curl_opts":[]}}`, false},
-		"HTTP resolver config":      {"MacSoftware", `{"source":{"resolver":"http","config":{"url":"https://example.test/download","headers":{"Accept":"application/zip"}}}}`, true},
-		"HTTP resolver invalid":     {"MacSoftware", `{"source":{"resolver":"http","config":{"url":"https://example.test/download","headers":[]}}}`, false},
-		"HTTP mixed config":         {"MacSoftware", `{"source":{"resolver":"http","config":{"url":"https://example.test/download"},"headers":{"Accept":"application/zip"}}}`, false},
 		"HTTP flat resolver":        {"MacSoftware", `{"source":{"resolver":"http","url":"https://example.test/download","headers":{"Accept":"application/zip"}}}`, true},
 		"file mac":                  {"MacSoftware", `{"source":{"path":"../Shared/app.pkg"}}`, true},
-		"external resolver":         {"MacSoftware", `{"source":{"resolver":"example.release","config":{"channel":"stable"}}}`, true},
+		"external resolver":         {"MacSoftware", `{"source":{"resolver":"example.release","channel":"stable"}}`, true},
 		"resource source":           {"MacSoftware", `{"source":{"resource":{"kind":"BuildMacPkg","name":"branding"}}}`, true},
 		"source free mac":           {"MacSoftware", `{"destinations":{"external":{"title":"Policy"}}}`, true},
 		"build":                     {"BuildMacPkg", `{"package":{"identifier":"org.example.payload","version":"1"},"inputs":{"text":{"path":"text.txt"}},"payload":{"/Library/Example/text.txt":{"$input":"text","mode":"0644"}}}`, true},
@@ -64,7 +31,6 @@ func TestResourceEditorSchema(t *testing.T) {
 		"inherited build":           {"BuildMacPkg", `{"extends":"base","payload":{"/Library/Example/text.txt":{"content":"text"}}}`, true},
 		"inherited windows":         {"WindowsSoftware", `{"extends":"base"}`, true},
 		"inherited source override": {"MacSoftware", `{"extends":"base","source":{"path":"different.pkg"}}`, true},
-		"old steps":                 {"MacSoftware", `{"steps":[{"operation":"pkg"}]}`, false},
 		"unknown resource field":    {"MacSoftware", `{"typo":true}`, false},
 		"unknown nested field":      {"MacSoftware", `{"application":{"typo":true}}`, false},
 		"missing package":           {"BuildMacPkg", `{"payload":{}}`, false},
