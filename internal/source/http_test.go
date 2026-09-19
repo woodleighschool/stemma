@@ -2,10 +2,12 @@ package source
 
 import (
 	"encoding/json"
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -167,5 +169,82 @@ func TestHTTPHeaderValidationAndDeclaration(t *testing.T) {
 	input.Config["token"] = "another-token"
 	if _, _, err := manager.Declaration(input); err == nil {
 		t.Fatal("accepted conflicting authentication")
+	}
+}
+
+func TestHTTPDiscoveryResolvesURLReferences(t *testing.T) {
+	for _, test := range []struct{ name, references, want string }{
+		{"absolute", "https://cdn.example/App.pkg", "https://cdn.example/App.pkg"},
+		{"protocol relative", "//cdn.example/App.pkg", "https://cdn.example/App.pkg"},
+		{"root relative", "/App.pkg", "https://pages.example/App.pkg"},
+		{"path relative", "../files/App.pkg", "https://pages.example/releases/files/App.pkg"},
+		{"equivalent", "./App.pkg\nhttps://pages.example/releases/mac/App.pkg", "https://pages.example/releases/mac/App.pkg"},
+		{"query", "App.pkg?version=1&amp;arch=arm64", "https://pages.example/releases/mac/App.pkg?version=1&arch=arm64"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, err := cas.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := New(store, t.TempDir(), false)
+			pages, downloads := 0, 0
+			m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				response := &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Request: r}
+				body := "installer"
+				switch r.URL.String() {
+				case "https://vendor.example/start":
+					if r.Header.Get("Authorization") != "Bearer private" || r.Header.Get("X-Vendor-Key") != "private" {
+						t.Error("source credentials missing")
+					}
+					response.StatusCode = http.StatusFound
+					response.Header.Set("Location", "https://pages.example/releases/mac/index.html")
+				case "https://pages.example/releases/mac/index.html":
+					pages++
+					body = test.references
+				case test.want:
+					downloads++
+				default:
+					t.Fatalf("unexpected request %s", r.URL)
+				}
+				if r.URL.Host != "vendor.example" && (r.Header.Get("Authorization") != "" || r.Header.Get("X-Vendor-Key") != "" || r.Header.Get("Cookie") != "") {
+					t.Error("credentials escaped source origin")
+				}
+				response.Body = io.NopCloser(strings.NewReader(body))
+				return response, nil
+			})
+			patterns := strings.Split(html.UnescapeString(test.references), "\n")
+			for i := range patterns {
+				patterns[i] = regexp.QuoteMeta(patterns[i])
+			}
+			input := plugin.Input{Resolver: "http", Config: map[string]any{
+				"url": "https://vendor.example/start", "match": `(?m)^(?:` + strings.Join(patterns, "|") + `)$`, "token": "private",
+				"headers": map[string]string{"X-Vendor-Key": "private", "Cookie": "session=private"},
+			}}
+			entry, err := m.Resolve(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if observation(t, entry).URL != test.want || entry.Content.Filename != "App.pkg" {
+				t.Fatalf("unexpected resolved input: %+v", entry)
+			}
+			cached, err := store.Path(entry.Content.Artifact)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Remove(cached); err != nil {
+				t.Fatal(err)
+			}
+			// A URL reference pattern need not match its resolved absolute URL.
+			if _, err := m.FetchLocked(t.Context(), input, entry); err != nil {
+				t.Fatal(err)
+			}
+			if pages != 1 || downloads != 2 {
+				t.Fatalf("pages=%d downloads=%d", pages, downloads)
+			}
+			input.Config["match"] = `different\.pkg`
+			if _, err := m.FetchLocked(t.Context(), input, entry); err == nil || !strings.Contains(err.Error(), "stale input lock") {
+				t.Fatalf("changed pattern accepted: %v", err)
+			}
+		})
 	}
 }

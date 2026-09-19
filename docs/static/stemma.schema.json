@@ -354,7 +354,7 @@
               "type": "object"
             },
             "match": {
-              "description": "HTTP page regular expression whose full matches must identify one distinct absolute stable download URL.",
+              "description": "HTTP page regular expression whose full matches are URL references resolved against the final page URL. Must identify one distinct stable HTTP(S) download URL.",
               "type": "string"
             },
             "sha256": {
@@ -401,7 +401,7 @@
               "type": "object"
             },
             "match": {
-              "description": "HTTP page regular expression whose full matches must identify one distinct absolute stable download URL.",
+              "description": "HTTP page regular expression whose full matches are URL references resolved against the final page URL. Must identify one distinct stable HTTP(S) download URL.",
               "type": "string"
             },
             "resolver": {
@@ -7495,7 +7495,7 @@
               "type": "object"
             },
             "match": {
-              "description": "HTTP page regular expression whose full matches must identify one distinct absolute stable download URL.",
+              "description": "HTTP page regular expression whose full matches are URL references resolved against the final page URL. Must identify one distinct stable HTTP(S) download URL.",
               "type": "string"
             },
             "sha256": {
@@ -7539,7 +7539,7 @@
               "type": "object"
             },
             "match": {
-              "description": "HTTP page regular expression whose full matches must identify one distinct absolute stable download URL.",
+              "description": "HTTP page regular expression whose full matches are URL references resolved against the final page URL. Must identify one distinct stable HTTP(S) download URL.",
               "type": "string"
             },
             "resolver": {

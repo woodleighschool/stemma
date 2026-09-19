@@ -65,8 +65,12 @@ source:
 ```
 
 For an HTTP page containing a download link, use `resolver: http` with `url` and a
-`match` regular expression. The full match must be an absolute download URL, and
-all matches must identify one distinct URL. Discovery belongs to the resolver; the software kind still receives
+`match` regular expression. The full match can be an absolute, protocol-relative, root-relative or path-relative
+URL. References resolve against the final discovery-page URL after redirects;
+equivalent references count as one URL. All matches must resolve to one distinct
+stable HTTP(S) URL. The lock stores that absolute URL, so locked fetches do not
+repeat discovery or reapply the pattern. Credentials remain confined to the
+configured source origin, and HTTPS downgrades remain rejected. Discovery belongs to the resolver; the software kind still receives
 one file. External plugins can supply other [resolvers](writing-plugins.md#resolvers).
 
 ## Use repository files
