@@ -24,7 +24,7 @@ import (
 
 // fixtureMarker is the marker of the fixture identity. Packages already in Jamf
 // carry this exact line, so it changes only with a deliberate format change.
-const fixtureMarker = "[stemma:v1 id=e4cca57883cf5980f928403769b45044c75f23a398406f24135c56148a8be72d]"
+const fixtureMarker = "[stemma:v1 id=9e24b0af0c9659ee7c0bad65847e693691a7e9f66341fa1fe0a0d7d89b91767e]"
 
 func TestPublicationCreatesMarkedPackageAndConvergesWithoutState(t *testing.T) {
 	server, request := newFixture(t)
@@ -586,7 +586,7 @@ func newFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest) {
 	fake := &fakeServer{t: t, packages: make(map[string]map[string]json.RawMessage), version: 1, tokenLifetime: 1800}
 	server := httptest.NewServer(http.HandlerFunc(fake.handle))
 	t.Cleanup(server.Close)
-	request := plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "school", Software: "vendor", Destination: "jamf"}, Config: raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}), Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
+	request := plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "school", Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "vendor"}, Destination: "jamf"}, Config: raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}), Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
 	return fake, request
 }
 

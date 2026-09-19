@@ -89,6 +89,38 @@ For source-free script items, see [nopkg](mac-software.md#publish-without-an-ins
 Native endpoint behaviour is described in the
 [Munki documentation](https://github.com/munki/munki/wiki).
 
+## Publication relationships
+
+Munki `requires` and `update_for` accept native strings or explicit resource
+references. Built-in Munki and the Woodstar destination use the same syntax:
+
+```yaml
+pkginfo:
+  requires:
+    - Some Manually Created Munki Item
+    - External Item--1.2.3
+    - resource:
+        kind: MacSoftware
+        name: google-chrome
+    - resource:
+        kind: MacSoftware
+        name: example
+      version: "1.2.3"
+```
+
+A string is always a literal native Munki reference, including Munki's version
+syntax. It never selects a Stemma resource. A `resource` reference resolves the exact
+`apiVersion/kind/name`, with `apiVersion` defaulting to `stemma/v1alpha1`. The peer
+must declare the same named destination connection. The destination translates its
+metadata into the native name: `google-chrome` may publish as `Google Chrome` through
+`pkginfo.name`. An optional relationship-level `version` selects a package version.
+
+Selected peers reconcile first. Unselected peers contribute declared metadata to
+locate an existing publication without being added to the run. Unknown references,
+wrong connections and cycles fail validation; they never fall back to native names.
+These publication relationships are separate from immutable
+[resource-output dependencies](catalogs.md#two-dependency-graphs).
+
 ## Intune
 
 The [Windows guide](windows-software.md) includes a complete connection and Win32
@@ -119,17 +151,29 @@ destinations:
   intune:
     type: win32
     dependencies:
-      - software: vc-runtime
+      - resource:
+          kind: WindowsSoftware
+          name: vc-runtime
         auto_install: true
     supersedes:
-      - software: legacy-client
+      - resource:
+          kind: WindowsSoftware
+          name: legacy-client
         uninstall_previous: true
 ```
 
-References resolve stable Stemma names to the app carrying that resource's
-identity, or to the `app_id` it sets, not display names or MSI ProductCodes. Publish
-the referenced items first. Cycles, unpublished references and incompatible app
-types fail. The provider permits up to 99 declared
+Resource references resolve to the app carrying that resource's canonical identity
+marker, or to the `app_id` it declares for this connection. An external app uses
+`app_id` directly instead of `resource`, with the same relationship policy:
+
+```yaml
+dependencies:
+  - app_id: 11111111-2222-3333-4444-555555555555
+    auto_install: true
+```
+
+Exactly one of `resource` and `app_id` is required. Cycles, unpublished references
+and incompatible app types fail. The provider permits up to 99 declared
 dependencies and 9 supersedence targets, subject to the service's graph limits.
 
 An ordinary update publishes new content to the same app ID. Supersedence relates

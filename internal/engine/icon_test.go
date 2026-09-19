@@ -166,7 +166,7 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 	record := func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
 		if request.Method == "apply" {
 			applies++
-			published[request.Identity.Software] = request.Inputs["icon"]
+			published[request.Identity.Resource.Name] = request.Inputs["icon"]
 		}
 		return plugin.ReconcileResponse{}, nil
 	}

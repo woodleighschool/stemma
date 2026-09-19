@@ -12,20 +12,35 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-// ResourceReference identifies a resource and one of its immutable outputs.
+// ResourceReference identifies a resource. An omitted API version means stemma/v1alpha1.
 type ResourceReference struct {
-	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty"`
-	Kind       string `json:"kind" yaml:"kind"`
-	Name       string `json:"name" yaml:"name"`
-	Output     string `json:"output,omitempty" yaml:"output,omitempty"`
+	APIVersion string `json:"apiVersion,omitempty" yaml:"apiVersion,omitempty" jsonschema:"default=stemma/v1alpha1"`
+	Kind       string `json:"kind" yaml:"kind" jsonschema:"required,minLength=1"`
+	Name       string `json:"name" yaml:"name" jsonschema:"required,minLength=1"`
 }
 
+// Key returns the canonical apiVersion/kind/name identity.
 func (r ResourceReference) Key() string {
 	version := r.APIVersion
 	if version == "" {
 		version = "stemma/v1alpha1"
 	}
 	return version + "/" + r.Kind + "/" + r.Name
+}
+
+// Validate requires an explicit kind and name; neither is inferred from a consumer.
+func (r ResourceReference) Validate() error {
+	if strings.TrimSpace(r.Kind) == "" || strings.TrimSpace(r.Name) == "" {
+		return errors.New("resource requires kind and name")
+	}
+	return nil
+}
+
+// ResourceOutputReference selects an immutable output, defaulting to installer.
+type ResourceOutputReference struct {
+	ResourceReference `yaml:",inline"`
+
+	Output string `json:"output,omitempty" yaml:"output,omitempty" jsonschema:"default=installer"`
 }
 
 // Input selects a resolver or a resource output. Every field beside resolver
@@ -35,7 +50,7 @@ type Input struct {
 	Base     string
 	Resolver string
 	Config   map[string]any
-	Resource *ResourceReference
+	Resource *ResourceOutputReference
 }
 
 func (input Input) MarshalJSON() ([]byte, error) {
@@ -68,10 +83,10 @@ func (input *Input) UnmarshalJSON(data []byte) error {
 		if err := decoder.Decode(&input.Resource); err != nil {
 			return err
 		}
-		if input.Resource == nil || input.Resource.Kind == "" || input.Resource.Name == "" {
+		if input.Resource == nil {
 			return errors.New("resource requires kind and name")
 		}
-		return nil
+		return input.Resource.Validate()
 	}
 	if value, ok := fields["resolver"]; ok {
 		if err := json.Unmarshal(value, &input.Resolver); err != nil {

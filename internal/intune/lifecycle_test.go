@@ -186,8 +186,8 @@ func TestRetentionWaitsForReferencesAndRetryDoesNotUploadAgain(t *testing.T) {
 		t.Fatal(err)
 	}
 	changePayload(t, &req, "second")
-	desired["dependencies"] = []any{object{"software": "runtime", "auto_install": true}}
-	req.Peers = map[string]json.RawMessage{"runtime": raw(object{"type": "win32", "app_id": "runtime-app"})}
+	desired["dependencies"] = []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": true}}
+	req.Peers = map[string]json.RawMessage{"stemma/v1alpha1/WindowsSoftware/runtime": raw(object{"type": "win32", "app_id": "runtime-app"})}
 	fake.mu.Lock()
 	fake.relatedApps["runtime-app"] = object{"id": "runtime-app", "@odata.type": win32Type, "publishingState": "published"}
 	fake.failRelationships = true
@@ -221,7 +221,8 @@ func TestRelationshipsPreserveOmittedCategoriesAndInboundReferences(t *testing.T
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
-	desired["dependencies"] = []any{object{"software": "runtime", "auto_install": false}}
+	desired["dependencies"] = []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": false}}
+	req.Peers = map[string]json.RawMessage{"stemma/v1alpha1/WindowsSoftware/runtime": raw(object{"type": "win32"})}
 	fake.mu.Lock()
 	fake.relatedApps["runtime-app"] = object{"id": "runtime-app", "@odata.type": win32Type, "publishingState": "published", "notes": peerNotes(req, "runtime")}
 	fake.relations["app-1"] = []object{
@@ -261,7 +262,7 @@ func TestRelationshipsPreserveOmittedCategoriesAndInboundReferences(t *testing.T
 // peerNotes are the notes of the app another software document publishes to the
 // same destination.
 func peerNotes(req plugin.ReconcileRequest, software string) string {
-	return withMarker("", publication{identity: markerIdentity(plugin.Identity{Project: req.Identity.Project, Software: software, Destination: req.Identity.Destination})})
+	return withMarker("", publication{identity: markerIdentity(plugin.Identity{Project: req.Identity.Project, Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: software}, Destination: req.Identity.Destination})})
 }
 
 func TestRelationshipPeersResolveByExplicitAppOrMarker(t *testing.T) {
@@ -269,49 +270,62 @@ func TestRelationshipPeersResolveByExplicitAppOrMarker(t *testing.T) {
 		return object{"id": id, "@odata.type": win32Type, "publishingState": "published", "notes": notes}
 	}
 	for _, test := range []struct {
-		name     string
-		software string
-		peers    map[string]json.RawMessage
-		apps     func(plugin.ReconcileRequest) []object
-		target   string
-		failure  string
+		name, peer, external, target, failure string
+		declared, duplicate                   bool
 	}{
-		{name: "declared app_id", software: "runtime", peers: map[string]json.RawMessage{"runtime": raw(object{"type": "win32", "app_id": "pinned"})}, apps: func(req plugin.ReconcileRequest) []object {
-			return []object{published("pinned", ""), published("marked", peerNotes(req, "runtime"))}
-		}, target: "pinned"},
-		{name: "marker of declared peer", software: "runtime", peers: map[string]json.RawMessage{"runtime": raw(object{"type": "win32"})}, apps: func(req plugin.ReconcileRequest) []object {
-			return []object{published("other", peerNotes(req, "unrelated")), published("marked", peerNotes(req, "runtime"))}
-		}, target: "marked"},
-		{name: "marker of undeclared peer", software: "runtime", apps: func(req plugin.ReconcileRequest) []object {
-			return []object{published("marked", peerNotes(req, "runtime"))}
-		}, target: "marked"},
-		{name: "another destination", software: "runtime", apps: func(req plugin.ReconcileRequest) []object {
-			req.Identity.Destination = "intune-staging"
-			return []object{published("elsewhere", peerNotes(req, "runtime"))}
-		}, failure: `"runtime" is not published to this destination yet`},
-		{name: "not published", software: "runtime", apps: func(plugin.ReconcileRequest) []object { return nil }, failure: `"runtime" is not published to this destination yet`},
-		{name: "ambiguous", software: "runtime", apps: func(req plugin.ReconcileRequest) []object {
-			return []object{published("first-copy", peerNotes(req, "runtime")), published("second-copy", peerNotes(req, "runtime"))}
-		}, failure: `"runtime": multiple Intune apps carry this Stemma identity: first-copy, second-copy`},
-		{name: "itself", software: "test", apps: func(plugin.ReconcileRequest) []object { return nil }, failure: "cannot depend on or supersede itself"},
+		{name: "declared app_id", peer: `{"app_id":"pinned"}`, declared: true, target: "pinned"},
+		{name: "canonical marker", peer: `{"type":"win32"}`, declared: true, target: "marked"},
+		{name: "unmanaged app", external: "pinned", target: "pinned"},
+		{name: "missing resource metadata", failure: "does not publish to this destination"},
+		{name: "unpublished peer", peer: `{}`, declared: true, failure: "not published to this destination yet"},
+		{name: "ambiguous marker", peer: `{}`, declared: true, duplicate: true, failure: "multiple Intune apps"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
 			c.appType = win32Type
 			req := fixtureRequest(t)
-			req.Peers = test.peers
-			for _, app := range test.apps(req) {
-				fake.relatedApps[text(app["id"])] = app
+			ref := relationshipReference{Resource: &plugin.ResourceReference{Kind: "WindowsSoftware", Name: "runtime"}, Install: true}
+			if test.declared {
+				req.Peers = map[string]json.RawMessage{ref.Resource.Key(): json.RawMessage(test.peer)}
 			}
-			relationships, err := c.desiredRelationships(t.Context(), req, &tenantApps{client: c}, lifecycle{Supersedes: []relationshipReference{{Software: test.software}}}, "")
-			if test.failure != "" {
-				if err == nil || !strings.Contains(err.Error(), test.failure) {
-					t.Fatalf("resolution error: %v", err)
+			if test.external != "" {
+				ref.Resource = nil
+				ref.AppID = test.external
+			}
+			fake.relatedApps["pinned"] = published("pinned", "")
+			if test.name != "unpublished peer" {
+				// Publication uses an explicit API version; the reference defaults it.
+				identity := req.Identity
+				identity.Resource = plugin.ResourceReference{APIVersion: "stemma/v1alpha1", Kind: "WindowsSoftware", Name: "runtime"}
+				fake.relatedApps["marked"] = published("marked", withMarker("", publication{identity: markerIdentity(identity)}))
+			}
+			// Same name, other kind is a different publication.
+			identity := req.Identity
+			identity.Resource = plugin.ResourceReference{Kind: "MacSoftware", Name: "runtime"}
+			fake.relatedApps["other-kind"] = published("other-kind", withMarker("", publication{identity: markerIdentity(identity)}))
+			if test.duplicate {
+				fake.relatedApps["copy"] = published("copy", peerNotes(req, "runtime"))
+			}
+			for _, category := range []string{"dependencies", "supersedes"} {
+				lifecycle := lifecycle{}
+				if category == "dependencies" {
+					lifecycle.Dependencies = []relationshipReference{ref}
+				} else {
+					lifecycle.Supersedes = []relationshipReference{ref}
 				}
-				return
-			}
-			if err != nil || len(relationships) != 1 || relationships[0]["targetId"] != test.target {
-				t.Fatalf("resolved %+v, %v", relationships, err)
+				relationships, err := c.desiredRelationships(t.Context(), req, &tenantApps{client: c}, lifecycle, "")
+				if test.failure != "" {
+					if err == nil || !strings.Contains(err.Error(), test.failure) {
+						t.Fatalf("%s: %v", category, err)
+					}
+					continue
+				}
+				if err != nil || len(relationships) != 1 || relationships[0]["targetId"] != test.target {
+					t.Fatalf("%s: %+v, %v", category, relationships, err)
+				}
+				if category == "dependencies" && relationships[0]["dependencyType"] != "autoInstall" || category == "supersedes" && relationships[0]["supersedenceType"] != "replace" {
+					t.Fatalf("policy lost: %+v", relationships)
+				}
 			}
 		})
 	}

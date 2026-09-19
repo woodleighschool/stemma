@@ -1,6 +1,7 @@
 package intune
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -20,7 +21,8 @@ type lifecycle struct {
 }
 
 type relationshipReference struct {
-	Software string
+	Resource *plugin.ResourceReference
+	AppID    string
 	Install  bool
 }
 
@@ -64,16 +66,43 @@ func lifecycleMetadata(m object) (lifecycle, error) {
 			if !ok {
 				return result, errors.New("relationship must be an object")
 			}
-			if err := fields(item, "software", flag); err != nil {
+			if err := fields(item, "resource", "app_id", flag); err != nil {
 				return result, err
 			}
-			name := text(item["software"])
-			install, ok := item[flag].(bool)
-			if name == "" || !ok || seen[name] {
-				return result, fmt.Errorf("%s requires unique software names and explicit %s booleans", category, flag)
+			var ref relationshipReference
+			_, resource := item["resource"]
+			_, external := item["app_id"]
+			if resource == external {
+				return result, fmt.Errorf("%s relationship requires exactly one of resource or app_id", category)
 			}
-			seen[name] = true
-			refs = append(refs, relationshipReference{Software: name, Install: install})
+			var key string
+			if resource {
+				decoder := json.NewDecoder(bytes.NewReader(raw(item["resource"])))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&ref.Resource); err != nil {
+					return result, fmt.Errorf("%s resource: %w", category, err)
+				}
+				if ref.Resource == nil {
+					return result, errors.New("resource requires kind and name")
+				}
+				if err := ref.Resource.Validate(); err != nil {
+					return result, err
+				}
+				key = ref.Resource.Key()
+			} else {
+				ref.AppID = text(item["app_id"])
+				if ref.AppID == "" {
+					return result, errors.New("relationship app_id must be a nonempty string")
+				}
+				key = "app_id/" + ref.AppID
+			}
+			install, ok := item[flag].(bool)
+			if !ok || seen[key] {
+				return result, fmt.Errorf("%s requires unique references and explicit %s booleans", category, flag)
+			}
+			seen[key] = true
+			ref.Install = install
+			refs = append(refs, ref)
 		}
 		if category == "dependencies" {
 			result.Dependencies = refs
@@ -82,17 +111,6 @@ func lifecycleMetadata(m object) (lifecycle, error) {
 		}
 	}
 	return result, nil
-}
-
-func (l lifecycle) requires() []string {
-	var names []string
-	for _, refs := range [][]relationshipReference{l.Dependencies, l.Supersedes} {
-		for _, ref := range refs {
-			names = append(names, ref.Software)
-		}
-	}
-	slices.Sort(names)
-	return slices.Compact(names)
 }
 
 // pruneContent keeps the active version and the newest keep-1 other committed

@@ -34,7 +34,7 @@ var markerPattern = regexp.MustCompile(`(?m)^\[stemma:v1 id=([0-9a-f]{64}) paylo
 // markerIdentity is the marker id of a logical identity. It finds this app and
 // the apps of referenced software in the tenant.
 func markerIdentity(id plugin.Identity) string {
-	sum := sha256.Sum256(raw(id))
+	sum := sha256.Sum256(raw([]string{id.Project, id.Resource.Key(), id.Destination}))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -99,11 +99,10 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest) (response plugin.R
 	if err != nil {
 		return response, err
 	}
-	lifecycle, err := lifecycleMetadata(desired)
+	_, err = lifecycleMetadata(desired)
 	if err != nil {
 		return response, err
 	}
-	response.Requires = lifecycle.requires()
 	if req.Method == "validate" {
 		if req.Artifact.Path != "" {
 			_, err := identifyArtifact(ctx, req.Artifact, text(desired["@odata.type"]), setupFile(desired))
@@ -119,7 +118,7 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest) (response plugin.R
 		return plugin.ReconcileResponse{}, err
 	}
 	result, err := c.handle(ctx, req, desired)
-	result.Origins, result.Requires = response.Origins, response.Requires
+	result.Origins = response.Origins
 	return result, err
 }
 
@@ -243,7 +242,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, desire
 	}
 	var prepared *preparedArtifact
 	if contentChanged {
-		prepared, err = prepareArtifact(ctx, req.Identity.Software, req.Artifact, artifact)
+		prepared, err = prepareArtifact(ctx, req.Identity.Resource.Name, req.Artifact, artifact)
 		if err != nil {
 			return response, err
 		}

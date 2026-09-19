@@ -130,7 +130,7 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 		id = stringField(current.Fields, "id")
 	}
 	if patch != nil {
-		if err := c.planPatch(ctx, patch, id, request.Identity.Software, &response); err != nil {
+		if err := c.planPatch(ctx, patch, id, request.Identity.Resource.Name, &response); err != nil {
 			return response, err
 		}
 	}
@@ -172,7 +172,7 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 		return response, errors.New("jamf content changed during metadata reconciliation")
 	}
 	if patch != nil {
-		if err := c.applyPatch(ctx, patch, id, request.Identity.Software); err != nil {
+		if err := c.applyPatch(ctx, patch, id, request.Identity.Resource.Name); err != nil {
 			return response, err
 		}
 	}
@@ -348,7 +348,7 @@ func markedFields(current *observed, declared map[string]json.RawMessage, identi
 }
 
 func inspectPayload(ctx context.Context, identity plugin.Identity, artifact plugin.Artifact) (payload, error) {
-	if identity.Project == "" || identity.Software == "" || identity.Destination == "" {
+	if identity.Project == "" || identity.Resource.Name == "" || identity.Destination == "" {
 		return payload{}, errors.New("jamf requires a complete logical identity")
 	}
 	// Jamf installs a DMG as a filesystem layout copied onto the startup disk,
@@ -381,7 +381,7 @@ func inspectPayload(ctx context.Context, identity plugin.Identity, artifact plug
 }
 
 func identityDigest(identity plugin.Identity) string {
-	sum := sha256.Sum256(raw(identity))
+	sum := sha256.Sum256(raw([]string{identity.Project, identity.Resource.Key(), identity.Destination}))
 	return hex.EncodeToString(sum[:])
 }
 

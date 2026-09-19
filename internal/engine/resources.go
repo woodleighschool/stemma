@@ -33,7 +33,6 @@ func discover(ctx context.Context, p config.Project, ops *operations) (map[strin
 			kinds[*op.Resource] = op
 		}
 	}
-	names := map[string]string{}
 	for _, key := range sortedKeys(p.Resources) {
 		r := p.Resources[key]
 		op, ok := kinds[plugin.ResourceKind{APIVersion: r.APIVersion, Kind: r.Kind}]
@@ -85,11 +84,6 @@ func discover(ctx context.Context, p config.Project, ops *operations) (map[strin
 			if err := ops.configuration(d.Operation, d.Config); err != nil {
 				return nil, err
 			}
-			nativeKey := r.Metadata.Name + "/" + destination
-			if previous := names[nativeKey]; previous != "" {
-				return nil, fmt.Errorf("%s and %s publish the same name on %s", previous, key, destination)
-			}
-			names[nativeKey] = key
 		}
 		if err := validateReferences(result); err != nil {
 			return nil, err

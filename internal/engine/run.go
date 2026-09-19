@@ -550,7 +550,7 @@ func makeDestinationInput(p config.Project, plans map[string]resourcePlan, root,
 	if err != nil {
 		return input, err
 	}
-	input.request = plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: p.Project, Software: plans[software].Resource.Metadata.Name, Destination: name}, Config: configData, Metadata: metadataData, Artifact: prepared.artifact(), Facts: prepared.Facts, Prepared: true, Root: root, Subjects: plans[software].Subjects, Peers: peers}
+	input.request = plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: p.Project, Resource: plans[software].Resource.Reference(), Destination: name}, Config: configData, Metadata: metadataData, Artifact: prepared.artifact(), Facts: prepared.Facts, Prepared: true, Root: root, Subjects: plans[software].Subjects, Peers: peers}
 	return input, nil
 }
 

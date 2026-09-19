@@ -77,7 +77,13 @@ func DestinationSchema() *jsonschema.Schema {
 	r := jsonschema.Reflector{DoNotReference: true, RequiredFromJSONSchemaTags: true}
 	schema := r.Reflect(&DestinationMetadata{})
 	schema.ID = ""
-	schema.Properties.Set("pkginfo", MetadataSchema())
+	pkginfo := MetadataSchema()
+	link := r.Reflect(resourceRelationship{})
+	link.ID = ""
+	for _, field := range []string{"requires", "update_for"} {
+		pkginfo.Properties.Set(field, &jsonschema.Schema{Type: "array", Items: &jsonschema.Schema{OneOf: []*jsonschema.Schema{{Type: "string"}, link}}})
+	}
+	schema.Properties.Set("pkginfo", pkginfo)
 	retention, _ := schema.Properties.Get("retention")
 	retention.Description = "Keep the current item and newest other versions. Exact version references are protected; bare references protect older items with different catalogs or installation constraints."
 	return schema
@@ -133,7 +139,7 @@ func Derive(request plugin.ReconcileRequest) (Derived, error) {
 		put("icon_name", "stemma/"+strings.ToLower(icon.SHA256)+".png", "input.icon")
 		put("icon_hash", strings.ToLower(icon.SHA256), "input.icon")
 	}
-	put("name", request.Identity.Software, "software.name")
+	put("name", request.Identity.Resource.Name, "software.name")
 	if request.Artifact.Version != "" {
 		put("version", request.Artifact.Version, "installer.version")
 	}

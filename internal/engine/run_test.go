@@ -331,7 +331,7 @@ spec:
 				ConfigPath: filename, CacheDir: t.TempDir(), Method: "prepare",
 				Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
 					if request.Prepared {
-						record("validate " + request.Identity.Software)
+						record("validate " + request.Identity.Resource.Name)
 						if cancelDuringValidation {
 							cancel()
 							return plugin.ReconcileResponse{}, ctx.Err()
@@ -372,7 +372,15 @@ func TestApplyKeepsCrossedPublicationDependenciesIndependent(t *testing.T) {
 	parts := strings.Split(policyProject, "\n---\n")
 	manifest := parts[0]
 	for _, name := range []string{"a", "b"} {
-		manifest += "\n---\n" + strings.Replace(parts[1], "name: policy", "name: "+name, 1)
+		resource := strings.Replace(parts[1], "name: policy", "name: "+name, 1)
+		if name == "a" {
+			resource = strings.Replace(resource, "description: original", "requires: [{resource: {kind: MacSoftware, name: b}}]", 1)
+		}
+		if name == "b" {
+			at := strings.Index(resource, "    second:")
+			resource = resource[:at] + strings.Replace(resource[at:], "pkginfo:", "pkginfo:\n        requires: [{resource: {kind: MacSoftware, name: a}}]", 1)
+		}
+		manifest += "\n---\n" + resource
 	}
 	filename := filepath.Join(t.TempDir(), "stemma.yaml")
 	testproject.Write(t, filename, manifest)
@@ -380,15 +388,8 @@ func TestApplyKeepsCrossedPublicationDependenciesIndependent(t *testing.T) {
 	report, err := Run(t.Context(), Options{
 		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply",
 		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
-			identity := request.Identity.Software + "/" + request.Identity.Destination
-			if request.Method == "validate" && !request.Prepared {
-				switch identity {
-				case "a/first":
-					return plugin.ReconcileResponse{Requires: []string{"b"}}, nil
-				case "b/second":
-					return plugin.ReconcileResponse{Requires: []string{"a"}}, nil
-				}
-			}
+			identity := request.Identity.Resource.Name + "/" + request.Identity.Destination
+
 			if request.Method == "apply" {
 				applied = append(applied, identity)
 			}
@@ -407,7 +408,11 @@ func TestApplyOrdersRequiredResourcesAndLeavesOthersToDestinations(t *testing.T)
 	parts := strings.Split(policyProject, "\n---\n")
 	manifest := parts[0]
 	for _, name := range []string{"agent", "suite"} {
-		manifest += "\n---\n" + strings.Replace(parts[1], "name: policy", "name: "+name, 1)
+		resource := strings.Replace(parts[1], "name: policy", "name: "+name, 1)
+		if name == "agent" {
+			resource = strings.ReplaceAll(resource, "pkginfo:", "pkginfo:\n        requires: [{resource: {kind: MacSoftware, name: suite}}, GarageBand]")
+		}
+		manifest += "\n---\n" + resource
 	}
 	filename := filepath.Join(t.TempDir(), "stemma.yaml")
 	testproject.Write(t, filename, manifest)
@@ -415,12 +420,8 @@ func TestApplyOrdersRequiredResourcesAndLeavesOthersToDestinations(t *testing.T)
 	report, err := Run(t.Context(), Options{
 		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply",
 		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
-			identity := request.Identity.Software + "/" + request.Identity.Destination
-			if request.Method == "validate" && !request.Prepared && request.Identity.Software == "agent" {
-				// The suite is a catalog resource; GarageBand is published
-				// outside the catalog and stays the destination's concern.
-				return plugin.ReconcileResponse{Requires: []string{"suite", "GarageBand"}}, nil
-			}
+			identity := request.Identity.Resource.Name + "/" + request.Identity.Destination
+
 			if request.Method == "apply" {
 				applied = append(applied, identity)
 			}
@@ -432,6 +433,37 @@ func TestApplyOrdersRequiredResourcesAndLeavesOthersToDestinations(t *testing.T)
 	}
 	if got := strings.Join(applied, ", "); got != "suite/first, agent/first, suite/second, agent/second" {
 		t.Fatalf("required resource not reconciled first: %s", got)
+	}
+}
+
+func TestApplyDoesNotSelectPublicationPeers(t *testing.T) {
+	parts := strings.Split(policyProject, "\n---\n")
+	consumer := strings.Replace(parts[1], "name: policy", "name: consumer", 1)
+	consumer = strings.ReplaceAll(consumer, "pkginfo:", "pkginfo:\n        requires: [{resource: {kind: MacSoftware, name: peer}}]")
+	peer := strings.Replace(parts[1], "name: policy", "name: peer", 1)
+	peer = strings.ReplaceAll(peer, "pkginfo:", "pkginfo:\n        name: Native Peer")
+	filename := filepath.Join(t.TempDir(), "stemma.yaml")
+	testproject.Write(t, filename, parts[0]+"\n---\n"+consumer+"\n---\n"+peer)
+	var applied []string
+	report, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Resources: []string{"consumer"}, Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+		if request.Identity.Resource.Name != "consumer" {
+			t.Fatalf("unselected peer invoked: %+v", request.Identity)
+		}
+		if request.Method == "apply" {
+			var metadata struct {
+				Pkginfo struct {
+					Name string `json:"name"`
+				} `json:"pkginfo"`
+			}
+			if err := json.Unmarshal(request.Peers["stemma/v1alpha1/MacSoftware/peer"], &metadata); err != nil || metadata.Pkginfo.Name != "Native Peer" {
+				t.Fatalf("peer metadata lost: %+v, %v", metadata, err)
+			}
+			applied = append(applied, request.Identity.Destination)
+		}
+		return plugin.ReconcileResponse{}, nil
+	}}})
+	if err != nil || len(report.Resources) != 1 || !slices.Equal(applied, []string{"first", "second"}) {
+		t.Fatalf("unexpected selected publications: %+v, %v, %v", report, applied, err)
 	}
 }
 

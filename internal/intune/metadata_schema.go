@@ -5,6 +5,7 @@ import (
 
 	"github.com/invopop/jsonschema"
 	orderedmap "github.com/pb33f/ordered-map/v2"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 // MetadataSchema describes the supported native Graph metadata and software adoption.
@@ -83,10 +84,16 @@ func MetadataSchema() *jsonschema.Schema {
 }
 
 func referencesSchema(flag string, limit uint64) *jsonschema.Schema {
-	return &jsonschema.Schema{Type: "array", MaxItems: new(limit), Description: "Own this outgoing relationship category. Omission preserves its relationships; [] clears it. Referenced software must publish to the same Intune destination first; it resolves to the app_id it declares, or else to the app carrying its identity marker.", Items: objectSchema(map[string]*jsonschema.Schema{
-		"software": {Type: "string", MinLength: new(uint64(1))},
+	r := jsonschema.Reflector{DoNotReference: true}
+	reference := r.Reflect(plugin.ResourceReference{})
+	reference.ID = ""
+	item := objectSchema(map[string]*jsonschema.Schema{
+		"resource": reference,
+		"app_id":   {Type: "string", MinLength: new(uint64(1))},
 		flag:       {Type: "boolean"},
-	}, "software", flag)}
+	}, flag)
+	item.OneOf = []*jsonschema.Schema{{Required: []string{"resource"}}, {Required: []string{"app_id"}}}
+	return &jsonschema.Schema{Type: "array", MaxItems: new(limit), Description: "Own this outgoing relationship category; [] clears it. Use resource for a publication on the same connection, or app_id for an external app.", Items: item}
 }
 
 func msiSchema() *jsonschema.Schema {

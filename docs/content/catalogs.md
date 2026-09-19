@@ -65,10 +65,26 @@ spec:
 This uses the `munki` connection from [getting started](getting-started.md) and the
 `intune` connection and `windows-win32` component from [Windows software](windows-software.md).
 
-`metadata.name` is a stable identity, independent of the filename or display name.
-Renaming a file does not rename what a destination publishes. Mac and Windows documents
-can share a name, but two resources cannot publish the same name to the same
-connection. Use separate connection aliases when that distinction is needed.
+A resource's identity is `apiVersion/kind/name`, independent of its filename or
+native destination name. Mac and Windows documents can share a name, including on
+the same connection. Each destination owns its native publication identity.
+
+## Two dependency graphs
+
+Resource-output dependencies, such as `source.resource`, consume another resource's
+immutable output. They order preparation and include the producer when selecting a
+consumer. `output` selects the artifact and defaults to `installer`.
+
+Publication relationships, such as Munki `requires` / `update_for` and Intune
+`dependencies` / `supersedes`, refer to another resource's publication on the same
+named destination connection. They order selected publications without selecting or
+mutating unselected peers. An unselected peer contributes its declared destination
+metadata so the destination can find an existing publication.
+
+Both use an explicit `kind` and `name`; `apiVersion` defaults to
+`stemma/v1alpha1`. Publication references have no `output`. Missing resources,
+missing publications on the named connection and publication cycles are errors.
+See [publication relationships](publishing.md#publication-relationships).
 
 ## Choose a kind
 

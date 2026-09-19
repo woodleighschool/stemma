@@ -2,7 +2,6 @@ package intune
 
 import (
 	"encoding/base64"
-	"slices"
 	"strings"
 	"testing"
 
@@ -100,19 +99,19 @@ func TestApplicationDiskImageDerivesADmgApp(t *testing.T) {
 	}
 }
 
-func TestStaticValidationDeclaresReferencesWithoutContent(t *testing.T) {
+func TestStaticValidationAcceptsReferencesWithoutContent(t *testing.T) {
 	req := plugin.ReconcileRequest{Method: "validate", Config: raw(object{"token": "synthetic"}),
 		Subjects: map[string]plugin.SubjectSelector{"installer": {Kind: "msi"}},
 		Metadata: raw(object{
 			"derive":       object{"msi": "installer"},
-			"dependencies": []any{object{"software": "runtime", "auto_install": true}},
-			"supersedes":   []any{object{"software": "previous", "uninstall_previous": false}},
+			"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": true}},
+			"supersedes":   []any{object{"resource": object{"kind": "WindowsSoftware", "name": "previous"}, "uninstall_previous": false}},
 			"retention":    object{"keep": 2},
 		}),
 	}
 	response, err := Handle(t.Context(), req)
-	if err != nil || !slices.Equal(response.Requires, []string{"previous", "runtime"}) {
-		t.Fatalf("static dependency discovery: %+v, %v", response, err)
+	if err != nil {
+		t.Fatalf("static relationship validation: %+v, %v", response, err)
 	}
 	req.Prepared = true
 	if _, err := Handle(t.Context(), req); err == nil {
@@ -134,11 +133,16 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 		{"mac setup tree", object{"type": "pkg", "content": object{"setup_file": "setup.exe"}}, false},
 		{"registry", object{"type": "win32", "rules": []any{object{"@odata.type": "#microsoft.graph.win32LobAppRegistryRule", "ruleType": "detection", "keyPath": `HKEY_LOCAL_MACHINE\Software\Example`, "valueName": "Version", "operationType": "version", "operator": "greaterThanOrEqual", "comparisonValue": "2.0"}}}, true},
 		{"script", object{"type": "win32", "rules": []any{object{"@odata.type": "#microsoft.graph.win32LobAppPowerShellScriptRule", "ruleType": "detection", "scriptContent": script, "runAs32Bit": false}}}, true},
-		{"references", object{"type": "win32", "dependencies": []any{object{"software": "runtime", "auto_install": true}}, "retention": object{"keep": 1}}, true},
+		{"references", object{"type": "win32", "dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": true}}, "retention": object{"keep": 1}}, true},
+		{"external relationship", object{"type": "win32", "dependencies": []any{object{"app_id": "existing-app", "auto_install": true}}}, true},
+		{"ambiguous relationship", object{"type": "win32", "dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "app_id": "existing-app", "auto_install": true}}}, false},
+		{"old software syntax", object{"type": "win32", "dependencies": []any{object{"software": "runtime", "auto_install": true}}}, false},
+		{"missing reference kind", object{"type": "win32", "dependencies": []any{object{"resource": object{"name": "runtime"}, "auto_install": true}}}, false},
+		{"publication output", object{"type": "win32", "dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime", "output": "installer"}, "auto_install": true}}}, false},
 		{"missing type", object{"displayName": "Example"}, false},
 		{"bad retention", object{"type": "win32", "retention": object{"keep": 0}}, false},
 		{"mac dependency", object{"type": "pkg", "dependencies": []any{}}, false},
-		{"missing relationship policy", object{"type": "win32", "dependencies": []any{object{"software": "runtime"}}}, false},
+		{"missing relationship policy", object{"type": "win32", "dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}}}}, false},
 		{"script context", object{"type": "win32", "rules": []any{object{"@odata.type": "#microsoft.graph.win32LobAppPowerShellScriptRule", "ruleType": "detection", "scriptContent": script, "runAsAccount": "system"}}}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

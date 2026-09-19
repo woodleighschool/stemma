@@ -10,7 +10,7 @@ import (
 )
 
 func TestDestinationDerivesSelectedDMGAppAndNativeOverrides(t *testing.T) {
-	request := plugin.ReconcileRequest{Prepared: true, Identity: plugin.Identity{Software: "Editor"}, Artifact: plugin.Artifact{Path: "leased.dmg", Format: "dmg"}, Subjects: map[string]plugin.SubjectSelector{"app": {Kind: "app", BundleID: "example.editor"}}, Facts: plugin.Facts{Subjects: []plugin.Subject{{Kind: "app", Path: "Editor.app", App: &plugin.AppFacts{BundleID: "example.editor", Name: "Editor", Version: "2.3", Build: "203", MinimumOS: "13.0"}}, {Kind: "app", Path: "Other.app", App: &plugin.AppFacts{BundleID: "example.other", Version: "1"}}}}, Metadata: json.RawMessage(`{"derive":{"app":{"subject":"app","version_key":"CFBundleVersion"}},"pkginfo":{"description":null,"blocking_applications":[]}}`)}
+	request := plugin.ReconcileRequest{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "Editor"}}, Artifact: plugin.Artifact{Path: "leased.dmg", Format: "dmg"}, Subjects: map[string]plugin.SubjectSelector{"app": {Kind: "app", BundleID: "example.editor"}}, Facts: plugin.Facts{Subjects: []plugin.Subject{{Kind: "app", Path: "Editor.app", App: &plugin.AppFacts{BundleID: "example.editor", Name: "Editor", Version: "2.3", Build: "203", MinimumOS: "13.0"}}, {Kind: "app", Path: "Other.app", App: &plugin.AppFacts{BundleID: "example.other", Version: "1"}}}}, Metadata: json.RawMessage(`{"derive":{"app":{"subject":"app","version_key":"CFBundleVersion"}},"pkginfo":{"description":null,"blocking_applications":[]}}`)}
 	derived, err := munki.Derive(request)
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func TestDestinationDerivesSelectedDMGAppAndNativeOverrides(t *testing.T) {
 
 func TestDerivedApplicationUsesNativeDetectionKeys(t *testing.T) {
 	app := plugin.Subject{Kind: "app", Path: "Editor.app", App: &plugin.AppFacts{BundleID: "example.editor", Name: "Editor", Version: "banana", Build: "2349", MinimumOS: "13.2"}}
-	request := plugin.ReconcileRequest{Prepared: true, Identity: plugin.Identity{Software: "Editor"}, Artifact: plugin.Artifact{Path: "leased.dmg", Format: "dmg"}, Facts: plugin.Facts{Subjects: []plugin.Subject{app}}, Metadata: json.RawMessage(`{}`)}
+	request := plugin.ReconcileRequest{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "Editor"}}, Artifact: plugin.Artifact{Path: "leased.dmg", Format: "dmg"}, Facts: plugin.Facts{Subjects: []plugin.Subject{app}}, Metadata: json.RawMessage(`{}`)}
 	derived, err := munki.Derive(request)
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestDerivedPackageMetadata(t *testing.T) {
 		{ID: "Beta.pkg/PackageInfo", Kind: "package", Package: &plugin.PackageFacts{Identifier: "example.beta", Version: "7.8.9", InstalledSize: 10, HasPayload: true}},
 		{ID: "Scripts.pkg/PackageInfo", Kind: "package", Package: &plugin.PackageFacts{Identifier: "example.scripts", Version: "1.0"}},
 	}}
-	request := plugin.ReconcileRequest{Prepared: true, Identity: plugin.Identity{Software: "Suite"}, Artifact: plugin.Artifact{Path: "leased.pkg", Format: "pkg"}, Facts: facts, Metadata: json.RawMessage(`{}`)}
+	request := plugin.ReconcileRequest{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "Suite"}}, Artifact: plugin.Artifact{Path: "leased.pkg", Format: "pkg"}, Facts: facts, Metadata: json.RawMessage(`{}`)}
 	derived, err := munki.Derive(request)
 	if err != nil {
 		t.Fatal(err)
@@ -110,7 +110,7 @@ func TestPKGAppRequiresKnownEndpointWhenExplicitlySelected(t *testing.T) {
 }
 
 func TestDerivationOwnsAttemptedFieldsWithoutEvidence(t *testing.T) {
-	request := plugin.ReconcileRequest{Prepared: true, Identity: plugin.Identity{Software: "Editor"}, Artifact: plugin.Artifact{Path: "leased.pkg", Format: "pkg", Version: "1"}, Metadata: json.RawMessage(`{}`)}
+	request := plugin.ReconcileRequest{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "Editor"}}, Artifact: plugin.Artifact{Path: "leased.pkg", Format: "pkg", Version: "1"}, Metadata: json.RawMessage(`{}`)}
 	derived, err := munki.Derive(request)
 	if err != nil {
 		t.Fatal(err)

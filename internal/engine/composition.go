@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -24,52 +25,49 @@ type destinationPlan struct {
 
 // Unselected peers contribute metadata without becoming part of the run.
 func planDestinations(ctx context.Context, project config.Project, plans map[string]resourcePlan, ops *operations, root string, selected []string) (map[destinationRef]destinationPlan, error) {
-	destinations := map[destinationRef]destinationPlan{}
-	declared := sortedKeys(plans)
-	var nodes []destinationRef
-	for _, name := range selected {
-		software := plans[name]
+	dests := map[destinationRef]destinationPlan{}
+	// Validate the declared graph, even when only some publications are selected.
+	for _, key := range sortedKeys(plans) {
+		software := plans[key]
 		for _, destination := range sortedKeys(software.Destinations) {
-			node := destinationRef{name, destination}
+			node := destinationRef{key, destination}
 			plan := destinationPlan{peers: map[string]json.RawMessage{}}
-			nodes = append(nodes, node)
-			connection := project.Destinations[destination]
-			metadata, _ := json.Marshal(staticMetadata(destinationMetadata(software.Destinations[destination])))
-			settings, _ := json.Marshal(connection.Config)
-			request := plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: project.Project, Software: software.Resource.Metadata.Name, Destination: destination}, Root: root, Config: settings, Metadata: metadata, Subjects: software.Subjects}
-			var response plugin.ReconcileResponse
-			if err := ops.call(ctx, connection.Operation, "validate", request, &response); err != nil {
-				return nil, fmt.Errorf("%s/%s: %w", name, destination, err)
+			references, err := publicationReferences(destinationMetadata(software.Destinations[destination]))
+			if err != nil {
+				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
 			}
-			for _, required := range response.Requires {
-				if ref, found := peer(plans, declared, destination, required); found {
-					metadata, _ := json.Marshal(staticMetadata(destinationMetadata(plans[ref.Resource].Destinations[destination])))
-					plan.peers[required] = metadata
+			for _, reference := range references {
+				peer, exists := plans[reference.Key()]
+				if !exists {
+					return nil, fmt.Errorf("%s/%s: unknown resource %s", key, destination, reference.Key())
 				}
-				ref, found := peer(plans, selected, destination, required)
-				if !found {
-					plugin.Logger(ctx).DebugContext(ctx, "Required resource is not reconciled in this run", "resource", name, "destination", destination, "requires", required)
-					continue
+				metadata, exists := peer.Destinations[destination]
+				if !exists {
+					return nil, fmt.Errorf("%s/%s: resource %s does not publish to destination %s", key, destination, reference.Key(), destination)
 				}
-				if ref != node && !slices.Contains(plan.requires, ref) {
+				plan.peers[reference.Key()], err = json.Marshal(staticMetadata(destinationMetadata(metadata)))
+				if err != nil {
+					return nil, err
+				}
+				ref := destinationRef{reference.Key(), destination}
+				if !slices.Contains(plan.requires, ref) {
 					plan.requires = append(plan.requires, ref)
 				}
 			}
-			destinations[node] = plan
+			dests[node] = plan
 		}
 	}
-	visited := map[destinationRef]bool{}
-	visiting := map[destinationRef]bool{}
+	visited, visiting := map[destinationRef]bool{}, map[destinationRef]bool{}
 	var visit func(destinationRef) error
 	visit = func(node destinationRef) error {
 		if visiting[node] {
-			return fmt.Errorf("software reference cycle at %s/%s", node.Resource, node.Destination)
+			return fmt.Errorf("publication reference cycle at %s/%s", node.Resource, node.Destination)
 		}
 		if visited[node] {
 			return nil
 		}
 		visiting[node] = true
-		for _, required := range destinations[node].requires {
+		for _, required := range dests[node].requires {
 			if err := visit(required); err != nil {
 				return err
 			}
@@ -78,25 +76,73 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 		visited[node] = true
 		return nil
 	}
-	for _, node := range nodes {
-		if err := visit(node); err != nil {
-			return nil, err
+	for _, key := range sortedKeys(plans) {
+		for _, destination := range sortedKeys(plans[key].Destinations) {
+			if err := visit(destinationRef{key, destination}); err != nil {
+				return nil, err
+			}
 		}
 	}
-	return destinations, nil
+	result := map[destinationRef]destinationPlan{}
+	for _, key := range selected {
+		software := plans[key]
+		for _, destination := range sortedKeys(software.Destinations) {
+			node := destinationRef{key, destination}
+			plan := dests[node]
+			plan.requires = slices.DeleteFunc(plan.requires, func(ref destinationRef) bool { return !slices.Contains(selected, ref.Resource) })
+			connection := project.Destinations[destination]
+			metadata, _ := json.Marshal(staticMetadata(destinationMetadata(software.Destinations[destination])))
+			settings, _ := json.Marshal(connection.Config)
+			request := plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: project.Project, Resource: software.Resource.Reference(), Destination: destination}, Root: root, Config: settings, Metadata: metadata, Subjects: software.Subjects, Peers: plan.peers}
+			if err := ops.call(ctx, connection.Operation, "validate", request, nil); err != nil {
+				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
+			}
+			result[node] = plan
+		}
+	}
+	return result, nil
 }
 
-// peer finds, among keys, the resource with a name that publishes to a destination.
-func peer(plans map[string]resourcePlan, keys []string, destination, name string) (destinationRef, bool) {
-	for _, key := range keys {
-		if plans[key].Resource.Metadata.Name != name {
-			continue
+// resource is reserved Stemma syntax within destination metadata, like $fact.
+// Only the reference is decoded here; surrounding native properties stay opaque.
+func publicationReferences(value any) ([]plugin.ResourceReference, error) {
+	var references []plugin.ResourceReference
+	switch value := value.(type) {
+	case map[string]any:
+		for _, key := range sortedKeys(value) {
+			if key == "resource" {
+				data, err := json.Marshal(value[key])
+				if err != nil {
+					return nil, err
+				}
+				var ref plugin.ResourceReference
+				decoder := json.NewDecoder(bytes.NewReader(data))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&ref); err != nil {
+					return nil, fmt.Errorf("resource: %w", err)
+				}
+				if err := ref.Validate(); err != nil {
+					return nil, err
+				}
+				references = append(references, ref)
+				continue
+			}
+			nested, err := publicationReferences(value[key])
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			references = append(references, nested...)
 		}
-		if _, ok := plans[key].Destinations[destination]; ok {
-			return destinationRef{key, destination}, true
+	case []any:
+		for i, item := range value {
+			nested, err := publicationReferences(item)
+			if err != nil {
+				return nil, fmt.Errorf("item %d: %w", i, err)
+			}
+			references = append(references, nested...)
 		}
 	}
-	return destinationRef{}, false
+	return references, nil
 }
 
 func staticMetadata(value map[string]any) map[string]any {

@@ -79,8 +79,8 @@ func TestDependenciesRequirePublishedWin32Apps(t *testing.T) {
 			c.appType = win32Type
 			fake.relatedApps["dependency"] = object{"id": "dependency", "@odata.type": appType, "publishingState": "published"}
 			req := fixtureRequest(t)
-			req.Peers = map[string]json.RawMessage{"runtime": raw(object{"app_id": "dependency"})}
-			_, err := c.desiredRelationships(t.Context(), req, &tenantApps{client: c}, lifecycle{Dependencies: []relationshipReference{{Software: "runtime", Install: true}}}, "")
+			req.Peers = map[string]json.RawMessage{"stemma/v1alpha1/WindowsSoftware/runtime": raw(object{"app_id": "dependency"})}
+			_, err := c.desiredRelationships(t.Context(), req, &tenantApps{client: c}, lifecycle{Dependencies: []relationshipReference{{Resource: &plugin.ResourceReference{Kind: "WindowsSoftware", Name: "runtime"}, Install: true}}}, "")
 			if (err == nil) != (appType == win32Type) {
 				t.Fatalf("target type %s: %v", appType, err)
 			}

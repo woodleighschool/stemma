@@ -8,7 +8,7 @@ import (
 )
 
 // ProtocolVersion is the executable protocol understood by this SDK.
-const ProtocolVersion = 4
+const ProtocolVersion = 5
 
 // Request invokes one advertised operation. Describe requests omit Operation and Input.
 type Request struct {
@@ -32,9 +32,9 @@ type Handler func(context.Context, Request) (Response, error)
 
 // Identity identifies a logical destination independently of its display metadata.
 type Identity struct {
-	Project     string `json:"project"`
-	Software    string `json:"software"`
-	Destination string `json:"destination"`
+	Project     string            `json:"project"`
+	Resource    ResourceReference `json:"resource"`
+	Destination string            `json:"destination"`
 }
 
 // Artifact is an immutable file or tree leased by the engine, never a writable
@@ -57,8 +57,8 @@ type Artifact struct {
 // false and empty collections; Config contains provider-owned connection settings.
 //
 // A destination keeps no state between runs: it identifies what it manages from
-// Identity and the destination itself. Peers holds the declared metadata, for
-// this destination, of each resource validation listed in Requires.
+// Identity and the destination itself. Peers holds declared metadata for each
+// resource referenced on this connection, keyed by ResourceReference.Key().
 type ReconcileRequest struct {
 	Method   string                     `json:"method"`
 	Identity Identity                   `json:"identity"`
@@ -74,15 +74,9 @@ type ReconcileRequest struct {
 }
 
 // ReconcileResponse carries the changes a run planned or made.
-//
-// Validation may list in Requires the resources, by name, that this document
-// refers to on the same connection. The run reconciles the ones it selects
-// first and supplies each one's declared metadata in Peers; a resource the
-// project does not declare is left to the destination.
 type ReconcileResponse struct {
-	Changes  []Change          `json:"changes,omitempty"`
-	Origins  map[string]string `json:"origins,omitempty"`
-	Requires []string          `json:"requires,omitempty"`
+	Changes []Change          `json:"changes,omitempty"`
+	Origins map[string]string `json:"origins,omitempty"`
 }
 
 // Change is a semantic destination change; an empty Changes list needs no write.

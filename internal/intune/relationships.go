@@ -31,10 +31,10 @@ func (c *client) desiredRelationships(ctx context.Context, req plugin.ReconcileR
 		{l.Supersedes, supersedenceType, "supersedenceType", "update", "replace"},
 	} {
 		for _, ref := range group.refs {
-			if ref.Software == req.Identity.Software {
+			if ref.Resource != nil && ref.Resource.Key() == req.Identity.Resource.Key() {
 				return nil, errSelfRelationship
 			}
-			target, err := peerApp(ctx, req, tenant, ref.Software)
+			target, err := relationshipApp(ctx, req, tenant, ref)
 			if err != nil {
 				return nil, err
 			}
@@ -43,10 +43,10 @@ func (c *client) desiredRelationships(ctx context.Context, req plugin.ReconcileR
 			}
 			var remote object
 			if err := c.request(ctx, abs.GET, c.app(target), nil, &remote); err != nil {
-				return nil, fmt.Errorf("read relationship target %q: %w", ref.Software, err)
+				return nil, fmt.Errorf("read relationship target %q: %w", target, err)
 			}
 			if remote["@odata.type"] != win32Type || remote["publishingState"] != "published" {
-				return nil, fmt.Errorf("relationship target %q must be a published Win32 app", ref.Software)
+				return nil, fmt.Errorf("relationship target %q must be a published Win32 app", target)
 			}
 			value := group.no
 			if ref.Install {
@@ -58,26 +58,32 @@ func (c *client) desiredRelationships(ctx context.Context, req plugin.ReconcileR
 	return result, nil
 }
 
-// peerApp resolves referenced software to its app: the app_id that software
-// declares for this destination, or else the app carrying its identity marker.
-func peerApp(ctx context.Context, req plugin.ReconcileRequest, tenant *tenantApps, software string) (string, error) {
+// relationshipApp uses explicit remote IDs or the publication of an exact resource.
+func relationshipApp(ctx context.Context, req plugin.ReconcileRequest, tenant *tenantApps, ref relationshipReference) (string, error) {
+	if ref.Resource == nil {
+		return ref.AppID, nil
+	}
+	key := ref.Resource.Key()
+	data, exists := req.Peers[key]
+	if !exists {
+		return "", fmt.Errorf("intune relationship resource %s does not publish to this destination", key)
+	}
 	var declared struct {
 		AppID string `json:"app_id"`
 	}
-	if data := req.Peers[software]; len(data) != 0 {
-		if err := json.Unmarshal(data, &declared); err != nil {
-			return "", fmt.Errorf("intune relationship software %q metadata: %w", software, err)
-		}
+	if err := json.Unmarshal(data, &declared); err != nil {
+		return "", fmt.Errorf("intune relationship resource %s metadata: %w", key, err)
 	}
 	if declared.AppID != "" {
 		return declared.AppID, nil
 	}
-	id, err := tenant.find(ctx, markerIdentity(plugin.Identity{Project: req.Identity.Project, Software: software, Destination: req.Identity.Destination}))
+	identity := plugin.Identity{Project: req.Identity.Project, Resource: *ref.Resource, Destination: req.Identity.Destination}
+	id, err := tenant.find(ctx, markerIdentity(identity))
 	if err != nil {
-		return "", fmt.Errorf("intune relationship software %q: %w", software, err)
+		return "", fmt.Errorf("intune relationship resource %s: %w", key, err)
 	}
 	if id == "" {
-		return "", fmt.Errorf("intune relationship software %q is not published to this destination yet", software)
+		return "", fmt.Errorf("intune relationship resource %s is not published to this destination yet", key)
 	}
 	return id, nil
 }

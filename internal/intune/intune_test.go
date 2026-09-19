@@ -379,7 +379,7 @@ func fixtureRequest(t *testing.T) plugin.ReconcileRequest {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(data)
-	return plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "example", Software: "test", Destination: "intune"}, Artifact: plugin.Artifact{Path: path, Filename: "setup.cmd", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}, Metadata: raw(object{
+	return plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "example", Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "test"}, Destination: "intune"}, Artifact: plugin.Artifact{Path: path, Filename: "setup.cmd", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}, Metadata: raw(object{
 		"@odata.type": win32Type, "displayName": "Fixture", "description": "Test app", "publisher": "Fixture Publisher",
 		"installCommandLine": "setup.cmd", "uninstallCommandLine": "setup.cmd /remove", "minimumSupportedWindowsRelease": "Windows11_23H2", "allowedArchitectures": "x64",
 		"installExperience": object{"runAsAccount": "system"},

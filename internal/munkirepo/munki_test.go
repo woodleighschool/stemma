@@ -348,7 +348,7 @@ func repositoryRequest(t *testing.T, filename, metadata string) (string, plugin.
 		t.Fatal(err)
 	}
 	return root, plugin.ReconcileRequest{
-		Method: "apply", Identity: plugin.Identity{Project: "test", Software: "App", Destination: "munki"},
+		Method: "apply", Identity: plugin.Identity{Project: "test", Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "App"}, Destination: "munki"},
 		Config: connection, Metadata: nativeMetadata(metadata),
 		Artifact: plugin.Artifact{Path: artifactPath, Filename: filename, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(content)), Version: "1"},
 	}
@@ -369,7 +369,7 @@ func apply(t *testing.T, root string, request *plugin.ReconcileRequest) string {
 	if err := json.Unmarshal(request.Metadata, &declared); err != nil {
 		t.Fatal(err)
 	}
-	name, version := request.Identity.Software, request.Artifact.Version
+	name, version := request.Identity.Resource.Name, request.Artifact.Version
 	if declared.Pkginfo.Name != "" {
 		name = declared.Pkginfo.Name
 	}

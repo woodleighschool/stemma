@@ -221,10 +221,22 @@ After an interruption, re-read the destination before writing again.
 Explicit fields override derived values. Missing derived values clear owned
 fields; other omitted fields remain unchanged. Ownership follows the current
 declaration and artifact.
-Validation may return `Requires`, the names of the resources a document refers to on
-the same connection. Stemma reconciles the selected ones first and supplies, in
-`Peers`, the metadata each one declares for the destination, which is enough to find
-its publication the same way the peer itself does.
+Within destination metadata, `resource` is reserved for an explicit
+`ResourceReference` containing `apiVersion`, `kind` and `name`. A destination's
+metadata schema defines where that reference is accepted and which native
+relationship properties may accompany it. Stemma reads these references directly,
+validates the publication graph, and reconciles selected peers first.
+
+`Identity.Resource` identifies the current resource. `Peers` maps each referenced
+resource's `ResourceReference.Key()` to its declared metadata for this connection,
+including unselected peers. The key defaults the API version to `stemma/v1alpha1`.
+Resolve native IDs from that metadata and the resource identity; missing peers are
+errors. Never reinterpret resource names as native strings or remote search terms.
+`ReconcileResponse` reports changes and origins; it does not discover dependencies.
+
+`ResourceOutputReference` adds an output selector to resource identity for immutable
+preparation inputs. It is distinct from publication references, which have no
+output selector. See [the two graphs](catalogs.md#two-dependency-graphs).
 
 Use the shared `Retention` type and order a software's publications from the
 destination's own records, while implementing native reference checks and cleanup in
@@ -232,12 +244,12 @@ the provider. See [retention](publishing.md#identity-and-retention).
 
 ## Protocol and runtime
 
-The host launches an executable for one request. Protocol version **4** sends one
+The host launches an executable for one request. Protocol version **5** sends one
 JSON object on stdin, ending at EOF:
 
 ```json
 {
-  "protocol": 4,
+  "protocol": 5,
   "method": "describe"
 }
 ```
@@ -247,7 +259,7 @@ The final stdout response has `protocol`, optional `output` and optional `error`
 Other requests add `operation`, `input` and optionally `log_level`.
 
 Before the final response, a plugin may emit newline-delimited envelopes containing
-`protocol: 4` and `log`, a structured record with time, level and message. Messages
+`protocol: 5` and `log`, a structured record with time, level and message. Messages
 are bounded to 4 MiB. No messages may follow the final response. The SDK's `Serve`
 and `Run` handle framing and validation.
 

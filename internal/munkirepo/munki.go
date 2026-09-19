@@ -34,6 +34,10 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 	if inputErr != nil {
 		return plugin.ReconcileResponse{}, inputErr
 	}
+	request, inputErr = munki.ResolveReferences(request)
+	if inputErr != nil {
+		return plugin.ReconcileResponse{}, inputErr
+	}
 	root, err := repositoryPath(request.Config)
 	if err == nil && !filepath.IsAbs(root) && request.Root != "" {
 		root = filepath.Join(request.Root, root)
@@ -88,7 +92,7 @@ func repositoryPath(configuration json.RawMessage) (string, error) {
 }
 
 func nativeInput(request plugin.ReconcileRequest) (munki.Input, map[string]any, munki.Derived, error) {
-	input := munki.Input{Name: request.Identity.Software, Version: request.Artifact.Version, SHA256: request.Artifact.SHA256, Size: request.Artifact.Size, InstallerLocation: request.Artifact.Filename}
+	input := munki.Input{Name: request.Identity.Resource.Name, Version: request.Artifact.Version, SHA256: request.Artifact.SHA256, Size: request.Artifact.Size, InstallerLocation: request.Artifact.Filename}
 	if request.Artifact.Format == "pkg" || strings.EqualFold(filepath.Ext(request.Artifact.Filename), ".pkg") {
 		input.InstallerType = "pkg"
 	}
