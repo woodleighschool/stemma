@@ -108,7 +108,7 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 			if ctx.Err() != nil {
 				return candidate, err
 			}
-			plugin.Logger(ctx).ErrorContext(ctx, "Resolution failed", "error", err)
+			plugin.Logger(ctx).DebugContext(ctx, "Resolution failed", "error", err)
 			resource.Error = err.Error()
 		} else if len(entries) > 0 {
 			resource.Inputs = entries

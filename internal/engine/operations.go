@@ -28,12 +28,12 @@ import (
 // Catalog describes built-in and installed plugin operations without acquiring
 // software inputs or contacting destinations. Trusted plugin discovery executes code.
 func Catalog(ctx context.Context, opts Options) (result plugin.Descriptor, err error) {
-	done := plugin.Stage(ctx, "Loading operation contracts")
-	defer func() { done(err) }()
 	p, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		return plugin.Descriptor{}, err
 	}
+	done := plugin.Stage(ctx, "Loading operation contracts")
+	defer func() { done(err) }()
 	ops, cleanup, err := projectOperations(ctx, p, opts)
 	if err != nil {
 		return plugin.Descriptor{}, err
@@ -45,8 +45,7 @@ func Catalog(ctx context.Context, opts Options) (result plugin.Descriptor, err e
 // ValidateProject checks authored fields and available operation contracts.
 // Values that depend on artifacts are validated after preparation.
 func ValidateProject(ctx context.Context, opts Options) (result config.Project, err error) {
-	done := plugin.Stage(ctx, "Validating project")
-	defer func() { done(err) }()
+	// Authoring mistakes are answered directly; the stage covers contract work.
 	p, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		return p, err
@@ -54,6 +53,8 @@ func ValidateProject(ctx context.Context, opts Options) (result config.Project, 
 	if err := Validate(ctx, p); err != nil {
 		return p, err
 	}
+	done := plugin.Stage(ctx, "Validating project")
+	defer func() { done(err) }()
 	ops, cleanup, err := projectOperations(ctx, p, opts)
 	if err != nil {
 		return p, err

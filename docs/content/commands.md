@@ -11,7 +11,7 @@ Run commands from a catalog. Stemma discovers its Git root and `stemma.yaml`.
 | `stemma update [Kind/name...]`    | Discover current inputs and update their locks                               |
 | `stemma prepare [Kind/name...]`   | Lock and prepare inputs without publication                                  |
 | `stemma signature [Kind/name...]` | Derive the verified signer of each published artifact                        |
-| `stemma icon [Kind/name...]`      | Author missing declared icons from the software's own artwork                |
+| `stemma icon [Kind/name...]`      | Create missing declared icons from the software's own artwork                |
 | `stemma plan [Kind/name...]`      | Read destinations and report proposed changes                                |
 | `stemma apply [Kind/name...]`     | Re-read and reconcile destinations once                                      |
 
@@ -21,17 +21,14 @@ ambiguous identity. Omitting selectors processes every resource that is not
 [suspended](catalogs.md#suspend-a-resource); a selector runs a suspended resource
 and the builds it references.
 
-`icon` authors the [declared icon](mac-software.md#icons) of each selected resource
-from the software its locked source prepares and writes `icons/<name>.png`. It
-extracts the artwork the software carries on any host, a Mac application's icon file
-or the icon a Windows installer registers, and presents it: `--presentation raw`
-writes that artwork as it is, `--presentation glassy` draws it with the macOS icon
-renderer at `--size` pixels (512 by default) and needs a Mac, and the default `auto`
-picks glassy on macOS and raw elsewhere. Each result names the presentation it
-used. The command fills in missing files, preparing only the resources it authors,
-and leaves existing artwork alone; `--force` replaces it. It never updates the
-lockfile or contacts a destination. Commit the result: publication on any runner
-sends those exact bytes.
+`icon` writes [declared icons](mac-software.md#icons) to `icons/<name>.png` from
+locked software. `--presentation raw` extracts the original artwork;
+`--presentation glassy` uses the macOS renderer at `--size` pixels (512 by default).
+The default, `auto`, chooses glassy on macOS and raw elsewhere.
+
+Existing icons stay unchanged unless `--force` is set. Only resources needing an
+icon are prepared. The command leaves the lockfile unchanged and does not contact
+destinations. Commit the icons so publication sends the same bytes on every host.
 
 `signature` acquires and prepares inputs like `prepare`, verifies each published
 artifact against the signer it observes and prints the `signature` fragment to
@@ -65,6 +62,7 @@ stemma operations
 stemma version
 ```
 
+`inspect`, `validate --resolved`, `schema` and `operations` print JSON documents.
 `inspect` reads artifact metadata without executing the installer.
 `validate --resolved` prints merged configuration and may expose expanded
 environment values: do not share it without reviewing it.
@@ -86,12 +84,19 @@ stemma cache prune
 ## Reports and diagnostics
 
 Stdout contains command reports; stderr contains progress and diagnostics.
+Commands that report an outcome print text, and `--json` prints the same report
+as JSON.
 
 ```sh
-stemma plan --output json
-stemma prepare --log-format json --output json
+stemma plan --json
+stemma prepare --log-format json --json
 stemma prepare --verbose --no-progress
 ```
+
+Terminals show live progress. Plain logs name each stage once as it starts;
+debug output and `--log-format json` also record each stage result and its
+duration. A failed command ends with `Error:` lines on stderr, and each failed
+resource shows its error once, in its own report. JSON logs record the raw error.
 
 Use `--quiet` (`-q`) for warnings and errors, `--verbose` (`-v`) or `--debug` (`-d`)
 for debug diagnostics, or `--log-level debug|info|warn|error`. `--no-progress`

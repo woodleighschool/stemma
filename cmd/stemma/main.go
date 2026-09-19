@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
@@ -65,18 +66,12 @@ func interruptContext() (context.Context, context.CancelFunc) {
 }
 
 func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
-	var rootDir, configPath, cacheDir, stateDir, output string
+	var rootDir, configPath, cacheDir, stateDir string
 	root := &cobra.Command{Use: "stemma", Short: "Resolve, prepare and publish reviewed software artifacts", SilenceErrors: true, SilenceUsage: true, Version: version}
 	display := newCommandOutput(root, errOut)
 	out = reportWriter{Writer: out, output: display}
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
-		if err := display.start(cmd); err != nil {
-			return err
-		}
-		if output != "text" && output != "json" {
-			return errors.New("output must be text or json")
-		}
-		return nil
+		return display.start(cmd)
 	}
 	root.SetOut(out)
 	root.SetErr(errOut)
@@ -84,11 +79,17 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	root.PersistentFlags().StringVar(&configPath, "config", "", "Path to stemma.yaml")
 	root.PersistentFlags().StringVar(&cacheDir, "cache-dir", os.Getenv("STEMMA_CACHE_DIR"), "Disposable content cache directory")
 	root.PersistentFlags().StringVar(&stateDir, "state-dir", os.Getenv("STEMMA_STATE_DIR"), "Durable destination binding directory")
-	root.PersistentFlags().StringVar(&output, "output", "text", "Report format: text or json")
 	resolve := func() (string, error) { return findConfig(rootDir, configPath) }
-	root.AddCommand(&cobra.Command{Use: "version", Short: "Print build information", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
-		return writeJSON(out, map[string]string{"version": version, "commit": commit, "date": date})
-	}})
+	build := &cobra.Command{Use: "version", Short: "Print build information", Args: cobra.NoArgs}
+	buildJSON := jsonFlag(build)
+	build.RunE = func(_ *cobra.Command, _ []string) error {
+		if *buildJSON {
+			return writeJSON(out, map[string]string{"version": version, "commit": commit, "date": date})
+		}
+		_, err := fmt.Fprintf(out, "stemma %s (commit %s, built %s)\n", version, commit, date)
+		return err
+	}
+	root.AddCommand(build)
 	var projectSchema, schemaOffline bool
 	schema := &cobra.Command{Use: "schema", Short: "Print the generated JSON schema with editor descriptions", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		var data []byte
@@ -121,17 +122,17 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		if err != nil {
 			return err
 		}
-		if resolved || output == "json" {
+		if resolved {
 			return writeJSON(out, p)
 		}
 		_, err = fmt.Fprintln(out, "Configuration is valid.")
 		return err
 	}}
-	validate.Flags().BoolVar(&resolved, "resolved", false, "Show fully resolved software composition")
+	validate.Flags().BoolVar(&resolved, "resolved", false, "Print the fully resolved software composition as JSON")
 	validate.Flags().BoolVar(&validateOffline, "offline", false, "Require verified cached plugin bundles")
 	root.AddCommand(validate)
 	var operationsOffline bool
-	operations := &cobra.Command{Use: "operations", Short: "Print built-in and trusted plugin operation contracts", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	operations := &cobra.Command{Use: "operations", Short: "Print built-in and trusted plugin operation contracts as JSON", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		path, err := resolve()
 		if err != nil {
 			return err
@@ -148,7 +149,10 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		var offline bool
 		var icons engine.IconOptions
 		var presentation string
-		cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "signature": "Derive the verified signer of each published artifact", "icon": "Author declared icon assets from the artwork prepared software carries", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
+		cmd := &cobra.Command{Use: method + " [Kind/name...]"}
+		asJSON := jsonFlag(cmd)
+		cmd.Short = map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "signature": "Derive the verified signer of each published artifact", "icon": "Create declared icon assets from the artwork prepared software carries", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method]
+		cmd.RunE = func(cmd *cobra.Command, args []string) error {
 			path, err := resolve()
 			if err != nil {
 				return err
@@ -158,12 +162,14 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 					return err
 				}
 			}
-			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Resources: args, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error { return display.resourceDone(out, output, method, resource) }, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply" || method == "icon", Refresh: method == "update", Offline: offline}})
-			if err := display.report(out, output, method, report, runErr); err != nil {
+			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Resources: args, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error {
+				return display.resourceDone(out, *asJSON, method, resource)
+			}, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply" || method == "icon", Refresh: method == "update", Offline: offline}})
+			if err := display.report(out, *asJSON, method, report, runErr); err != nil {
 				return errors.Join(runErr, err)
 			}
 			return runErr
-		}}
+		}
 
 		cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
 		if method == "icon" {
@@ -173,20 +179,23 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		}
 		root.AddCommand(cmd)
 	}
-	root.AddCommand(&cobra.Command{Use: "reconcile", Short: "Apply the reviewed branch of this checkout and propose lock updates as pull requests", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	reconciler := &cobra.Command{Use: "reconcile", Short: "Apply the reviewed branch of this checkout and propose lock updates as pull requests", Args: cobra.NoArgs}
+	reconcileJSON := jsonFlag(reconciler)
+	reconciler.RunE = func(cmd *cobra.Command, _ []string) error {
 		path, err := resolve()
 		if err != nil {
 			return err
 		}
 		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, ResourceDone: func(method string, resource engine.ResourceReport) error {
-			return display.resourceDone(out, output, method, resource)
+			return display.resourceDone(out, *reconcileJSON, method, resource)
 		}})
-		if err := display.reconciled(out, output, report, runErr); err != nil {
+		if err := display.reconciled(out, *reconcileJSON, report, runErr); err != nil {
 			return errors.Join(runErr, err)
 		}
 		return runErr
-	}})
-	root.AddCommand(&cobra.Command{Use: "inspect FILE", Short: "Read artifact metadata without executing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	}
+	root.AddCommand(reconciler)
+	root.AddCommand(&cobra.Command{Use: "inspect FILE", Short: "Read artifact metadata as JSON without executing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		switch strings.ToLower(filepath.Ext(args[0])) {
 		case ".intunewin":
 			done := plugin.Stage(cmd.Context(), "Inspecting artifact")
@@ -225,7 +234,9 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	}})
 	root.AddCommand(cache)
 	plugins := &cobra.Command{Use: "plugins", Short: "Install and update explicitly trusted executable plugins"}
-	plugins.AddCommand(&cobra.Command{Use: "list", Short: "Show configured plugin images", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
+	list := &cobra.Command{Use: "list", Short: "Show configured plugins", Args: cobra.NoArgs}
+	listJSON := jsonFlag(list)
+	list.RunE = func(_ *cobra.Command, _ []string) error {
 		path, err := resolve()
 		if err != nil {
 			return err
@@ -234,10 +245,16 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		if err != nil {
 			return err
 		}
-		return writeJSON(out, p.Plugins)
-	}})
+		if *listJSON {
+			return writeJSON(out, p.Plugins)
+		}
+		return printPlugins(out, p.Plugins)
+	}
+	plugins.AddCommand(list)
 	for _, method := range []string{"install", "update"} {
-		plugins.AddCommand(&cobra.Command{Use: method, Short: "Resolve plugin images and lock their release indexes", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		install := &cobra.Command{Use: method, Short: map[string]string{"install": "Lock configured plugins, keeping locked images", "update": "Lock configured plugins, resolving images again"}[method], Args: cobra.NoArgs}
+		installJSON := jsonFlag(install)
+		install.RunE = func(cmd *cobra.Command, _ []string) error {
 			plugin.Logger(cmd.Context()).DebugContext(cmd.Context(), "Loading plugin declarations")
 			path, err := resolve()
 			if err != nil {
@@ -274,8 +291,12 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 			if err != nil {
 				return err
 			}
-			return writeJSON(out, result.File.Plugins)
-		}})
+			if *installJSON {
+				return writeJSON(out, result.File.Plugins)
+			}
+			return printLockedPlugins(out, previous.Plugins, result.File.Plugins, result.Changed)
+		}
+		plugins.AddCommand(install)
 	}
 	root.AddCommand(plugins)
 	return root, display.finish
@@ -283,13 +304,20 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 
 func packageCommand(out io.Writer) *cobra.Command {
 	cmd := &cobra.Command{Use: "package", Short: "Build destination transport containers"}
-	cmd.AddCommand(&cobra.Command{Use: "intunewin SOURCE_DIRECTORY SETUP_FILE OUTPUT", Short: "Build a randomized Intune Windows envelope", Args: cobra.ExactArgs(3), RunE: func(cmd *cobra.Command, args []string) error {
+	envelope := &cobra.Command{Use: "intunewin SOURCE_DIRECTORY SETUP_FILE OUTPUT", Short: "Build a randomized Intune Windows envelope", Args: cobra.ExactArgs(3)}
+	envelopeJSON := jsonFlag(envelope)
+	envelope.RunE = func(cmd *cobra.Command, args []string) error {
 		result, err := intunewin.Write(cmd.Context(), args[0], args[1], args[2])
 		if err != nil {
 			return err
 		}
-		return writeJSON(out, result)
-	}})
+		if *envelopeJSON {
+			return writeJSON(out, result)
+		}
+		_, err = fmt.Fprintf(out, "Packaged %s: setup file %s, %s encrypted.\n", args[2], result.SetupFile, humanize.IBytes(uint64(max(0, result.EncryptedContentSize))))
+		return err
+	}
+	cmd.AddCommand(envelope)
 	var options pkgbuild.Options
 	var preinstall, postinstall string
 	pkg := &cobra.Command{Use: "pkg SOURCE_DIRECTORY OUTPUT", Short: "Build a portable payload or scripts-only Apple package", Long: "Build a portable Apple package, preserving source modification times.\nSet SOURCE_DATE_EPOCH to normalize timestamps for reproducible standalone builds.", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
@@ -336,6 +364,11 @@ func findConfig(root, path string) (string, error) {
 	}
 	return filepath.Join(project, "stemma.yaml"), nil
 }
+
+func jsonFlag(cmd *cobra.Command) *bool {
+	return cmd.Flags().Bool("json", false, "Print the report as JSON")
+}
+
 func writeJSON(out io.Writer, value any) error {
 	encoder := json.NewEncoder(out)
 	encoder.SetIndent("", "  ")

@@ -38,9 +38,8 @@ func TestNestedStagesReportOnTheirOperationRow(t *testing.T) {
 	verified := plugin.Stage(ctx, "Verifying installer")
 	verified(errors.New("invalid signature"))
 	prepared(errors.New("invalid signature"))
-	plugin.Logger(ctx).Error("Preparation failed", "error", errors.New("invalid signature"))
 	plugin.Logger(ctx).Info("Provider notice")
-	if err := o.resourceDone(&bytes.Buffer{}, "json", "prepare", engine.ResourceReport{Kind: "MacSoftware", Name: "example", Error: "invalid signature"}); err != nil {
+	if err := o.resourceDone(&bytes.Buffer{}, true, "prepare", engine.ResourceReport{Kind: "MacSoftware", Name: "example", Error: "invalid signature"}); err != nil {
 		t.Fatal(err)
 	}
 	o.endProgress(errors.New("an earlier resource failed"))
@@ -78,7 +77,7 @@ func TestIdleResourcesLeaveTheLiveRegion(t *testing.T) {
 	}
 	p.update(activity{scope: "first", label: "Planning destination", stage: true})
 	p.update(activity{scope: "first", label: "Planning destination", status: true, elapsed: time.Second})
-	p.complete("first", "unchanged", false)
+	p.complete("first", "unchanged", false, nil)
 	p.stop("")
 	if !strings.Contains(out.String(), "✓ first  unchanged (3s)\n") {
 		t.Fatalf("heading did not report working time: %s", out.String())
@@ -91,7 +90,7 @@ func TestInterleavedResourcesKeepSeparateTrees(t *testing.T) {
 	p.update(activity{scope: "first", label: "Download", stage: true})
 	p.update(activity{scope: "second", label: "Download", stage: true})
 	p.update(activity{scope: "first", label: "Download", status: true})
-	p.complete("first", "prepared", false)
+	p.complete("first", "prepared", false, nil)
 	p.stop("interrupted")
 	text := out.String()
 	if strings.Count(text, "first") != 1 || strings.Count(text, "second") != 1 || !strings.Contains(text, "✓ first  prepared") || !strings.Contains(text, "✗ second  interrupted") || strings.Contains(text, "    ✓ Download") {
@@ -134,8 +133,8 @@ func TestSuccessfulResourceCollapsesButRetainsPlanChanges(t *testing.T) {
 	p := newTerminalProgress(&out)
 	p.update(activity{scope: "example", label: "Planning destination", stage: true})
 	p.update(activity{scope: "example", label: "Planning destination", status: true})
-	p.note("example", "repo: set description", "", "detail")
-	p.complete("example", "1 planned change", false)
+	p.note("example", "repo: set description", "detail")
+	p.complete("example", "1 planned change", false, nil)
 	p.stop("")
 	text := out.String()
 	if !strings.Contains(text, "✓ example  1 planned change") || !strings.Contains(text, "    - repo: set description") || strings.Contains(text, "Planning destination") {

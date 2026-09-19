@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/fatih/color"
 	"github.com/lmittmann/tint"
 	"github.com/spf13/cobra"
 	"github.com/woodleighschool/stemma/internal/engine"
@@ -29,13 +30,13 @@ type commandOutput struct {
 	started                           time.Time
 	staged                            atomic.Bool
 	reported                          bool
+	failed                            int
 	level, format                     string
 	quiet, verbose, debug, noProgress bool
 }
 
 func newCommandOutput(cmd *cobra.Command, out io.Writer) *commandOutput {
 	o := &commandOutput{out: out}
-	o.logger = slog.New(tint.NewTextHandler(out, &tint.Options{NoColor: true}))
 	flags := cmd.PersistentFlags()
 	flags.StringVar(&o.level, "log-level", "info", "Log level: debug, info, warn or error")
 	flags.StringVar(&o.format, "log-format", "text", "Stderr log format: text or json")
@@ -108,17 +109,70 @@ func (o *commandOutput) stop() {
 func (o *commandOutput) finish(err error) {
 	o.endProgress(err)
 	o.interactive = false
-	if o.started.IsZero() && o.format == "json" {
+	if o.started.IsZero() {
+		o.style = newTextStyle(o.out)
 		o.logger = slog.New(slog.NewJSONHandler(o.out, nil))
 	}
 	switch {
-	case errors.Is(err, context.Canceled):
+	case err == nil:
+		if o.staged.Load() && !o.reported {
+			o.logger.Info("Completed", "elapsed", time.Since(o.started).Round(time.Millisecond))
+		}
+	case o.format == "json" && errors.Is(err, context.Canceled):
 		o.logger.Warn("Interrupted")
-	case err != nil:
+	case o.format == "json":
 		o.logger.Error("Command failed", "error", err)
-	case o.staged.Load() && !o.reported:
-		o.logger.Info("Completed", "elapsed", time.Since(o.started).Round(time.Millisecond))
+	case errors.Is(err, context.Canceled):
+		_, _ = fmt.Fprintln(o.out, o.style.paint("Interrupted", color.FgHiYellow))
+	default:
+		_, _ = io.WriteString(o.out, o.failure(err))
 	}
+}
+
+// failure renders the final error. Failures the resource reports already showed
+// are counted rather than repeated.
+func (o *commandOutput) failure(err error) string {
+	label := o.style.paint("Error:", color.Bold, color.FgHiRed)
+	var text strings.Builder
+	var write func(error)
+	write = func(err error) {
+		if _, reported := err.(engine.ReportedError); reported && o.failed > 0 { //nolint:errorlint // Wrapped errors may contain unreported failures.
+			return
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			for _, child := range joined.Unwrap() {
+				write(child)
+			}
+			return
+		}
+		_, _ = fmt.Fprintf(&text, "%s %s\n", label, strings.Join(errorLines(err.Error()), "\n"))
+	}
+	write(err)
+	if o.failed > 0 {
+		noun := "resources"
+		if o.failed == 1 {
+			noun = "resource"
+		}
+		_, _ = fmt.Fprintf(&text, "%s %d %s failed\n", label, o.failed, noun)
+	}
+	return text.String()
+}
+
+// errorLines splits error text for display, indenting what follows the first
+// line. Joined errors and schema violations carry newlines and tabs.
+func errorLines(text string) []string {
+	var lines []string
+	for line := range strings.SplitSeq(text, "\n") {
+		line = strings.TrimRight(cleanLine(strings.ReplaceAll(line, "\t", "  ")), " ")
+		if line == "" {
+			continue
+		}
+		if len(lines) > 0 {
+			line = "  " + line
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 // Stop live rendering before stdout reports so terminal redraws cannot erase them.
@@ -129,6 +183,7 @@ type reportWriter struct {
 }
 
 func (w reportWriter) Write(data []byte) (int, error) {
+	w.output.reported = true
 	if terminalOutput(w.Writer) {
 		w.output.stop()
 	}
@@ -156,24 +211,12 @@ func (h *stageHandler) Handle(ctx context.Context, record slog.Record) error {
 	if a.stage {
 		o.staged.Store(true)
 	}
-	if o.interactive && (a.stage || a.progress || a.status || record.Level >= slog.LevelWarn && a.scope != "") {
-		o.mu.Lock()
-		defer o.mu.Unlock()
-		if o.progress == nil {
-			o.progress = newTerminalProgress(o.out)
-		}
-		if a.stage || a.progress || a.status {
-			o.progress.update(a)
-		} else {
-			outcome := "warning"
-			if record.Level >= slog.LevelError {
-				outcome = "failed"
-			}
-			o.progress.note(a.scope, a.label, a.err, outcome)
-		}
+	if o.interactive && o.live(a, record.Level) {
 		return nil
 	}
-	if a.progress && !a.final {
+	// Text logs name a stage once, when it starts. Its result and interim
+	// progress are debug detail; JSON logs keep every stage result.
+	if a.progress && !a.final || a.status && o.format != "json" {
 		record.Level = slog.LevelDebug
 		if !h.Enabled(ctx, record.Level) {
 			return nil
@@ -182,38 +225,95 @@ func (h *stageHandler) Handle(ctx context.Context, record slog.Record) error {
 	return h.Handler.Handle(ctx, record)
 }
 
-func (o *commandOutput) resourceDone(out io.Writer, format, method string, resource engine.ResourceReport) error {
-	details := resource.Error != ""
-	for _, destination := range resource.Destinations {
-		details = details || destination.Error != "" || len(destination.Changes) > 0
+// live renders a record in the terminal tree. Only a stage opens the tree;
+// progress, results and scoped warnings join it while it is open.
+func (o *commandOutput) live(a activity, level slog.Level) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.progress == nil {
+		if !a.stage {
+			return false
+		}
+		o.progress = newTerminalProgress(o.out)
 	}
+	switch {
+	case a.stage || a.progress || a.status:
+		o.progress.update(a)
+	case level >= slog.LevelWarn && a.scope != "":
+		message, outcome := a.label, "warning"
+		if a.err != "" {
+			message += ": " + a.err
+		}
+		if level >= slog.LevelError {
+			outcome = "failed"
+		}
+		o.progress.note(a.scope, message, outcome)
+	default:
+		return false
+	}
+	return true
+}
+
+func (o *commandOutput) resourceDone(out io.Writer, asJSON bool, method string, resource engine.ResourceReport) (err error) {
+	failure := failureLines(resource)
+	defer func() {
+		if err == nil && len(failure) > 0 {
+			o.failed++
+		}
+	}()
+	details := len(failure) > 0
+	for _, destination := range resource.Destinations {
+		details = details || len(destination.Changes) > 0
+	}
+	shown := false
 	if o.interactive {
 		o.mu.Lock()
 		if o.progress != nil {
+			name := resourceName(resource)
 			for _, destination := range resource.Destinations {
 				for _, change := range destination.Changes {
-					o.progress.note(resourceName(resource), destination.Name+": "+change.Action+" "+change.Field, "", "detail")
+					o.progress.note(name, destination.Name+": "+change.Action+" "+change.Field, "detail")
 				}
 			}
-			o.progress.complete(resourceName(resource), resourceStatus(method, resource), resource.Error != "")
+			shown = o.progress.complete(name, resourceStatus(method, resource), len(failure) > 0, failure)
 		}
 		o.mu.Unlock()
-		if terminalOutput(out) {
+		if shown && terminalOutput(out) {
 			return nil
 		}
 	}
-	// An authored icon names the presentation the host chose, so it is always shown.
-	authored := method == "icon" && resource.Icon != "" && resource.Icon != "exists" && resource.Icon != "no icon declared"
-	if format != "json" && (details || method == "signature" || authored) {
+	// A created icon names the presentation the host chose and missing artwork
+	// needs a committed file, so an icon run always shows both.
+	reported := method == "icon" && resource.Icon != "" && resource.Icon != "unchanged" && resource.Icon != "no icon declared"
+	switch {
+	case !asJSON && (details || method == "signature" || reported):
 		return printResource(out, method, resource)
+	case asJSON && len(failure) > 0 && !shown && o.format == "json":
+		o.logger.Error("Resource failed", "resource", resourceName(resource), "error", resource.Error)
+	case asJSON && len(failure) > 0 && !shown:
+		return printResource(o, method, resource)
 	}
 	return nil
 }
 
-func (o *commandOutput) report(out io.Writer, format, method string, report engine.Report, runErr error) error {
+// failureLines lists what failed in a resource, naming each failed destination.
+func failureLines(resource engine.ResourceReport) []string {
+	var lines []string
+	for _, destination := range resource.Destinations {
+		if destination.Error != "" {
+			lines = append(lines, errorLines(destination.Name+": "+destination.Error)...)
+		}
+	}
+	if len(lines) == 0 {
+		lines = errorLines(resource.Error)
+	}
+	return lines
+}
+
+func (o *commandOutput) report(out io.Writer, asJSON bool, method string, report engine.Report, runErr error) error {
 	o.endProgress(runErr)
 	o.reported = true
-	if format == "json" {
+	if asJSON {
 		return writeJSON(out, report)
 	}
 	if errors.Is(runErr, context.Canceled) {
@@ -222,10 +322,10 @@ func (o *commandOutput) report(out io.Writer, format, method string, report engi
 	return printSummary(out, method, report)
 }
 
-func (o *commandOutput) reconciled(out io.Writer, format string, report reconcile.Report, runErr error) error {
+func (o *commandOutput) reconciled(out io.Writer, asJSON bool, report reconcile.Report, runErr error) error {
 	o.endProgress(runErr)
 	o.reported = true
-	if format == "json" {
+	if asJSON {
 		return writeJSON(out, report)
 	}
 	if errors.Is(runErr, context.Canceled) {

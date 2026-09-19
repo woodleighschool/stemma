@@ -33,6 +33,13 @@ type Options struct {
 	ResourceDone func(ResourceReport) error
 }
 
+// ReportedError is a failure the run's report already carries for its resource,
+// so callers that present the report need not present it again.
+type ReportedError struct{ Err error }
+
+func (e ReportedError) Error() string { return e.Err.Error() }
+func (e ReportedError) Unwrap() error { return e.Err }
+
 // Report distinguishes source, preparation and each destination's work.
 type Report struct {
 	LockChanged *bool            `json:"lock_changed,omitempty"`
@@ -123,7 +130,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		return report, err
 	}
 	if opts.Method == "plan" || opts.Method == "apply" {
-		// Locking and rendering come first for a new declaration, so only
+		// Locking and icon creation come first for a new declaration, so only
 		// publication requires the asset.
 		if err := verifyIcons(root, plans, selected); err != nil {
 			return report, err
@@ -301,7 +308,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		if preparationErr != nil {
 			item.Error = preparationErr.Error()
 			if acquisitionErr == nil && ctx.Err() == nil {
-				failures = append(failures, fmt.Errorf("%s: %w", key, preparationErr))
+				failures = append(failures, ReportedError{fmt.Errorf("%s: %w", key, preparationErr)})
 			}
 		}
 		preparedItems[key] = preparedResource{work, outputs, len(report.Resources), preparationErr == nil}
@@ -313,14 +320,19 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			artifact := outputs["installer"]
 			plugin.Logger(ctx).DebugContext(ctx, "Prepared", "artifact", artifact.Filename, "version", artifact.Version, "cached", item.Cached, "elapsed", time.Since(started).Round(time.Millisecond))
 		} else {
-			plugin.Logger(ctx).ErrorContext(ctx, "Preparation failed", "error", preparationErr)
+			plugin.Logger(ctx).DebugContext(ctx, "Preparation failed", "error", preparationErr)
+		}
+		// An acquisition failure ends the run; the completed report carries it.
+		var aborted error
+		if acquisitionErr != nil {
+			aborted = ReportedError{acquisitionErr}
 		}
 		if preparationErr != nil || pending[key] == 0 {
 			if err := complete(item); err != nil {
-				return errors.Join(acquisitionErr, err)
+				return errors.Join(aborted, err)
 			}
 		}
-		return acquisitionErr
+		return aborted
 	}
 	failed, reconciled := map[destinationRef]bool{}, map[destinationRef]bool{}
 	var reconcile func(destinationRef) error
@@ -374,14 +386,14 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 				item.Error += "\n" + destinationErr.Error()
 			}
 			if ctx.Err() == nil {
-				failures = append(failures, fmt.Errorf("%s/%s: %w", destination.Resource, destination.Destination, destinationErr))
+				failures = append(failures, ReportedError{fmt.Errorf("%s/%s: %w", destination.Resource, destination.Destination, destinationErr)})
 			}
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		if destinationErr != nil {
-			plugin.Logger(ctx).ErrorContext(ctx, "Destination failed", "resource", item.Kind+"/"+item.Name, "destination", destination.Destination, "error", destinationErr)
+			plugin.Logger(ctx).DebugContext(ctx, "Destination failed", "resource", item.Kind+"/"+item.Name, "destination", destination.Destination, "error", destinationErr)
 		}
 		pending[destination.Resource]--
 		if pending[destination.Resource] == 0 {
@@ -391,7 +403,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	if opts.Method == "icon" {
 		// Only a missing or forced asset costs a preparation, so a run across the
-		// catalog is cheap; rendering then completes the resource in place of
+		// catalog is cheap; creating the icon then completes the resource in place of
 		// publication.
 		clear(pending)
 		outcomes, building := map[string]string{}, map[string]bool{}
@@ -431,11 +443,11 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 				continue
 			}
 			item := &report.Resources[prepared.report]
-			item.Icon, err = renderIcon(resourceContext(ctx, plans[key].Resource), opts.Icons, root, plans[key], prepared.outputs, prepared.work)
+			item.Icon, err = createIcon(resourceContext(ctx, plans[key].Resource), opts.Icons, root, plans[key], prepared.outputs, prepared.work)
 			if err != nil {
 				item.Error = err.Error()
 				if ctx.Err() == nil {
-					failures = append(failures, fmt.Errorf("%s: %w", key, err))
+					failures = append(failures, ReportedError{fmt.Errorf("%s: %w", key, err)})
 				}
 			}
 			if err := complete(*item); err != nil {

@@ -40,7 +40,7 @@ func (s *Store) Load(ctx context.Context, root string, declaration config.Plugin
 	}
 	entry := Entry{Path: declaration.Path, Entrypoint: declaration.Entrypoint, Local: &current}
 	if frozen && (previous.Image != "" || previous.Digest != "" || previous.Size != 0 || previous.Path != entry.Path || previous.Entrypoint != entry.Entrypoint || previous.Local == nil || !current.Equal(*previous.Local)) {
-		return Bundle{}, Entry{}, errors.New("local plugin is missing or changed in the lockfile; run stemma prepare")
+		return Bundle{}, Entry{}, errors.New("local plugin is missing or changed in the lockfile; run stemma plugins update")
 	}
 	name := declaration.Entrypoint
 	if name == "" {

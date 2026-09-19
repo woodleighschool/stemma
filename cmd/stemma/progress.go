@@ -206,22 +206,17 @@ func (p *terminalProgress) update(a activity) {
 	p.show()
 }
 
-func (p *terminalProgress) note(scope, message, err, outcome string) {
+func (p *terminalProgress) note(scope, message, outcome string) {
 	group := p.group(scope)
-	// Failure logs repeat errors that an operation row already shows.
-	if err != "" && slices.ContainsFunc(group.rows[1:], func(row *progressLine) bool { return row.err != "" && strings.Contains(err, row.err) }) {
-		return
-	}
-	if err != "" {
-		message += ": " + err
-	}
 	now := time.Now()
 	group.rows = append(group.rows, &progressLine{label: message, started: now, ended: now, outcome: outcome})
 	p.recent = scope
 	p.show()
 }
 
-func (p *terminalProgress) complete(scope, status string, failed bool) {
+// complete moves a group to scrollback and reports whether it had one. Rows
+// mark the stage that failed; the failure text belongs to the group.
+func (p *terminalProgress) complete(scope, status string, failed bool, failure []string) bool {
 	for index, group := range p.groups {
 		if group.scope != scope {
 			continue
@@ -255,15 +250,16 @@ func (p *terminalProgress) complete(scope, status string, failed bool) {
 				continue
 			}
 			_, _ = fmt.Fprintln(&result, progressText(p.style, &line, width, now, ""))
-			if line.err != "" {
-				_, _ = fmt.Fprintln(&result, "      "+cleanLine(line.err))
-			}
+		}
+		for _, line := range failure {
+			_, _ = fmt.Fprintln(&result, "      "+line)
 		}
 		p.groups = slices.Delete(p.groups, index, index+1)
 		p.show()
 		_, _ = p.Write([]byte(result.String()))
-		return
+		return true
 	}
+	return false
 }
 
 func (p *terminalProgress) stop(outcome string) {
@@ -272,7 +268,7 @@ func (p *terminalProgress) stop(outcome string) {
 		if status == "" {
 			status = "finished"
 		}
-		p.complete(p.groups[0].scope, status, outcome != "")
+		p.complete(p.groups[0].scope, status, outcome != "", nil)
 	}
 	if p.progress != nil {
 		p.progress.Quit()

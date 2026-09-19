@@ -29,9 +29,9 @@ type Spec struct {
 	// Signature requires the setup file to carry a complete Authenticode
 	// signature from the expected publisher.
 	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty"`
-	// Icon names the catalog asset icons/<name>.png that destinations publish,
-	// so Windows software can share artwork rendered from its macOS counterpart.
-	Icon         string                    `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Commit a square PNG or share one rendered with stemma icon."`
+	// Icon names the catalog asset icons/<name>.png that destinations publish;
+	// documents that name the same asset share it.
+	Icon         string                    `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Create it with stemma icon or commit a square PNG."`
 	Destinations map[string]map[string]any `json:"destinations" yaml:"destinations"`
 }
 

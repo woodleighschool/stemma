@@ -36,7 +36,7 @@ func verifyIcons(root string, plans map[string]resourcePlan, keys []string) erro
 		}
 		if _, err := icon.Read(root, name); err != nil {
 			if errors.Is(err, icon.ErrMissing) {
-				return fmt.Errorf("resource %s: %w; run stemma icon %s to render it or commit the file", key, err, key)
+				return fmt.Errorf("resource %s: %w; run stemma icon %s to create it or commit the file", key, err, key)
 			}
 			return fmt.Errorf("resource %s: %w", key, err)
 		}
@@ -66,27 +66,23 @@ func iconInput(root, name, dir string) (plugin.Artifact, error) {
 }
 
 // iconOutcome reports, in the words the CLI prints, why a resource needs no
-// rendering, or "" when it does. Existing files stay unless forced, so
+// icon created, or "" when it does. Existing files stay unless forced, so
 // committed artwork survives a catalog-wide run.
 func iconOutcome(options IconOptions, root string, plan resourcePlan) string {
 	if plan.Icon == "" {
 		return "no icon declared"
 	}
 	if exists, err := icon.Exists(root, plan.Icon); err == nil && exists && !options.Force {
-		return "exists"
+		return "unchanged"
 	}
 	return ""
 }
 
-// renderIcon writes the declared asset for one prepared resource and reports
-// the outcome in the words the CLI prints: the presentation drawn, or why
+// createIcon writes the declared asset for one prepared resource and reports
+// the outcome in the words the CLI prints: the presentation created, or why
 // nothing could be.
-func renderIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, outputs map[string]Prepared, work string) (string, error) {
+func createIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, outputs map[string]Prepared, work string) (string, error) {
 	name := plan.Icon
-	exists, err := icon.Exists(root, name)
-	if err != nil {
-		return "", err
-	}
 	installer, ok := outputs["installer"]
 	if !ok || installer.Path == "" {
 		return "no artwork", nil
@@ -113,10 +109,7 @@ func renderIcon(ctx context.Context, options IconOptions, root string, plan reso
 	if err := icon.Write(root, name, data); err != nil {
 		return "", err
 	}
-	if exists {
-		return "replaced " + string(presentation), nil
-	}
-	return "rendered " + string(presentation), nil
+	return "created " + string(presentation), nil
 }
 
 // iconSubject reads the installer artwork or bundle that presentation needs.

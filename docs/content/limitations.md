@@ -2,7 +2,7 @@
 
 Stemma's runner and the software's target platform are separate. The CLI builds
 for macOS, Linux and Windows on amd64 and arm64. Built-in inspection and packaging
-use portable Go implementations. Only the glassy icon presentation, an authoring
+use portable Go implementations. Only the glassy icon presentation, an
 option of `stemma icon`, needs macOS.
 
 Plugins can impose additional runner or tool requirements. Stemma checks declared
@@ -21,7 +21,7 @@ arbitrary plugin code.
 | MSI inspection        | Reads MSI database metadata without Windows or executing the installer                                                |
 | EXE preparation       | Preserves the vendor installer; commands, version-specific detection and other installation semantics remain authored |
 | Intune Win32 wrapping | Portable `.intunewin` preparation with a 2 GiB implementation bound                                                   |
-| Icon authoring        | `stemma icon` extracts icon artwork on any host; the glassy presentation needs the macOS renderer                     |
+| Icon creation         | `stemma icon` extracts icon artwork on any host; the glassy presentation needs the macOS renderer                     |
 
 PKG inspection bounds entry counts and retained path metadata, rather than imposing
 a small total payload size. Exceptionally large inventories can still hit those
@@ -82,6 +82,6 @@ Retention is provider-owned and reference-aware. It is not a hard storage ceilin
 an app retirement policy or an automatic rollback mechanism. See
 [publishing](publishing.md#identity-and-retention).
 
-Icon authoring extracts the artwork software carries on any host and styles it with
+Icon creation extracts the artwork software carries on any host and styles it with
 the macOS renderer only where one exists. Reconciliation publishes committed PNG
 files and never renders, so every runner produces the same result.

@@ -130,12 +130,13 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 		var record struct {
 			Message     string `json:"msg"`
 			Destination string `json:"destination"`
+			Error       string `json:"error"`
 		}
 		if err := json.Unmarshal(line, &record); err != nil {
 			t.Fatal(err)
 		}
 		if record.Destination == "first" {
-			failed = failed || record.Message == "Destination failed"
+			failed = failed || record.Error != ""
 			if record.Message == "Destination planned" || record.Message == "Destination applied" {
 				t.Fatalf("failed destination logged success: %s", line)
 			}

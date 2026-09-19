@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/engine"
+	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/reconcile"
 	"github.com/woodleighschool/stemma/internal/signature"
 )
@@ -62,7 +64,14 @@ func printResource(out io.Writer, method string, resource engine.ResourceReport)
 	for _, destination := range resource.Destinations {
 		switch {
 		case destination.Error != "":
-			_, _ = fmt.Fprintf(&details, "  %s: failed: %s\n", destination.Name, style.paint(destination.Error, color.FgHiRed))
+			for index, line := range errorLines(destination.Error) {
+				if index == 0 {
+					line = destination.Name + ": failed: " + style.paint(line, color.FgHiRed)
+				} else {
+					line = style.paint(line, color.FgHiRed)
+				}
+				_, _ = fmt.Fprintf(&details, "  %s\n", line)
+			}
 		case len(destination.Changes) > 0:
 			verb := "planned"
 			if destination.Applied {
@@ -78,8 +87,10 @@ func printResource(out io.Writer, method string, resource engine.ResourceReport)
 	}
 	var text strings.Builder
 	_, _ = fmt.Fprintf(&text, "%s: %s\n", style.paint(resourceName(resource), color.Bold), style.outcome(resourceStatus(method, resource)))
-	if details.Len() == 0 && resource.Error != "" {
-		_, _ = fmt.Fprintf(&text, "  %s\n", resource.Error)
+	if details.Len() == 0 {
+		for _, line := range errorLines(resource.Error) {
+			_, _ = fmt.Fprintf(&text, "  %s\n", line)
+		}
 	}
 	text.WriteString(details.String())
 	if method == "signature" && resource.Error == "" {
@@ -112,7 +123,7 @@ func signatureDetails(resource engine.ResourceReport) string {
 func printSummary(out io.Writer, method string, report engine.Report) error {
 	style := newTextStyle(out)
 	var text strings.Builder
-	prepared, cached, failed, changes, rendered, skipped := 0, 0, 0, 0, 0, 0
+	prepared, cached, failed, changes, created, unchanged := 0, 0, 0, 0, 0, 0
 	for _, resource := range report.Resources {
 		switch {
 		case resource.Error != "":
@@ -123,11 +134,11 @@ func printSummary(out io.Writer, method string, report engine.Report) error {
 			prepared++
 		}
 		switch outcome, _, _ := strings.Cut(resource.Icon, " "); outcome {
-		case "rendered", "replaced":
-			rendered++
+		case "created":
+			created++
 		case "":
 		default:
-			skipped++
+			unchanged++
 		}
 		for _, destination := range resource.Destinations {
 			if method == "plan" || destination.Applied {
@@ -142,7 +153,7 @@ func printSummary(out io.Writer, method string, report engine.Report) error {
 		case "signature":
 			_, _ = fmt.Fprintf(&text, "%s %d derived, %d failed.\n", style.paint("Signatures:", color.Bold), prepared, failed)
 		case "icon":
-			_, _ = fmt.Fprintf(&text, "%s %d rendered, %d left alone, %d failed.\n", style.paint("Icons:", color.Bold), rendered, skipped, failed)
+			_, _ = fmt.Fprintf(&text, "%s %d created, %d unchanged, %d failed.\n", style.paint("Icons:", color.Bold), created, unchanged, failed)
 		case "plan":
 			_, _ = fmt.Fprintf(&text, "%s %d changes, %d failed resources.\n", style.paint("Plan:", color.Bold), changes, failed)
 		case "apply":
@@ -150,14 +161,17 @@ func printSummary(out io.Writer, method string, report engine.Report) error {
 		}
 	}
 	if (method == "update" || method == "prepare") && report.LockChanged != nil {
-		if *report.LockChanged {
-			text.WriteString(style.paint("Lockfile updated.", color.FgHiGreen) + "\n")
-		} else {
-			text.WriteString(style.paint("Lockfile unchanged.", color.Faint) + "\n")
-		}
+		text.WriteString(style.lockfile(*report.LockChanged) + "\n")
 	}
 	_, err := io.WriteString(out, text.String())
 	return err
+}
+
+func (s textStyle) lockfile(changed bool) string {
+	if changed {
+		return s.paint("Lockfile updated.", color.FgHiGreen)
+	}
+	return s.paint("Lockfile unchanged.", color.Faint)
 }
 
 func (s textStyle) outcome(text string) string {
@@ -167,7 +181,7 @@ func (s textStyle) outcome(text string) string {
 		attribute = color.FgHiRed
 	case "interrupted", "not completed", "skipped", "declined":
 		attribute = color.FgHiYellow
-	case "unchanged", "already applied", "exists", "no artwork", "no icon declared":
+	case "unchanged", "already applied", "no artwork", "no icon declared":
 		attribute = color.Faint
 	}
 	return s.paint(text, attribute)
@@ -208,12 +222,60 @@ func printReconcile(out io.Writer, report reconcile.Report) error {
 			_, _ = fmt.Fprintf(&text, " %s", update.PullRequest)
 		}
 		if update.Error != "" {
-			_, _ = fmt.Fprintf(&text, " %s", style.paint(update.Error, color.FgHiRed))
+			_, _ = fmt.Fprintf(&text, " %s", style.paint(strings.Join(errorLines(update.Error), "\n  "), color.FgHiRed))
 		} else if update.Summary != "" {
 			_, _ = fmt.Fprintf(&text, " %s", update.Summary)
 		}
 		text.WriteString("\n")
 	}
+	_, err := io.WriteString(out, text.String())
+	return err
+}
+
+func printPlugins(out io.Writer, plugins map[string]config.Plugin) error {
+	style := newTextStyle(out)
+	var text strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(plugins)) {
+		declaration := plugins[name]
+		source := declaration.Image + declaration.Path
+		if declaration.Entrypoint != "" {
+			source += " (" + declaration.Entrypoint + ")"
+		}
+		_, _ = fmt.Fprintf(&text, "%s: %s\n", style.paint(name, color.Bold), source)
+	}
+	if len(plugins) == 0 {
+		text.WriteString("No plugins configured.\n")
+	}
+	_, err := io.WriteString(out, text.String())
+	return err
+}
+
+// printLockedPlugins names the code each plugin is locked to and whether this
+// run changed it.
+func printLockedPlugins(out io.Writer, previous, locked map[string]pluginstore.Entry, changed bool) error {
+	style := newTextStyle(out)
+	digest := func(entry pluginstore.Entry) string {
+		if entry.Local != nil {
+			return "sha256:" + entry.Local.Content.Artifact.SHA256
+		}
+		return entry.Digest
+	}
+	var text strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(locked)) {
+		entry := locked[name]
+		outcome := "unchanged"
+		if before, ok := previous[name]; !ok {
+			outcome = "locked"
+		} else if digest(before) != digest(entry) {
+			outcome = "updated"
+		}
+		id := digest(entry)
+		if len(id) > 19 {
+			id = id[:19]
+		}
+		_, _ = fmt.Fprintf(&text, "%s: %s %s %s\n", style.paint(name, color.Bold), entry.Image+entry.Path, id, style.outcome(outcome))
+	}
+	text.WriteString(style.lockfile(changed) + "\n")
 	_, err := io.WriteString(out, text.String())
 	return err
 }

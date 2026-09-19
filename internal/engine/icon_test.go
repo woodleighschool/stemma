@@ -181,7 +181,7 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 		result := map[string]string{}
 		for _, resource := range report.Resources {
 			result[resource.Name] = resource.Icon
-			if resource.Icon == "exists" && len(resource.Artifacts) != 0 {
+			if resource.Icon == "unchanged" && len(resource.Artifacts) != 0 {
 				t.Fatalf("%s: prepared %s although its asset exists", method, resource.Name)
 			}
 		}
@@ -199,25 +199,25 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 	// presentation writes Mac and Windows artwork alike, and a bundle without
 	// a PNG-backed icon file has nothing portable to write.
 	statuses("prepare")
-	want := map[string]string{"example": "rendered raw", "setup": "rendered raw", "fixture": "no artwork", "branding": "no artwork", "plain": "no icon declared"}
+	want := map[string]string{"example": "created raw", "setup": "created raw", "fixture": "no artwork", "branding": "no artwork", "plain": "no icon declared"}
 	if got := statuses("icon"); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("first run: %v", got)
 	}
 	assetIs("example", bundleArtwork)
 	assetIs("setup", setupArtwork)
-	if got := statuses("icon"); got["example"] != "exists" || got["setup"] != "exists" {
-		t.Fatalf("existing artwork was not left alone: %v", got)
+	if got := statuses("icon"); got["example"] != "unchanged" || got["setup"] != "unchanged" {
+		t.Fatalf("existing artwork changed: %v", got)
 	}
 	custom := iconPNG(t, 512, 200)
 	if err := icon.Write(root, "example", custom); err != nil {
 		t.Fatal(err)
 	}
-	if got := statuses("icon"); got["example"] != "exists" {
-		t.Fatalf("hand-made artwork was not left alone: %v", got)
+	if got := statuses("icon"); got["example"] != "unchanged" {
+		t.Fatalf("hand-made artwork changed: %v", got)
 	}
 	assetIs("example", custom)
 	options.Icons.Force = true
-	if got := statuses("icon"); got["example"] != "replaced raw" || got["setup"] != "replaced raw" {
+	if got := statuses("icon"); got["example"] != "created raw" || got["setup"] != "created raw" {
 		t.Fatalf("forced run: %v", got)
 	}
 	assetIs("example", bundleArtwork)

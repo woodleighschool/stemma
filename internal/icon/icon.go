@@ -1,7 +1,7 @@
 // Package icon owns the catalog icon namespace. A resource declares an icon by
 // name, the asset lives at icons/<name>.png and destinations publish those
-// exact bytes. Authoring extracts the artwork software carries into a Subject
-// on any host and a Presentation styles it into the asset.
+// exact bytes. Creating one extracts the artwork software carries into a
+// Subject on any host and a Presentation styles it into the asset.
 package icon
 
 import (
@@ -31,7 +31,7 @@ const (
 	maxBytes = 1 << 20
 )
 
-// ErrMissing reports a declared asset without a file; stemma icon renders it.
+// ErrMissing reports a declared asset without a file; stemma icon creates it.
 var ErrMissing = errors.New("icon asset does not exist")
 
 // ErrUnsupportedHost reports a presentation this host cannot draw.

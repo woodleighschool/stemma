@@ -27,9 +27,7 @@ type session struct {
 // open loads the project, serializes it and leases the cache before any
 // operation code runs. Frozen loads reject plugins that differ from the lock.
 func open(ctx context.Context, opts Options, frozen bool) (_ *session, err error) {
-	done := plugin.Stage(ctx, "Loading project")
 	p, err := config.Load(opts.ConfigPath)
-	done(err)
 	if err != nil {
 		return nil, err
 	}

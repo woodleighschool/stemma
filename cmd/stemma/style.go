@@ -13,8 +13,11 @@ type textStyle struct {
 }
 
 func terminalOutput(out io.Writer) bool {
-	if report, ok := out.(reportWriter); ok {
-		out = report.Writer
+	switch writer := out.(type) {
+	case reportWriter:
+		out = writer.Writer
+	case *commandOutput:
+		out = writer.out
 	}
 	file, ok := out.(*os.File)
 	return ok && term.IsTerminal(int(file.Fd())) && os.Getenv("TERM") != "dumb"

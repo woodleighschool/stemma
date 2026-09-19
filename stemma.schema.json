@@ -925,7 +925,7 @@
                   "type": "object"
                 },
                 "icon": {
-                  "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Render it with stemma icon or commit a square PNG.",
+                  "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Create it with stemma icon or commit a square PNG.",
                   "maxLength": 128,
                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
                   "type": "string"
@@ -1323,7 +1323,7 @@
                       "type": "string"
                     },
                     "icon": {
-                      "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Render it with stemma icon or commit a square PNG.",
+                      "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Create it with stemma icon or commit a square PNG.",
                       "maxLength": 128,
                       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
                       "type": "string"
@@ -2218,7 +2218,7 @@
                   "type": "object"
                 },
                 "icon": {
-                  "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Commit a square PNG or share one rendered with stemma icon.",
+                  "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Create it with stemma icon or commit a square PNG.",
                   "maxLength": 128,
                   "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
                   "type": "string"
@@ -2906,7 +2906,7 @@
                       "type": "string"
                     },
                     "icon": {
-                      "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Commit a square PNG or share one rendered with stemma icon.",
+                      "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Create it with stemma icon or commit a square PNG.",
                       "maxLength": 128,
                       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
                       "type": "string"
