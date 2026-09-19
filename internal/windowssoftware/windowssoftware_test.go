@@ -148,44 +148,21 @@ func TestCompanionPathsFailBeforePublishing(t *testing.T) {
 	}
 }
 
-func TestCompanionLinksAndUnsupportedMetadataAreRejected(t *testing.T) {
-	for _, kind := range []string{"symlink", "hard link", "special permissions"} {
-		t.Run(kind, func(t *testing.T) {
-			vendor := writeFixture(t, t.TempDir(), "setup.exe", []byte("unexecuted vendor"), 0o644)
-			input := writeFixture(t, t.TempDir(), "settings.ini", []byte("settings"), 0o644)
-			switch kind {
-			case "symlink":
-				link := filepath.Join(t.TempDir(), "link.ini")
-				if err := os.Symlink(input, link); err != nil {
-					t.Skipf("symlinks unavailable: %v", err)
-				}
-				input = link
-			case "hard link":
-				if err := os.Link(input, filepath.Join(t.TempDir(), "link.ini")); err != nil {
-					t.Skipf("hard links unavailable: %v", err)
-				}
-			case "special permissions":
-				if err := os.Chmod(input, os.ModeSetuid|0o644); err != nil {
-					t.Skipf("special permissions unavailable: %v", err)
-				}
-				info, err := os.Stat(input)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if info.Mode()&os.ModeSetuid == 0 {
-					t.Skip("filesystem does not retain special permission bits")
-				}
-			}
-			spec := Spec{Content: &Content{Files: map[string]plugin.Input{"settings.ini": {}}}}
-			inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: "setup.exe"}, "file:settings.ini": {Path: input}}
-			workspace := t.TempDir()
-			if _, err := Prepare(t.Context(), spec, inputs, workspace, false); err == nil {
-				t.Fatal("unrepresentable companion metadata accepted")
-			}
-			entries, err := os.ReadDir(workspace)
-			if err != nil || len(entries) != 0 {
-				t.Fatalf("failed copy left output: %v %v", entries, err)
-			}
-		})
+func TestCompanionSymlinkIsRejected(t *testing.T) {
+	vendor := writeFixture(t, t.TempDir(), "setup.exe", []byte("unexecuted vendor"), 0o644)
+	input := writeFixture(t, t.TempDir(), "settings.ini", []byte("settings"), 0o644)
+	link := filepath.Join(t.TempDir(), "link.ini")
+	if err := os.Symlink(input, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	spec := Spec{Content: &Content{Files: map[string]plugin.Input{"settings.ini": {}}}}
+	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: "setup.exe"}, "file:settings.ini": {Path: link}}
+	workspace := t.TempDir()
+	if _, err := Prepare(t.Context(), spec, inputs, workspace, false); err == nil {
+		t.Fatal("symlinked companion accepted")
+	}
+	entries, err := os.ReadDir(workspace)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("failed copy left output: %v %v", entries, err)
 	}
 }

@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
 	"go.yaml.in/yaml/v4"
@@ -306,9 +305,6 @@ func (m *Manager) importArtifact(ctx context.Context, artifact plugin.Artifact) 
 	}
 	if info.IsDir() != artifact.Tree || !info.IsDir() && !info.Mode().IsRegular() {
 		return Content{}, errors.New("resolver artifact type differs from its descriptor")
-	}
-	if err := archive.CheckMetadata(file, info); err != nil {
-		return Content{}, err
 	}
 	content := Content{Filename: artifact.Filename, Tree: artifact.Tree, Mode: uint32(info.Mode().Perm())}
 	if artifact.Tree {

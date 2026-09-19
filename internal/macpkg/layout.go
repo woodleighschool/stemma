@@ -206,20 +206,12 @@ func checkedInput(root *os.Root, name string) (*os.File, os.FileInfo, error) {
 	if !info.IsDir() && !info.Mode().IsRegular() {
 		return nil, nil, errors.New("input contains an unsupported file type")
 	}
+	if err := archive.CheckMode(info); err != nil {
+		return nil, nil, err
+	}
 	file, err := root.Open(name)
 	if err != nil {
 		return nil, nil, err
 	}
-	actual, err := file.Stat()
-	if err == nil && !os.SameFile(info, actual) {
-		err = errors.New("input changed while opening")
-	}
-	if err == nil {
-		err = archive.CheckMetadata(file, actual)
-	}
-	if err != nil {
-		_ = file.Close()
-		return nil, nil, err
-	}
-	return file, actual, nil
+	return file, info, nil
 }

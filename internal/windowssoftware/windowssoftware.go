@@ -269,16 +269,6 @@ func copyFile(ctx context.Context, source, target string) error {
 		return err
 	}
 	defer func() { _ = in.Close() }()
-	current, err := in.Stat()
-	if err != nil {
-		return err
-	}
-	if !os.SameFile(info, current) {
-		return errors.New("content input changed while opening")
-	}
-	if err := archive.CheckMetadata(in, current); err != nil {
-		return err
-	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
@@ -286,12 +276,12 @@ func copyFile(ctx context.Context, source, target string) error {
 	if err != nil {
 		return err
 	}
-	n, err := io.Copy(out, io.LimitReader(fileio.Reader{Context: ctx, Reader: in}, current.Size()+1))
-	if err == nil && n != current.Size() {
+	n, err := io.Copy(out, io.LimitReader(fileio.Reader{Context: ctx, Reader: in}, info.Size()+1))
+	if err == nil && n != info.Size() {
 		err = errors.New("content input changed during copy")
 	}
 	if err == nil {
-		err = out.Chmod(current.Mode().Perm())
+		err = out.Chmod(info.Mode().Perm())
 	}
 	return errors.Join(err, out.Close())
 }

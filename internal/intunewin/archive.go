@@ -15,7 +15,6 @@ import (
 	"io/fs"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -109,11 +108,6 @@ func zipSource(ctx context.Context, sourceDir, setup string, target io.Writer) e
 		if err != nil {
 			return err
 		}
-		current, err := file.Stat()
-		if err != nil || !current.Mode().IsRegular() || !os.SameFile(info, current) {
-			_ = file.Close()
-			return fmt.Errorf("source file changed while packaging %q", name)
-		}
 		n, copyErr := copyContext(ctx, writer, file, maxContent-total)
 		closeErr := file.Close()
 		if copyErr != nil {
@@ -139,7 +133,7 @@ func zipSource(ctx context.Context, sourceDir, setup string, target io.Writer) e
 	return zw.Close()
 }
 
-func inspectPayload(ctx context.Context, file *os.File, size int64, setup string, destination *os.Root) error {
+func inspectPayload(ctx context.Context, file *os.File, size int64, setup string) error {
 	if err := checkZipDirectory(file, size); err != nil {
 		return err
 	}
@@ -179,36 +173,14 @@ func inspectPayload(ctx context.Context, file *os.File, size int64, setup string
 			if entry.UncompressedSize64 != 0 {
 				return errors.New("directory entry contains data")
 			}
-			if destination != nil {
-				if err := destination.MkdirAll(filepath.FromSlash(name), 0o755); err != nil {
-					return err
-				}
-			}
 			continue
 		}
 		input, err := entry.Open()
 		if err != nil {
 			return err
 		}
-		output := io.Discard
-		var extracted *os.File
-		if destination != nil {
-			if err := destination.MkdirAll(filepath.FromSlash(path.Dir(name)), 0o755); err != nil {
-				_ = input.Close()
-				return err
-			}
-			extracted, err = destination.OpenFile(filepath.FromSlash(name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-			if err != nil {
-				_ = input.Close()
-				return err
-			}
-			output = extracted
-		}
-		n, copyErr := copyContext(ctx, output, input, maxContent-total)
+		n, copyErr := copyContext(ctx, io.Discard, input, maxContent-total)
 		closeErr := input.Close()
-		if extracted != nil {
-			closeErr = errors.Join(closeErr, extracted.Close())
-		}
 		if copyErr != nil {
 			return copyErr
 		}

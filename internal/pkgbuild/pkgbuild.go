@@ -238,25 +238,14 @@ func checkedFile(source *os.Root, name string) (*os.File, os.FileInfo, error) {
 	if !info.IsDir() && !info.Mode().IsRegular() {
 		return nil, nil, fmt.Errorf("unsupported package file type: %s", name)
 	}
-	if info.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
-		return nil, nil, fmt.Errorf("unsupported package special permission bits: %s", name)
+	if err := archive.CheckMode(info); err != nil {
+		return nil, nil, fmt.Errorf("package input %s: %w", name, err)
 	}
 	f, err := source.Open(name)
 	if err != nil {
 		return nil, nil, err
 	}
-	actual, err := f.Stat()
-	if err == nil && !os.SameFile(info, actual) {
-		err = errors.New("package input changed while opening")
-	}
-	if err == nil {
-		err = archive.CheckMetadata(f, actual)
-	}
-	if err != nil {
-		_ = f.Close()
-		return nil, nil, fmt.Errorf("package input %s: %w", name, err)
-	}
-	return f, actual, nil
+	return f, info, nil
 }
 
 func copyContents(ctx context.Context, destination io.Writer, f *os.File, info os.FileInfo) error {

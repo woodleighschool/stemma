@@ -61,15 +61,6 @@ func TestNativePackagePayloadScriptsAndBOM(t *testing.T) {
 	}
 }
 
-func TestNativeACLRejected(t *testing.T) {
-	root, opts := fixture(t)
-	name := filepath.Join(root, "Payload/Library/Application Support/Fixture/message.txt")
-	native(t, "/bin/chmod", "+a", "everyone allow read", name)
-	if err := Build(t.Context(), root, filepath.Join(t.TempDir(), "out.pkg"), opts); err == nil {
-		t.Fatal("ACL silently lost")
-	}
-}
-
 func TestNativeLargeAppPayloadAndBOM(t *testing.T) {
 	root, opts := largeFixture(t)
 	output := filepath.Join(t.TempDir(), "large.pkg")

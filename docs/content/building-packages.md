@@ -78,7 +78,8 @@ Ownership defaults to root:wheel; numeric `uid` and `gid` apply to the mapped
 subtree without changing ownership on the runner. Quote octal modes in YAML.
 
 An entry with neither `$input` nor `content` creates a directory. Confined relative
-symlinks are supported; unsupported metadata is rejected rather than dropped.
+symlinks are supported. Extended attributes, ACLs and resource forks are not
+carried into new payload trees. Vendor installers retain their original bytes.
 
 ## Include installer scripts
 

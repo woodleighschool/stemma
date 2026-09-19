@@ -91,7 +91,7 @@ func TestBuildIntegrityReproducibilityAndInputChanges(t *testing.T) {
 	}
 }
 func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
-	for _, name := range []string{"empty", "traversal", "script-name", "symlink", "hardlink", "oversize", "total-size", "output-in-root", "output-via-symlink", "script-ancestor", "existing-output", "cancelled"} {
+	for _, name := range []string{"empty", "traversal", "script-name", "symlink", "oversize", "total-size", "output-in-root", "output-via-symlink", "script-ancestor", "existing-output", "cancelled"} {
 		t.Run(name, func(t *testing.T) {
 			root, opts := fixture(t)
 			output := filepath.Join(t.TempDir(), "out.pkg")
@@ -106,10 +106,6 @@ func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
 				opts.Scripts["prepare"] = "Scripts/preinstall"
 			case "symlink":
 				if err := os.Symlink("../../../../../outside", filepath.Join(root, "Payload/Library/Application Support/Fixture/link")); err != nil {
-					t.Skip(err)
-				}
-			case "hardlink":
-				if err := os.Link(filepath.Join(root, "Payload/Library/Application Support/Fixture/message.txt"), filepath.Join(root, "Payload/link")); err != nil {
 					t.Skip(err)
 				}
 			case "oversize", "total-size":

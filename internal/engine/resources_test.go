@@ -3,12 +3,10 @@ package engine
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/internal/testproject"
@@ -142,27 +140,6 @@ spec:
 	}
 	if updated.Resources[0].Artifacts["installer"].Payload == original {
 		t.Fatal("changed payload reused previous package")
-	}
-}
-
-func TestResourceFileImportRejectsUnrepresentableMetadata(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("POSIX mode test")
-	}
-	work := t.TempDir()
-	filename := filepath.Join(work, "payload")
-	if err := os.WriteFile(filename, []byte("payload"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(filename, os.ModeSetuid|0o755); err != nil {
-		t.Fatal(err)
-	}
-	store, err := cas.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := importPath(t.Context(), store, filename, false, work); err == nil {
-		t.Fatal("resource artifact silently discarded setuid metadata")
 	}
 }
 

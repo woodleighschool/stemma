@@ -92,7 +92,7 @@ func identifyArtifact(ctx context.Context, artifact plugin.Artifact, appType, se
 		return artifactIdentity{identity: hex.EncodeToString(hash[:]), setup: strings.ReplaceAll(setup, "/", `\`)}, nil
 	}
 	if strings.EqualFold(filepath.Ext(artifact.Filename), ".intunewin") {
-		metadata, err := intunewin.Inspect(artifact.Path)
+		metadata, err := intunewin.Inspect(ctx, artifact.Path)
 		if err != nil {
 			return artifactIdentity{}, err
 		}

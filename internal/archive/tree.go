@@ -13,8 +13,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/fileio"
 )
 
-// Pack writes a canonical TAR tree, retaining modes and confined symlinks.
-// Unsupported metadata is rejected rather than silently discarded.
+// Pack writes a canonical TAR tree, retaining bytes, modes and confined symlinks.
 func Pack(ctx context.Context, root string, output io.Writer) error {
 	scoped, err := os.OpenRoot(root)
 	if err != nil {
@@ -28,23 +27,6 @@ func Pack(ctx context.Context, root string, output io.Writer) error {
 // order. Nil names selects the whole scoped root; directory names alone do not
 // select their contents. Symlink parents are rejected rather than dereferenced.
 func PackSelected(ctx context.Context, root *os.Root, names []string, output io.Writer) error {
-	if names == nil {
-		directory, err := root.Open(".")
-		if err != nil {
-			return err
-		}
-		info, statErr := directory.Stat()
-		if statErr == nil {
-			statErr = CheckMetadata(directory, info)
-		}
-		closeErr := directory.Close()
-		if statErr != nil {
-			return statErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-	}
 	var selected map[string]bool
 	if names != nil {
 		selected = map[string]bool{}
@@ -109,24 +91,8 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 		} else if !info.IsDir() && !info.Mode().IsRegular() {
 			return fmt.Errorf("unsupported tree entry %s", name)
 		}
-		var f *os.File
-		if info.Mode()&os.ModeSymlink == 0 {
-			f, err = root.Open(name)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = f.Close() }()
-			actual, err := f.Stat()
-			if err != nil {
-				return err
-			}
-			if !os.SameFile(info, actual) {
-				return fmt.Errorf("tree changed while opening %s", name)
-			}
-			if err := CheckMetadata(f, actual); err != nil {
-				return fmt.Errorf("tree entry %s: %w", name, err)
-			}
-			info = actual
+		if err := CheckMode(info); err != nil {
+			return fmt.Errorf("tree entry %s: %w", name, err)
 		}
 		h, err := tar.FileInfoHeader(info, target)
 		if err != nil {
@@ -149,6 +115,10 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 				return fmt.Errorf("tree exceeds size limit")
 			}
 			total += info.Size()
+			f, err := root.Open(name)
+			if err != nil {
+				return err
+			}
 			n, err := io.Copy(w, io.LimitReader(fileio.Reader{Context: ctx, Reader: f}, info.Size()+1))
 			closeErr := f.Close()
 			if err != nil {

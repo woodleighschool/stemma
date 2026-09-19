@@ -39,10 +39,9 @@ entry and output limits catch malformed or unexpectedly large inputs; they do no
 provide a sandbox or guarantee bounded resource use for deliberately adversarial
 files.
 
-New payload trees retain bytes, modes and confined relative symlinks. Resource
-forks, ACLs, hardlinks and other unsupported payload metadata fail rather than
-being silently discarded. On macOS, download provenance and tracking attributes
-are omitted, and transparent filesystem compression is imported as ordinary bytes.
+New payload trees retain bytes, modes and confined relative symlinks, which is
+what a Git checkout carries. Extended attributes, ACLs and resource forks are left
+behind, and AppleDouble sidecars in vendor archives are skipped.
 This is distinct from preserving an existing vendor PKG or DMG unchanged.
 
 ## Signatures

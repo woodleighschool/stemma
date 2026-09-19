@@ -4,7 +4,6 @@ package archive
 import (
 	"archive/tar"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -15,7 +14,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/klauspost/compress/zip"
 	"github.com/mholt/archives"
 	"github.com/woodleighschool/stemma/internal/fileio"
 )
@@ -24,7 +22,7 @@ const maxBytes int64 = 16 << 30
 const maxEntries = 100000
 
 // Extract writes a new directory and removes partial outputs on failure.
-// Device nodes, hard links, extended attributes and escaping paths are rejected.
+// Device nodes, hard links and escaping paths are rejected.
 func Extract(ctx context.Context, input, destination string) (err error) {
 	if err := os.Mkdir(destination, 0o700); err != nil {
 		return err
@@ -54,17 +52,10 @@ func Extract(ctx context.Context, input, destination string) (err error) {
 		return fmt.Errorf("%s is not a supported archive", input)
 	}
 	err = reader.Extract(ctx, stream, func(_ context.Context, entry archives.FileInfo) error {
-		if header, ok := entry.Header.(zip.FileHeader); ok {
-			if err := zipMetadata(header); err != nil {
-				return err
-			}
+		if appleDouble(entry.NameInArchive) {
+			return nil
 		}
 		if header, ok := entry.Header.(*tar.Header); ok {
-			for key := range header.PAXRecords {
-				if strings.HasPrefix(key, "SCHILY.xattr.") || strings.HasPrefix(key, "LIBARCHIVE.") {
-					return fmt.Errorf("unsupported archive metadata %q", key)
-				}
-			}
 			switch header.Typeflag {
 			case tar.TypeReg, tar.TypeDir, tar.TypeSymlink:
 			default:
@@ -109,30 +100,15 @@ type extractor struct {
 	dirs     []directory
 }
 
-func zipMetadata(header zip.FileHeader) error {
-	for part := range strings.SplitSeq(header.Name, "/") {
+// appleDouble reports the sidecar entries macOS archivers add for extended
+// attributes and resource forks, which extraction leaves behind.
+func appleDouble(name string) bool {
+	for part := range strings.SplitSeq(name, "/") {
 		if part == "__MACOSX" || strings.HasPrefix(part, "._") {
-			return fmt.Errorf("unsupported AppleDouble metadata in %q", header.Name)
+			return true
 		}
 	}
-	for extra := header.Extra; len(extra) > 0; {
-		if len(extra) < 4 {
-			return errors.New("truncated ZIP extra field")
-		}
-		kind := binary.LittleEndian.Uint16(extra)
-		size := int(binary.LittleEndian.Uint16(extra[2:]))
-		if size > len(extra)-4 {
-			return errors.New("truncated ZIP extra field")
-		}
-		switch kind {
-		case 0x0001, 0x000a, 0x5455, 0x5855, 0x7875, 0x7075, 0x6375:
-			// ZIP64, timestamps, Unix ownership, and Unicode names/comments.
-		default:
-			return fmt.Errorf("unsupported ZIP metadata 0x%04x in %q", kind, header.Name)
-		}
-		extra = extra[4+size:]
-	}
-	return nil
+	return false
 }
 
 func safeName(name string) (string, error) {

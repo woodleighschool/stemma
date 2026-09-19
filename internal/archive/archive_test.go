@@ -12,7 +12,6 @@ func TestRejectUnsafeAndAmbiguousArchives(t *testing.T) {
 		"traversal": {"../escape"}, "absolute": {"/escape"},
 		"duplicate": {"app.exe", "app.exe"}, "case": {"App.exe", "app.exe"},
 		"implicit parent case": {"Data/a", "data/b"},
-		"AppleDouble":          {"Fixture.app/Contents/Info.plist", "__MACOSX/Fixture.app/Contents/._Info.plist"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			input := writeZip(t, entries)
@@ -25,10 +24,13 @@ func TestRejectUnsafeAndAmbiguousArchives(t *testing.T) {
 			}
 		})
 	}
-	input := writeZip(t, []string{"one.exe", "two.exe"})
+	input := writeZip(t, []string{"one.exe", "two.exe", "__MACOSX/._one.exe"})
 	out := filepath.Join(t.TempDir(), "out")
 	if err := Extract(t.Context(), input, out); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(out, "__MACOSX")); !os.IsNotExist(err) {
+		t.Fatal("AppleDouble sidecar extracted")
 	}
 	if _, err := Select(out, ""); err == nil {
 		t.Fatal("silently chose ambiguous payload")

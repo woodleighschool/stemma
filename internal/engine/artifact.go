@@ -57,9 +57,6 @@ func importPath(ctx context.Context, store *cas.Store, path string, tree bool, w
 		if !info.Mode().IsRegular() {
 			return cas.Ref{}, errors.New("artifact must be a regular file or tree")
 		}
-		if err := archive.CheckMetadata(file, info); err != nil {
-			return cas.Ref{}, err
-		}
 		return store.Import(ctx, file, "")
 	}
 	packed, err := os.CreateTemp(work, "tree-*.tar")

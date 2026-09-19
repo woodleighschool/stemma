@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Readlink reads a confined relative link and checks its filesystem metadata.
+// Readlink reads a confined relative link.
 func Readlink(root *os.Root, name string) (string, error) {
 	info, err := root.Lstat(name)
 	if err != nil {
@@ -15,9 +15,6 @@ func Readlink(root *os.Root, name string) (string, error) {
 	}
 	if info.Mode()&os.ModeSymlink == 0 {
 		return "", fmt.Errorf("not a symlink: %s", name)
-	}
-	if err := checkSymlinkMetadata(root, name, info); err != nil {
-		return "", err
 	}
 	target, err := root.Readlink(name)
 	if err != nil {

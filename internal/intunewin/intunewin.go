@@ -161,48 +161,7 @@ func outerZip(ctx context.Context, output io.Writer, encrypted *os.File, data []
 // Inspect authenticates and decrypts the envelope, validates the payload paths,
 // reads every payload member to verify ZIP integrity, and checks the setup file.
 // It does not execute the installer or verify its publisher signature.
-func Inspect(path string) (Metadata, error) {
-	return inspect(context.Background(), path, nil)
-}
-
-// Extract verifies the entire package before publishing its regular-file tree.
-// DestinationDir must not exist, and its parent must exist. No symlinks, device
-// paths, traversal paths, or case-conflicting names are accepted.
-func Extract(ctx context.Context, path, destinationDir string) error {
-	destination, err := filepath.Abs(destinationDir)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
-		if err == nil {
-			err = os.ErrExist
-		}
-		return err
-	}
-	stage, err := os.MkdirTemp(filepath.Dir(destination), ".intunewin-extract-")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.RemoveAll(stage) }()
-	root, err := os.OpenRoot(stage)
-	if err != nil {
-		return err
-	}
-	_, readErr := inspect(ctx, path, root)
-	closeErr := root.Close()
-	if readErr != nil {
-		return readErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return publishDirectory(stage, destination)
-}
-
-func inspect(ctx context.Context, path string, destination *os.Root) (Metadata, error) {
+func Inspect(ctx context.Context, path string) (Metadata, error) {
 	var m Metadata
 	if err := ctx.Err(); err != nil {
 		return m, err
@@ -299,7 +258,7 @@ func inspect(ctx context.Context, path string, destination *os.Root) (Metadata, 
 	if err := decrypt(ctx, encrypted, plain, &m); err != nil {
 		return Metadata{}, err
 	}
-	if err := inspectPayload(ctx, plain, m.PlaintextSize, m.SetupFile, destination); err != nil {
+	if err := inspectPayload(ctx, plain, m.PlaintextSize, m.SetupFile); err != nil {
 		return Metadata{}, err
 	}
 	return m, nil

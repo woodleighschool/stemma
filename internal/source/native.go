@@ -417,9 +417,6 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry *nativeEnt
 		if entry.Tree {
 			return cas.Ref{}, errors.New("file source changed from directory to file")
 		}
-		if err := archive.CheckMetadata(f, info); err != nil {
-			return cas.Ref{}, err
-		}
 		return m.Store.Import(ctx, f, expected)
 	}
 	if err := validateHTTPURL(entry.URL); err != nil {

@@ -190,7 +190,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		switch strings.ToLower(filepath.Ext(args[0])) {
 		case ".intunewin":
 			done := plugin.Stage(cmd.Context(), "Inspecting artifact")
-			value, err := intunewin.Inspect(args[0])
+			value, err := intunewin.Inspect(cmd.Context(), args[0])
 			done(err)
 			if err != nil {
 				return err

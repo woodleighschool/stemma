@@ -38,34 +38,12 @@ func TestPayloadIdentityAndRandomEnvelope(t *testing.T) {
 	if m1.EncryptionInfo.EncryptionKey == m2.EncryptionInfo.EncryptionKey || m1.EncryptionInfo.MacKey == m2.EncryptionInfo.MacKey || m1.EncryptionInfo.InitializationVector == m2.EncryptionInfo.InitializationVector {
 		t.Fatal("reused random encryption material")
 	}
-	verified, err := Inspect(one)
+	verified, err := Inspect(t.Context(), one)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if verified != m1 {
 		t.Fatalf("metadata differs: %+v / %+v", verified, m1)
-	}
-}
-
-func TestExtract(t *testing.T) {
-	source := sourceFixture(t)
-	one := filepath.Join(t.TempDir(), "package.intunewin")
-	if _, err := Write(t.Context(), source, "setup.cmd", one); err != nil {
-		t.Fatal(err)
-	}
-	destination := filepath.Join(t.TempDir(), "recovered")
-	if err := Extract(t.Context(), one, destination); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"setup.cmd", "data/config.txt"} {
-		want := readFile(t, filepath.Join(source, name))
-		got := readFile(t, filepath.Join(destination, name))
-		if !bytes.Equal(got, want) {
-			t.Fatalf("recovered %s differs", name)
-		}
-	}
-	if err := Extract(t.Context(), one, destination); !errors.Is(err, os.ErrExist) {
-		t.Fatalf("existing destination: %v", err)
 	}
 }
 
@@ -109,15 +87,8 @@ func TestTamperedEnvelopeIsRejected(t *testing.T) {
 			}
 			output := filepath.Join(t.TempDir(), "bad.intunewin")
 			writeEnvelope(t, output, entries, kind == "duplicate-metadata")
-			if _, err := Inspect(output); err == nil {
+			if _, err := Inspect(t.Context(), output); err == nil {
 				t.Fatal("accepted malformed envelope")
-			}
-			destination := filepath.Join(t.TempDir(), "out")
-			if err := Extract(t.Context(), output, destination); err == nil {
-				t.Fatal("extracted malformed envelope")
-			}
-			if _, err := os.Lstat(destination); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("published failed extraction: %v", err)
 			}
 		})
 	}
@@ -132,13 +103,13 @@ func TestUnsafePayloadsAreRejected(t *testing.T) {
 	for _, names := range cases {
 		t.Run(strings.Join(names, ","), func(t *testing.T) {
 			output := packageEntries(t, names, false)
-			if _, err := Inspect(output); err == nil {
+			if _, err := Inspect(t.Context(), output); err == nil {
 				t.Fatalf("accepted paths %v", names)
 			}
 		})
 	}
 	t.Run("symlink", func(t *testing.T) {
-		if _, err := Inspect(packageEntries(t, []string{"setup.cmd"}, true)); err == nil {
+		if _, err := Inspect(t.Context(), packageEntries(t, []string{"setup.cmd"}, true)); err == nil {
 			t.Fatal("accepted archive symlink")
 		}
 	})
