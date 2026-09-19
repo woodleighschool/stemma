@@ -23,7 +23,6 @@ import (
 )
 
 func TestCMSAuthenticatesEveryArchitecture(t *testing.T) {
-	portableOnly(t)
 	for _, arch := range []int{0, 1} {
 		t.Run([]string{"first", "second"}[arch], func(t *testing.T) {
 			sig := signedFixtureSignature(t, arch)
@@ -51,7 +50,6 @@ func TestCMSAuthenticatesEveryArchitecture(t *testing.T) {
 }
 
 func TestCMSSignatureAllocationIsNotCode(t *testing.T) {
-	portableOnly(t)
 	app := filepath.Join(t.TempDir(), "SignedFixture.app")
 	if err := os.CopyFS(app, os.DirFS("testdata/SignedFixture.app")); err != nil {
 		t.Fatal(err)

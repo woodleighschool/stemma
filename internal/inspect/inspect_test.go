@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -275,7 +276,11 @@ func TestReadFSMatchesLocalPayload(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer func() { _ = root.Close() }()
-			image, err := ReadFS(t.Context(), root.FS(), filepath.Base(name))
+			fsys, ok := root.FS().(fs.ReadLinkFS)
+			if !ok {
+				t.Fatal("directory filesystem does not report symlinks")
+			}
+			image, err := ReadFS(t.Context(), fsys, filepath.Base(name))
 			if err != nil {
 				t.Fatal(err)
 			}

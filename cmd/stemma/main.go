@@ -147,12 +147,17 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	for _, method := range []string{"update", "prepare", "signature", "icon", "plan", "apply"} {
 		var offline bool
 		var icons engine.IconOptions
-		cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "signature": "Derive the verified signer of each published artifact", "icon": "Render declared icon assets from prepared applications", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
+		var presentation string
+		cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "signature": "Derive the verified signer of each published artifact", "icon": "Author declared icon assets from the artwork prepared software carries", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method], RunE: func(cmd *cobra.Command, args []string) error {
 			path, err := resolve()
 			if err != nil {
 				return err
 			}
-
+			if method == "icon" {
+				if icons.Presentation, err = icon.ParsePresentation(presentation); err != nil {
+					return err
+				}
+			}
 			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Resources: args, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error { return display.resourceDone(out, output, method, resource) }, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply" || method == "icon", Refresh: method == "update", Offline: offline}})
 			if err := display.report(out, output, method, report, runErr); err != nil {
 				return errors.Join(runErr, err)
@@ -163,7 +168,8 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
 		if method == "icon" {
 			cmd.Flags().BoolVar(&icons.Force, "force", false, "Replace icon assets that already exist")
-			cmd.Flags().IntVar(&icons.Size, "size", icon.Size, "Rendered icon width and height in pixels")
+			cmd.Flags().StringVar(&presentation, "presentation", string(icon.Auto), "Icon presentation: auto (glassy on macOS, raw elsewhere), raw or glassy")
+			cmd.Flags().IntVar(&icons.Size, "size", icon.Size, "Glassy icon width and height in pixels")
 		}
 		root.AddCommand(cmd)
 	}

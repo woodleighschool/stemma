@@ -7,8 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"image"
-	"image/png"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -25,14 +23,10 @@ func applicationFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	files := map[string][]byte{
-		"Example.app/Contents/Info.plist":    []byte(`<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.app</string><key>CFBundleName</key><string>Example</string><key>CFBundleShortVersionString</key><string>1.2</string><key>CFBundleVersion</key><string>123</string><key>CFBundleExecutable</key><string>example</string><key>CFBundleIconFile</key><string>icon.png</string></dict></plist>`),
-		"Example.app/Contents/MacOS/example": []byte("#!/bin/sh\nexit 97\n"),
+		"Example.app/Contents/Info.plist":           []byte(`<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.app</string><key>CFBundleName</key><string>Example</string><key>CFBundleShortVersionString</key><string>1.2</string><key>CFBundleVersion</key><string>123</string><key>CFBundleExecutable</key><string>example</string><key>CFBundleIconFile</key><string>AppIcon</string></dict></plist>`),
+		"Example.app/Contents/MacOS/example":        []byte("#!/bin/sh\nexit 97\n"),
+		"Example.app/Contents/Resources/manual.pdf": []byte("not an icon"),
 	}
-	var icon bytes.Buffer
-	if err := png.Encode(&icon, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
-		t.Fatal(err)
-	}
-	files["Example.app/Contents/Resources/icon.png"] = icon.Bytes()
 	for name, data := range files {
 		destination := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(destination), 0o755); err != nil {
@@ -167,16 +161,33 @@ func TestDMGMetadataDoesNotExtract(t *testing.T) {
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("metadata inspection materialized payload: %v, %v", entries, err)
 	}
-	local, err := selected.materialize(t.Context(), workspace)
+}
+
+func TestDMGPackageIsPublishedAsALocalFile(t *testing.T) {
+	data, err := os.ReadFile("../apple/testdata/fixture.pkg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(local, "Contents/MacOS/example")); err != nil {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "Example.pkg"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	again, err := selected.materialize(t.Context(), workspace)
-	if err != nil || again != local {
-		t.Fatalf("repeated materialization: %q, %v", again, err)
+	filename := filepath.Join(t.TempDir(), "Example.dmg")
+	if err := testdiskimage.Write(filename, source); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	outputs, err := Prepare(t.Context(), Spec{}, Request{Input: plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}, Workspace: workspace})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := outputs["installer"]
+	hash := sha256.Sum256(data)
+	if installer.Format != "pkg" || installer.Filename != "Example.pkg" || installer.SHA256 != hex.EncodeToString(hash[:]) {
+		t.Fatalf("installer = %+v", installer)
+	}
+	if published, err := os.ReadFile(installer.Path); err != nil || !bytes.Equal(published, data) {
+		t.Fatalf("published package differs from the image's: %v", err)
 	}
 }
 
@@ -210,7 +221,13 @@ func TestDMGSignatureVerifiesSelectedApplication(t *testing.T) {
 				t.Fatal(err)
 			}
 			input := plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}
-			outputs, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: signer}}, Request{Input: input, Workspace: t.TempDir()})
+			workspace := t.TempDir()
+			outputs, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: signer}}, Request{Input: input, Workspace: workspace})
+			// The application is verified inside the image; only the retained
+			// installer reaches the workspace.
+			if entries, readErr := os.ReadDir(workspace); readErr != nil || len(entries) > 1 || len(entries) == 1 && entries[0].Name() != "Example.dmg" {
+				t.Fatalf("verification wrote to the workspace: %v, %v", entries, readErr)
+			}
 			if modified {
 				if err == nil {
 					t.Fatal("verification ignored modified executable")
@@ -229,6 +246,9 @@ func TestDMGSignatureVerifiesSelectedApplication(t *testing.T) {
 			}
 			if evidence.Signer != signer || evidence.Name != "Woodleigh School" || evidence.Target != "SignedFixture.app" {
 				t.Fatalf("signature evidence: %+v", evidence)
+			}
+			if local, err := apple.VerifyApp(t.Context(), app, signature.Signer{}); err != nil || local != evidence {
+				t.Fatalf("evidence from the image %+v differs from the bundle on disk %+v: %v", evidence, local, err)
 			}
 			if _, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: "apple:developer-id:AAAAAAAAAA"}}, Request{Input: input, Workspace: t.TempDir()}); !errors.Is(err, signature.ErrMismatch) {
 				t.Fatalf("unexpected signer accepted: %v", err)

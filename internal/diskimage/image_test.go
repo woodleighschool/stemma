@@ -117,7 +117,7 @@ func TestImageReadsSelectedChunks(t *testing.T) {
 					}
 					if operation == "extract" {
 						destination := filepath.Join(t.TempDir(), "payload")
-						selected, err := image.Extract(t.Context(), destination, "")
+						selected, err := image.Extract(t.Context(), destination, "", nil)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -151,7 +151,7 @@ func TestImageLZFSE(t *testing.T) {
 	if err := disk.WrapRawImageDMGFrom(compressed, source, source.Size(), "Apple_HFSX", &disk.EncodeOptions{Compression: disk.CompressionLZFSE}); err != nil {
 		t.Fatal(err)
 	}
-	selected, err := Extract(t.Context(), compressed, filepath.Join(t.TempDir(), "payload"), "")
+	selected, err := Extract(t.Context(), compressed, filepath.Join(t.TempDir(), "payload"), "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

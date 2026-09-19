@@ -11,7 +11,7 @@ Run commands from a catalog. Stemma discovers its Git root and `stemma.yaml`.
 | `stemma update [Kind/name...]`    | Discover current inputs and update their locks                               |
 | `stemma prepare [Kind/name...]`   | Lock and prepare inputs without publication                                  |
 | `stemma signature [Kind/name...]` | Derive the verified signer of each published artifact                        |
-| `stemma icon [Kind/name...]`      | Render missing declared icons from prepared applications on macOS            |
+| `stemma icon [Kind/name...]`      | Author missing declared icons from the software's own artwork                |
 | `stemma plan [Kind/name...]`      | Read destinations and report proposed changes                                |
 | `stemma apply [Kind/name...]`     | Re-read and reconcile destinations once                                      |
 
@@ -21,12 +21,17 @@ ambiguous identity. Omitting selectors processes every resource that is not
 [suspended](catalogs.md#suspend-a-resource); a selector runs a suspended resource
 and the builds it references.
 
-`icon` renders the [declared icon](mac-software.md#icons) of each selected resource from
-the application its locked source prepares, using the macOS system renderer, and writes
-`icons/<name>.png`. It fills in missing files, preparing only the resources it renders,
-and leaves existing artwork alone; `--force` renders it again and `--size` changes the
-512-pixel edge. It never updates the lockfile or contacts a destination. Commit the
-result: publication on any runner sends those exact bytes.
+`icon` authors the [declared icon](mac-software.md#icons) of each selected resource
+from the software its locked source prepares and writes `icons/<name>.png`. It
+extracts the artwork the software carries on any host, a Mac application's icon file
+or the icon a Windows installer registers, and presents it: `--presentation raw`
+writes that artwork as it is, `--presentation glassy` draws it with the macOS icon
+renderer at `--size` pixels (512 by default) and needs a Mac, and the default `auto`
+picks glassy on macOS and raw elsewhere. Each result names the presentation it
+used. The command fills in missing files, preparing only the resources it authors,
+and leaves existing artwork alone; `--force` replaces it. It never updates the
+lockfile or contacts a destination. Commit the result: publication on any runner
+sends those exact bytes.
 
 `signature` acquires and prepares inputs like `prepare`, verifies each published
 artifact against the signer it observes and prints the `signature` fragment to

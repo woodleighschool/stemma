@@ -1,6 +1,7 @@
 package msi
 
 import (
+	"bytes"
 	"encoding/binary"
 	"os"
 	"path/filepath"
@@ -62,5 +63,19 @@ func TestSectorChainLimits(t *testing.T) {
 	}
 	if _, err := readChain(0, -1, 512, []uint32{0}, func(uint32) (int, error) { return 0, nil }, make([]byte, 512)); err == nil {
 		t.Fatal("accepted cyclic sector chain")
+	}
+}
+
+func TestProductIconReadsTheIconTableStream(t *testing.T) {
+	want, err := os.ReadFile("testdata/icon.ico")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, ok, err := ProductIcon("testdata/icon.msi")
+	if err != nil || !ok || !bytes.Equal(data, want) {
+		t.Fatalf("product icon: ok=%v %d bytes %v", ok, len(data), err)
+	}
+	if _, ok, err := ProductIcon("testdata/test.msi"); err != nil || ok {
+		t.Fatalf("installer without ARPPRODUCTICON: ok=%v %v", ok, err)
 	}
 }

@@ -30,22 +30,27 @@ const maxEntries = 100000
 
 // Extract writes the selected app or flat PKG under a new destination directory,
 // returning its path. An empty selection requires one unambiguous payload.
+// keep names the files of a selected app to write, relative to it, and nil
+// writes them all; only directories leading to a kept file are listed.
 // Partial output is removed on failure. Images are read without mounting them.
 //
 // The result is an inspection copy: file bytes, modes, times and confined symlinks.
 // Filesystem metadata remains in the original DMG, which is the installer artifact.
 // This copy must not be used to repackage an application.
-func Extract(ctx context.Context, input, destination, selection string) (result string, err error) {
+func Extract(ctx context.Context, input, destination, selection string, keep archive.Leaves) (result string, err error) {
 	image, err := Open(ctx, input)
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = image.Close() }()
-	return image.Extract(ctx, destination, selection)
+	return image.Extract(ctx, destination, selection, keep)
 }
 
 // Extract copies a selected payload from the open image into a new directory.
-func (image *Image) Extract(ctx context.Context, destination, selection string) (result string, err error) {
+func (image *Image) Extract(ctx context.Context, destination, selection string, keep archive.Leaves) (result string, err error) {
+	if err := keep.Validate(); err != nil {
+		return "", err
+	}
 	selection, err = image.Select(ctx, selection)
 	if err != nil {
 		return "", err
@@ -64,7 +69,7 @@ func (image *Image) Extract(ctx context.Context, destination, selection string) 
 		return "", err
 	}
 	defer func() { _ = root.Close() }()
-	if err := extract(ctx, image, root, selection); err != nil {
+	if err := extract(ctx, image, root, selection, keep); err != nil {
 		return "", fmt.Errorf("disk image: %w", err)
 	}
 	return filepath.Join(destination, filepath.FromSlash(selection)), nil
@@ -257,7 +262,7 @@ type entry struct {
 	link string
 }
 
-func extract(ctx context.Context, volume filesystem, root *os.Root, selection string) (err error) {
+func extract(ctx context.Context, volume filesystem, root *os.Root, selection string, keep archive.Leaves) (err error) {
 	var dirs, links []entry
 	spelling := map[string]string{}
 	var total int64
@@ -323,6 +328,10 @@ func extract(ctx context.Context, volume filesystem, root *os.Root, selection st
 			for _, child := range children {
 				if err := safeName(child.Name()); err != nil || path.Base(child.Name()) != child.Name() {
 					return fmt.Errorf("invalid directory entry %q", child.Name())
+				}
+				relative := strings.TrimPrefix(path.Join(name, child.Name()), selection+"/")
+				if child.IsDir() && !keep.Leads(relative) || !child.IsDir() && !keep.Keeps(relative) {
+					continue
 				}
 				childInfo, err := child.Info()
 				if err != nil {

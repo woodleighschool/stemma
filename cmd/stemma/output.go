@@ -202,7 +202,9 @@ func (o *commandOutput) resourceDone(out io.Writer, format, method string, resou
 			return nil
 		}
 	}
-	if format != "json" && (details || method == "signature") {
+	// An authored icon names the presentation the host chose, so it is always shown.
+	authored := method == "icon" && resource.Icon != "" && resource.Icon != "exists" && resource.Icon != "no icon declared"
+	if format != "json" && (details || method == "signature" || authored) {
 		return printResource(out, method, resource)
 	}
 	return nil

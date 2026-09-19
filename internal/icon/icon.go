@@ -1,6 +1,7 @@
 // Package icon owns the catalog icon namespace. A resource declares an icon by
-// name, the asset lives at icons/<name>.png, destinations publish those exact
-// bytes, and the macOS renderer authors or replaces them.
+// name, the asset lives at icons/<name>.png and destinations publish those
+// exact bytes. Authoring extracts the artwork software carries into a Subject
+// on any host and a Presentation styles it into the asset.
 package icon
 
 import (
@@ -33,8 +34,11 @@ const (
 // ErrMissing reports a declared asset without a file; stemma icon renders it.
 var ErrMissing = errors.New("icon asset does not exist")
 
-// ErrUnsupportedHost reports that native rendering needs macOS.
-var ErrUnsupportedHost = errors.New("native icon rendering requires macOS")
+// ErrUnsupportedHost reports a presentation this host cannot draw.
+var ErrUnsupportedHost = errors.New("the glassy presentation requires macOS")
+
+// ErrNoArtwork reports software that carries nothing an icon can be made from.
+var ErrNoArtwork = errors.New("no icon artwork")
 
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 

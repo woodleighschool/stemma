@@ -1,7 +1,9 @@
-# MSI fixture
+# MSI fixtures
 
-Rebuild from this directory with [wixl](https://github.com/GNOME/msitools)
-(`brew install msitools` or `sudo apt install wixl msitools`):
+`test.msi` carries product properties only; `icon.msi` also registers `icon.ico`,
+a 128-pixel PNG-framed ICO, as its `ARPPRODUCTICON`. Rebuild from this directory
+with [wixl](https://github.com/GNOME/msitools) (`brew install msitools` or
+`sudo apt install wixl msitools`):
 
 ```sh
 work=$(mktemp -d)
@@ -32,3 +34,15 @@ msibuild "$work/test.msi" -s 'Stemma MSI Fixture' 'Woodleigh School' 'x64;1033' 
 cp "$work/test.msi" test.msi
 rm -rf "$work"
 ```
+
+For `icon.msi`, change the product to `Id="3F0B1C7E-5D2A-4B8E-9C6F-1A2B3C4D5E6F"`,
+`Name="Stemma Icon Fixture"`, `UpgradeCode="B7E6D5C4-3B2A-4F1E-8D9C-0A1B2C3D4E5F"`
+and the component to `Guid="C1D2E3F4-A5B6-4C7D-8E9F-0A1B2C3D4E5F"`, add
+
+```xml
+<Icon Id="ProductIcon.ico" SourceFile="icon.ico"/>
+<Property Id="ARPPRODUCTICON" Value="ProductIcon.ico"/>
+```
+
+after the `Media` element with `icon.ico` copied beside the source, and stamp the
+summary with `'Stemma Icon Fixture'` and `'{9E8D7C6B-5A4F-4E3D-2C1B-0A9F8E7D6C5B}'`.

@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"howett.net/plist"
 )
@@ -37,39 +36,26 @@ func InspectApp(appPath string) (AppFacts, error) {
 		return AppFacts{}, err
 	}
 	defer func() { _ = root.Close() }()
-	return InspectAppFS(context.Background(), root.FS(), ".")
+	bundle := rootFS(root)
+	return InspectAppFS(context.Background(), bundle, ".")
 }
 
-// InspectAppFS reads conventional application metadata from a filesystem.
-// Metadata paths must be regular files without symlink parents.
-func InspectAppFS(ctx context.Context, fsys fs.FS, appPath string) (AppFacts, error) {
-	name := path.Join(appPath, "Contents/Info.plist")
-	for prefix := name; prefix != "."; prefix = path.Dir(prefix) {
-		info, err := fs.Lstat(fsys, prefix)
-		if err != nil {
-			return AppFacts{}, err
-		}
-		if info.Mode()&fs.ModeSymlink != 0 || prefix != name && !info.IsDir() {
-			return AppFacts{}, fmt.Errorf("%w: app metadata traverses a symlink or nondirectory parent", ErrUnsupported)
-		}
-		if prefix == name && (!info.Mode().IsRegular() || info.Size() > maxMetadata) {
-			return AppFacts{}, fmt.Errorf("app Info.plist must be a regular file within the metadata limit")
-		}
-	}
-	f, err := fsys.Open(name)
-	if err != nil {
+// InspectAppFS reads conventional application metadata where the bundle lies
+// in a filesystem. Its Info.plist must be a regular file without symlink parents.
+func InspectAppFS(ctx context.Context, fsys fs.ReadLinkFS, appPath string) (AppFacts, error) {
+	if err := ctx.Err(); err != nil {
 		return AppFacts{}, err
 	}
-	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(io.LimitReader(fileio.Reader{Context: ctx, Reader: f}, maxMetadata+1))
+	data, err := readRegular(fsys, path.Join(appPath, "Contents/Info.plist"), maxMetadata)
 	if err != nil {
 		return AppFacts{}, err
 	}
 	return ParseAppInfo(data)
 }
 
-// VerifyApp verifies a Contents-style bundle's complete Developer ID signature
-// and reports its signer. A zero want derives the signer; otherwise it must match.
+// VerifyApp verifies a Contents-style bundle on disk: its complete Developer ID
+// signature, reporting the signer. A zero want derives the signer; otherwise it
+// must match.
 func VerifyApp(ctx context.Context, appPath string, want signature.Signer) (signature.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return signature.Result{}, err
@@ -79,22 +65,38 @@ func VerifyApp(ctx context.Context, appPath string, want signature.Signer) (sign
 		return signature.Result{}, err
 	}
 	defer func() { _ = root.Close() }()
+	bundle := rootFS(root)
 	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10)}
-	if nativeBundleValidity != nil {
-		v.skipEnvelopes = nativeBundleValidity(ctx, appPath)
+	return v.verifyApp(bundle, filepath.Base(appPath), want)
+}
+
+// VerifyAppFS verifies a Contents-style bundle where it lies in a filesystem,
+// such as an open disk image.
+func VerifyAppFS(ctx context.Context, fsys fs.ReadLinkFS, appPath string, want signature.Signer) (signature.Result, error) {
+	if err := ctx.Err(); err != nil {
+		return signature.Result{}, err
 	}
-	identity, err := v.verifyContents(root, filepath.Base(appPath))
+	bundle, err := subtree(fsys, appPath)
+	if err != nil {
+		return signature.Result{}, err
+	}
+	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10)}
+	return v.verifyApp(bundle, path.Base(appPath), want)
+}
+
+func (v *bundleVerifier) verifyApp(bundle fs.ReadLinkFS, name string, want signature.Signer) (signature.Result, error) {
+	identity, err := v.verifyContents(bundle, name)
 	if err != nil {
 		return signature.Result{}, err
 	}
 	if !identity.application {
 		return signature.Result{}, fmt.Errorf("%w: application is not signed with a Developer ID Application certificate", ErrUnsupported)
 	}
-	result := signature.Result{Signer: identity.signer().String(), Name: identity.name, Authority: "Developer ID Application", Target: filepath.Base(appPath), Verifier: signature.Verifier}
+	result := signature.Result{Signer: identity.signer().String(), Name: identity.name, Authority: "Developer ID Application", Target: name, Verifier: signature.Verifier}
 	if err := signature.Check(identity.signer(), want); err != nil {
 		return result, err
 	}
-	return result, ctx.Err()
+	return result, v.ctx.Err()
 }
 
 // ParseAppInfo reads conventional application metadata without accessing an
@@ -159,20 +161,106 @@ func highestOSVersion(versions ...string) (string, error) {
 	return highest, nil
 }
 
-func rootRead(root *os.Root, name string, limit int64) ([]byte, error) {
-	f, err := openAppFile(root, name)
+// bundleFile is a regular file opened from a bundle: read in sequence for
+// digests and at offsets for Mach-O code pages.
+type bundleFile interface {
+	io.ReadCloser
+	io.ReaderAt
+}
+
+// rootFS exposes a directory on disk as a bundle filesystem. The root confines
+// every path to that directory.
+func rootFS(root *os.Root) fs.ReadLinkFS {
+	return hostLinks{root.FS().(fs.ReadLinkFS)}
+}
+
+// hostLinks reports symlink targets with forward slashes, the form signatures
+// seal, where the host's filesystem returns its own separator.
+type hostLinks struct{ fs.ReadLinkFS }
+
+func (h hostLinks) ReadLink(name string) (string, error) {
+	target, err := h.ReadLinkFS.ReadLink(name)
+	return filepath.ToSlash(target), err
+}
+
+// subtree roots a bundle directory by name. The rooting is only logical, so the
+// directory and its parents are established as real here, and confinement
+// stays with the filesystem underneath.
+func subtree(fsys fs.ReadLinkFS, dir string) (fs.ReadLinkFS, error) {
+	if dir == "." {
+		return fsys, nil
+	}
+	if err := realDirectory(fsys, dir); err != nil {
+		return nil, err
+	}
+	sub, err := fs.Sub(fsys, dir)
+	if err != nil {
+		return nil, err
+	}
+	links, ok := sub.(fs.ReadLinkFS)
+	if !ok {
+		return nil, fmt.Errorf("%w: filesystem subtree does not report symlinks", ErrUnsupported)
+	}
+	return links, nil
+}
+
+// realDirectory requires dir and each of its parents to be a directory itself,
+// not a symlink to one.
+func realDirectory(fsys fs.ReadLinkFS, dir string) error {
+	for prefix := dir; prefix != "."; prefix = path.Dir(prefix) {
+		info, err := fsys.Lstat(prefix)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("%w: app path %q traverses a symlink or nondirectory parent", ErrUnsupported, dir)
+		}
+	}
+	return nil
+}
+
+// openRegular opens a regular file reached through real directories only. No
+// open relies on the filesystem to refuse a symlinked path.
+func openRegular(fsys fs.ReadLinkFS, name string) (bundleFile, int64, error) {
+	if err := realDirectory(fsys, path.Dir(name)); err != nil {
+		return nil, 0, err
+	}
+	info, err := fsys.Lstat(name)
+	if err != nil {
+		return nil, 0, err
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return nil, 0, fmt.Errorf("%w: app file %q is a symlink", ErrUnsupported, name)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, 0, fmt.Errorf("%s is not a regular file", name)
+	}
+	f, err := fsys.Open(name)
+	if err != nil {
+		return nil, 0, err
+	}
+	file, ok := f.(bundleFile)
+	if !ok {
+		_ = f.Close()
+		return nil, 0, fmt.Errorf("%w: filesystem does not read %s at offsets", ErrUnsupported, name)
+	}
+	if info, err = f.Stat(); err == nil && !info.Mode().IsRegular() {
+		err = fmt.Errorf("%s is not a regular file", name)
+	}
+	if err != nil {
+		_ = file.Close()
+		return nil, 0, err
+	}
+	return file, info.Size(), nil
+}
+
+func readRegular(fsys fs.ReadLinkFS, name string, limit int64) ([]byte, error) {
+	f, size, err := openRegular(fsys, name)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", name)
-	}
-	if info.Size() > limit {
+	if size > limit {
 		return nil, fmt.Errorf("%s exceeds %d-byte limit", name, limit)
 	}
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
@@ -183,20 +271,4 @@ func rootRead(root *os.Root, name string, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("%s exceeds %d-byte limit", name, limit)
 	}
 	return data, nil
-}
-
-func openAppFile(root *os.Root, name string) (*os.File, error) {
-	for prefix := name; prefix != "."; prefix = path.Dir(prefix) {
-		info, err := root.Lstat(prefix)
-		if err != nil {
-			return nil, err
-		}
-		if info.Mode()&fs.ModeSymlink != 0 || prefix != name && !info.IsDir() {
-			return nil, fmt.Errorf("%w: app file %q traverses a symlink or nondirectory parent", ErrUnsupported, name)
-		}
-		if prefix == name && !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("%s is not a regular file", name)
-		}
-	}
-	return root.Open(name)
 }

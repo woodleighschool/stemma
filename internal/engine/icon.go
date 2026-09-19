@@ -11,18 +11,19 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/macsoftware"
+	"github.com/woodleighschool/stemma/internal/windowssoftware"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// IconOptions configures the icon method, which renders declared assets from
-// the applications preparation selects.
+// IconOptions configures the icon method, which extracts the artwork prepared
+// software carries and presents it as the declared asset.
 type IconOptions struct {
 	// Force replaces assets that already exist.
 	Force bool
-	// Size is the rendered edge in pixels; zero selects icon.Size.
+	// Size is the glassy edge in pixels; zero selects icon.Size.
 	Size int
-	// Renderer draws an application bundle's icon; nil selects the host renderer.
-	Renderer func(ctx context.Context, app string, size int) ([]byte, error)
+	// Presentation styles the artwork; icon.Auto follows the host.
+	Presentation icon.Presentation
 }
 
 // verifyIcons rejects declared assets that are missing or invalid before any
@@ -78,7 +79,8 @@ func iconOutcome(options IconOptions, root string, plan resourcePlan) string {
 }
 
 // renderIcon writes the declared asset for one prepared resource and reports
-// the outcome in the words the CLI prints.
+// the outcome in the words the CLI prints: the presentation drawn, or why
+// nothing could be.
 func renderIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, outputs map[string]Prepared, work string) (string, error) {
 	name := plan.Icon
 	exists, err := icon.Exists(root, name)
@@ -87,27 +89,24 @@ func renderIcon(ctx context.Context, options IconOptions, root string, plan reso
 	}
 	installer, ok := outputs["installer"]
 	if !ok || installer.Path == "" {
-		return "no application", nil
+		return "no artwork", nil
 	}
-	if _, selected := installer.Evidence["macos.application"]; !selected {
-		return "no application", nil
-	}
-	done := plugin.Stage(ctx, "Extracting application")
-	bundle, err := macsoftware.Bundle(ctx, installer.artifact(), filepath.Join(work, "icon"))
+	workspace := filepath.Join(work, "icon")
+	done := plugin.Stage(ctx, "Extracting artwork")
+	subject, err := iconSubject(ctx, plan.Resource.Kind, installer.artifact(), workspace, options.Presentation)
 	done(err)
+	if errors.Is(err, icon.ErrNoArtwork) || errors.Is(err, macsoftware.ErrNoApplication) {
+		return "no artwork", nil
+	}
 	if err != nil {
 		return "", err
 	}
-	render, size := options.Renderer, options.Size
-	if render == nil {
-		render = icon.Render
-	}
-	if size == 0 {
-		size = icon.Size
-	}
-	done = plugin.Stage(ctx, "Rendering icon")
-	data, err := render(ctx, bundle, size)
+	done = plugin.Stage(ctx, "Presenting icon")
+	data, presentation, err := icon.Present(ctx, subject, icon.Options{Presentation: options.Presentation, Size: options.Size, Workspace: workspace})
 	done(err)
+	if errors.Is(err, icon.ErrNoArtwork) {
+		return "no artwork", nil
+	}
 	if err != nil {
 		return "", err
 	}
@@ -115,7 +114,18 @@ func renderIcon(ctx context.Context, options IconOptions, root string, plan reso
 		return "", err
 	}
 	if exists {
-		return "replaced", nil
+		return "replaced " + string(presentation), nil
 	}
-	return "rendered", nil
+	return "rendered " + string(presentation), nil
+}
+
+// iconSubject reads the installer artwork or bundle that presentation needs.
+func iconSubject(ctx context.Context, kind string, installer plugin.Artifact, workspace string, presentation icon.Presentation) (icon.Subject, error) {
+	switch kind {
+	case "MacSoftware":
+		return macsoftware.Icon(ctx, installer, workspace, presentation)
+	case "WindowsSoftware":
+		return windowssoftware.Icon(ctx, installer)
+	}
+	return icon.Subject{}, icon.ErrNoArtwork
 }

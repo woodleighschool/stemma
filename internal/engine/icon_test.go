@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"image"
@@ -33,6 +34,21 @@ spec:
       operation: munki
       config:
         path: repository
+    graph:
+      operation: intune
+      config:
+        token: test-token
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: example
+spec:
+  icon: example
+  source: {path: Example.app}
+  destinations:
+    repository:
+      pkginfo: {catalogs: [testing]}
 ---
 apiVersion: stemma/v1alpha1
 kind: MacSoftware
@@ -44,6 +60,16 @@ spec:
   destinations:
     repository:
       pkginfo: {catalogs: [testing]}
+---
+apiVersion: stemma/v1alpha1
+kind: WindowsSoftware
+metadata:
+  name: setup
+spec:
+  icon: setup
+  source: {path: icon.msi}
+  destinations:
+    graph: {type: win32}
 ---
 apiVersion: stemma/v1alpha1
 kind: MacSoftware
@@ -86,7 +112,49 @@ func iconPNG(t *testing.T, edge int, shade uint8) []byte {
 	return data.Bytes()
 }
 
-func TestIconsAreAuthoredOnceAndPublishedAsExactBytes(t *testing.T) {
+// iconFixtures writes a Mac bundle whose ICNS wraps artwork and copies the MSI
+// fixture that registers a product icon, returning both expected artworks.
+func iconFixtures(t *testing.T, root string) (bundle, setup []byte) {
+	t.Helper()
+	bundle = iconPNG(t, 128, 33)
+	var icns bytes.Buffer
+	icns.WriteString("icns")
+	_ = binary.Write(&icns, binary.BigEndian, uint32(16+len(bundle)))
+	icns.WriteString("ic07")
+	_ = binary.Write(&icns, binary.BigEndian, uint32(8+len(bundle)))
+	icns.Write(bundle)
+	for name, data := range map[string][]byte{
+		"Example.app/Contents/Info.plist":             []byte(`<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.app</string><key>CFBundleName</key><string>Example</string><key>CFBundleShortVersionString</key><string>1.2</string><key>CFBundleVersion</key><string>123</string><key>CFBundleExecutable</key><string>example</string><key>CFBundleIconFile</key><string>AppIcon</string></dict></plist>`),
+		"Example.app/Contents/MacOS/example":          []byte("#!/bin/sh\nexit 0\n"),
+		"Example.app/Contents/Resources/AppIcon.icns": icns.Bytes(),
+	} {
+		target := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(target, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(root, "Example.app/Contents/MacOS/example"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	msi, err := os.ReadFile("../msi/testdata/icon.msi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "icon.msi"), msi, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ico, err := os.ReadFile("../msi/testdata/icon.ico")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fixture ICO holds one PNG frame after its 22-byte directory.
+	return bundle, ico[22:]
+}
+
+func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 	server := httptest.NewServer(http.FileServer(http.Dir("../apple/testdata")))
 	t.Cleanup(server.Close)
 	root := t.TempDir()
@@ -94,17 +162,17 @@ func TestIconsAreAuthoredOnceAndPublishedAsExactBytes(t *testing.T) {
 	if err := testproject.Write(filename, fmt.Appendf(nil, iconProject, server.URL)); err != nil {
 		t.Fatal(err)
 	}
-	renders := 0
-	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), StateDir: t.TempDir(), Icons: IconOptions{Size: 256, Renderer: func(_ context.Context, app string, size int) ([]byte, error) {
-		renders++
-		if _, err := os.Stat(filepath.Join(app, "Contents", "Info.plist")); err != nil {
-			return nil, err
+	bundleArtwork, setupArtwork := iconFixtures(t, root)
+	published := map[string]plugin.Artifact{}
+	applies := 0
+	record := func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+		if request.Method == "apply" {
+			applies++
+			published[request.Identity.Software] = request.Inputs["icon"]
 		}
-		if filepath.Base(app) != "SignedFixture.app" || size != 256 {
-			return nil, fmt.Errorf("rendered %s at %d pixels", app, size)
-		}
-		return iconPNG(t, size, uint8(renders)), nil
-	}}}
+		return plugin.ReconcileResponse{}, nil
+	}
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), StateDir: t.TempDir(), Icons: IconOptions{Presentation: icon.Raw}, Handlers: map[string]reconcileHandler{"munki": record, "intune": record}}
 	statuses := func(method string) map[string]string {
 		t.Helper()
 		options.Method = method
@@ -121,41 +189,48 @@ func TestIconsAreAuthoredOnceAndPublishedAsExactBytes(t *testing.T) {
 		}
 		return result
 	}
-
-	// A new declaration locks and renders before its asset exists.
-	statuses("prepare")
-	if got := statuses("icon"); got["fixture"] != "rendered" || got["branding"] != "no application" || got["plain"] != "no icon declared" {
-		t.Fatalf("first render: %v", got)
+	assetIs := func(name string, want []byte) {
+		t.Helper()
+		got, err := icon.Read(root, name)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("icons/%s.png holds %d bytes, want %d: %v", name, len(got), len(want), err)
+		}
 	}
-	rendered, err := icon.Read(root, "fixture")
-	if err != nil {
+
+	// A new declaration locks and extracts before its asset exists; the raw
+	// presentation writes Mac and Windows artwork alike, and a bundle without
+	// a PNG-backed icon file has nothing portable to write.
+	statuses("prepare")
+	want := map[string]string{"example": "rendered raw", "setup": "rendered raw", "fixture": "no artwork", "branding": "no artwork", "plain": "no icon declared"}
+	if got := statuses("icon"); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("first run: %v", got)
+	}
+	assetIs("example", bundleArtwork)
+	assetIs("setup", setupArtwork)
+	if got := statuses("icon"); got["example"] != "exists" || got["setup"] != "exists" {
+		t.Fatalf("existing artwork was not left alone: %v", got)
+	}
+	custom := iconPNG(t, 512, 200)
+	if err := icon.Write(root, "example", custom); err != nil {
 		t.Fatal(err)
 	}
-	if got := statuses("icon"); got["fixture"] != "exists" || renders != 1 {
-		t.Fatalf("existing artwork was not left alone: %v after %d renders", got, renders)
+	if got := statuses("icon"); got["example"] != "exists" {
+		t.Fatalf("hand-made artwork was not left alone: %v", got)
 	}
+	assetIs("example", custom)
 	options.Icons.Force = true
-	if got := statuses("icon"); got["fixture"] != "replaced" || renders != 2 {
-		t.Fatalf("forced render: %v after %d renders", got, renders)
+	if got := statuses("icon"); got["example"] != "replaced raw" || got["setup"] != "replaced raw" {
+		t.Fatalf("forced run: %v", got)
 	}
-	replaced, err := icon.Read(root, "fixture")
-	if err != nil || bytes.Equal(replaced, rendered) {
-		t.Fatalf("forced render kept the previous bytes: %v", err)
-	}
+	assetIs("example", bundleArtwork)
 	if _, err := os.Stat(filepath.Join(root, "stemma.lock.yaml")); err != nil {
 		t.Fatal(err)
 	}
 
-	// Publication needs every declared asset, and hand-made artwork is as valid as rendered.
-	published := map[string]plugin.Artifact{}
-	applies := 0
-	options.Handlers = map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
-		if request.Method == "apply" {
-			applies++
-			published[request.Identity.Software] = request.Inputs["icon"]
-		}
-		return plugin.ReconcileResponse{}, nil
-	}}
+	// Publication needs every declared asset, and hand-made artwork is as valid as extracted.
+	if err := icon.Write(root, "fixture", custom); err != nil {
+		t.Fatal(err)
+	}
 	options.Method = "apply"
 	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "icons/shared-artwork.png") || !strings.Contains(err.Error(), "stemma icon") || applies != 0 {
 		t.Fatalf("missing asset did not stop publication: applies=%d error=%v", applies, err)
@@ -163,14 +238,13 @@ func TestIconsAreAuthoredOnceAndPublishedAsExactBytes(t *testing.T) {
 	if _, err := ValidateProject(t.Context(), options); err == nil || !strings.Contains(err.Error(), "icons/shared-artwork.png") {
 		t.Fatalf("validation accepted a missing asset: %v", err)
 	}
-	custom := iconPNG(t, 512, 200)
 	if err := icon.Write(root, "shared-artwork", custom); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Run(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}
-	for name, want := range map[string][]byte{"fixture": replaced, "branding": custom} {
+	for name, want := range map[string][]byte{"example": bundleArtwork, "setup": setupArtwork, "fixture": custom, "branding": custom} {
 		digest := sha256.Sum256(want)
 		artifact := published[name]
 		if artifact.SHA256 != hex.EncodeToString(digest[:]) || artifact.Format != "png" || artifact.Size != int64(len(want)) {

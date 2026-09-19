@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 
@@ -78,6 +79,16 @@ func openImage(ctx context.Context, source io.ReaderAt, size int64) (*Image, err
 	}
 	reader.remaining = maxBytes * 4
 	return &Image{filesystem: volume, closeVolume: closeVolume}, nil
+}
+
+// ReadLink returns a symlink's target, making an image an [fs.ReadLinkFS].
+func (image *Image) ReadLink(name string) (string, error) {
+	return image.Readlink(name)
+}
+
+// Lstat describes the named entry. Volumes never follow symlinks, so it is Stat.
+func (image *Image) Lstat(name string) (fs.FileInfo, error) {
+	return image.Stat(name)
 }
 
 // Select resolves an exact path or pattern, or discovers one unambiguous app/PKG.

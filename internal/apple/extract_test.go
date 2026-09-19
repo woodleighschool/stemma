@@ -2,11 +2,15 @@ package apple
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/deploymenttheory/go-macos-pkg/pkg/cpio"
+	"github.com/woodleighschool/stemma/internal/archive"
 )
 
 func directoryEntry(name string) payloadEntry {
@@ -43,7 +47,7 @@ func TestExtractApplicationWritesOnlyTheBundle(t *testing.T) {
 		t.Fatalf("application path %q", selected.Path)
 	}
 	destination := t.TempDir()
-	bundle, err := ExtractApplication(t.Context(), name, selected.Path, selected.InstalledPath, destination)
+	bundle, err := ExtractApplication(t.Context(), name, selected.Path, selected.InstalledPath, destination, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,8 +69,53 @@ func TestExtractApplicationWritesOnlyTheBundle(t *testing.T) {
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("destination holds %v, %v", entries, err)
 	}
-	if _, err := ExtractApplication(t.Context(), name, "Payload/Applications/Other.app", "", t.TempDir()); err == nil {
+	if _, err := ExtractApplication(t.Context(), name, "Payload/Applications/Other.app", "", t.TempDir(), nil); err == nil {
 		t.Fatal("extracted an application the payload does not hold")
+	}
+}
+
+func TestExtractApplicationKeepsNamedLeaves(t *testing.T) {
+	const app = "./Applications/Example.app"
+	name := applicationPackage(t, "/", []payloadEntry{
+		directoryEntry("."), directoryEntry("./Applications"), directoryEntry(app), directoryEntry(app + "/Contents"),
+		plistEntry(t, app+"/Contents/Info.plist", "Example"),
+		directoryEntry(app + "/Contents/Frameworks"), fileEntry(app+"/Contents/Frameworks/library.dylib", 0o755, "code"),
+		directoryEntry(app + "/Contents/MacOS"), fileEntry(app+"/Contents/MacOS/Example", 0o755, "#!/bin/sh\nexit 0\n"), fileEntry(app+"/Contents/MacOS/helper", 0o755, "helper"),
+		directoryEntry(app + "/Contents/Resources"), fileEntry(app+"/Contents/Resources/AppIcon.icns", 0o644, "icns"), fileEntry(app+"/Contents/Resources/Assets.car", 0o644, "catalog"),
+		fileEntry(app+"/Contents/Resources/document.pdf", 0o644, "manual"),
+		directoryEntry(app + "/Contents/Resources/en.lproj"), fileEntry(app+"/Contents/Resources/en.lproj/Nested.icns", 0o644, "nested"),
+	})
+	facts, err := InspectPackageContents(t.Context(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := facts.Applications[0]
+	bundle, err := ExtractApplication(t.Context(), name, selected.Path, selected.InstalledPath, t.TempDir(), IconResources("Example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var written []string
+	err = filepath.WalkDir(bundle, func(current string, entry fs.DirEntry, err error) error {
+		if err == nil && !entry.IsDir() {
+			relative, _ := filepath.Rel(bundle, current)
+			written = append(written, filepath.ToSlash(relative))
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"Contents/Info.plist", "Contents/MacOS/Example", "Contents/Resources/AppIcon.icns", "Contents/Resources/Assets.car"}
+	if !slices.Equal(written, want) {
+		t.Fatalf("wrote %v, want %v", written, want)
+	}
+	for _, directory := range []string{"Contents/Frameworks", "Contents/Resources/en.lproj"} {
+		if _, err := os.Stat(filepath.Join(bundle, directory)); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("directory %s leads to no kept file but exists: %v", directory, err)
+		}
+	}
+	if _, err := ExtractApplication(t.Context(), name, selected.Path, selected.InstalledPath, t.TempDir(), archive.Leaves{"Contents/*/Info.plist"}); err == nil {
+		t.Fatal("a leaf with a patterned directory was accepted")
 	}
 }
 
@@ -80,7 +129,7 @@ func TestExtractApplicationFromBundleRootPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	selected := facts.Applications[0]
-	bundle, err := ExtractApplication(t.Context(), name, selected.Path, selected.InstalledPath, t.TempDir())
+	bundle, err := ExtractApplication(t.Context(), name, selected.Path, selected.InstalledPath, t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

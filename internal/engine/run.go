@@ -8,7 +8,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"sort"
 	"time"
@@ -17,7 +16,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/fileio"
-	"github.com/woodleighschool/stemma/internal/icon"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/plugin"
@@ -91,12 +89,16 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	default:
 		return report, fmt.Errorf("unsupported run method %q", opts.Method)
 	}
-	if opts.Method == "icon" && opts.Icons.Renderer == nil && runtime.GOOS != "darwin" {
-		// Fail before acquiring anything rather than once per prepared resource.
-		return report, icon.ErrUnsupportedHost
+	if opts.Method == "icon" {
+		// A presentation the host cannot draw fails before anything is acquired.
+		presentation, err := opts.Icons.Presentation.Resolve()
+		if err != nil {
+			return report, err
+		}
+		opts.Icons.Presentation = presentation
 	}
 	// signature derives each resource's signer through the preparation path;
-	// icon renders declared assets from prepared applications the same way.
+	// icon presents the artwork of prepared software the same way.
 	preparing := opts.Method == "prepare" || opts.Method == "signature" || opts.Method == "icon"
 	if opts.Method == "plan" || opts.Method == "apply" || opts.Method == "icon" {
 		opts.Lock.Frozen = true

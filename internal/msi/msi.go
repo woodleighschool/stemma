@@ -32,28 +32,9 @@ type Info struct {
 // files with 512/4096-byte sectors and ASCII, Windows-1252, UTF-8 or UTF-16 strings.
 // Invalid structures and unsupported encodings return errors, never guessed facts.
 func Read(path string) (Info, error) {
-	file, err := os.Open(path)
+	db, err := load(path)
 	if err != nil {
 		return Info{}, err
-	}
-	defer func() { _ = file.Close() }()
-	stat, err := file.Stat()
-	if err != nil {
-		return Info{}, err
-	}
-	if !stat.Mode().IsRegular() || stat.Size() > maxFileSize {
-		return Info{}, errors.New("MSI must be a regular file no larger than 256 MiB")
-	}
-	data, err := io.ReadAll(io.LimitReader(file, maxFileSize+1))
-	if err != nil {
-		return Info{}, err
-	}
-	if len(data) > maxFileSize {
-		return Info{}, errors.New("MSI exceeds 256 MiB")
-	}
-	db, err := newDatabase(data)
-	if err != nil {
-		return Info{}, fmt.Errorf("MSI compound file: %w", err)
 	}
 	props, err := db.readProperties()
 	if err != nil {
@@ -66,4 +47,57 @@ func Read(path string) (Info, error) {
 		ProductCode: props["ProductCode"], ProductVersion: props["ProductVersion"], ProductName: props["ProductName"],
 		Manufacturer: props["Manufacturer"], UpgradeCode: props["UpgradeCode"], PackageCode: db.packageCode(), Properties: props,
 	}, nil
+}
+
+// ProductIcon returns the icon the installer registers for Programs and
+// Features, an ICO or executable stored under the Icon table, and false when
+// the installer declares none.
+func ProductIcon(path string) ([]byte, bool, error) {
+	db, err := load(path)
+	if err != nil {
+		return nil, false, err
+	}
+	props, err := db.readProperties()
+	if err != nil {
+		return nil, false, fmt.Errorf("MSI Property table: %w", err)
+	}
+	name := props["ARPPRODUCTICON"]
+	if name == "" {
+		return nil, false, nil
+	}
+	data, ok, err := db.decoded("Icon." + name)
+	if err != nil {
+		return nil, false, err
+	}
+	if !ok {
+		return nil, false, fmt.Errorf("MSI Icon table has no %q stream", name)
+	}
+	return data, true, nil
+}
+
+func load(path string) (*database, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	stat, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !stat.Mode().IsRegular() || stat.Size() > maxFileSize {
+		return nil, errors.New("MSI must be a regular file no larger than 256 MiB")
+	}
+	data, err := io.ReadAll(io.LimitReader(file, maxFileSize+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxFileSize {
+		return nil, errors.New("MSI exceeds 256 MiB")
+	}
+	db, err := newDatabase(data)
+	if err != nil {
+		return nil, fmt.Errorf("MSI compound file: %w", err)
+	}
+	return db, nil
 }

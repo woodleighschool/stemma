@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/woodleighschool/stemma/internal/apple"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/inspect"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -41,13 +43,24 @@ func (p *payload) inspect(ctx context.Context) (plugin.Facts, error) {
 	return inspect.ReadFS(ctx, p.image, p.name)
 }
 
+// verifyApp verifies the selected application where it lies: inside the open
+// disk image, or on disk.
+func (p *payload) verifyApp(ctx context.Context, want signature.Signer) (signature.Result, error) {
+	if p.image != nil {
+		return apple.VerifyAppFS(ctx, p.image, p.name, want)
+	}
+	return apple.VerifyApp(ctx, p.local, want)
+}
+
+// materialize copies a flat package out of a disk image, because the package
+// published is a local file. A payload already on disk stays where it is.
 func (p *payload) materialize(ctx context.Context, workspace string) (string, error) {
 	if p.local != "" {
 		return p.local, nil
 	}
-	done := plugin.Stage(ctx, "Extracting disk image")
+	done := plugin.Stage(ctx, "Extracting package from disk image")
 	var err error
-	p.local, err = p.image.Extract(ctx, filepath.Join(workspace, "expanded"), p.name)
+	p.local, err = p.image.Extract(ctx, filepath.Join(workspace, "expanded"), p.name, nil)
 	done(err)
 	return p.local, err
 }

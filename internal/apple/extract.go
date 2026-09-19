@@ -12,14 +12,20 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/woodleighschool/stemma/internal/archive"
 )
 
 // ExtractApplication writes one application bundle from a flat package payload
 // into destination and returns the bundle's path. appPath is the payload path
 // inspection reported for the application; installedPath names the bundle when
-// the payload root is the bundle itself. Entries outside the bundle are skipped
-// and scripts are never run.
-func ExtractApplication(ctx context.Context, filePath, appPath, installedPath, destination string) (string, error) {
+// the payload root is the bundle itself. keep names the bundle's files to
+// write, and nil writes them all. The payload is read once whatever is kept;
+// everything else in it is skipped, and scripts are never run.
+func ExtractApplication(ctx context.Context, filePath, appPath, installedPath, destination string, keep archive.Leaves) (string, error) {
+	if err := keep.Validate(); err != nil {
+		return "", err
+	}
 	f, err := os.Open(filePath)
 	if err != nil {
 		return "", err
@@ -70,7 +76,7 @@ func ExtractApplication(ctx context.Context, filePath, appPath, installedPath, d
 	defer func() { _ = entry.Close() }()
 	budget := newPayloadBudget()
 	err = streamPayload(ctx, io.NopCloser(entry), budget, func(content io.Reader) error {
-		return extractBundle(content, budget, inner, bundle)
+		return extractBundle(content, budget, inner, bundle, keep)
 	})
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", payload, err)
@@ -95,16 +101,16 @@ func payloadOf(archive *xarArchive, appPath string) (payload, inner string, err 
 	return "", "", fmt.Errorf("package has no payload holding application %q", appPath)
 }
 
-// extractBundle writes the entries under prefix into bundle. An empty prefix
-// means the payload root is the bundle.
-func extractBundle(r io.Reader, budget *payloadBudget, prefix string, bundle *os.Root) error {
+// extractBundle writes the kept entries under prefix into bundle, with the
+// directories leading to them. An empty prefix means the payload root is the bundle.
+func extractBundle(r io.Reader, budget *payloadBudget, prefix string, bundle *os.Root, keep archive.Leaves) error {
 	type directory struct {
 		name string
 		perm fs.FileMode
 	}
 	var directories []directory
 	entries := newCPIOReader(r, budget)
-	written := 0
+	found := false
 	for {
 		entry, err := entries.next()
 		if errors.Is(err, io.EOF) {
@@ -114,14 +120,22 @@ func extractBundle(r io.Reader, budget *payloadBudget, prefix string, bundle *os
 			return err
 		}
 		relative, inside := bundlePath(entry.name, prefix)
+		kind := entry.kind()
+		if inside {
+			found = true
+			if kind == cpioDirectory {
+				inside = keep.Leads(relative)
+			} else {
+				inside = keep.Keeps(relative)
+			}
+		}
 		if !inside {
 			if err := entries.skip(entry); err != nil {
 				return err
 			}
 			continue
 		}
-		written++
-		switch entry.kind() {
+		switch kind {
 		case cpioDirectory:
 			if err := bundle.MkdirAll(relative, 0o700); err != nil {
 				return err
@@ -144,7 +158,7 @@ func extractBundle(r io.Reader, budget *payloadBudget, prefix string, bundle *os
 			return fmt.Errorf("%w: CPIO entry %q has an unsupported type", ErrUnsupported, entry.name)
 		}
 	}
-	if written == 0 {
+	if !found {
 		return fmt.Errorf("payload holds no application %q", prefix)
 	}
 	// Directories stayed writable while their children arrived; restore the

@@ -158,29 +158,37 @@ ordinary drift that the next run replaces. Without `icon`, published artwork is
 unmanaged and stays as it is. A declared icon without its file fails `validate`,
 `plan` and `apply`.
 
-Render the asset on a Mac:
+Author the asset from the software itself:
 
 ```sh
 stemma icon MacSoftware/microsoft-word
 stemma icon
 ```
 
-`stemma icon` prepares the locked source like any other run, takes the application
-that [selection](#select-an-application-once) identifies and draws it with the macOS
-system renderer at 512 pixels, so the artwork carries the current system
-presentation. Disk images, archives and vendor packages all work; a package holding
-several applications needs `application.bundle_id` or `application.path` first.
-Without selectors it fills in every declared icon that has no file yet and leaves
-existing files alone, so a run across the catalog is safe. `--force` renders them
-again.
+`stemma icon` prepares the locked source like any other run and takes the
+application that [selection](#select-an-application-once) identifies. Disk images,
+archives and vendor packages all work; a package holding several applications needs
+`application.bundle_id` or `application.path` first. Without selectors it fills in
+every declared icon that has no file yet and leaves existing files alone, so a run
+across the catalog is safe. `--force` replaces them.
 
-The renderer draws what that Mac would show in Finder. Render on a Mac that can
-launch the application, because macOS overlays its prohibited badge on software the
-host cannot run, and review the image like any other change. A large bundle takes
-as long to extract from its installer as it would to install.
+Two presentations write the file. `glassy`, the default on a Mac, draws the bundle
+with the macOS icon renderer at 512 pixels, so the artwork carries the current system
+presentation exactly as Finder shows it; `--size` changes the edge. `raw`, the
+default elsewhere, writes the largest PNG entry of the bundle's icon file unchanged,
+so any host can author an icon; a bundle that keeps its icon in an asset catalog has
+no raw artwork and reports `no artwork` until a Mac renders it. `--presentation`
+selects either explicitly.
+
+The glassy renderer draws what that Mac would show. Render on a Mac that can launch
+the application, because macOS overlays its prohibited badge on software the host
+cannot run, and review the image like any other change. Only the files the renderer
+reads leave the installer: the bundle's `Info.plist`, main executable, icon files and
+asset catalog. A package's payload is still read through once to reach them, which
+takes as long as decompressing it.
 
 `icons/` holds plain PNG files. Software without an application, such as a
 script-only item or a driver package, uses artwork you commit yourself: any square
 PNG between 128 and 1024 pixels, up to 1 MiB. Resources share an asset by naming
-it, which lets a `WindowsSoftware` document publish the icon rendered from its macOS
-counterpart.
+it, so a `WindowsSoftware` document can publish the icon authored from its macOS
+counterpart, or author its own.

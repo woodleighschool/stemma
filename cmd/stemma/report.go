@@ -122,7 +122,7 @@ func printSummary(out io.Writer, method string, report engine.Report) error {
 		default:
 			prepared++
 		}
-		switch resource.Icon {
+		switch outcome, _, _ := strings.Cut(resource.Icon, " "); outcome {
 		case "rendered", "replaced":
 			rendered++
 		case "":
@@ -167,7 +167,7 @@ func (s textStyle) outcome(text string) string {
 		attribute = color.FgHiRed
 	case "interrupted", "not completed", "skipped", "declined":
 		attribute = color.FgHiYellow
-	case "unchanged", "already applied", "exists", "no application", "no icon declared":
+	case "unchanged", "already applied", "exists", "no artwork", "no icon declared":
 		attribute = color.Faint
 	}
 	return s.paint(text, attribute)

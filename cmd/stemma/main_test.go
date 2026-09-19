@@ -51,10 +51,11 @@ func TestReportRetainsIndependentDestinationResults(t *testing.T) {
 
 func TestIconReportNamesEachOutcome(t *testing.T) {
 	report := engine.Report{Resources: []engine.ResourceReport{
-		{Name: "word", Kind: "MacSoftware", Icon: "rendered"},
-		{Name: "chrome", Kind: "MacSoftware", Icon: "exists"},
-		{Name: "rosetta", Kind: "MacSoftware", Icon: "no application"},
-		{Name: "zoom", Kind: "MacSoftware", Error: "native icon rendering requires macOS"},
+		{Name: "word", Kind: "MacSoftware", Icon: "rendered glassy"},
+		{Name: "chrome", Kind: "WindowsSoftware", Icon: "replaced raw"},
+		{Name: "teams", Kind: "MacSoftware", Icon: "exists"},
+		{Name: "rosetta", Kind: "MacSoftware", Icon: "no artwork"},
+		{Name: "zoom", Kind: "MacSoftware", Error: "quick look icon rendering: timed out"},
 	}}
 	var out bytes.Buffer
 	for _, resource := range report.Resources {
@@ -66,16 +67,35 @@ func TestIconReportNamesEachOutcome(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"MacSoftware/word: rendered",
-		"MacSoftware/chrome: exists",
-		"MacSoftware/rosetta: no application",
+		"MacSoftware/word: rendered glassy",
+		"WindowsSoftware/chrome: replaced raw",
+		"MacSoftware/teams: exists",
+		"MacSoftware/rosetta: no artwork",
 		"MacSoftware/zoom: failed",
-		"native icon rendering requires macOS",
-		"Icons: 1 rendered, 2 left alone, 1 failed.",
+		"quick look icon rendering: timed out",
+		"Icons: 2 rendered, 2 left alone, 1 failed.",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("report missing %q: %s", want, out.String())
 		}
+	}
+}
+
+func TestIconRunsShowWhatEachAssetWasAuthoredFrom(t *testing.T) {
+	var out bytes.Buffer
+	output := &commandOutput{}
+	for _, resource := range []engine.ResourceReport{
+		{Name: "word", Kind: "MacSoftware", Icon: "rendered glassy"},
+		{Name: "chrome", Kind: "WindowsSoftware", Icon: "no artwork"},
+		{Name: "teams", Kind: "MacSoftware", Icon: "exists"},
+		{Name: "fonts", Kind: "MacSoftware", Icon: "no icon declared"},
+	} {
+		if err := output.resourceDone(&out, "text", "icon", resource); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := out.String(); !strings.Contains(got, "MacSoftware/word: rendered glassy") || !strings.Contains(got, "WindowsSoftware/chrome: no artwork") || strings.Contains(got, "teams") || strings.Contains(got, "fonts") {
+		t.Fatalf("icon run output: %s", got)
 	}
 }
 

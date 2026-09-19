@@ -2,7 +2,8 @@
 
 Stemma's runner and the software's target platform are separate. The CLI builds
 for macOS, Linux and Windows on amd64 and arm64. Built-in inspection and packaging
-use portable Go implementations. Only `stemma icon`, an authoring command, needs macOS.
+use portable Go implementations. Only the glassy icon presentation, an authoring
+option of `stemma icon`, needs macOS.
 
 Plugins can impose additional runner or tool requirements. Stemma checks declared
 requirements before expensive processing or destination mutation and reports the
@@ -19,7 +20,7 @@ arbitrary plugin code.
 | MSI inspection        | Reads MSI database metadata without Windows or executing the installer                                                |
 | EXE preparation       | Preserves the vendor installer; commands, version-specific detection and other installation semantics remain authored |
 | Intune Win32 wrapping | Portable `.intunewin` preparation with a 2 GiB implementation bound                                                   |
-| Icon rendering        | `stemma icon` draws application icons with the macOS system renderer; publishing committed icons is portable          |
+| Icon authoring        | `stemma icon` extracts icon artwork on any host; the glassy presentation needs the macOS renderer                     |
 
 PKG inspection bounds entry counts and retained path metadata, rather than imposing
 a small total payload size. Exceptionally large inventories can still hit those
@@ -27,10 +28,10 @@ bounds. Unsupported DMG layouts and codecs fail; not every image accepted by
 macOS is supported by the portable reader.
 
 DMG inspection reads the filesystem through compressed chunks, without creating a
-raw filesystem image. Selected applications are extracted when verification or
-icon rendering needs a local bundle. Published vendor installers retain
-their original bytes. Leave enough working disk space for extracted content and
-destination preparation.
+raw filesystem image. A selected application is verified inside the image, and
+icon rendering copies out only the files the renderer reads. Published vendor
+installers retain their original bytes. Leave enough working disk space for
+extracted content and destination preparation.
 
 The pipeline consumes catalog-selected vendor artifacts. Inspection does not run
 installer contents, and extraction remains confined to its destination. File,
@@ -52,8 +53,7 @@ bundles, and Authenticode signatures over MSI and EXE files. Apple verification
 covers the shapes `codesign` writes today: `files2` envelopes, versioned and
 shallow frameworks, nested bundles and executables. Legacy envelopes, detached
 signature files and nested code replaced under Apple's requirement language are
-rejected rather than emulated. On macOS the system verifier establishes bundle
-validity, so it can accept what the portable verifier reports as unsupported.
+rejected rather than emulated, identically on every host.
 Windows verification anchors at the issuing authority recorded in the signer
 value and never consults the operating system's root store. Neither asserts
 notarisation, Gatekeeper, SmartScreen or WDAC policy, nor certificate revocation.
@@ -82,5 +82,6 @@ Retention is provider-owned and reference-aware. It is not a hard storage ceilin
 an app retirement policy or an automatic rollback mechanism. See
 [publishing](publishing.md#identity-and-retention).
 
-Icon rendering is an authoring step on macOS. Reconciliation publishes committed PNG
+Icon authoring extracts the artwork software carries on any host and styles it with
+the macOS renderer only where one exists. Reconciliation publishes committed PNG
 files and never renders, so every runner produces the same result.

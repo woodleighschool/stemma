@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path"
 	"strings"
 	"time"
@@ -20,22 +19,15 @@ const maxBundleDepth = 8
 const maxBundleEntries = 200000
 const maxCodeResources = 64 << 20
 
-// nativeBundleValidity reports whether the platform's own verifier finds a
-// bundle's complete signature valid; false leaves the decision to Stemma.
-var nativeBundleValidity = codesignValidity
-
 // bundleVerifier checks a bundle against its files2 resource envelope: every
 // sealed file matches its recorded SHA-256, every sealed symlink its target,
 // every nested code item its exact cdhash, and nothing else is present.
-// Main executables are always authenticated by Stemma; envelopes are skipped
-// only once the platform verifier has established whole-bundle validity.
 type bundleVerifier struct {
-	ctx           context.Context
-	buffer        []byte
-	entries       int
-	depth         int
-	progress      time.Time
-	skipEnvelopes bool
+	ctx      context.Context
+	buffer   []byte
+	entries  int
+	depth    int
+	progress time.Time
 }
 
 type resourceSeal struct {
@@ -49,20 +41,19 @@ type resourceSeal struct {
 
 // verifyContents verifies a Contents-style bundle and returns its main code
 // identity. Without CFBundleExecutable the executable is named after the bundle.
-func (v *bundleVerifier) verifyContents(root *os.Root, bundleName string) (codeIdentity, error) {
-	entries, err := fs.ReadDir(root.FS(), ".")
+func (v *bundleVerifier) verifyContents(bundle fs.ReadLinkFS, bundleName string) (codeIdentity, error) {
+	entries, err := fs.ReadDir(bundle, ".")
 	if err != nil {
 		return codeIdentity{}, err
 	}
 	if len(entries) != 1 || entries[0].Name() != "Contents" || !entries[0].IsDir() {
 		return codeIdentity{}, errors.New("bundle root must contain only Contents")
 	}
-	contents, err := root.OpenRoot("Contents")
+	contents, err := subtree(bundle, "Contents")
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	defer func() { _ = contents.Close() }()
-	info, err := rootRead(contents, "Info.plist", maxMetadata)
+	info, err := readRegular(contents, "Info.plist", maxMetadata)
 	if err != nil {
 		return codeIdentity{}, err
 	}
@@ -90,8 +81,8 @@ func bundleExecutable(info []byte, bundleName string) (string, error) {
 
 // verifyFramework verifies a versioned framework. Only the current version is
 // code; the root may hold Versions and the conventional symlinks into it.
-func (v *bundleVerifier) verifyFramework(root *os.Root, bundleName string) (codeIdentity, error) {
-	entries, err := fs.ReadDir(root.FS(), ".")
+func (v *bundleVerifier) verifyFramework(bundle fs.ReadLinkFS, bundleName string) (codeIdentity, error) {
+	entries, err := fs.ReadDir(bundle, ".")
 	if err != nil {
 		return codeIdentity{}, err
 	}
@@ -99,7 +90,7 @@ func (v *bundleVerifier) verifyFramework(root *os.Root, bundleName string) (code
 		switch {
 		case entry.Name() == "Versions" && entry.IsDir():
 		case entry.Type()&fs.ModeSymlink != 0:
-			target, err := root.Readlink(entry.Name())
+			target, err := bundle.ReadLink(entry.Name())
 			if err != nil {
 				return codeIdentity{}, err
 			}
@@ -110,11 +101,11 @@ func (v *bundleVerifier) verifyFramework(root *os.Root, bundleName string) (code
 			return codeIdentity{}, fmt.Errorf("%w: framework root entry %q", ErrUnsupported, entry.Name())
 		}
 	}
-	versions, err := fs.ReadDir(root.FS(), "Versions")
+	versions, err := fs.ReadDir(bundle, "Versions")
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	current, err := root.Readlink("Versions/Current")
+	current, err := bundle.ReadLink("Versions/Current")
 	if err != nil {
 		return codeIdentity{}, fmt.Errorf("%w: framework without a current version: %w", ErrUnsupported, err)
 	}
@@ -123,16 +114,15 @@ func (v *bundleVerifier) verifyFramework(root *os.Root, bundleName string) (code
 			return codeIdentity{}, fmt.Errorf("%w: framework version entry %q is not the current version", ErrUnsupported, entry.Name())
 		}
 	}
-	version, err := root.OpenRoot("Versions/" + current)
+	version, err := subtree(bundle, "Versions/"+current)
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	defer func() { _ = version.Close() }()
 	infoPath := "Resources/Info.plist"
-	info, err := rootRead(version, infoPath, maxMetadata)
+	info, err := readRegular(version, infoPath, maxMetadata)
 	if errors.Is(err, fs.ErrNotExist) {
 		infoPath = "Info.plist"
-		info, err = rootRead(version, infoPath, maxMetadata)
+		info, err = readRegular(version, infoPath, maxMetadata)
 	}
 	if err != nil {
 		return codeIdentity{}, err
@@ -146,12 +136,12 @@ func (v *bundleVerifier) verifyFramework(root *os.Root, bundleName string) (code
 
 // verifyShallow verifies a bundle whose signature, executable and resources
 // share its root, such as an unversioned framework.
-func (v *bundleVerifier) verifyShallow(root *os.Root, bundleName string) (codeIdentity, error) {
+func (v *bundleVerifier) verifyShallow(bundle fs.ReadLinkFS, bundleName string) (codeIdentity, error) {
 	infoPath := "Resources/Info.plist"
-	info, err := rootRead(root, infoPath, maxMetadata)
+	info, err := readRegular(bundle, infoPath, maxMetadata)
 	if errors.Is(err, fs.ErrNotExist) {
 		infoPath = "Info.plist"
-		info, err = rootRead(root, infoPath, maxMetadata)
+		info, err = readRegular(bundle, infoPath, maxMetadata)
 	}
 	if err != nil {
 		return codeIdentity{}, err
@@ -160,13 +150,16 @@ func (v *bundleVerifier) verifyShallow(root *os.Root, bundleName string) (codeId
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	return v.verifyCode(root, executable, infoPath, info)
+	return v.verifyCode(bundle, executable, infoPath, info)
 }
 
 // verifyCode authenticates the main executable within a resource root, whose
 // CodeDirectory seals Info.plist and CodeResources, then the envelope itself.
-func (v *bundleVerifier) verifyCode(root *os.Root, executable, infoPath string, info []byte) (codeIdentity, error) {
-	signatureEntries, err := fs.ReadDir(root.FS(), "_CodeSignature")
+func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, executable, infoPath string, info []byte) (codeIdentity, error) {
+	if err := realDirectory(root, "_CodeSignature"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return codeIdentity{}, err
+	}
+	signatureEntries, err := fs.ReadDir(root, "_CodeSignature")
 	if err != nil {
 		return codeIdentity{}, fmt.Errorf("bundle is not signed: %w", err)
 	}
@@ -175,21 +168,18 @@ func (v *bundleVerifier) verifyCode(root *os.Root, executable, infoPath string, 
 			return codeIdentity{}, fmt.Errorf("%w: legacy signature file %q", ErrUnsupported, entry.Name())
 		}
 	}
-	resources, err := rootRead(root, "_CodeSignature/CodeResources", maxCodeResources)
+	resources, err := readRegular(root, "_CodeSignature/CodeResources", maxCodeResources)
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	f, err := openAppFile(root, executable)
+	f, size, err := openRegular(root, executable)
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	identity, err := verifyMachO(v.ctx, f, map[uint32][]byte{1: info, 3: resources})
+	identity, err := verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info, 3: resources})
 	_ = f.Close()
 	if err != nil {
 		return codeIdentity{}, fmt.Errorf("%s: %w", executable, err)
-	}
-	if v.skipEnvelopes {
-		return identity, nil
 	}
 	if err := v.verifyResources(root, resources, executable, infoPath); err != nil {
 		return codeIdentity{}, err
@@ -197,7 +187,7 @@ func (v *bundleVerifier) verifyCode(root *os.Root, executable, infoPath string, 
 	return identity, nil
 }
 
-func (v *bundleVerifier) verifyResources(root *os.Root, data []byte, executable, infoPath string) error {
+func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, data []byte, executable, infoPath string) error {
 	var manifest struct {
 		Files map[string]any `plist:"files2"`
 	}
@@ -221,7 +211,7 @@ func (v *bundleVerifier) verifyResources(root *os.Root, data []byte, executable,
 		}
 		seals[name] = seal
 	}
-	err := fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
+	err := fs.WalkDir(root, ".", func(name string, entry fs.DirEntry, err error) error {
 		if canceled := v.ctx.Err(); canceled != nil {
 			return canceled
 		}
@@ -238,7 +228,7 @@ func (v *bundleVerifier) verifyResources(root *os.Root, data []byte, executable,
 		seal := seals[name]
 		switch {
 		case entry.Type()&fs.ModeSymlink != 0:
-			target, err := root.Readlink(name)
+			target, err := root.ReadLink(name)
 			if err != nil {
 				return err
 			}
@@ -354,8 +344,8 @@ func unsealedByDefault(name string) bool {
 	return name == "PkgInfo" || name == "CodeResources" || path.Base(name) == ".DS_Store" || strings.HasSuffix(name, ".lproj/locversion.plist")
 }
 
-func (v *bundleVerifier) verifySealedFile(root *os.Root, name string, expected []byte) error {
-	f, err := root.Open(name)
+func (v *bundleVerifier) verifySealedFile(root fs.ReadLinkFS, name string, expected []byte) error {
+	f, _, err := openRegular(root, name)
 	if err != nil {
 		return err
 	}
@@ -372,7 +362,7 @@ func (v *bundleVerifier) verifySealedFile(root *os.Root, name string, expected [
 
 // verifyNested authenticates nested code and binds it by its sealed cdhash,
 // so only the exact recorded code satisfies the envelope.
-func (v *bundleVerifier) verifyNested(root *os.Root, name string, cdhash []byte) error {
+func (v *bundleVerifier) verifyNested(root fs.ReadLinkFS, name string, cdhash []byte) error {
 	if v.depth >= maxBundleDepth {
 		return fmt.Errorf("%w: nested code deeper than %d bundles", ErrUnsupported, maxBundleDepth)
 	}
@@ -390,20 +380,19 @@ func (v *bundleVerifier) verifyNested(root *os.Root, name string, cdhash []byte)
 	return nil
 }
 
-func (v *bundleVerifier) verifyNestedCode(root *os.Root, name string, bundle bool) (codeIdentity, error) {
+func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, name string, bundle bool) (codeIdentity, error) {
 	if !bundle {
-		f, err := openAppFile(root, name)
+		f, size, err := openRegular(root, name)
 		if err != nil {
 			return codeIdentity{}, err
 		}
 		defer func() { _ = f.Close() }()
-		return verifyMachO(v.ctx, f, nil)
+		return verifyMachO(v.ctx, f, size, nil)
 	}
-	nested, err := root.OpenRoot(name)
+	nested, err := subtree(root, name)
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	defer func() { _ = nested.Close() }()
 	v.depth++
 	defer func() { v.depth-- }()
 	switch {
@@ -418,8 +407,8 @@ func (v *bundleVerifier) verifyNestedCode(root *os.Root, name string, bundle boo
 	}
 }
 
-func isDirectory(root *os.Root, name string) bool {
-	info, err := root.Lstat(name)
+func isDirectory(fsys fs.ReadLinkFS, name string) bool {
+	info, err := fsys.Lstat(name)
 	return err == nil && info.IsDir()
 }
 

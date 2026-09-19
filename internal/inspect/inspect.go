@@ -165,11 +165,11 @@ func readDMG(ctx context.Context, name string) ([]plugin.Subject, error) {
 
 // ReadFS inspects an application or flat package within a filesystem. It reads
 // application metadata directly and does not materialize the selected payload.
-func ReadFS(ctx context.Context, fsys fs.FS, name string) (plugin.Facts, error) {
+func ReadFS(ctx context.Context, fsys fs.ReadLinkFS, name string) (plugin.Facts, error) {
 	if err := ctx.Err(); err != nil {
 		return plugin.Facts{}, err
 	}
-	info, err := fs.Lstat(fsys, name)
+	info, err := fsys.Lstat(name)
 	if err != nil {
 		return plugin.Facts{}, err
 	}

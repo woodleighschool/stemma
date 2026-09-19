@@ -218,8 +218,13 @@ not setup-directory inputs.
 
 `spec.icon` names a catalog asset exactly as it does for
 [macOS software](mac-software.md#icons): `icon: microsoft-word` publishes
-`icons/microsoft-word.png`. Windows installers are not rendered, so share the asset
-rendered from the macOS document or commit a square PNG.
+`icons/microsoft-word.png`. `stemma icon` authors it from the installer on any host:
+an MSI supplies the icon it registers for Programs and Features (`ARPPRODUCTICON`)
+and an EXE its first icon group, the icon Explorer shows. On a Mac the default
+`glassy` presentation draws that artwork with the same renderer as macOS
+applications, so both platforms' icons look alike; elsewhere `raw` writes the
+largest frame unchanged. An installer without a registered icon reports
+`no artwork`; commit a square PNG or share the macOS document's asset instead.
 
 ## Signature
 

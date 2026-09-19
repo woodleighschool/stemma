@@ -96,15 +96,8 @@ func InspectMachO(filePath string) (MachOFacts, error) {
 // CodeDirectory seals its code pages and special slots, its CMS signature
 // chains to Apple at the signature's trusted time, and all architectures
 // share one signer and identifier.
-func verifyMachO(ctx context.Context, f *os.File, external map[uint32][]byte) (codeIdentity, error) {
-	info, err := f.Stat()
-	if err != nil {
-		return codeIdentity{}, err
-	}
-	if !info.Mode().IsRegular() {
-		return codeIdentity{}, fmt.Errorf("Mach-O must be a regular file")
-	}
-	slices, err := machoSlices(contextReaderAt{ctx, f}, info.Size())
+func verifyMachO(ctx context.Context, r io.ReaderAt, size int64, external map[uint32][]byte) (codeIdentity, error) {
+	slices, err := machoSlices(contextReaderAt{ctx, r}, size)
 	if err != nil {
 		return codeIdentity{}, err
 	}

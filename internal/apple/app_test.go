@@ -1,17 +1,20 @@
 package apple
 
 import (
-	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/signature"
+	"github.com/woodleighschool/stemma/internal/testdiskimage"
 	"howett.net/plist"
 )
 
@@ -160,69 +163,45 @@ func bundleMutations() []bundleMutation {
 	}
 }
 
+// TestNestedFixtureMutations judges every case on disk.
 func TestNestedFixtureMutations(t *testing.T) {
-	native := nativeBundleValidity
-	portableOnly(t)
-	for _, mode := range []string{"portable", "native"} {
-		if mode == "native" && native == nil {
-			continue
-		}
-		t.Run(mode, func(t *testing.T) {
-			nativeBundleValidity = nil
-			if mode == "native" {
-				nativeBundleValidity = native
-			}
-			for _, mutation := range bundleMutations() {
-				if mode == "native" && !mutation.parity {
-					continue
-				}
-				t.Run(mutation.name, func(t *testing.T) {
-					app := copyFixture(t, "NestedFixture.app")
-					mutation.apply(t, app)
-					result, err := VerifyApp(t.Context(), app, signature.Signer{})
-					if (err == nil) != mutation.accept {
-						t.Fatalf("accept = %v, want %v: %+v: %v", err == nil, mutation.accept, result, err)
-					}
-					if mode == "portable" && errors.Is(err, ErrUnsupported) != mutation.unsupported {
-						t.Fatalf("unsupported = %v, want %v: %v", errors.Is(err, ErrUnsupported), mutation.unsupported, err)
-					}
-					if mutation.accept && (result.Signer != fixtureSigner || result.Name != "Woodleigh School" || result.Authority != "Developer ID Application" || result.Target != "NestedFixture.app") {
-						t.Fatalf("wrong result: %+v", result)
-					}
-				})
-			}
+	for _, mutation := range bundleMutations() {
+		t.Run(mutation.name, func(t *testing.T) {
+			app := copyFixture(t, "NestedFixture.app")
+			mutation.apply(t, app)
+			result, err := VerifyApp(t.Context(), app, signature.Signer{})
+			checkMutation(t, mutation, result, err)
 		})
 	}
 }
 
-func TestNativeValidityStillAuthenticatesSigner(t *testing.T) {
-	portableOnly(t)
-	calls := 0
-	nativeBundleValidity = func(context.Context, string) bool {
-		calls++
-		return true
+// TestNestedFixtureMutationsInImage judges the same cases where they lie in a
+// disk image. One image holds them all.
+func TestNestedFixtureMutationsInImage(t *testing.T) {
+	mutations := bundleMutations()
+	stage := t.TempDir()
+	for i, mutation := range mutations {
+		mutation.apply(t, copyFixtureTo(t, filepath.Join(stage, strconv.Itoa(i)), "NestedFixture.app"))
 	}
-	app := copyFixture(t, "NestedFixture.app")
-	writeTestFile(t, filepath.Join(app, "Contents/Resources/message.txt"), []byte("trusted natively"), 0o644)
-	if result, err := VerifyApp(t.Context(), app, signature.Signer{}); err != nil || result.Signer != fixtureSigner {
-		t.Fatalf("native validity did not skip the envelope: %+v: %v", result, err)
+	image := openImage(t, stage)
+	for i, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			result, err := VerifyAppFS(t.Context(), image, path.Join(strconv.Itoa(i), "NestedFixture.app"), signature.Signer{})
+			checkMutation(t, mutation, result, err)
+		})
 	}
-	corruptExecutable(t, filepath.Join(app, "Contents/MacOS/fixture"), 0)
-	if _, err := VerifyApp(t.Context(), app, signature.Signer{}); err == nil {
-		t.Fatal("native validity replaced main executable authentication")
+}
+
+func checkMutation(t *testing.T, mutation bundleMutation, result signature.Result, err error) {
+	t.Helper()
+	if (err == nil) != mutation.accept {
+		t.Fatalf("accept = %v, want %v: %+v: %v", err == nil, mutation.accept, result, err)
 	}
-	if _, err := VerifyApp(t.Context(), "testdata/Fixture.app", signature.Signer{}); err == nil {
-		t.Fatal("native validity established an ad-hoc signer")
+	if errors.Is(err, ErrUnsupported) != mutation.unsupported {
+		t.Fatalf("unsupported = %v, want %v: %v", errors.Is(err, ErrUnsupported), mutation.unsupported, err)
 	}
-	// A bundle the platform rejects is judged by the portable verifier.
-	nativeBundleValidity = func(context.Context, string) bool { return false }
-	app = copyFixture(t, "NestedFixture.app")
-	writeTestFile(t, filepath.Join(app, "Contents/Resources/message.txt"), []byte("judged portably"), 0o644)
-	if _, err := VerifyApp(t.Context(), app, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "does not match its seal") {
-		t.Fatalf("native rejection did not fall back to the portable verifier: %v", err)
-	}
-	if calls != 3 {
-		t.Fatalf("native verifier consulted %d times", calls)
+	if mutation.accept && (result.Signer != fixtureSigner || result.Name != "Woodleigh School" || result.Authority != "Developer ID Application" || result.Target != "NestedFixture.app") {
+		t.Fatalf("wrong result: %+v", result)
 	}
 }
 
@@ -270,6 +249,7 @@ func TestResourceEnvelopeRequiresFiles2(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = root.Close() }()
+	contents := rootFS(root)
 	v := &bundleVerifier{ctx: t.Context(), buffer: make([]byte, 4096)}
 	for name, seals := range map[string]any{
 		"legacy": map[string]any{"files": map[string]any{"Resources/message.txt": make([]byte, 20)}},
@@ -280,37 +260,112 @@ func TestResourceEnvelopeRequiresFiles2(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := v.verifyResources(root, data, "MacOS/fixture", "Info.plist"); !errors.Is(err, ErrUnsupported) {
+		if err := v.verifyResources(contents, data, "MacOS/fixture", "Info.plist"); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("%s envelope was not rejected as unsupported: %v", name, err)
 		}
 	}
 }
 
 func TestAppVerificationRejectsSymlinkedCriticalPaths(t *testing.T) {
-	portableOnly(t)
-	for _, name := range []string{"Contents", "Contents/Info.plist", "Contents/MacOS", "Contents/MacOS/fixture", "Contents/_CodeSignature", "Contents/_CodeSignature/CodeResources"} {
+	names := []string{"Contents", "Contents/Info.plist", "Contents/MacOS", "Contents/MacOS/fixture", "Contents/_CodeSignature", "Contents/_CodeSignature/CodeResources"}
+	stage := t.TempDir()
+	apps := make([]string, len(names))
+	for i, name := range names {
+		apps[i] = copyFixtureTo(t, filepath.Join(stage, strconv.Itoa(i)), "SignedFixture.app")
+		original := filepath.Join(apps[i], filepath.FromSlash(name))
+		moved := original + ".real"
+		if err := os.Rename(original, moved); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Base(moved), original); err != nil {
+			t.Fatal(err)
+		}
+	}
+	image := openImage(t, stage)
+	for i, name := range names {
 		t.Run(name, func(t *testing.T) {
-			app := copyFixture(t, "SignedFixture.app")
-			original := filepath.Join(app, filepath.FromSlash(name))
-			moved := original + ".real"
-			if err := os.Rename(original, moved); err != nil {
-				t.Fatal(err)
+			if _, err := VerifyApp(t.Context(), apps[i], signature.Signer{}); err == nil {
+				t.Fatal("critical verification input traversed a symlink on disk")
 			}
-			if err := os.Symlink(filepath.Base(moved), original); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := VerifyApp(t.Context(), app, signature.Signer{}); err == nil {
-				t.Fatal("critical verification input traversed a symlink")
+			if _, err := VerifyAppFS(t.Context(), image, path.Join(strconv.Itoa(i), "SignedFixture.app"), signature.Signer{}); err == nil {
+				t.Fatal("critical verification input traversed a symlink in a disk image")
 			}
 		})
 	}
 }
 
+func TestAppInFilesystemRejectsSymlinkedLocation(t *testing.T) {
+	app := copyFixture(t, "SignedFixture.app")
+	if err := os.Symlink("SignedFixture.app", filepath.Join(filepath.Dir(app), "Alias.app")); err != nil {
+		t.Fatal(err)
+	}
+	image := openImage(t, filepath.Dir(app))
+	if _, err := VerifyAppFS(t.Context(), image, "SignedFixture.app", signature.Signer{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyAppFS(t.Context(), image, "Alias.app", signature.Signer{}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("bundle reached through a symlink: %v", err)
+	}
+}
+
+// sequentialFS hides random access from the files of a filesystem.
+type sequentialFS struct{ fs.ReadLinkFS }
+
+func (s sequentialFS) Open(name string) (fs.File, error) {
+	f, err := s.ReadLinkFS.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	if info, err := f.Stat(); err != nil || info.IsDir() {
+		return f, err
+	}
+	return struct{ fs.File }{f}, nil
+}
+
+func TestAppInFilesystemRequiresRandomAccess(t *testing.T) {
+	root, err := os.OpenRoot("testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	fsys := rootFS(root)
+	if _, err := VerifyAppFS(t.Context(), fsys, "SignedFixture.app", signature.Signer{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := VerifyAppFS(t.Context(), sequentialFS{fsys}, "SignedFixture.app", signature.Signer{}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("files without random access were read: %v", err)
+	}
+}
+
+// openImage writes a directory's children into a disk image and opens it, so
+// bundles are judged where none lies on disk.
+func openImage(t *testing.T, dir string) *diskimage.Image {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the fixture writer stores symlink targets with the host's separator")
+	}
+	name := filepath.Join(t.TempDir(), "fixture.dmg")
+	if err := testdiskimage.Write(name, dir); err != nil {
+		t.Fatal(err)
+	}
+	image, err := diskimage.Open(t.Context(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = image.Close() })
+	return image
+}
+
 // copyFixture copies a testdata bundle, preserving symlinks and modes.
 func copyFixture(t *testing.T, name string) string {
 	t.Helper()
+	return copyFixtureTo(t, t.TempDir(), name)
+}
+
+func copyFixtureTo(t *testing.T, dir, name string) string {
+	t.Helper()
 	source := filepath.Join("testdata", name)
-	target := filepath.Join(t.TempDir(), name)
+	target := filepath.Join(dir, name)
 	err := filepath.WalkDir(source, func(current string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err

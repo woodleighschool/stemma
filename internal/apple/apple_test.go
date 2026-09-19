@@ -210,14 +210,6 @@ func corruptExecutable(t *testing.T, file string, arch int) {
 	writeTestFile(t, file, data, 0755)
 }
 
-// portableOnly disables the platform verifier so the test exercises Stemma's own checks.
-func portableOnly(t *testing.T) {
-	t.Helper()
-	native := nativeBundleValidity
-	nativeBundleValidity = nil
-	t.Cleanup(func() { nativeBundleValidity = native })
-}
-
 func readTestFile(t *testing.T, file string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(file)

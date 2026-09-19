@@ -83,13 +83,6 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	if info.IsDir() && (app == nil || !strings.EqualFold(path.Ext(payload.name), ".app")) {
 		return nil, errors.New("selected tree must be one application bundle")
 	}
-	verify := spec.Signature != nil || request.DeriveSignature
-	if verify {
-		selected, err = payload.materialize(ctx, workspace)
-		if err != nil {
-			return nil, err
-		}
-	}
 	if app != nil {
 		if options != nil && options.InstalledPath != "" {
 			app.InstalledPath = options.InstalledPath
@@ -117,10 +110,6 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 		if !strings.EqualFold(path.Ext(payload.name), ".pkg") {
 			return nil, errors.New("macOS software requires an application, PKG or DMG installer")
 		}
-		selected, err = payload.materialize(ctx, workspace)
-		if err != nil {
-			return nil, err
-		}
 		installer, err = retain(ctx, selected, filepath.Base(selected), workspace)
 		installer.Format = "pkg"
 	}
@@ -128,9 +117,9 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 		return nil, err
 	}
 	var verified *signature.Result
-	if verify {
+	if spec.Signature != nil || request.DeriveSignature {
 		done := plugin.Stage(ctx, "Verifying signature")
-		verified, err = verifySignature(ctx, spec, selected, info.IsDir())
+		verified, err = verifySignature(ctx, spec, payload, selected, info.IsDir())
 		done(err)
 		if err != nil {
 			return nil, err
@@ -284,8 +273,8 @@ func installerVersion(facts plugin.Facts) string {
 
 // verifySignature checks the vendor package when that is what we publish,
 // otherwise the selected application. A retained DMG is a container, so its
-// application carries the signature.
-func verifySignature(ctx context.Context, spec Spec, selected string, app bool) (*signature.Result, error) {
+// application carries the signature and is verified inside the image.
+func verifySignature(ctx context.Context, spec Spec, payload *payload, selected string, app bool) (*signature.Result, error) {
 	var want signature.Signer
 	if spec.Signature != nil {
 		var err error
@@ -297,7 +286,7 @@ func verifySignature(ctx context.Context, spec Spec, selected string, app bool) 
 	var err error
 	switch {
 	case app:
-		result, err = apple.VerifyApp(ctx, selected, want)
+		result, err = payload.verifyApp(ctx, want)
 	case strings.EqualFold(filepath.Ext(selected), ".pkg"):
 		result, err = apple.VerifyPackage(ctx, selected, want)
 	default:
