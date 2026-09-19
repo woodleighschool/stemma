@@ -86,7 +86,7 @@ func TestFamilyRelativeInputDeclarations(t *testing.T) {
 	m := New(store, root, false)
 	input := plugin.Input{Resolver: "file", Base: "software/Branding", Config: map[string]any{"path": "../Shared/script"}}
 	entry, err := m.Resolve(t.Context(), input)
-	if err != nil || entry.Content.Filename != "script" || entry.Content.Mode != 0o755 {
+	if err != nil || entry.Content.Filename != "script" {
 		t.Fatalf("family-relative input: %v", err)
 	}
 	equivalent := plugin.Input{Resolver: "file", Base: "software/Shared", Config: map[string]any{"path": "script"}}

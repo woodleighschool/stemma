@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -70,7 +71,7 @@ func TestExtractApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o751 || !info.ModTime().Equal(modified) {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o751 || !info.ModTime().Equal(modified) {
 		t.Fatalf("mode %v, modified %v", info.Mode(), info.ModTime())
 	}
 	link, err := os.Readlink(filepath.Join(selected, "Contents", "Current"))

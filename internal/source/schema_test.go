@@ -58,7 +58,7 @@ func TestSourceDocumentationExamples(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	blocks := regexp.MustCompile("(?s)```yaml\\n(.*?)```").FindAllSubmatch(data, -1)
+	blocks := regexp.MustCompile("(?s)```yaml\\r?\\n(.*?)```").FindAllSubmatch(data, -1)
 	if len(blocks) == 0 {
 		t.Fatal("no source examples")
 	}

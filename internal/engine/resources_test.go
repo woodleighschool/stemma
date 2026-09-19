@@ -1,16 +1,63 @@
 package engine
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
+	"github.com/woodleighschool/stemma/plugin"
 )
+
+func TestPreparationKeepsInputsImmutable(t *testing.T) {
+	for _, change := range []string{"none", "content", "mode"} {
+		t.Run(change, func(t *testing.T) {
+			store, err := cas.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			ref, err := store.Import(t.Context(), strings.NewReader("original"), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			ops := &operations{registry: plugin.New("fixture", "1")}
+			operation := plugin.Operation{Name: "fixture", Kind: "resource", SideEffects: "workspace", Methods: []string{"run"}, InputSchema: json.RawMessage(`{}`), OutputSchema: json.RawMessage(`{}`)}
+			err = ops.registry.Register(operation, func(_ context.Context, envelope plugin.Request) (plugin.Response, error) {
+				var request plugin.ResourceRequest
+				if err := json.Unmarshal(envelope.Input, &request); err != nil {
+					return plugin.Response{}, err
+				}
+				var err error
+				switch change {
+				case "content":
+					err = os.WriteFile(request.Inputs["source"].Path, []byte("changed"), 0o640)
+				case "mode":
+					err = os.Chmod(request.Inputs["source"].Path, 0o444)
+				}
+				return plugin.Response{Output: json.RawMessage(`{}`)}, err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			inputs := map[string]Prepared{"source": {Payload: ref, Filename: "input.bin", Mode: 0o640}}
+			_, _, err = prepareResource(t.Context(), store, ops, resourcePlan{Operation: "fixture"}, inputs, t.TempDir(), "")
+			if change == "none" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), "modified immutable input source") {
+				t.Fatalf("input %s change: %v", change, err)
+			}
+		})
+	}
+}
 
 func TestBuildReferencesShareLockedInputsAndPreserveMetadataOnlyCache(t *testing.T) {
 	root := t.TempDir()

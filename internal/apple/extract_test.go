@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"testing"
 
@@ -59,7 +60,7 @@ func TestExtractApplicationWritesOnlyTheBundle(t *testing.T) {
 		t.Fatalf("Info.plist: %v", err)
 	}
 	executable, err := os.Stat(filepath.Join(bundle, "Contents/MacOS/Example"))
-	if err != nil || executable.Mode().Perm() != 0o755 {
+	if err != nil || !executable.Mode().IsRegular() || runtime.GOOS != "windows" && executable.Mode().Perm() != 0o755 {
 		t.Fatalf("executable: %v %v", executable, err)
 	}
 	if target, err := os.Readlink(filepath.Join(bundle, "Contents/Current")); err != nil || target != "Resources" {

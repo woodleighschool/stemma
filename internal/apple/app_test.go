@@ -192,6 +192,19 @@ func TestNestedFixtureMutationsInImage(t *testing.T) {
 	}
 }
 
+func TestVerifyExtractedApplication(t *testing.T) {
+	app := copyFixture(t, "NestedFixture.app")
+	image := openImage(t, filepath.Dir(app))
+	extracted, err := image.Extract(t.Context(), filepath.Join(t.TempDir(), "extracted"), "NestedFixture.app", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := VerifyApp(t.Context(), extracted, signature.Signer{})
+	if err != nil || result.Signer != fixtureSigner {
+		t.Fatalf("extracted application: %+v, %v", result, err)
+	}
+}
+
 func checkMutation(t *testing.T, mutation bundleMutation, result signature.Result, err error) {
 	t.Helper()
 	if (err == nil) != mutation.accept {
@@ -341,9 +354,6 @@ func TestAppInFilesystemRequiresRandomAccess(t *testing.T) {
 // bundles are judged where none lies on disk.
 func openImage(t *testing.T, dir string) *diskimage.Image {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the fixture writer stores symlink targets with the host's separator")
-	}
 	name := filepath.Join(t.TempDir(), "fixture.dmg")
 	testdiskimage.Write(t, name, dir)
 	image, err := diskimage.Open(t.Context(), name)

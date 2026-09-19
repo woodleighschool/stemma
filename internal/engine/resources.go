@@ -252,6 +252,8 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		return nil, false, err
 	}
 	request := plugin.ResourceRequest{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp, Derive: derive}
+	// Windows stores only the read-only bit, so compare modes against the lease.
+	leasedModes := map[string]os.FileMode{}
 	for name, input := range inputs {
 		leased, err := materialize(ctx, store, input, filepath.Join(work, "inputs", config.Fingerprint(name)))
 		if err != nil {
@@ -261,6 +263,11 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		if err != nil {
 			return nil, false, err
 		}
+		info, err := os.Stat(leased.Path)
+		if err != nil {
+			return nil, false, err
+		}
+		leasedModes[name] = info.Mode().Perm()
 		request.Inputs[name] = leased.artifact()
 	}
 	var response plugin.ResourceResult
@@ -278,7 +285,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		if err != nil {
 			return nil, false, errors.Join(runErr, err)
 		}
-		if ref != inputs[name].Payload || uint32(info.Mode().Perm()) != inputs[name].Mode {
+		if ref != inputs[name].Payload || info.Mode().Perm() != leasedModes[name] {
 			return nil, false, errors.Join(runErr, fmt.Errorf("resource %s modified immutable input %s", plan.Resource.Reference().Key(), name))
 		}
 	}

@@ -51,9 +51,13 @@ func TestSetupTreePreservesFilesAndSelectsMSIEvidence(t *testing.T) {
 	if selected.MSI == nil || selected.Path != "bin/vendor.msi" || selected.MSI.ProductCode != "{8B2D32B7-0BE9-4CF9-B1E7-42C27753A6B8}" || string(artifact.Evidence["vendor.probe"]) != `{"channel":"stable"}` {
 		t.Fatal("incorrect selected MSI evidence")
 	}
-	for name, mode := range map[string]os.FileMode{"bin/vendor.msi": 0o640, "settings.ini": 0o604} {
+	for name, original := range map[string]string{"bin/vendor.msi": filepath.Join(source, "bin", "vendor.msi"), "settings.ini": companion} {
+		before, err := os.Stat(original)
+		if err != nil {
+			t.Fatal(err)
+		}
 		info, err := os.Stat(filepath.Join(artifact.Path, filepath.FromSlash(name)))
-		if err != nil || info.Mode().Perm() != mode {
+		if err != nil || info.Mode().Perm() != before.Mode().Perm() {
 			t.Fatalf("mode %s: %v %v", name, info, err)
 		}
 	}

@@ -212,7 +212,7 @@ func (transport releaseTransport) RoundTrip(request *http.Request) (*http.Respon
 func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 	m := manager(t)
 	file := filepath.Join(m.Root, "postinstall")
-	if err := os.WriteFile(file, []byte("script"), 0o640); err != nil {
+	if err := os.WriteFile(file, []byte("script"), 0o444); err != nil {
 		t.Fatal(err)
 	}
 	tree := filepath.Join(m.Root, "payload")
@@ -236,7 +236,7 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.File.Inputs[resource]) != 2 || first.File.Inputs[resource]["script"].Content.Mode != 0o640 || !first.File.Inputs[resource]["payload"].Content.Tree {
+	if len(first.File.Inputs[resource]) != 2 || first.File.Inputs[resource]["script"].Content.Mode != 0o444 || !first.File.Inputs[resource]["payload"].Content.Tree {
 		t.Fatal("named input representation was lost")
 	}
 	script := first.File.Inputs[resource]["script"]
@@ -245,6 +245,10 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 	save(t, m, first.File)
 	before := lockedBytes(t, m)
 	if err := os.Chmod(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(file)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil {
@@ -257,7 +261,7 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.File.Inputs[resource]["script"].Content.Artifact != script.Content.Artifact || second.File.Inputs[resource]["script"].Content.Mode != 0o755 || !second.File.Inputs[resource]["script"].ResolvedAt.Equal(script.ResolvedAt) {
+	if second.File.Inputs[resource]["script"].Content.Artifact != script.Content.Artifact || second.File.Inputs[resource]["script"].Content.Mode != uint32(info.Mode().Perm()) || !second.File.Inputs[resource]["script"].ResolvedAt.Equal(script.ResolvedAt) {
 		t.Fatal("mode-only change did not preserve byte identity")
 	}
 	if err := os.Remove(link); err != nil {
@@ -276,7 +280,7 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 	if third.File.Inputs[resource]["payload"].Content.Artifact == second.File.Inputs[resource]["payload"].Content.Artifact {
 		t.Fatal("tree digest omitted symlink identity")
 	}
-	if err := os.Chmod(filepath.Join(tree, "one"), 0o600); err != nil {
+	if err := os.Chmod(filepath.Join(tree, "one"), 0o444); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := prepare(t, m, inputs, Options{Frozen: true, Offline: true}); err == nil {
