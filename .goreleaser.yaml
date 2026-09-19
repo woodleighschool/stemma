@@ -20,6 +20,10 @@ builds:
     goarch:
       - amd64
       - arm64
+    ignore:
+      # The Authenticode dependency has no keyring backend for this target.
+      - goos: windows
+        goarch: arm64
     mod_timestamp: "{{ .CommitTimestamp }}"
     flags:
       - -trimpath

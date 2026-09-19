@@ -113,25 +113,21 @@ jobs:
             exit 1
           }
 
-      - name: Run dependency-free Go checks
-        run: mise run test
-
       - name: Build application
         run: mise run build
 
-  native-tests:
+  go-test:
     if: >-
       ${{ !(startsWith(github.head_ref, 'release-please--')
       && github.event.pull_request.head.repo.full_name == github.repository) }}
-    name: Native Tests (${{ matrix.os }})
+    name: Go Test (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: macos-26
-            packages: ./internal/macsoftware ./internal/archive ./internal/pkgbuild ./internal/source
-          - os: windows-2025
-            packages: ./internal/archive ./internal/intunewin
+        os:
+          - ubuntu-24.04
+          - macos-26
+          - windows-2025
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -146,8 +142,8 @@ jobs:
           experimental: true
           install_args: --locked go
 
-      - name: Test native integrations
-        run: mise exec -- go test -race -count=1 -run '^Test(Native|Extract)' ${{ matrix.packages }}
+      - name: Run Go tests
+        run: mise run test
 
   go-vulncheck:
     if: >-
@@ -188,7 +184,7 @@ jobs:
     needs:
       - workflow-lint
       - go-checks
-      - native-tests
+      - go-test
       - go-vulncheck
       - goreleaser
     runs-on: ubuntu-24.04

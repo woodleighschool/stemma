@@ -50,7 +50,7 @@ tools = { "github:microsoft/kiota" = "1.35.0" }
 run = "go run ./internal/intune/generate.go"
 
 [tasks.test]
-description = "Run dependency-free Go checks"
+description = "Run Go tests"
 run = ["go vet ./...", "go test -race -count=1 ./..."]
 
 [tasks.lint-fix]

@@ -1,7 +1,7 @@
 # Runtime and limitations
 
 Stemma's runner and the software's target platform are separate. The CLI builds
-for macOS, Linux and Windows on amd64 and arm64. Built-in inspection and packaging
+for macOS and Linux on amd64 and arm64, and for Windows on amd64. Built-in inspection and packaging
 use portable Go implementations. Only the glassy icon presentation, an
 option of `stemma icon`, needs macOS.
 
