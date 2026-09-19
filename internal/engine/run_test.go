@@ -94,7 +94,7 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 		t.Fatal("metadata invalidated sourcefree preparation")
 	}
 	applied := []string{}
-	options.Handlers = map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+	options.Handlers = map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 		if request.Method == "plan" && request.Identity.Destination == "first" {
 			return plugin.ReconcileResponse{}, errors.New("unavailable")
 		}
@@ -147,7 +147,7 @@ func TestPartialFailureReportsCompletedChangesWithoutSuccess(t *testing.T) {
 	filename := filepath.Join(root, "stemma.yaml")
 	testproject.Write(t, filename, policyProject)
 	failure := errors.New("upload failed")
-	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 		if request.Method == "apply" {
 			return plugin.ReconcileResponse{Changes: []plugin.Change{{Kind: "metadata", Field: "description", Action: "set"}}}, failure
 		}
@@ -329,7 +329,7 @@ spec:
 			ctx = plugin.WithLogger(ctx, slog.New(slog.NewJSONHandler(&logs, nil)))
 			report, err := Run(ctx, Options{
 				ConfigPath: filename, CacheDir: t.TempDir(), Method: "prepare",
-				Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+				Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 					if request.Prepared {
 						record("validate " + request.Identity.Resource.Name)
 						if cancelDuringValidation {
@@ -387,7 +387,7 @@ func TestApplyKeepsCrossedPublicationDependenciesIndependent(t *testing.T) {
 	var applied []string
 	report, err := Run(t.Context(), Options{
 		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply",
-		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 			identity := request.Identity.Resource.Name + "/" + request.Identity.Destination
 
 			if request.Method == "apply" {
@@ -419,7 +419,7 @@ func TestApplyOrdersRequiredResourcesAndLeavesOthersToDestinations(t *testing.T)
 	var applied []string
 	report, err := Run(t.Context(), Options{
 		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply",
-		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 			identity := request.Identity.Resource.Name + "/" + request.Identity.Destination
 
 			if request.Method == "apply" {
@@ -445,7 +445,7 @@ func TestApplyDoesNotSelectPublicationPeers(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "stemma.yaml")
 	testproject.Write(t, filename, parts[0]+"\n---\n"+consumer+"\n---\n"+peer)
 	var applied []string
-	report, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Resources: []string{"consumer"}, Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+	report, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Resources: []string{"consumer"}, Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 		if request.Identity.Resource.Name != "consumer" {
 			t.Fatalf("unselected peer invoked: %+v", request.Identity)
 		}
@@ -494,7 +494,7 @@ func TestApplyChecksEveryReviewedInputBeforeWriting(t *testing.T) {
 	}
 	writes := 0
 	options.Method = "apply"
-	options.Handlers = map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+	options.Handlers = map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 		if request.Method == "apply" {
 			writes++
 		}

@@ -24,20 +24,20 @@ import (
 )
 
 type Spec struct {
-	Source  plugin.Input `json:"source,omitzero" yaml:"source" jsonschema:"required"`
-	Content *Content     `json:"content,omitempty" yaml:"content,omitempty"`
+	Source  plugin.Input `json:"source,omitzero" yaml:"source" jsonschema:"required" jsonschema_description:"Vendor installer or a resource output. A WindowsSoftware document requires a source."`
+	Content *Content     `json:"content,omitempty" yaml:"content,omitempty" jsonschema_description:"Assemble a setup tree from the vendor installer and optional supporting files."`
 	// Signature requires the setup file to carry a complete Authenticode
 	// signature from the expected publisher.
-	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty"`
+	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require a complete Authenticode signature from the configured publisher on the setup file."`
 	// Icon names the catalog asset icons/<name>.png that destinations publish;
 	// documents that name the same asset share it.
 	Icon         string                    `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Create it with stemma icon or commit a square PNG."`
-	Destinations map[string]map[string]any `json:"destinations" yaml:"destinations"`
+	Destinations map[string]map[string]any `json:"destinations" yaml:"destinations" jsonschema_description:"Native publication metadata keyed by a Project destination name."`
 }
 
 type Content struct {
-	SetupFile string                  `json:"setup_file,omitempty" yaml:"setup_file,omitempty"`
-	Files     map[string]plugin.Input `json:"files,omitempty" yaml:"files,omitempty"`
+	SetupFile string                  `json:"setup_file,omitempty" yaml:"setup_file,omitempty" jsonschema_description:"Relative Windows payload path of the executable to run. Required when the source tree has no selected entrypoint."`
+	Files     map[string]plugin.Input `json:"files,omitempty" yaml:"files,omitempty" jsonschema_description:"Additional files keyed by their relative paths in the setup tree. Each value selects its own input."`
 }
 
 func (s Spec) Validate() error {

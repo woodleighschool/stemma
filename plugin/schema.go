@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	defaults "github.com/kaptinlin/jsonschema"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -53,6 +54,22 @@ func validateData(schema *jsonschema.Schema, data json.RawMessage) error {
 		return fmt.Errorf("contract: %w", err)
 	}
 	return nil
+}
+
+// defaultData uses the schema library's decoder to fill omitted properties.
+// Decode into a JSON object so explicit zero values retain their meaning.
+func defaultData(schema *defaults.Schema, data json.RawMessage) (json.RawMessage, error) {
+	var value map[string]any
+	if err := schema.Unmarshal(&value, []byte(data)); err != nil {
+		return nil, err
+	}
+	return json.Marshal(value)
+}
+
+func compileDefaults(data json.RawMessage) (*defaults.Schema, error) {
+	compiler := defaults.NewCompiler()
+	clear(compiler.Loaders)
+	return compiler.Compile(data)
 }
 
 type noResources struct{}

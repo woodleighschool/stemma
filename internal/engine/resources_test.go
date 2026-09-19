@@ -30,7 +30,7 @@ func TestPreparationKeepsInputsImmutable(t *testing.T) {
 			ops := &operations{registry: plugin.New("fixture", "1")}
 			operation := plugin.Operation{Name: "fixture", Kind: "resource", SideEffects: "workspace", Methods: []string{"run"}, InputSchema: json.RawMessage(`{}`), OutputSchema: json.RawMessage(`{}`)}
 			err = ops.registry.Register(operation, func(_ context.Context, envelope plugin.Request) (plugin.Response, error) {
-				var request plugin.ResourceRequest
+				var request plugin.ResourceRequest[json.RawMessage]
 				if err := json.Unmarshal(envelope.Input, &request); err != nil {
 					return plugin.Response{}, err
 				}

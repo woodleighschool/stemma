@@ -85,13 +85,14 @@ func (t *tenantApps) find(ctx context.Context, identity string) (string, error) 
 // Handle validates, plans or applies an Intune destination request. It keeps no
 // state between invocations: a declared app_id or the marker in an app's notes
 // identifies the app, and the tenant supplies its publication state.
-// Connection credentials are supplied through the request configuration.
-func Handle(ctx context.Context, req plugin.ReconcileRequest) (response plugin.ReconcileResponse, err error) {
+// Connection credentials are supplied through the request Config.
+func Handle(ctx context.Context, req plugin.ReconcileRequest[Config]) (response plugin.ReconcileResponse, err error) {
 	req, response.Origins, err = Derive(req)
 	if err != nil {
 		return response, err
 	}
-	cfg, err := parseConfiguration(req.Config)
+	cfg := req.Config
+	err = cfg.Validate()
 	if err != nil {
 		return response, err
 	}
@@ -122,7 +123,7 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest) (response plugin.R
 	return result, err
 }
 
-func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, desired object) (response plugin.ReconcileResponse, err error) {
+func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config], desired object) (response plugin.ReconcileResponse, err error) {
 	lifecycle, err := lifecycleMetadata(desired)
 	if err != nil {
 		return response, err

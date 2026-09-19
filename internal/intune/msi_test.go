@@ -8,7 +8,7 @@ import (
 
 func TestSelectedMSIDefaultsAndNativeOverrides(t *testing.T) {
 	msi := &plugin.MSIFacts{ProductName: "Example", Manufacturer: "Vendor", ProductCode: "{11111111-1111-4111-8111-111111111111}", ProductVersion: "2.0.0", UpgradeCode: "{33333333-3333-4333-8333-333333333333}"}
-	req := plugin.ReconcileRequest{Prepared: true, Metadata: raw(object{"type": "win32"}), Artifact: plugin.Artifact{Filename: "Example.msi", Facts: plugin.Facts{Subjects: []plugin.Subject{{Kind: "msi", MSI: msi}}}}}
+	req := plugin.ReconcileRequest[Config]{Prepared: true, Metadata: raw(object{"type": "win32"}), Artifact: plugin.Artifact{Filename: "Example.msi", Facts: plugin.Facts{Subjects: []plugin.Subject{{Kind: "msi", MSI: msi}}}}}
 	for _, code := range []string{msi.ProductCode, "{22222222-2222-4222-8222-222222222222}"} {
 		msi.ProductCode = code
 		derived, origins, err := Derive(req)

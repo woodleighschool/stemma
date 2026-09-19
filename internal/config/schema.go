@@ -5,14 +5,13 @@ import (
 	"net/url"
 
 	"github.com/invopop/jsonschema"
-	"github.com/woodleighschool/stemma/internal/macpkg"
-	"github.com/woodleighschool/stemma/internal/macsoftware"
-	"github.com/woodleighschool/stemma/internal/source"
-	"github.com/woodleighschool/stemma/internal/windowssoftware"
 )
 
-// Schema describes the initial resource contracts and the project envelope.
-func Schema() ([]byte, error) {
+// catalogSchemaID scopes references inside the bundled document independently of its published URL.
+const catalogSchemaID = "https://stemma.invalid/catalog.schema.json"
+
+// baseSchema describes the static project envelope. Resource kinds come from the registry.
+func baseSchema() ([]byte, error) {
 	r := jsonschema.Reflector{}
 	raw, err := json.Marshal(r.Reflect(ProjectDocument{}))
 	if err != nil {
@@ -22,7 +21,7 @@ func Schema() ([]byte, error) {
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		return nil, err
 	}
-	schema["$id"] = "https://raw.githubusercontent.com/woodleighschool/stemma/main/stemma.schema.json"
+	schema["$id"] = catalogSchemaID
 	schema["title"] = "Stemma documents"
 	schema["description"] = "A Project imports family files containing resource documents separated by ---. Each kind owns preparation; destination operations own native publication fields."
 	delete(schema, "$ref")
@@ -32,25 +31,6 @@ func Schema() ([]byte, error) {
 		map[string]any{"required": []string{"path"}, "not": map[string]any{"required": []string{"image"}}},
 	}
 	variants := []any{map[string]any{"$ref": "#/$defs/ProjectDocument"}}
-	for _, item := range []struct {
-		kind string
-		spec any
-	}{{"BuildMacPkg", macpkg.Spec{}}, {"MacSoftware", macsoftware.Spec{}}, {"WindowsSoftware", windowssoftware.Spec{}}} {
-		reflector := jsonschema.Reflector{DoNotReference: true, Mapper: source.InputSchema}
-		raw, err := json.Marshal(reflector.Reflect(item.spec))
-		if err != nil {
-			return nil, err
-		}
-		var spec map[string]any
-		if err := json.Unmarshal(raw, &spec); err != nil {
-			return nil, err
-		}
-		definitions[item.kind], err = resourceSchema("stemma/v1alpha1", item.kind, spec)
-		if err != nil {
-			return nil, err
-		}
-		variants = append(variants, map[string]any{"$ref": "#/$defs/" + item.kind})
-	}
 	definitions["FactReference"] = map[string]any{"type": "object", "required": []string{"$fact"}, "additionalProperties": false, "properties": map[string]any{"$fact": map[string]any{"type": "string"}}}
 	schema["oneOf"] = variants
 	data, err := json.MarshalIndent(schema, "", "  ")
@@ -74,6 +54,9 @@ func resourceSchema(version, kind string, spec map[string]any) (map[string]any, 
 	// Inherited specs supply partial overrides. Validate each supplied value;
 	// the registered kind validates the fully composed object at runtime.
 	walkEditorSchema(partial, func(node map[string]any) {
+		if node["$ref"] == catalogSchemaID+"#/$defs/Input" {
+			node["$ref"] = catalogSchemaID + "#/$defs/PartialInput"
+		}
 		delete(node, "required")
 		if variants, ok := node["oneOf"]; ok {
 			all, _ := node["allOf"].([]any)

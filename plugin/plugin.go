@@ -8,7 +8,7 @@ import (
 )
 
 // ProtocolVersion is the executable protocol understood by this SDK.
-const ProtocolVersion = 5
+const ProtocolVersion = 6
 
 // Request invokes one advertised operation. Describe requests omit Operation and Input.
 type Request struct {
@@ -59,10 +59,10 @@ type Artifact struct {
 // A destination keeps no state between runs: it identifies what it manages from
 // Identity and the destination itself. Peers holds declared metadata for each
 // resource referenced on this connection, keyed by ResourceReference.Key().
-type ReconcileRequest struct {
-	Method   string                     `json:"method"`
+type ReconcileRequest[C any] struct {
+	Method   string                     `json:"-"`
 	Identity Identity                   `json:"identity"`
-	Config   json.RawMessage            `json:"config,omitempty"`
+	Config   C                          `json:"config,omitempty"`
 	Metadata json.RawMessage            `json:"metadata,omitempty"`
 	Artifact Artifact                   `json:"artifact"`
 	Inputs   map[string]Artifact        `json:"inputs,omitempty"`
@@ -162,3 +162,6 @@ type MSIFacts struct {
 	PackageCode    string            `json:"package_code,omitempty"`
 	Properties     map[string]string `json:"properties,omitempty"`
 }
+
+func (request ReconcileRequest[C]) validateConfig() error    { return validateConfig(request.Config) }
+func (request *ReconcileRequest[C]) setMethod(method string) { request.Method = method }

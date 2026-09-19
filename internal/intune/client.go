@@ -1,12 +1,10 @@
 package intune
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -23,12 +21,12 @@ import (
 	dam "github.com/woodleighschool/stemma/internal/intune/graph/stable/deviceappmanagement"
 )
 
-type configuration struct {
-	GraphURL     string `json:"graph_url,omitempty"`
-	Token        string `json:"token,omitempty"`
-	TenantID     string `json:"tenant_id,omitempty"`
-	ClientID     string `json:"client_id,omitempty"`
-	ClientSecret string `json:"client_secret,omitempty"`
+type Config struct {
+	GraphURL     string `json:"graph_url,omitempty" jsonschema:"default=https://graph.microsoft.com/v1.0" jsonschema_description:"Graph base URL ending in /v1.0. macOS apps select /beta automatically. HTTPS is required."`
+	Token        string `json:"token,omitempty" jsonschema:"minLength=1,writeOnly=true" jsonschema_description:"Bearer token. Choose this or all three client credentials; supply secrets through environment references."`
+	TenantID     string `json:"tenant_id,omitempty" jsonschema:"minLength=1" jsonschema_description:"Microsoft Entra tenant ID for client-credential authentication."`
+	ClientID     string `json:"client_id,omitempty" jsonschema:"minLength=1" jsonschema_description:"App registration client ID for client-credential authentication."`
+	ClientSecret string `json:"client_secret,omitempty" jsonschema:"minLength=1,writeOnly=true" jsonschema_description:"App registration secret. Supply it through an environment reference."`
 }
 
 type client struct {
@@ -39,37 +37,26 @@ type client struct {
 	pollInterval time.Duration
 }
 
-func parseConfiguration(data []byte) (configuration, error) {
-	var cfg configuration
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
-		return cfg, err
-	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		return cfg, errors.New("expected one connection object")
-	}
-	if cfg.GraphURL == "" {
-		cfg.GraphURL = "https://graph.microsoft.com/v1.0"
-	}
+// Validate checks the Graph origin and exclusive authentication methods.
+func (cfg Config) Validate() error {
 	base, err := url.Parse(cfg.GraphURL)
 	if err != nil || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" ||
 		base.Scheme != "https" {
-		return cfg, errors.New("graph_url must be HTTPS without user info, query or fragment")
+		return errors.New("graph_url must be HTTPS without user info, query or fragment")
 	}
 	if !strings.HasSuffix(strings.TrimRight(base.Path, "/"), "/v1.0") {
-		return cfg, errors.New("graph_url must end in /v1.0; macOS apps select /beta automatically")
+		return errors.New("graph_url must end in /v1.0; macOS apps select /beta automatically")
 	}
 	if cfg.Token == "" && (cfg.TenantID == "" || cfg.ClientID == "" || cfg.ClientSecret == "") {
-		return cfg, errors.New("set token or tenant_id, client_id and client_secret")
+		return errors.New("set token or tenant_id, client_id and client_secret")
 	}
 	if cfg.Token != "" && (cfg.TenantID != "" || cfg.ClientID != "" || cfg.ClientSecret != "") {
-		return cfg, errors.New("choose one Intune authentication method")
+		return errors.New("choose one Intune authentication method")
 	}
-	return cfg, nil
+	return nil
 }
 
-func newClient(cfg configuration) (*client, error) {
+func newClient(cfg Config) (*client, error) {
 	endpoint, _ := url.Parse(cfg.GraphURL)
 	hosts := []string{endpoint.Hostname()}
 	var auth authentication.AuthenticationProvider

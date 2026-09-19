@@ -18,21 +18,21 @@ import (
 
 // DestinationMetadata separates native pkginfo from provider-owned derivation and retention.
 type DestinationMetadata struct {
-	Derive    Derivation        `json:"derive,omitzero"`
-	Pkginfo   json.RawMessage   `json:"pkginfo,omitempty"`
-	Retention *plugin.Retention `json:"retention,omitempty"`
+	Derive    Derivation        `json:"derive,omitzero" jsonschema_description:"Select observed evidence used to fill omitted pkginfo fields. Explicit pkginfo values take precedence."`
+	Pkginfo   json.RawMessage   `json:"pkginfo,omitempty" jsonschema_description:"Native Munki pkginfo fields. Omission preserves unowned fields; supported null values clear fields."`
+	Retention *plugin.Retention `json:"retention,omitempty" jsonschema_description:"Prune older publications belonging to this resource while keeping versions still referenced by the destination."`
 }
 
 // Derivation selects observed evidence used to fill omitted native fields.
 type Derivation struct {
-	App *AppDerivation `json:"app,omitempty"`
+	App *AppDerivation `json:"app,omitempty" jsonschema_description:"Application evidence used for install detection, version and minimum macOS derivation."`
 }
 
 // AppDerivation selects a named application subject and its endpoint detection path.
 type AppDerivation struct {
-	Subject       string `json:"subject" jsonschema:"minLength=1"`
-	InstalledPath string `json:"installed_path,omitempty"`
-	VersionKey    string `json:"version_key,omitempty" jsonschema:"enum=CFBundleShortVersionString,enum=CFBundleVersion"`
+	Subject       string `json:"subject" jsonschema:"minLength=1" jsonschema_description:"Name of the application subject exposed by the preparing resource."`
+	InstalledPath string `json:"installed_path,omitempty" jsonschema_description:"Absolute application path on managed devices. Omit to use the selected application installation path."`
+	VersionKey    string `json:"version_key,omitempty" jsonschema:"enum=CFBundleShortVersionString,enum=CFBundleVersion" jsonschema_description:"Info.plist key for the managed application version. Omit to use the resource selection."`
 }
 
 // DecodeDestination validates declared fields without requiring prepared artifacts.
@@ -81,7 +81,8 @@ func DestinationSchema() *jsonschema.Schema {
 	link := r.Reflect(resourceRelationship{})
 	link.ID = ""
 	for _, field := range []string{"requires", "update_for"} {
-		pkginfo.Properties.Set(field, &jsonschema.Schema{Type: "array", Items: &jsonschema.Schema{OneOf: []*jsonschema.Schema{{Type: "string"}, link}}})
+		property, _ := pkginfo.Properties.Get(field)
+		pkginfo.Properties.Set(field, &jsonschema.Schema{Description: property.Description, Type: "array", Items: &jsonschema.Schema{OneOf: []*jsonschema.Schema{{Type: "string"}, link}}})
 	}
 	schema.Properties.Set("pkginfo", pkginfo)
 	retention, _ := schema.Properties.Get("retention")
@@ -102,7 +103,7 @@ type Derived struct {
 // fields always win; archive paths only become endpoint paths through copy actions.
 // File installers own their derived fields even when the format changes or the
 // artifact supplies no value.
-func Derive(request plugin.ReconcileRequest) (Derived, error) {
+func Derive[C any](request plugin.ReconcileRequest[C]) (Derived, error) {
 	metadata, err := DecodeDestination(request.Metadata)
 	if err != nil {
 		return Derived{}, err

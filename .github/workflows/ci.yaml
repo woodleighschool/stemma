@@ -106,10 +106,10 @@ jobs:
 
       - name: Check generated artifacts are committed
         run: |
-          generated_status=$(git status --short --untracked-files=all -- stemma.schema.json)
+          generated_status=$(git status --short --untracked-files=all -- docs/static/stemma.schema.json)
           test -z "$generated_status" || {
             printf '%s\n' "$generated_status"
-            git diff -- stemma.schema.json
+            git diff -- docs/static/stemma.schema.json
             exit 1
           }
 

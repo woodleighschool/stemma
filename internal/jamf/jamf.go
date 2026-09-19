@@ -41,10 +41,10 @@ const responseLimit = 8 << 20
 // markerPattern matches an identity marker that has a line of the notes to itself.
 var markerPattern = regexp.MustCompile(`(?m)^\[stemma:v1 id=([0-9a-f]{64})\]$`)
 
-type configuration struct {
+type Config struct {
 	URL          string `json:"url" jsonschema:"minLength=1" jsonschema_description:"Jamf Pro server origin, such as https://school.jamfcloud.com. HTTPS is required except loopback test servers. Paths, embedded credentials, queries and fragments are rejected."`
 	ClientID     string `json:"client_id" jsonschema:"minLength=1" jsonschema_description:"Jamf API client ID. Use ${VAR} to supply it from the environment."`
-	ClientSecret string `json:"client_secret" jsonschema:"minLength=1" jsonschema_description:"Jamf API client secret. Use ${VAR} to supply it from the environment."`
+	ClientSecret string `json:"client_secret" jsonschema:"minLength=1,writeOnly=true" jsonschema_description:"Jamf API client secret. Use ${VAR} to supply it from the environment."`
 }
 
 type client struct {
@@ -78,7 +78,7 @@ type payload struct {
 // Handle validates, plans or applies one software's publication. It converges
 // the package holding the artifact's file name, then patch deployment, then
 // retention; plan reports the same changes without writing.
-func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, error) {
 	var response plugin.ReconcileResponse
 	config, metadata, adopt, err := validate(request)
 	if err != nil {
@@ -179,26 +179,12 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 	return response, c.prune(ctx, retiring, patch, true, &response)
 }
 
-func validate(request plugin.ReconcileRequest) (configuration, map[string]json.RawMessage, string, error) {
-	var config configuration
-	if err := strictDecode(request.Config, &config); err != nil {
-		return config, nil, "", fmt.Errorf("jamf config: %w", err)
-	}
-	u, err := url.Parse(config.URL)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
-		return config, nil, "", errors.New("jamf url must be a server origin without credentials, path, query or fragment")
-	}
-	loopback := u.Hostname() == "localhost"
-	if ip := net.ParseIP(u.Hostname()); ip != nil {
-		loopback = ip.IsLoopback()
-	}
-	if u.Scheme != "https" && (u.Scheme != "http" || !loopback) {
-		return config, nil, "", errors.New("jamf url must use HTTPS (HTTP is allowed only for loopback test servers)")
+func validate(request plugin.ReconcileRequest[Config]) (Config, map[string]json.RawMessage, string, error) {
+	config := request.Config
+	if err := config.Validate(); err != nil {
+		return config, nil, "", err
 	}
 	config.URL = strings.TrimRight(config.URL, "/")
-	if config.ClientID == "" || config.ClientSecret == "" {
-		return config, nil, "", errors.New("jamf client_id and client_secret are required")
-	}
 	metadata, err := decodeObject(request.Metadata)
 	if err != nil {
 		return config, nil, "", fmt.Errorf("jamf metadata: %w", err)
@@ -405,7 +391,7 @@ func contentDigestMatches(current *observed, content payload) bool {
 	return strings.EqualFold(stringField(current.Fields, "sha256"), content.sha256)
 }
 
-func newClient(ctx context.Context, config configuration) (*client, error) {
+func newClient(ctx context.Context, config Config) (*client, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -823,4 +809,24 @@ func decodeObject(data []byte) (map[string]json.RawMessage, error) {
 		return nil, errors.New("trailing JSON data")
 	}
 	return fields, nil
+}
+
+// Validate checks the server origin and credentials.
+func (config Config) Validate() error {
+	u, err := url.Parse(config.URL)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Trim(u.Path, "/") != "" {
+		return errors.New("jamf url must be a server origin without credentials, path, query or fragment")
+	}
+	loopback := u.Hostname() == "localhost"
+	if ip := net.ParseIP(u.Hostname()); ip != nil {
+		loopback = ip.IsLoopback()
+	}
+	if u.Scheme != "https" && (u.Scheme != "http" || !loopback) {
+		return errors.New("jamf url must use HTTPS (HTTP is allowed only for loopback test servers)")
+	}
+	if config.ClientID == "" || config.ClientSecret == "" {
+		return errors.New("jamf client_id and client_secret are required")
+	}
+
+	return nil
 }

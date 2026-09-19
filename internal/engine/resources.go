@@ -15,6 +15,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -47,7 +48,7 @@ func discover(ctx context.Context, p config.Project, ops *operations) (map[strin
 			return nil, err
 		}
 		var result plugin.ResourceResult
-		if err := ops.call(ctx, op.Name, "validate", plugin.ResourceRequest{Config: encoded, Identity: r.Reference()}, &result); err != nil {
+		if err := ops.call(ctx, op.Name, "validate", plugin.ResourceRequest[json.RawMessage]{Config: encoded, Identity: r.Reference()}, &result); err != nil {
 			return nil, fmt.Errorf("resource %s: %w", key, err)
 		}
 		if len(result.Config) == 0 {
@@ -59,6 +60,23 @@ func discover(ctx context.Context, p config.Project, ops *operations) (map[strin
 			}
 			input.Base = r.Base
 			result.Inputs[inputName] = input
+			if input.Resource == nil {
+				var err error
+				if source.NativeResolver(input.Resolver) {
+					err = source.ValidateInput(input)
+				} else if operation, lookupErr := ops.operation(input.Resolver); lookupErr != nil || operation.Resolver == nil {
+					err = fmt.Errorf("unknown resolver %q", input.Resolver)
+				} else {
+					var settings []byte
+					settings, err = json.Marshal(input.Config)
+					if err == nil {
+						err = ops.call(ctx, input.Resolver, "validate", plugin.ResolveRequest[json.RawMessage]{Config: settings, Base: input.Base}, nil)
+					}
+				}
+				if err != nil {
+					return nil, fmt.Errorf("resource %s input %s: %w", key, inputName, err)
+				}
+			}
 			if input.Resource != nil {
 				ref := input.Resource
 				producer, ok := p.Resources[ref.Key()]
@@ -245,7 +263,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	if err != nil {
 		return nil, false, err
 	}
-	request := plugin.ResourceRequest{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp, Derive: derive}
+	request := plugin.ResourceRequest[json.RawMessage]{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp, Derive: derive}
 	// Windows stores only the read-only bit, so compare modes against the lease.
 	leasedModes := map[string]os.FileMode{}
 	for name, input := range inputs {

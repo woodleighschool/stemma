@@ -371,7 +371,7 @@ func publishedMarker(t *testing.T, fake *graphFixture) publication {
 	return publication{identity: match[1], payload: match[2], content: match[3]}
 }
 
-func fixtureRequest(t *testing.T) plugin.ReconcileRequest {
+func fixtureRequest(t *testing.T) plugin.ReconcileRequest[Config] {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "setup.cmd")
 	data := []byte("@echo off\r\necho fixture\r\n")
@@ -379,7 +379,7 @@ func fixtureRequest(t *testing.T) plugin.ReconcileRequest {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(data)
-	return plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "example", Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "test"}, Destination: "intune"}, Artifact: plugin.Artifact{Path: path, Filename: "setup.cmd", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}, Metadata: raw(object{
+	return plugin.ReconcileRequest[Config]{Method: "apply", Identity: plugin.Identity{Project: "example", Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "test"}, Destination: "intune"}, Artifact: plugin.Artifact{Path: path, Filename: "setup.cmd", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}, Metadata: raw(object{
 		"@odata.type": win32Type, "displayName": "Fixture", "description": "Test app", "publisher": "Fixture Publisher",
 		"installCommandLine": "setup.cmd", "uninstallCommandLine": "setup.cmd /remove", "minimumSupportedWindowsRelease": "Windows11_23H2", "allowedArchitectures": "x64",
 		"installExperience": object{"runAsAccount": "system"},
@@ -767,7 +767,7 @@ func TestMacValidationAndAdoption(t *testing.T) {
 	req := fixtureRequest(t)
 	req.Method = "plan"
 	req.Artifact.Filename = "existing.dmg"
-	req.Config = raw(object{"graph_url": fake.url + "/v1.0", "token": "test-token"})
+	req.Config = Config{GraphURL: fake.url + "/v1.0", Token: "test-token"}
 	req.Metadata = raw(object{"@odata.type": dmgType, "app_id": "app-1", "displayName": "Adopted"})
 	desired, err := validateMetadata(req.Metadata)
 	if err != nil {
@@ -799,8 +799,7 @@ func TestMacValidationAndAdoption(t *testing.T) {
 	if _, err := Handle(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}
-	req.Config = raw(object{"token": "unused", "app_id": "app-1"})
-	if _, err := Handle(t.Context(), req); err == nil {
+	if err := plugin.ValidateSchema(raw(plugin.SchemaFor[Config]()), raw(object{"token": "unused", "app_id": "app-1"})); err == nil {
 		t.Fatal("accepted software adoption ID in shared connection")
 	}
 }

@@ -34,7 +34,7 @@ func registerResolvers(manager *source.Manager, ops *operations, work string) er
 			if err != nil {
 				return source.Resolution{}, err
 			}
-			request := plugin.ResolveRequest{Config: settings, Base: input.Base, Root: manager.Root, Workspace: workspace, Locked: locked, Observation: observation}
+			request := plugin.ResolveRequest[json.RawMessage]{Config: settings, Base: input.Base, Root: manager.Root, Workspace: workspace, Locked: locked, Observation: observation}
 			if err := ops.call(ctx, operation.Name, "validate", request, nil); err != nil {
 				return source.Resolution{}, err
 			}

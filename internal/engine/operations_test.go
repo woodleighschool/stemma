@@ -6,12 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/klauspost/compress/zstd"
-	"github.com/opencontainers/go-digest"
-	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
-	"github.com/woodleighschool/stemma/internal/plugins"
-	"github.com/woodleighschool/stemma/internal/testutil/testproject"
-	"go.yaml.in/yaml/v4"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +15,13 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/klauspost/compress/zstd"
+	"github.com/opencontainers/go-digest"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/woodleighschool/stemma/internal/plugins"
+	"github.com/woodleighschool/stemma/internal/testutil/testproject"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 
@@ -82,7 +83,7 @@ spec:
 	wantVersion := "1.2"
 	validated := false
 	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "prepare", Handlers: map[string]reconcileHandler{
-		"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+		"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 			if request.Prepared {
 				var metadata struct {
 					Pkginfo struct {

@@ -46,15 +46,3 @@ func MetadataSchema() *jsonschema.Schema {
 		Description: "Native Jamf Pro v1 package metadata. Omitted fields are left unchanged; explicit false, zero and empty strings are managed. Only the documented nullable strings accept null. Each artifact filename has its own package, named natively and identified by Stemma's marker in its notes; changed bytes under the same filename are uploaded into that package. Patch deployment and retention are opt-in.",
 	}
 }
-
-// ConnectionSchema describes shared Jamf credentials without software adoption.
-func ConnectionSchema() *jsonschema.Schema {
-	reflector := &jsonschema.Reflector{DoNotReference: true}
-	schema := reflector.Reflect(configuration{})
-	schema.ID, schema.Version = "", ""
-	if secret, ok := schema.Properties.Get("client_secret"); ok {
-		secret.WriteOnly = true
-	}
-	schema.Description = "Shared Jamf Pro connection using client credentials and the v1 package API reviewed against Jamf Pro 11.31. Requires package read/write/upload privileges and a distribution configuration that supports package upload; retention also deletes packages and reads policies, PreStages and patch titles. Put package_id in software metadata to adopt an existing package."
-	return schema
-}

@@ -23,7 +23,7 @@ var ErrMismatch = errors.New("signature: unexpected signer")
 // Policy requires the published artifact to carry a complete, valid signature
 // from one expected signer. Derive the value with `stemma signature`.
 type Policy struct {
-	Signer string `json:"signer" yaml:"signer" jsonschema:"required"`
+	Signer string `json:"signer" yaml:"signer" jsonschema:"required" jsonschema_description:"Expected publisher identity: apple:developer-id:<TEAMID> or authenticode:<SHA256>. Use stemma signature to inspect the input and derive it."`
 }
 
 // Signer is a canonical publisher identity that survives certificate renewal.
@@ -76,7 +76,7 @@ func (s Signer) String() string {
 // Result records one complete, valid signature. Name is display information
 // from the signing certificate and never participates in verification.
 type Result struct {
-	Signer    string `json:"signer"`
+	Signer    string `json:"signer" jsonschema_description:"Expected publisher identity: apple:developer-id:<TEAMID> or authenticode:<SHA256>. Use stemma signature to inspect the input and derive it."`
 	Name      string `json:"name,omitempty"`
 	Authority string `json:"authority,omitempty"`
 	Target    string `json:"target"`

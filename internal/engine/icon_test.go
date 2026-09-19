@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -163,7 +164,7 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 	bundleArtwork, setupArtwork := iconFixtures(t, root)
 	published := map[string]plugin.Artifact{}
 	applies := 0
-	record := func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+	record := func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 		if request.Method == "apply" {
 			applies++
 			published[request.Identity.Resource.Name] = request.Inputs["icon"]

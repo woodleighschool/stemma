@@ -16,23 +16,23 @@ import (
 const Version = "stemma.macsoftware/7"
 
 type Spec struct {
-	Source      *plugin.Input `json:"source,omitempty" yaml:"source,omitempty"`
-	Application *Application  `json:"application,omitempty" yaml:"application,omitempty"`
+	Source      *plugin.Input `json:"source,omitempty" yaml:"source,omitempty" jsonschema_description:"Installer input from a built-in or loaded resolver, or a named resource output. Omit for source-free destination policies."`
+	Application *Application  `json:"application,omitempty" yaml:"application,omitempty" jsonschema_description:"Select one application within the input to inspect, package and derive version or detection metadata."`
 	// PackagePath selects one installer by archive-relative path or glob.
-	PackagePath string `json:"package_path,omitempty" yaml:"package_path,omitempty"`
+	PackagePath string `json:"package_path,omitempty" yaml:"package_path,omitempty" jsonschema_description:"Archive-relative path or glob selecting one installer package. Selection must be unambiguous."`
 	// Signature requires the published PKG or selected application to carry a
 	// complete Developer ID signature from the expected team.
-	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty"`
+	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require a complete Developer ID signature from the expected team before publication."`
 	// Icon names the catalog asset icons/<name>.png that destinations publish.
 	Icon         string                    `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Create it with stemma icon or commit a square PNG."`
-	Destinations map[string]map[string]any `json:"destinations,omitempty" yaml:"destinations,omitempty"`
+	Destinations map[string]map[string]any `json:"destinations,omitempty" yaml:"destinations,omitempty" jsonschema_description:"Native publication metadata keyed by a Project destination name. Explicit values override derived values."`
 }
 
 type Application struct {
-	Path          string `json:"path,omitempty" yaml:"path,omitempty"`
-	InstalledPath string `json:"installed_path,omitempty" yaml:"installed_path,omitempty"`
-	BundleID      string `json:"bundle_id,omitempty" yaml:"bundle_id,omitempty"`
-	VersionKey    string `json:"version_key,omitempty" yaml:"version_key,omitempty" jsonschema:"enum=CFBundleShortVersionString,enum=CFBundleVersion"`
+	Path          string `json:"path,omitempty" yaml:"path,omitempty" jsonschema_description:"Archive-relative application path or glob. Must stay inside the input."`
+	InstalledPath string `json:"installed_path,omitempty" yaml:"installed_path,omitempty" jsonschema_description:"Absolute application path on managed devices, used for packaging and detection."`
+	BundleID      string `json:"bundle_id,omitempty" yaml:"bundle_id,omitempty" jsonschema_description:"Bundle identifier used to select one application when an input contains several."`
+	VersionKey    string `json:"version_key,omitempty" yaml:"version_key,omitempty" jsonschema:"enum=CFBundleShortVersionString,enum=CFBundleVersion" jsonschema_description:"Info.plist key used as the managed version. Omit to prefer CFBundleShortVersionString, then CFBundleVersion."`
 }
 
 // Preparation keeps the fields that shape the installer; publication settings

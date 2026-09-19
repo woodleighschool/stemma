@@ -32,3 +32,12 @@ func TestResourceOutputReferencePreservesSelection(t *testing.T) {
 		t.Fatal("explicit API version changed identity")
 	}
 }
+
+func TestInputRejectsEmptyExplicitResolver(t *testing.T) {
+	for _, data := range []string{`{"resolver":"","url":"https://example.test/app.pkg"}`, `{"resolver":null,"path":"app.pkg"}`} {
+		var input plugin.Input
+		if err := json.Unmarshal([]byte(data), &input); err == nil {
+			t.Fatalf("accepted %s", data)
+		}
+	}
+}

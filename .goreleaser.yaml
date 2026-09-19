@@ -46,7 +46,9 @@ archives:
     files:
       - LICENSE
       - README.md
-      - stemma.schema.json
+      - src: docs/static/stemma.schema.json
+        dst: .
+        strip_parent: true
 
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"

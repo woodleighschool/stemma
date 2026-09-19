@@ -436,7 +436,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 
 type destinationInput struct {
 	name    string
-	request plugin.ReconcileRequest
+	request plugin.ReconcileRequest[json.RawMessage]
 	report  DestinationReport
 }
 
@@ -550,7 +550,7 @@ func makeDestinationInput(p config.Project, plans map[string]resourcePlan, root,
 	if err != nil {
 		return input, err
 	}
-	input.request = plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: p.Project, Resource: plans[software].Resource.Reference(), Destination: name}, Config: configData, Metadata: metadataData, Artifact: prepared.artifact(), Facts: prepared.Facts, Prepared: true, Root: root, Subjects: plans[software].Subjects, Peers: peers}
+	input.request = plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: p.Project, Resource: plans[software].Resource.Reference(), Destination: name}, Config: configData, Metadata: metadataData, Artifact: prepared.artifact(), Facts: prepared.Facts, Prepared: true, Root: root, Subjects: plans[software].Subjects, Peers: peers}
 	return input, nil
 }
 
@@ -572,7 +572,7 @@ func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.
 	return report, err
 }
 
-func verifyLeases(ctx context.Context, store *cas.Store, work string, request plugin.ReconcileRequest) error {
+func verifyLeases(ctx context.Context, store *cas.Store, work string, request plugin.ReconcileRequest[json.RawMessage]) error {
 	var artifacts []plugin.Artifact
 	if request.Artifact.Path != "" {
 		artifacts = append(artifacts, request.Artifact)

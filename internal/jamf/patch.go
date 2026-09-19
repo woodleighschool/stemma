@@ -154,7 +154,7 @@ func (c *client) getTitle(ctx context.Context, id string) (*titles.ResourcePatch
 		return nil, err
 	}
 	if result == nil || result.ID != id {
-		return nil, errors.New("jamf title response does not match requested configuration")
+		return nil, errors.New("jamf title response does not match requested Config")
 	}
 	fields, err := decodeObject(response.Bytes())
 	if err != nil {
@@ -180,7 +180,7 @@ func titlePackage(title *titles.ResourcePatchSoftwareTitleConfiguration, version
 	return found, nil
 }
 
-// policyName identifies the patch policy within its title configuration.
+// policyName identifies the patch policy within its title Config.
 func policyName(patch *patchConfig, software string) string {
 	if patch.Policy.Name != nil {
 		return *patch.Policy.Name
@@ -371,7 +371,7 @@ func (c *client) listPatchPolicies(ctx context.Context, filter string) ([]patch_
 }
 
 // observePolicy finds the policy by its declared ID, or by name within the
-// title configuration. It returns a nil policy when that name is free.
+// title Config. It returns a nil policy when that name is free.
 func (c *client) observePolicy(ctx context.Context, patch *patchConfig, name string) (string, *xmlNode, error) {
 	id := patch.Policy.ID
 	if id == "" {
@@ -384,7 +384,7 @@ func (c *client) observePolicy(ctx context.Context, patch *patchConfig, name str
 				continue
 			}
 			if id != "" {
-				return "", nil, fmt.Errorf("multiple Jamf patch policies are named %q in title configuration %s; set patch.policy.id to select one", name, patch.TitleConfigurationID)
+				return "", nil, fmt.Errorf("multiple Jamf patch policies are named %q in title Config %s; set patch.policy.id to select one", name, patch.TitleConfigurationID)
 			}
 			id = p.ID
 		}
@@ -400,7 +400,7 @@ func (c *client) observePolicy(ctx context.Context, patch *patchConfig, name str
 		return "", nil, fmt.Errorf("jamf patch policy %s does not exist", id)
 	}
 	if policy.value("software_title_configuration_id") != patch.TitleConfigurationID {
-		return "", nil, errors.New("jamf patch policy belongs to a different title configuration")
+		return "", nil, errors.New("jamf patch policy belongs to a different title Config")
 	}
 	return id, policy, nil
 }

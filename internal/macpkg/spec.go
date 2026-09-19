@@ -18,32 +18,32 @@ import (
 const Version = "stemma.macpkg/2"
 
 type Spec struct {
-	Inputs  map[string]plugin.Input `json:"inputs,omitempty" yaml:"inputs,omitempty"`
-	Payload map[string]Entry        `json:"payload,omitempty" yaml:"payload,omitempty"`
-	Package Package                 `json:"package" yaml:"package"`
-	Scripts map[string]InputFileRef `json:"scripts,omitempty" yaml:"scripts,omitempty"`
+	Inputs  map[string]plugin.Input `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema_description:"Named source files or trees leased into the build. Refer to them with $input in payload and scripts."`
+	Payload map[string]Entry        `json:"payload,omitempty" yaml:"payload,omitempty" jsonschema_description:"Installed absolute paths mapped to files, trees, literal text or directory declarations."`
+	Package Package                 `json:"package" yaml:"package" jsonschema_description:"Component package identity and version recorded in macOS receipts."`
+	Scripts map[string]InputFileRef `json:"scripts,omitempty" yaml:"scripts,omitempty" jsonschema_description:"Installer lifecycle scripts keyed by their native role, such as preinstall or postinstall. Scripts are packaged, never executed by Stemma."`
 }
 
 type Package struct {
-	Identifier string `json:"identifier" yaml:"identifier"`
-	Version    string `json:"version" yaml:"version"`
-	Filename   string `json:"filename,omitempty" yaml:"filename,omitempty"`
+	Identifier string `json:"identifier" yaml:"identifier" jsonschema_description:"Stable reverse-DNS package identifier written into the installation receipt."`
+	Version    string `json:"version" yaml:"version" jsonschema_description:"Package receipt version. Change it when the managed payload changes."`
+	Filename   string `json:"filename,omitempty" yaml:"filename,omitempty" jsonschema_description:"Optional published PKG basename. Omit to derive it from the resource name and package version."`
 }
 
 // Entry maps a file or tree to its payload key. No input or content declares a
 // directory. Mode applies to the mapped root; ownership applies to its subtree.
 type Entry struct {
-	Input   string  `json:"$input,omitempty" yaml:"$input,omitempty"`
-	Path    string  `json:"path,omitempty" yaml:"path,omitempty"`
-	Content *string `json:"content,omitempty" yaml:"content,omitempty"`
-	Mode    string  `json:"mode,omitempty" yaml:"mode,omitempty" jsonschema:"pattern=^0?[0-7]{3}$"`
-	UID     uint32  `json:"uid,omitempty" yaml:"uid,omitempty" jsonschema:"maximum=262143"`
-	GID     uint32  `json:"gid,omitempty" yaml:"gid,omitempty" jsonschema:"maximum=262143"`
+	Input   string  `json:"$input,omitempty" yaml:"$input,omitempty" jsonschema_description:"Name of a declared input supplying this file or tree."`
+	Path    string  `json:"path,omitempty" yaml:"path,omitempty" jsonschema_description:"Relative path within the selected input. Omit to use the input itself."`
+	Content *string `json:"content,omitempty" yaml:"content,omitempty" jsonschema_description:"Literal UTF-8 file contents. Mutually exclusive with $input; omit both to create a directory."`
+	Mode    string  `json:"mode,omitempty" yaml:"mode,omitempty" jsonschema:"pattern=^0?[0-7]{3}$" jsonschema_description:"Octal permissions for the mapped root, for example 0644 for a file or 0755 for a directory."`
+	UID     uint32  `json:"uid,omitempty" yaml:"uid,omitempty" jsonschema:"maximum=262143" jsonschema_description:"Numeric owner applied to the mapped subtree. Defaults to root (0)."`
+	GID     uint32  `json:"gid,omitempty" yaml:"gid,omitempty" jsonschema:"maximum=262143" jsonschema_description:"Numeric group applied to the mapped subtree. Defaults to wheel (0)."`
 }
 
 type InputFileRef struct {
-	Input string `json:"$input" yaml:"$input"`
-	Path  string `json:"path,omitempty" yaml:"path,omitempty"`
+	Input string `json:"$input" yaml:"$input" jsonschema_description:"Name of a declared input supplying this file or tree."`
+	Path  string `json:"path,omitempty" yaml:"path,omitempty" jsonschema_description:"Relative path within the selected input. Omit to use the input itself."`
 }
 
 func (s Spec) Filename() string {

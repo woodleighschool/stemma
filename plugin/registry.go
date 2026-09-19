@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	defaults "github.com/kaptinlin/jsonschema"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -68,6 +69,7 @@ type registeredOperation struct {
 	descriptor Operation
 	handle     Handler
 	config     *jsonschema.Schema
+	defaults   *defaults.Schema
 	metadata   *jsonschema.Schema
 	input      *jsonschema.Schema
 	output     *jsonschema.Schema
@@ -150,21 +152,33 @@ func (registry *Registry) Handle(ctx context.Context, request Request) (Response
 	if !operation.descriptor.SupportsPlatform(runtime.GOOS, runtime.GOARCH) {
 		return Response{}, fmt.Errorf("operation %q does not support runner %s/%s", request.Operation, runtime.GOOS, runtime.GOARCH)
 	}
-	if err := validateData(operation.input, request.Input); err != nil {
-		return Response{}, fmt.Errorf("operation %q input: %w", request.Operation, err)
-	}
 	if operation.config != nil && (operation.descriptor.Resource == nil || request.Method == "validate") {
 		var input map[string]json.RawMessage
 		if err := json.Unmarshal(request.Input, &input); err != nil || input == nil {
 			return Response{}, fmt.Errorf("operation %q configuration requires an object input", request.Operation)
 		}
 		config := input["config"]
-		if len(config) == 0 || bytes.Equal(bytes.TrimSpace(config), []byte("null")) {
+		if len(config) == 0 {
 			config = json.RawMessage(`{}`)
 		}
 		if err := validateData(operation.config, config); err != nil {
 			return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
 		}
+		config, err := defaultData(operation.defaults, config)
+		if err != nil {
+			return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
+		}
+		if err := validateData(operation.config, config); err != nil {
+			return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
+		}
+		input["config"] = config
+		request.Input, err = json.Marshal(input)
+		if err != nil {
+			return Response{}, err
+		}
+	}
+	if err := validateData(operation.input, request.Input); err != nil {
+		return Response{}, fmt.Errorf("operation %q input: %w", request.Operation, err)
 	}
 	if operation.metadata != nil {
 		var input struct {
@@ -272,11 +286,19 @@ func compileOperation(operation Operation) (registeredOperation, error) {
 		}
 	}
 	var config *jsonschema.Schema
+	var configurationDefaults *defaults.Schema
 	if len(operation.ConfigSchema) != 0 {
 		var err error
 		config, err = compileSchema(operation.ConfigSchema)
 		if err != nil {
 			return registeredOperation{}, fmt.Errorf("operation %q config: %w", operation.Name, err)
+		}
+	}
+	if config != nil {
+		var err error
+		configurationDefaults, err = compileDefaults(operation.ConfigSchema)
+		if err != nil {
+			return registeredOperation{}, fmt.Errorf("operation %q defaults: %w", operation.Name, err)
 		}
 	}
 	var metadata *jsonschema.Schema
@@ -295,7 +317,7 @@ func compileOperation(operation Operation) (registeredOperation, error) {
 	if err != nil {
 		return registeredOperation{}, fmt.Errorf("operation %q output: %w", operation.Name, err)
 	}
-	return registeredOperation{descriptor: cloneOperation(operation), config: config, metadata: metadata, input: input, output: output}, nil
+	return registeredOperation{descriptor: cloneOperation(operation), config: config, defaults: configurationDefaults, metadata: metadata, input: input, output: output}, nil
 }
 
 func cloneOperation(operation Operation) Operation {

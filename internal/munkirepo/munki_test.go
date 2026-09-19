@@ -334,7 +334,7 @@ func TestInterruptedCatalogMembershipChangeConvergesOnRetry(t *testing.T) {
 	assertConverged(t, request)
 }
 
-func repositoryRequest(t *testing.T, filename, metadata string) (string, plugin.ReconcileRequest) {
+func repositoryRequest(t *testing.T, filename, metadata string) (string, plugin.ReconcileRequest[munkirepo.Config]) {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "repo")
 	content := []byte("installer content")
@@ -343,18 +343,14 @@ func repositoryRequest(t *testing.T, filename, metadata string) (string, plugin.
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(content)
-	connection, err := json.Marshal(map[string]string{"path": root})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return root, plugin.ReconcileRequest{
+	return root, plugin.ReconcileRequest[munkirepo.Config]{
 		Method: "apply", Identity: plugin.Identity{Project: "test", Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "App"}, Destination: "munki"},
-		Config: connection, Metadata: nativeMetadata(metadata),
+		Config: munkirepo.Config{Path: root}, Metadata: nativeMetadata(metadata),
 		Artifact: plugin.Artifact{Path: artifactPath, Filename: filename, SHA256: hex.EncodeToString(digest[:]), Size: int64(len(content)), Version: "1"},
 	}
 }
 
-func apply(t *testing.T, root string, request *plugin.ReconcileRequest) string {
+func apply(t *testing.T, root string, request *plugin.ReconcileRequest[munkirepo.Config]) string {
 	t.Helper()
 	request.Method = "apply"
 	if _, err := munkirepo.Handle(t.Context(), *request); err != nil {
@@ -407,7 +403,7 @@ func published(t *testing.T, root, name, version string) string {
 	return found[len(found)-1]
 }
 
-func assertConverged(t *testing.T, request plugin.ReconcileRequest) {
+func assertConverged(t *testing.T, request plugin.ReconcileRequest[munkirepo.Config]) {
 	t.Helper()
 	request.Method = "plan"
 	response, err := munkirepo.Handle(t.Context(), request)

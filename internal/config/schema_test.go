@@ -4,12 +4,16 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/macpkg"
+	"github.com/woodleighschool/stemma/internal/macsoftware"
+	"github.com/woodleighschool/stemma/internal/windowssoftware"
+
 	"github.com/woodleighschool/stemma/plugin"
 	"go.yaml.in/yaml/v4"
 )
 
 func TestResourceEditorSchema(t *testing.T) {
-	schema, err := Schema()
+	schema, err := testCatalogSchema()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +60,7 @@ func TestResourceEditorSchema(t *testing.T) {
 }
 
 func TestProjectEnvelopeSchema(t *testing.T) {
-	schema, err := Schema()
+	schema, err := baseSchema()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,4 +75,17 @@ func TestProjectEnvelopeSchema(t *testing.T) {
 	if err := plugin.ValidateSchema(schema, encoded); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func testCatalogSchema() ([]byte, error) {
+	encode := func(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
+	return ProjectSchema(Project{Destinations: map[string]Destination{"external": {Operation: "fixture.publish"}}}, plugin.Descriptor{Operations: []plugin.Operation{
+		{Name: "fixture.publish", Kind: "reconcile"},
+		{Name: "example.release", Resolver: &plugin.ResolverKind{Version: "1"}, ConfigSchema: encode(plugin.SchemaFor[struct {
+			Channel string `json:"channel"`
+		}]())},
+		{Name: "build.mac.pkg", Resource: &plugin.ResourceKind{APIVersion: "stemma/v1alpha1", Kind: "BuildMacPkg"}, ConfigSchema: encode(plugin.SchemaFor[macpkg.Spec]())},
+		{Name: "software.mac", Resource: &plugin.ResourceKind{APIVersion: "stemma/v1alpha1", Kind: "MacSoftware"}, ConfigSchema: encode(plugin.SchemaFor[macsoftware.Spec]())},
+		{Name: "software.windows", Resource: &plugin.ResourceKind{APIVersion: "stemma/v1alpha1", Kind: "WindowsSoftware"}, ConfigSchema: encode(plugin.SchemaFor[windowssoftware.Spec]())},
+	}})
 }

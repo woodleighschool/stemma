@@ -92,6 +92,9 @@ func (input *Input) UnmarshalJSON(data []byte) error {
 		if err := json.Unmarshal(value, &input.Resolver); err != nil {
 			return err
 		}
+		if input.Resolver == "" {
+			return errors.New("resolver must be a nonempty operation name")
+		}
 		delete(fields, "resolver")
 	}
 	encoded, _ := json.Marshal(fields)
@@ -144,8 +147,9 @@ type ResourceKind struct {
 
 // ResourceRequest uses validate to discover inputs and publication intentions;
 // run receives only locked, leased inputs and produces immutable outputs.
-type ResourceRequest struct {
-	Config json.RawMessage `json:"config"`
+type ResourceRequest[C any] struct {
+	Method string `json:"-"`
+	Config C      `json:"config,omitempty"`
 	// Derive names a policy to observe from the inputs instead of enforcing
 	// the configured value: "signature" reports the verified signer as evidence.
 	Derive    string              `json:"derive,omitempty"`
@@ -204,16 +208,27 @@ type ResolverKind struct {
 	Local   bool   `json:"local,omitempty"`
 }
 
-type ResolveRequest struct {
-	Config      json.RawMessage `json:"config"`
+type ResolveRequest[C any] struct {
+	Config      C               `json:"config,omitempty"`
 	Base        string          `json:"base,omitempty"`
-	Root        string          `json:"root"`
-	Workspace   string          `json:"workspace"`
-	Locked      bool            `json:"locked"`
+	Root        string          `json:"root,omitempty"`
+	Workspace   string          `json:"workspace,omitempty"`
+	Locked      bool            `json:"locked,omitempty"`
 	Observation json.RawMessage `json:"observation,omitempty"`
 }
 
 type ResolveResponse struct {
 	Observation json.RawMessage `json:"observation"`
 	Artifact    Artifact        `json:"artifact"`
+}
+
+func (request ResolveRequest[C]) validateConfig() error { return validateConfig(request.Config) }
+
+func (request *ResourceRequest[C]) setMethod(method string) { request.Method = method }
+
+func (request ResourceRequest[C]) validateConfig() error {
+	if request.Method == "validate" {
+		return validateConfig(request.Config)
+	}
+	return nil
 }

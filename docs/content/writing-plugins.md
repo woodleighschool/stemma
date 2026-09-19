@@ -42,8 +42,8 @@ import (
 )
 
 type spec struct {
-	Source       plugin.Input              `json:"source"`
-	Destinations map[string]map[string]any `json:"destinations"`
+	Source       plugin.Input              `json:"source" jsonschema_description:"Vendor installer to acquire."`
+	Destinations map[string]map[string]any `json:"destinations" jsonschema_description:"Native metadata for each named destination."`
 }
 
 func main() {
@@ -57,23 +57,12 @@ func main() {
 
 func serve(ctx context.Context) error {
 	registry := plugin.New("catalog-tools", "1.0.0")
-	err := registry.Register(plugin.Operation{
+	err := plugin.Register(registry, plugin.Operation{
 		Name:        "catalog-tools.package",
 		Kind:        "resource",
 		Resource:    &plugin.ResourceKind{APIVersion: "example.org/v1", Kind: "VendorPackage"},
 		SideEffects: "workspace",
 		Methods:     []string{"validate", "run"},
-		ConfigSchema: json.RawMessage(`{
-			"type": "object",
-			"required": ["source", "destinations"],
-			"additionalProperties": false,
-			"properties": {
-				"source": {"type": "object"},
-				"destinations": {"type": "object"}
-			}
-		}`),
-		InputSchema:  json.RawMessage(`{"type":"object"}`),
-		OutputSchema: json.RawMessage(`{"type":"object"}`),
 	}, prepare)
 	if err != nil {
 		return err
@@ -81,32 +70,23 @@ func serve(ctx context.Context) error {
 	return plugin.Serve(ctx, os.Stdin, os.Stdout, registry)
 }
 
-func prepare(ctx context.Context, envelope plugin.Request) (plugin.Response, error) {
-	var request plugin.ResourceRequest
-	if err := json.Unmarshal(envelope.Input, &request); err != nil {
-		return plugin.Response{}, err
-	}
+func prepare(ctx context.Context, request plugin.ResourceRequest[spec]) (plugin.ResourceResult, error) {
 	var result plugin.ResourceResult
-	switch envelope.Method {
+	switch request.Method {
 	case "validate":
-		var config spec
-		if err := json.Unmarshal(request.Config, &config); err != nil {
-			return plugin.Response{}, err
-		}
-		result.Inputs = map[string]plugin.Input{"source": config.Source}
+		result.Inputs = map[string]plugin.Input{"source": request.Config.Source}
 		result.Config = json.RawMessage(`{}`)
-		result.Destinations = config.Destinations
+		result.Destinations = request.Config.Destinations
 	case "run":
 		artifact := request.Inputs["source"]
 		if artifact.Tree || !strings.EqualFold(filepath.Ext(artifact.Filename), ".pkg") {
-			return plugin.Response{}, errors.New("source must be a PKG file")
+			return result, errors.New("source must be a PKG file")
 		}
 		artifact.Format = "pkg"
 		result.Artifacts = map[string]plugin.Artifact{"installer": artifact}
 		plugin.Logger(ctx).InfoContext(ctx, "Prepared vendor package")
 	}
-	output, err := json.Marshal(result)
-	return plugin.Response{Output: output}, err
+	return result, nil
 }
 ```
 
@@ -119,9 +99,52 @@ go build -o plugin .
 ```
 
 On Windows, name the output `plugin.exe`. `go get` records the resolved revision in
-`go.mod`; keep that pin. The example's envelope schemas only require objects to
-keep the entry point small. A published plugin should describe its supported
-request and response fields with self-contained JSON Schemas.
+`go.mod`; keep that pin. `plugin.Register` derives the request, config and response
+schemas from the handler types. The protocol and catalog editor use those same
+contracts.
+
+## Typed configuration
+
+Use Go fields for structure, `omitempty` for optional fields, and invopop's
+`jsonschema` tags for constraints and defaults. Add `jsonschema_description` to
+fields whose purpose or behaviour benefits from an editor hover.
+
+```go
+type Architecture string
+
+const (
+	ARM64 Architecture = "arm64"
+	X64   Architecture = "x64"
+)
+
+func (Architecture) JSONSchemaExtend(s *jsonschema.Schema) {
+	s.Enum = []any{ARM64, X64}
+}
+
+type Config struct {
+	Major int `json:"major" jsonschema:"minimum=1" jsonschema_description:"Major release to track."`
+	Architecture Architecture `json:"architecture,omitempty" jsonschema:"default=arm64" jsonschema_description:"Installer CPU architecture."`
+}
+```
+
+Import `github.com/invopop/jsonschema` for the enum hook. Registration rejects
+unknown fields, checks required fields and enum values, applies schema defaults,
+then decodes the effective config. An optional `Validate() error` method handles
+semantic rules before a resolver or destination handler runs, including locked
+requests. Resource config validation runs on declarations; prepared config
+returned for `run` has already passed that boundary. Resolver `validate` requests stop after these checks and perform no
+acquisition. Direct calls to typed resolvers supply effective config values.
+
+Defaults live in tags once; omitted values receive them while explicit zero,
+false and empty values remain explicit. Required fields must be supplied even
+when they have a default annotation. Sparse destination metadata retains its
+absent/null/value semantics and does not receive config defaults.
+
+JSON Schema describes structural constraints. Cross-field and external-system
+rules may remain authoritative in Go; use `JSONSchemaExtend` only when a small
+schema addition helps editors. `stemma schema --output-file stemma.schema.json` composes the
+static document structure with every locally loaded operation. No copy of a
+plugin's config fields belongs in the catalog schema generator.
 
 ## Run it from a catalog
 
@@ -192,7 +215,7 @@ Register an operation with `kind: resolve`, methods `validate` and `run`, and a
 `ResolverKind` containing the observation contract's version. Set `local: true`
 when consuming a lock must also check current local files.
 
-`ResolveRequest` supplies declaration `config`, resource-relative `base`, project
+`ResolveRequest[Config]` supplies declaration `config`, resource-relative `base`, project
 `root`, a workspace, `locked` and the previous `observation`. Return a
 `ResolveResponse` containing the observation and artifact.
 
@@ -218,7 +241,7 @@ URLs out of evidence as well as observations.
 
 Register `kind: reconcile` with methods `validate`, `plan` and `apply`. Use
 `ConfigSchema` for connection settings and `MetadataSchema` for native
-settings. `ReconcileRequest` includes logical identity, primary artifact, named
+settings. `ReconcileRequest[Config]` includes logical identity, primary artifact, named
 artifact inputs, facts, subject selectors and peers.
 
 `plan` reads the destination and returns semantic `Change` records without
@@ -261,7 +284,7 @@ JSON object on stdin, ending at EOF:
 
 ```json
 {
-  "protocol": 5,
+  "protocol": 6,
   "method": "describe"
 }
 ```
@@ -271,7 +294,7 @@ The final stdout response has `protocol`, optional `output` and optional `error`
 Other requests add `operation`, `input` and optionally `log_level`.
 
 Before the final response, a plugin may emit newline-delimited envelopes containing
-`protocol: 5` and `log`, a structured record with time, level and message. Messages
+`protocol: 6` and `log`, a structured record with time, level and message. Messages
 are bounded to 4 MiB. No messages may follow the final response. The SDK's `Serve`
 and `Run` handle framing and validation.
 

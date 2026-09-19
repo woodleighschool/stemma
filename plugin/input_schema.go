@@ -1,20 +1,21 @@
 package plugin
 
-import (
-	"encoding/json"
-	"github.com/invopop/jsonschema"
-)
+import "github.com/invopop/jsonschema"
 
-// JSONSchema keeps resolver declarations extensible while distinguishing resource references.
+// JSONSchema distinguishes resource references from dynamic resolver declarations.
+// The catalog composer binds the latter to the loaded registry.
 func (Input) JSONSchema() *jsonschema.Schema {
-	var schema jsonschema.Schema
-	_ = json.Unmarshal([]byte(`{"type":"object","oneOf":[
- {"required":["resource"],"additionalProperties":false,"properties":{"resource":{}}},
- {"not":{"required":["resource"]},"anyOf":[{"required":["url"]},{"required":["path"]},{"required":["resolver"]}]}
- ]}`), &schema)
 	r := jsonschema.Reflector{DoNotReference: true}
-	reference := r.Reflect(ResourceOutputReference{})
-	reference.ID = ""
-	schema.OneOf[0].Properties.Set("resource", reference)
-	return &schema
+	reference := r.Reflect(struct {
+		Resource ResourceOutputReference `json:"resource" jsonschema_description:"Use a named output from another resource in this project."`
+	}{})
+	reference.ID, reference.Version = "", ""
+	return &jsonschema.Schema{
+		Type: "object",
+		OneOf: []*jsonschema.Schema{reference, {
+			Not:   &jsonschema.Schema{Required: []string{"resource"}},
+			AnyOf: []*jsonschema.Schema{{Required: []string{"url"}}, {Required: []string{"path"}}, {Required: []string{"resolver"}}},
+		}},
+		Extras: map[string]any{"x-stemma-input": true},
+	}
 }

@@ -160,14 +160,24 @@ credentials. Stemma reads the process environment; it does not source `.env`.
 Interpolation inside larger strings and mapping keys is unsupported. Document
 identities must remain literal.
 
-The [generated schema](https://github.com/woodleighschool/stemma/blob/main/stemma.schema.json)
-describes built-in documents. To include your installed plugins and bind destination
-aliases to their schemas:
+The [default schema](https://woodleighschool.github.io/stemma/stemma.schema.json)
+describes built-in operations and accepts arbitrary destination names. Generate a
+catalog-specific schema from the local registry, including installed plugins
+and the Project's named destinations:
 
 ```sh
-stemma schema --project --offline > stemma.project.schema.json
+stemma schema --offline --output-file stemma.schema.json
 ```
 
-Point your YAML editor at that file. Schema generation does not need destination
+Track the generated file in the catalog and add a YAML language-server modeline
+using its raw repository URL:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/OWNER/CATALOG/main/stemma.schema.json
+```
+
+Regenerate it when plugin declarations or destination names change.
+`--output-file` is required; use `--output-file -` to print JSON to stdout. Schema generation does not need destination
 credentials or acquire software, but OCI plugin bundles must already be cached
-when using `--offline`.
+when using `--offline`. Go validation also checks semantic rules that are broader
+in the editor schema, such as valid Microsoft product/channel combinations.

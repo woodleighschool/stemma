@@ -9,7 +9,7 @@ import (
 )
 
 func TestMSIDerivationRequiresSelectedFactsAndLeavesExecutionExplicit(t *testing.T) {
-	req := plugin.ReconcileRequest{
+	req := plugin.ReconcileRequest[Config]{
 		Method: "validate", Prepared: true,
 		Metadata: raw(object{"derive": object{"msi": "installer"}, "displayName": "Declared name", "msiInformation": object{"publisher": "Declared publisher"}}),
 		Subjects: map[string]plugin.SubjectSelector{"installer": {Kind: "msi", Path: "setup.msi"}},
@@ -45,7 +45,7 @@ func TestMSIDerivationRequiresSelectedFactsAndLeavesExecutionExplicit(t *testing
 }
 
 func TestMacDerivationKeepsExactOSAndExplicitDetection(t *testing.T) {
-	req := plugin.ReconcileRequest{
+	req := plugin.ReconcileRequest[Config]{
 		Method: "validate", Prepared: true,
 		Metadata: raw(object{"type": "pkg", "derive": object{"app": "main"}}),
 		Subjects: map[string]plugin.SubjectSelector{"main": {BundleID: "org.example.app"}},
@@ -75,7 +75,7 @@ func TestMacDerivationKeepsExactOSAndExplicitDetection(t *testing.T) {
 
 func TestApplicationDiskImageDerivesADmgApp(t *testing.T) {
 	app := plugin.Subject{ID: "WoodSweep.app", Path: "WoodSweep.app", Parent: ".", Kind: "app", InstalledPath: "/Applications/WoodSweep.app", App: &plugin.AppFacts{BundleID: "org.example.woodsweep", Version: "1.2.3", Name: "WoodSweep", MinimumOS: "14.0"}}
-	req := plugin.ReconcileRequest{
+	req := plugin.ReconcileRequest[Config]{
 		Method: "validate", Prepared: true,
 		Metadata: raw(object{"type": "dmg", "derive": object{"app": "main"}}),
 		Subjects: map[string]plugin.SubjectSelector{"main": {Kind: "app"}},
@@ -100,7 +100,7 @@ func TestApplicationDiskImageDerivesADmgApp(t *testing.T) {
 }
 
 func TestStaticValidationAcceptsReferencesWithoutContent(t *testing.T) {
-	req := plugin.ReconcileRequest{Method: "validate", Config: raw(object{"token": "synthetic"}),
+	req := plugin.ReconcileRequest[Config]{Method: "validate", Config: Config{GraphURL: "https://graph.microsoft.com/v1.0", Token: "synthetic"},
 		Subjects: map[string]plugin.SubjectSelector{"installer": {Kind: "msi"}},
 		Metadata: raw(object{
 			"derive":       object{"msi": "installer"},
@@ -150,7 +150,7 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 			if err := plugin.ValidateSchema(raw(MetadataSchema()), metadata); (err == nil) != test.valid {
 				t.Fatalf("schema validity differs: %v", err)
 			}
-			_, err := Handle(t.Context(), plugin.ReconcileRequest{Method: "validate", Config: raw(object{"token": "synthetic"}), Metadata: metadata})
+			_, err := Handle(t.Context(), plugin.ReconcileRequest[Config]{Method: "validate", Config: Config{GraphURL: "https://graph.microsoft.com/v1.0", Token: "synthetic"}, Metadata: metadata})
 			if (err == nil) != test.valid {
 				t.Fatalf("provider validity differs: %v", err)
 			}

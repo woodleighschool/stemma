@@ -1,10 +1,12 @@
 package engine
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/woodleighschool/stemma/internal/macpkg"
+	"github.com/woodleighschool/stemma/internal/macsoftware"
 
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -12,18 +14,12 @@ import (
 func TestBuildPackageFilenameOverride(t *testing.T) {
 	for _, override := range []string{"", "Deployment.pkg"} {
 		t.Run(override, func(t *testing.T) {
-			settings := map[string]any{
-				"package": map[string]string{"identifier": "org.example.payload", "version": "4.2", "filename": override},
-				"payload": map[string]any{"/Library/Example/message.txt": map[string]string{"content": "synthetic payload"}},
-			}
-			config, _ := json.Marshal(settings)
-			request, _ := json.Marshal(plugin.ResourceRequest{Config: config, Identity: plugin.ResourceReference{Kind: "BuildMacPkg", Name: "payload"}, Workspace: t.TempDir()})
-			response, err := buildMacPkg(t.Context(), plugin.Request{Method: "run", Input: request})
+			request := plugin.ResourceRequest[macpkg.Spec]{Method: "run", Config: macpkg.Spec{
+				Package: macpkg.Package{Identifier: "org.example.payload", Version: "4.2", Filename: override},
+				Payload: map[string]macpkg.Entry{"/Library/Example/message.txt": {Content: new("synthetic payload")}},
+			}, Identity: plugin.ResourceReference{Kind: "BuildMacPkg", Name: "payload"}, Workspace: t.TempDir()}
+			result, err := buildMacPkg(t.Context(), request)
 			if err != nil {
-				t.Fatal(err)
-			}
-			var result plugin.ResourceResult
-			if err := json.Unmarshal(response.Output, &result); err != nil {
 				t.Fatal(err)
 			}
 			want := override
@@ -50,13 +46,9 @@ func TestMacPublicationNameRetainsInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, _ := json.Marshal(plugin.ResourceRequest{Config: json.RawMessage(`{}`), Identity: plugin.ResourceReference{Kind: "MacSoftware", Name: "vendor"}, Workspace: t.TempDir(), Inputs: map[string]plugin.Artifact{"source": {Path: inputPath, Filename: "upstream.pkg"}}})
-	response, err := macSoftware(t.Context(), plugin.Request{Method: "run", Input: request})
+	request := plugin.ResourceRequest[macsoftware.Spec]{Method: "run", Identity: plugin.ResourceReference{Kind: "MacSoftware", Name: "vendor"}, Workspace: t.TempDir(), Inputs: map[string]plugin.Artifact{"source": {Path: inputPath, Filename: "upstream.pkg"}}}
+	result, err := macSoftware(t.Context(), request)
 	if err != nil {
-		t.Fatal(err)
-	}
-	var result plugin.ResourceResult
-	if err := json.Unmarshal(response.Output, &result); err != nil {
 		t.Fatal(err)
 	}
 	installer := result.Artifacts["installer"]

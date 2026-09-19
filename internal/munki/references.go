@@ -16,7 +16,7 @@ type resourceRelationship struct {
 
 // ResolveReferences translates explicit resource relationships into native
 // pkginfo strings. Strings supplied by the author pass through unchanged.
-func ResolveReferences(request plugin.ReconcileRequest) (plugin.ReconcileRequest, error) {
+func ResolveReferences[C any](request plugin.ReconcileRequest[C]) (plugin.ReconcileRequest[C], error) {
 	var metadata map[string]json.RawMessage
 	if len(request.Metadata) == 0 {
 		return request, nil

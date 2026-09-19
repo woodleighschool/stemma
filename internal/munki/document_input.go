@@ -16,7 +16,7 @@ import (
 
 // DocumentInput reads an explicitly rendered pkginfo artifact and binds it to
 // its installer input before native destination derivation.
-func DocumentInput(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileRequest, error) {
+func DocumentInput[C any](ctx context.Context, request plugin.ReconcileRequest[C]) (plugin.ReconcileRequest[C], error) {
 	installer, exists := request.Inputs["installer"]
 	if !exists && request.Artifact.Format != "json" {
 		return request, nil

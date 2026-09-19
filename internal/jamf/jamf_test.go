@@ -460,7 +460,7 @@ func TestAuthenticationHonorsCancellation(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	t.Cleanup(server.Close)
-	request.Config = raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"})
+	request.Config = Config{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
@@ -498,7 +498,7 @@ func TestAuthenticationRejectsCrossOriginRedirect(t *testing.T) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 	}))
 	t.Cleanup(server.Close)
-	request.Config = raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"})
+	request.Config = Config{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}
 	if _, err := Handle(t.Context(), request); err == nil {
 		t.Fatal("authentication followed a cross-origin redirect")
 	}
@@ -525,8 +525,7 @@ func TestStrictValidationPreservesNullFalseAndZero(t *testing.T) {
 		}
 	}
 	request.Metadata = raw(map[string]any{})
-	request.Config = raw(map[string]any{"url": "https://example.com", "client_id": "ID", "client_secret": "SECRET", "package_id": "1"})
-	if _, err := Handle(t.Context(), request); err == nil {
+	if err := plugin.ValidateSchema(raw(plugin.SchemaFor[Config]()), raw(map[string]any{"url": "https://example.com", "client_id": "ID", "client_secret": "SECRET", "package_id": "1"})); err == nil {
 		t.Fatal("accepted software adoption in shared destination config")
 	}
 }
@@ -581,12 +580,12 @@ type fakeServer struct {
 	notesAfterUpload string
 }
 
-func newFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest) {
+func newFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest[Config]) {
 	t.Helper()
 	fake := &fakeServer{t: t, packages: make(map[string]map[string]json.RawMessage), version: 1, tokenLifetime: 1800}
 	server := httptest.NewServer(http.HandlerFunc(fake.handle))
 	t.Cleanup(server.Close)
-	request := plugin.ReconcileRequest{Method: "apply", Identity: plugin.Identity{Project: "school", Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "vendor"}, Destination: "jamf"}, Config: raw(configuration{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}), Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
+	request := plugin.ReconcileRequest[Config]{Method: "apply", Identity: plugin.Identity{Project: "school", Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "vendor"}, Destination: "jamf"}, Config: Config{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}, Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
 	return fake, request
 }
 

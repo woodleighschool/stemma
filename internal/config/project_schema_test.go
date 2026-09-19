@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -148,5 +149,70 @@ func TestProjectSchemaRegistersExternalKindsByGroupVersionAndKind(t *testing.T) 
 				t.Fatalf("valid=%v expected=%v: %v", err == nil, test.valid, err)
 			}
 		})
+	}
+}
+
+type releaseSettings struct {
+	Major   int    `json:"major" jsonschema:"minimum=1" jsonschema_description:"Major release to track."`
+	Channel string `json:"channel,omitempty" jsonschema:"enum=production,enum=preview,default=production" jsonschema_description:"Release channel."`
+}
+
+func TestProjectSchemaComposesTypedResolvers(t *testing.T) {
+	registry := plugin.New("fixture", "1")
+	if err := plugin.Register(registry, plugin.Operation{Name: "fixture.release", Kind: "resolve", Resolver: &plugin.ResolverKind{Version: "1"}, SideEffects: "none", Methods: []string{"validate", "run"}}, func(context.Context, plugin.ResolveRequest[releaseSettings]) (plugin.ResolveResponse, error) {
+		t.Fatal("schema generation invoked a resolver")
+		return plugin.ResolveResponse{}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.Register(registry, plugin.Operation{Name: "fixture.resource", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "fixture/v1", Kind: "Application"}, SideEffects: "none", Methods: []string{"validate", "run"}}, func(context.Context, plugin.ResourceRequest[struct {
+		Sources []plugin.Input `json:"sources" jsonschema_description:"Inputs to acquire."`
+	}]) (plugin.ResourceResult, error) {
+		return plugin.ResourceResult{}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := ProjectSchema(Project{}, registry.Descriptor())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		source string
+		valid  bool
+	}{
+		{`{"resolver":"fixture.release","major":4}`, true},
+		{`{"resolver":"fixture.release","major":4,"channel":"preview"}`, true},
+		{`{"resolver":"fixture.release","major":4,"channel":"${RELEASE_CHANNEL}"}`, true},
+		{`{"resolver":"fixture.release"}`, false},
+		{`{"resolver":"fixture.release","major":0}`, false},
+		{`{"resolver":"fixture.release","major":4,"channel":"stable"}`, false},
+		{`{"resolver":"fixture.release","major":4,"typo":true}`, false},
+		{`{"resolver":"unloaded.release","major":4}`, false},
+	} {
+		document := []byte(`{"apiVersion":"fixture/v1","kind":"Application","metadata":{"name":"app"},"spec":{"sources":[` + test.source + `]}}`)
+		if err := plugin.ValidateSchema(schema, document); (err == nil) != test.valid {
+			t.Fatalf("%s valid=%v: %v", test.source, test.valid, err)
+		}
+	}
+	var document map[string]any
+	if err := json.Unmarshal(schema, &document); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	walkEditorSchema(document, func(node map[string]any) {
+		properties, _ := node["properties"].(map[string]any)
+		resolver, _ := properties["resolver"].(map[string]any)
+		if resolver["const"] != "fixture.release" || node["required"] == nil {
+			return
+		}
+		major := properties["major"].(map[string]any)
+		channel := properties["channel"].(map[string]any)
+		if major["description"] != "Major release to track." || channel["default"] != "production" {
+			t.Fatal("editor lost config annotations")
+		}
+		found = true
+	})
+	if !found {
+		t.Fatal("typed resolver schema missing from editor")
 	}
 }

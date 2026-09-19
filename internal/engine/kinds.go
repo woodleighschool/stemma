@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,96 +14,66 @@ import (
 )
 
 func registerKinds(ops *operations) error {
-	for _, item := range []struct {
-		name, kind, version string
-		spec                any
-		handle              plugin.Handler
-	}{
-		{"build.mac.pkg", "BuildMacPkg", macpkg.Version, macpkg.Spec{}, buildMacPkg},
-		{"software.mac", "MacSoftware", macsoftware.Version, macsoftware.Spec{}, macSoftware},
-		{"software.windows", "WindowsSoftware", "windowssoftware/1", windowssoftware.Spec{}, windowsSoftware},
+	for _, err := range []error{
+		plugin.Register(ops.registry, resourceOperation("build.mac.pkg", "BuildMacPkg"), buildMacPkg),
+		plugin.Register(ops.registry, resourceOperation("software.mac", "MacSoftware"), macSoftware),
+		plugin.Register(ops.registry, resourceOperation("software.windows", "WindowsSoftware"), windowsSoftware),
 	} {
-		op := plugin.Operation{Name: item.name, Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "stemma/v1alpha1", Kind: item.kind}, SideEffects: "workspace", Methods: []string{"validate", "run"}, ConfigSchema: operationSchema(item.spec), InputSchema: operationSchema(plugin.ResourceRequest{}), OutputSchema: operationSchema(plugin.ResourceResult{})}
-		if err := ops.registry.Register(op, item.handle); err != nil {
+		if err != nil {
 			return err
 		}
-		ops.identity[item.name] = item.version
 	}
+	ops.identity["build.mac.pkg"] = macpkg.Version
+	ops.identity["software.mac"] = macsoftware.Version
+	ops.identity["software.windows"] = "windowssoftware/1"
 	return nil
 }
 
-func resourceRequest(request plugin.Request, spec any) (plugin.ResourceRequest, error) {
-	var input plugin.ResourceRequest
-	if err := json.Unmarshal(request.Input, &input); err != nil {
-		return input, err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(input.Config))
-	decoder.DisallowUnknownFields()
-	return input, decoder.Decode(spec)
+func resourceOperation(name, kind string) plugin.Operation {
+	return plugin.Operation{Name: name, Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "stemma/v1alpha1", Kind: kind}, SideEffects: "workspace", Methods: []string{"validate", "run"}}
 }
-func resourceResponse(result plugin.ResourceResult, err error) (plugin.Response, error) {
-	data, encodeErr := json.Marshal(result)
-	return plugin.Response{Output: data}, errors.Join(err, encodeErr)
-}
-func buildMacPkg(ctx context.Context, request plugin.Request) (plugin.Response, error) {
-	var spec macpkg.Spec
-	input, err := resourceRequest(request, &spec)
-	if err != nil {
-		return plugin.Response{}, err
-	}
+
+func buildMacPkg(ctx context.Context, request plugin.ResourceRequest[macpkg.Spec]) (plugin.ResourceResult, error) {
+	spec := request.Config
+	input := request
 	if request.Method == "validate" {
-		if err := spec.Validate(); err != nil {
-			return plugin.Response{}, err
-		}
 		declarations := spec.Inputs
 		spec.Inputs = nil
 		config, err := json.Marshal(spec)
-		return resourceResponse(plugin.ResourceResult{Inputs: declarations, Config: config}, err)
+		return plugin.ResourceResult{Inputs: declarations, Config: config}, err
 	}
 	if spec.Package.Filename == "" {
 		spec.Package.Filename = artifactname.Filename(input.Identity.Name, spec.Package.Version, "", "pkg")
 	}
 	artifact, err := macpkg.Build(ctx, spec, input.Inputs, input.Workspace, input.Timestamp)
-	return resourceResponse(plugin.ResourceResult{Artifacts: map[string]plugin.Artifact{"installer": artifact}}, err)
+	return plugin.ResourceResult{Artifacts: map[string]plugin.Artifact{"installer": artifact}}, err
 }
-func macSoftware(ctx context.Context, request plugin.Request) (plugin.Response, error) {
-	var spec macsoftware.Spec
-	input, err := resourceRequest(request, &spec)
-	if err != nil {
-		return plugin.Response{}, err
-	}
+func macSoftware(ctx context.Context, request plugin.ResourceRequest[macsoftware.Spec]) (plugin.ResourceResult, error) {
+	spec := request.Config
+	input := request
 	if request.Method == "validate" {
 		if spec.Source == nil && (spec.Application != nil || spec.PackagePath != "" || spec.Signature != nil) {
-			return plugin.Response{}, errors.New("application selection, package selection and signature verification require a source")
+			return plugin.ResourceResult{}, errors.New("application selection, package selection and signature verification require a source")
 		}
 
-		if err := spec.Validate(); err != nil {
-			return plugin.Response{}, err
-		}
 		declarations := map[string]plugin.Input{}
 		if spec.Source != nil {
 			declarations["source"] = *spec.Source
 		}
 		config, err := json.Marshal(spec.Preparation())
-		return resourceResponse(plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: spec.Destinations, Icon: spec.Icon}, err)
+		return plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: spec.Destinations, Icon: spec.Icon}, err
 	}
 	artifacts, err := macsoftware.Prepare(ctx, spec, macsoftware.Request{Input: input.Inputs["source"], Workspace: input.Workspace, Timestamp: input.Timestamp, DeriveSignature: input.Derive == "signature"})
 	if installer, ok := artifacts["installer"]; err == nil && ok {
 		installer.Filename = artifactname.Filename(input.Identity.Name, installer.Version, installer.SHA256, installer.Format)
 		artifacts["installer"] = installer
 	}
-	return resourceResponse(plugin.ResourceResult{Artifacts: artifacts}, err)
+	return plugin.ResourceResult{Artifacts: artifacts}, err
 }
-func windowsSoftware(ctx context.Context, request plugin.Request) (plugin.Response, error) {
-	var spec windowssoftware.Spec
-	input, err := resourceRequest(request, &spec)
-	if err != nil {
-		return plugin.Response{}, err
-	}
+func windowsSoftware(ctx context.Context, request plugin.ResourceRequest[windowssoftware.Spec]) (plugin.ResourceResult, error) {
+	spec := request.Config
+	input := request
 	if request.Method == "validate" {
-		if err := spec.Validate(); err != nil {
-			return plugin.Response{}, err
-		}
 		declarations := map[string]plugin.Input{"source": spec.Source}
 		if spec.Content != nil {
 			for name, value := range spec.Content.Files {
@@ -117,7 +86,7 @@ func windowsSoftware(ctx context.Context, request plugin.Request) (plugin.Respon
 			spec.Content.Files = nil
 		}
 		config, err := json.Marshal(spec)
-		return resourceResponse(plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: destinations, Icon: iconName}, err)
+		return plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: destinations, Icon: iconName}, err
 	}
 	if spec.Content != nil {
 		spec.Content.Files = map[string]plugin.Input{}
@@ -128,5 +97,5 @@ func windowsSoftware(ctx context.Context, request plugin.Request) (plugin.Respon
 		}
 	}
 	artifacts, err := windowssoftware.Prepare(ctx, spec, input.Inputs, input.Workspace, input.Derive == "signature")
-	return resourceResponse(plugin.ResourceResult{Artifacts: artifacts}, err)
+	return plugin.ResourceResult{Artifacts: artifacts}, err
 }

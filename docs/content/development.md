@@ -19,10 +19,15 @@ mise run format
 mise run lint
 mise run test
 mise run build
+mise run generate
 mise run vulncheck
 ```
 
-`mise run generate` refreshes `stemma.schema.json` from the Go contracts.
+`mise run generate` writes the default editor schema to
+`docs/static/stemma.schema.json` from the registered built-in operations. Commit it
+with contract changes; the docs build publishes it as `/stemma/stemma.schema.json`
+on GitHub Pages. `stemma schema --output-file stemma.schema.json` generates a
+catalog-specific schema from the same contracts and the locally loaded plugins.
 `mise run generate-graph` regenerates the scoped Microsoft Graph clients. Keep
 generated outputs with changes to their source contracts.
 

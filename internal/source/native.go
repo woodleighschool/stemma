@@ -76,6 +76,18 @@ type nativeEntry struct {
 // errNotModified reports that a conditional download confirmed the previous content.
 var errNotModified = errors.New("source content not modified")
 
+// NativeResolver reports whether the name is reserved for a built-in source.
+func NativeResolver(name string) bool {
+	_, ok := nativeFields[name]
+	return ok
+}
+
+// ValidateInput checks a native declaration without acquiring its content.
+func ValidateInput(input plugin.Input) error {
+	_, err := native(input)
+	return err
+}
+
 func native(input plugin.Input) (nativeConfig, error) {
 	var s nativeConfig
 	for field := range input.Config {

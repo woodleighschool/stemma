@@ -6,9 +6,11 @@ import (
 	"maps"
 	"net/url"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 
+	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -58,7 +60,16 @@ func LoadSchemaProject(filename string) (Project, error) {
 // ProjectSchema binds named connections to their advertised operation contracts.
 // Plugin schemas remain independent resources, including their local references.
 func ProjectSchema(project Project, descriptor plugin.Descriptor) ([]byte, error) {
-	data, err := Schema()
+	return catalogSchema(&project, descriptor)
+}
+
+// Schema describes registered operations without binding destination names to a project.
+func Schema(descriptor plugin.Descriptor) ([]byte, error) {
+	return catalogSchema(nil, descriptor)
+}
+
+func catalogSchema(project *Project, descriptor plugin.Descriptor) ([]byte, error) {
+	data, err := baseSchema()
 	if err != nil {
 		return nil, err
 	}
@@ -72,22 +83,46 @@ func ProjectSchema(project Project, descriptor plugin.Descriptor) ([]byte, error
 	for _, operation := range descriptor.Operations {
 		operations[operation.Name] = operation
 	}
-	connections, metadata := map[string]any{}, map[string]any{}
+	input, err := catalogInputSchema(descriptor)
+	if err != nil {
+		return nil, err
+	}
+	definitions["Input"] = input
+	encodedInput, err := json.Marshal(input)
+	if err != nil {
+		return nil, err
+	}
+	partialInput, _, err := editorResource(encodedInput, "https://stemma.invalid/editor/partial-input")
+	if err != nil {
+		return nil, err
+	}
+	walkEditorSchema(partialInput, func(node map[string]any) {
+		delete(node, "required")
+		if alternatives, ok := node["oneOf"]; ok {
+			node["anyOf"] = alternatives
+			delete(node, "oneOf")
+		}
+	}, "if", "not")
+	definitions["PartialInput"] = partialInput
+	var connections []any
+	var nativeMetadata []any
+	metadata := map[string]any{}
 	installer := map[string]any{"type": "string", "pattern": namePattern.String(), "description": "Named output from this resource. Defaults to installer."}
 	inputs := map[string]any{"type": "object", "propertyNames": map[string]any{"pattern": namePattern.String()}, "additionalProperties": installer}
-	for name, connection := range project.Destinations {
-		operation, ok := operations[connection.Operation]
-		if !ok || operation.Kind != "reconcile" {
-			return nil, fmt.Errorf("destination %s: unknown reconcile operation %q", name, connection.Operation)
+	for _, operation := range descriptor.Operations {
+		if operation.Kind != "reconcile" {
+			continue
 		}
 		metadataID := "https://stemma.invalid/editor/" + url.PathEscape(operation.Name) + "/metadata"
 		settingsID := "https://stemma.invalid/editor/" + url.PathEscape(operation.Name) + "/config"
 		metadataKey, settingsKey := "OperationMetadata_"+operation.Name, "OperationConfig_"+operation.Name
+		nativeMetadata = append(nativeMetadata, map[string]any{"$ref": metadataID})
 		if _, exists := definitions[metadataKey]; !exists {
 			native, resources, err := editorResource(operation.MetadataSchema, metadataID)
 			if err != nil {
 				return nil, fmt.Errorf("operation %s metadata schema: %w", operation.Name, err)
 			}
+			walkEditorSchema(native, editorEnvironment)
 			walkEditorSchema(native, func(node map[string]any) { editorFacts(node, rootID+"#/$defs/FactReference") })
 			addEditorInputs(native, resources, installer, inputs, map[string]bool{})
 			definitions[metadataKey] = native
@@ -95,10 +130,32 @@ func ProjectSchema(project Project, descriptor plugin.Descriptor) ([]byte, error
 			if err != nil {
 				return nil, fmt.Errorf("operation %s config schema: %w", operation.Name, err)
 			}
+			walkEditorSchema(settings, editorEnvironment)
 			definitions[settingsKey] = settings
 		}
-		metadata[name] = map[string]any{"$ref": metadataID}
-		connections[name] = map[string]any{"type": "object", "additionalProperties": false, "required": []string{"operation"}, "properties": map[string]any{"operation": map[string]any{"const": operation.Name}, "config": map[string]any{"$ref": settingsID}}}
+		required := []string{"operation"}
+		if len(operation.ConfigSchema) > 0 && plugin.ValidateSchema(operation.ConfigSchema, []byte(`{}`)) != nil {
+			required = append(required, "config")
+		}
+		connections = append(connections, map[string]any{"type": "object", "additionalProperties": false, "required": required, "properties": map[string]any{
+			"operation": map[string]any{"const": operation.Name, "description": "Registered destination operation."},
+			"config":    map[string]any{"$ref": settingsID, "description": "Connection settings for this destination. Credentials may reference environment variables."},
+		}})
+	}
+	destinations := map[string]any{"type": "object", "description": "Native metadata for each named Project destination. Explicit values override derived values.", "properties": metadata, "additionalProperties": false}
+	if project == nil {
+		destinations["propertyNames"] = map[string]any{"pattern": namePattern.String()}
+		if len(nativeMetadata) > 0 {
+			destinations["additionalProperties"] = map[string]any{"anyOf": nativeMetadata}
+		}
+	} else {
+		for name, connection := range project.Destinations {
+			operation, ok := operations[connection.Operation]
+			if !ok || operation.Kind != "reconcile" {
+				return nil, fmt.Errorf("destination %s: unknown reconcile operation %q", name, connection.Operation)
+			}
+			metadata[name] = map[string]any{"$ref": "https://stemma.invalid/editor/" + url.PathEscape(operation.Name) + "/metadata"}
+		}
 	}
 	for _, operation := range descriptor.Operations {
 		if operation.Resource == nil {
@@ -110,29 +167,60 @@ func ProjectSchema(project Project, descriptor plugin.Descriptor) ([]byte, error
 			return nil, err
 		}
 		walkEditorSchema(native, func(node map[string]any) {
+			if node["x-stemma-input"] == true {
+				description := node["description"]
+				clear(node)
+				if description != nil {
+					node["description"] = description
+				}
+				node["$ref"] = rootID + "#/$defs/Input"
+				return
+			}
 			fields, _ := node["properties"].(map[string]any)
 			if _, ok := fields["destinations"]; ok {
-				fields["destinations"] = map[string]any{"type": "object", "properties": metadata, "additionalProperties": false}
+				fields["destinations"] = destinations
 			}
 		})
+		walkEditorSchema(native, editorEnvironment)
 		definition := operation.Resource.Kind
 		if operation.Resource.APIVersion != "stemma/v1alpha1" {
 			definition = "Resource_" + operation.Name
 		}
-		if _, exists := definitions[definition]; !exists {
-			schema["oneOf"] = append(schema["oneOf"].([]any), map[string]any{"$ref": "#/$defs/" + definition})
-		}
+		schema["oneOf"] = append(schema["oneOf"].([]any), map[string]any{"$ref": "#/$defs/" + definition})
 		definitions[definition], err = resourceSchema(operation.Resource.APIVersion, operation.Resource.Kind, native)
 		if err != nil {
 			return nil, err
 		}
 	}
-	definitions["ProjectSpec"].(map[string]any)["properties"].(map[string]any)["destinations"] = map[string]any{"type": "object", "properties": connections, "additionalProperties": false}
+	var connectionSchema any = false
+	if len(connections) > 0 {
+		connectionSchema = map[string]any{"oneOf": connections}
+	}
+	definitions["ProjectSpec"].(map[string]any)["properties"].(map[string]any)["destinations"] = map[string]any{"type": "object", "description": "Named destination connections. Resource destination names refer to these entries.", "propertyNames": map[string]any{"pattern": namePattern.String()}, "additionalProperties": connectionSchema}
 	data, err = json.MarshalIndent(schema, "", "  ")
 	if err != nil {
 		return nil, err
 	}
 	return append(data, '\n'), nil
+}
+
+// Environment expansion precedes typed decoding. Keep literal constraints in the
+// protocol while accepting whole-value string placeholders in the editor.
+func editorEnvironment(node map[string]any) {
+	if node["type"] != "string" {
+		return
+	}
+	if node["enum"] == nil && node["pattern"] == nil && node["minLength"] == nil && node["maxLength"] == nil && node["format"] == nil {
+		return
+	}
+	literal := maps.Clone(node)
+	clear(node)
+	for _, key := range []string{"description", "default", "title", "writeOnly"} {
+		if value, ok := literal[key]; ok {
+			node[key] = value
+		}
+	}
+	node["anyOf"] = []any{literal, map[string]any{"type": "string", "pattern": environmentPlaceholder.String()}}
 }
 
 // Walk only schema positions: examples, defaults and enum values are user data.
@@ -175,7 +263,13 @@ func editorChildren(node map[string]any, preserve ...string) []map[string]any {
 }
 
 func editorFacts(node map[string]any, reference string) {
-	wrap := func(value any) any { return map[string]any{"anyOf": []any{value, map[string]any{"$ref": reference}}} }
+	wrap := func(value any) any {
+		wrapped := map[string]any{"anyOf": []any{value, map[string]any{"$ref": reference}}}
+		if property, ok := value.(map[string]any); ok && property["description"] != nil {
+			wrapped["description"] = property["description"]
+		}
+		return wrapped
+	}
 	for _, key := range []string{"properties", "patternProperties"} {
 		properties, _ := node[key].(map[string]any)
 		for name, property := range properties {
@@ -264,8 +358,8 @@ func editorResource(data json.RawMessage, identity string) (map[string]any, map[
 			resolved.Fragment = ""
 			if rebased, exists := ids[resolved.String()]; exists {
 				resolved, _ = url.Parse(rebased)
-				resolved.Fragment = fragment
 			}
+			resolved.Fragment = fragment
 			scoped.node[key] = resolved.String()
 		}
 	}
@@ -319,4 +413,41 @@ func editEditorObject(node map[string]any, resources map[string]map[string]any, 
 			}
 		}
 	}
+}
+
+// catalogInputSchema closes the dynamic input slots using the same contracts
+// advertised by the loaded resolvers. No vendor fields are copied here.
+func catalogInputSchema(descriptor plugin.Descriptor) (map[string]any, error) {
+	data, err := json.Marshal(source.InputSchema(reflect.TypeFor[plugin.Input]()))
+	if err != nil {
+		return nil, err
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(data, &schema); err != nil {
+		return nil, err
+	}
+	walkEditorSchema(schema, editorEnvironment)
+	for _, operation := range descriptor.Operations {
+		if operation.Resolver == nil {
+			continue
+		}
+		identity := "https://stemma.invalid/editor/" + url.PathEscape(operation.Name) + "/input"
+		config, resources, err := editorResource(operation.ConfigSchema, identity)
+		if err != nil {
+			return nil, err
+		}
+		walkEditorSchema(config, editorEnvironment)
+		editEditorObject(config, resources, map[string]bool{}, func(node map[string]any) {
+			properties, _ := node["properties"].(map[string]any)
+			if properties == nil {
+				properties = map[string]any{}
+				node["properties"] = properties
+			}
+			properties["resolver"] = map[string]any{"const": operation.Name, "description": "Loaded resolver selecting this input."}
+		})
+		required, _ := config["required"].([]any)
+		config["required"] = append(required, "resolver")
+		schema["oneOf"] = append(schema["oneOf"].([]any), config)
+	}
+	return schema, nil
 }

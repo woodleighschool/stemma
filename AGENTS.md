@@ -51,7 +51,7 @@ Guidance for agents and humans working in this repository. This file is self-con
 
 ## Repository contract
 
-- A Git root owns the project, imported software-family files and reviewed lockfile. Keep parsing, composition, validation and the generated editor schema aligned; edit Go definitions before regenerating `stemma.schema.json`.
+- A Git root owns the project, imported software-family files and reviewed lockfile. Keep parsing, composition, validation and the generated editor schema aligned; derive schemas from Go definitions and the loaded registry with `stemma schema --output-file PATH`.
 - Source locks pin reviewed inputs. Unchanged bytes retain their recorded timestamp; frozen runs reject stale inputs. Destination metadata edits must not invalidate acquisition or packaging.
 - The content-addressed cache is disposable. Destinations identify publications from native keys or markers; losing local files must not duplicate remote objects or repeat completed uploads. Plugins receive leased workspaces, not cache ownership.
 - Planning is read-only. Applying reconciles each destination independently using native field names. Explicit values override derived values; missing derived values clear owned fields or fail if required. Other omitted fields remain unchanged, supported nulls clear values, and supplied lists replace their collections.

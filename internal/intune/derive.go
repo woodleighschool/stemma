@@ -16,7 +16,7 @@ import (
 // Declared fields win over MSI defaults and explicitly selected application facts.
 // A derivation manages every field it can supply: one the artifact gives no
 // value is cleared, or must be set where Graph requires a value.
-func Derive(req plugin.ReconcileRequest) (plugin.ReconcileRequest, map[string]string, error) {
+func Derive(req plugin.ReconcileRequest[Config]) (plugin.ReconcileRequest[Config], map[string]string, error) {
 	m, err := decodeObject(req.Metadata)
 	if err != nil {
 		return req, nil, err
@@ -126,7 +126,7 @@ func Derive(req plugin.ReconcileRequest) (plugin.ReconcileRequest, map[string]st
 	return req, origins, err
 }
 
-func deriveInstaller(req plugin.ReconcileRequest, metadata object, origins map[string]string) (object, error) {
+func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origins map[string]string) (object, error) {
 	if metadata["@odata.type"] != win32Type {
 		return metadata, nil
 	}

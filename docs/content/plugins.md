@@ -66,7 +66,7 @@ destination. Add a named connection using the advertised operation, then put its
 native metadata in the software document.
 
 `stemma operations` shows the installed contracts.
-`stemma schema --project --offline` includes their schemas for your editor.
+`stemma schema --offline --output-file stemma.schema.json` includes their schemas for your editor.
 
 Woodstar's experimental plugin is an external consumer of this interface. Its
 Munki-compatible publishing belongs to that plugin; Stemma does not register it as

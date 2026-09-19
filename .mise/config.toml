@@ -41,8 +41,8 @@ description = "Scan for known vulnerabilities with govulncheck"
 run = "govulncheck ./..."
 
 [tasks.generate]
-description = "Generate committed artifacts"
-run = "go run ./cmd/stemma schema > stemma.schema.json"
+description = "Generate the published default editor schema"
+run = "go run ./cmd/stemma schema --builtins --output-file docs/static/stemma.schema.json"
 
 [tasks.generate-graph]
 description = "Regenerate scoped Microsoft Graph clients"

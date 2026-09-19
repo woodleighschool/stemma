@@ -18,7 +18,7 @@ const (
 
 var errSelfRelationship = errors.New("an Intune app cannot depend on or supersede itself")
 
-func (c *client) desiredRelationships(ctx context.Context, req plugin.ReconcileRequest, tenant *tenantApps, l lifecycle, appID string) ([]object, error) {
+func (c *client) desiredRelationships(ctx context.Context, req plugin.ReconcileRequest[Config], tenant *tenantApps, l lifecycle, appID string) ([]object, error) {
 	var result []object
 	for _, group := range []struct {
 		refs  []relationshipReference
@@ -59,7 +59,7 @@ func (c *client) desiredRelationships(ctx context.Context, req plugin.ReconcileR
 }
 
 // relationshipApp uses explicit remote IDs or the publication of an exact resource.
-func relationshipApp(ctx context.Context, req plugin.ReconcileRequest, tenant *tenantApps, ref relationshipReference) (string, error) {
+func relationshipApp(ctx context.Context, req plugin.ReconcileRequest[Config], tenant *tenantApps, ref relationshipReference) (string, error) {
 	if ref.Resource == nil {
 		return ref.AppID, nil
 	}

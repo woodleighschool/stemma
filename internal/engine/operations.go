@@ -13,7 +13,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/invopop/jsonschema"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/intune"
@@ -135,7 +134,7 @@ func (o *operations) configuration(name string, settings map[string]any) error {
 	return nil
 }
 
-type reconcileHandler func(context.Context, plugin.ReconcileRequest) (plugin.ReconcileResponse, error)
+type reconcileHandler func(context.Context, plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error)
 
 type operations struct {
 	registry *plugin.Registry
@@ -143,60 +142,60 @@ type operations struct {
 	plugins  map[string]plugins.Entry
 }
 
-func operationSchema(value any) json.RawMessage {
-	r := jsonschema.Reflector{DoNotReference: true, Mapper: source.InputSchema}
-	data, _ := json.Marshal(r.Reflect(value))
+func schemaJSON(value any) json.RawMessage {
+	data, _ := json.Marshal(value)
 	return data
 }
 
 func builtins(handlers map[string]reconcileHandler) (*operations, error) {
 	ops := &operations{registry: plugin.New("stemma", "operations/4"), identity: map[string]string{}}
-	register := func(name, kind, effects string, methods []string, input, output any, handler plugin.Handler) error {
-		operation := plugin.Operation{Name: name, Kind: kind, SideEffects: effects, Methods: methods, InputSchema: operationSchema(input), OutputSchema: operationSchema(output)}
-		switch name {
-		case "munki":
-			operation.RequiresInspection = true
-			operation.Content = &plugin.ContentContract{Formats: []string{"pkg", "dmg"}, SourceFree: true}
-			operation.ConfigSchema, _ = json.Marshal(munkirepo.ConnectionSchema())
-			operation.MetadataSchema, _ = json.Marshal(munkirepo.MetadataSchema())
-		case "intune":
-			operation.RequiresInspection = true
-			operation.Content = intune.ContentContract()
-			operation.Requirements = intune.RuntimeRequirements()
-			operation.ConfigSchema, _ = json.Marshal(intune.ConnectionSchema())
-			operation.MetadataSchema, _ = json.Marshal(intune.MetadataSchema())
-		case "jamf":
-			operation.Content = &plugin.ContentContract{Formats: []string{"pkg", "dmg"}}
-			operation.ConfigSchema, _ = json.Marshal(jamf.ConnectionSchema())
-			operation.MetadataSchema, _ = json.Marshal(jamf.MetadataSchema())
-		}
-
-		if err := ops.registry.Register(operation, handler); err != nil {
-			return err
-		}
-		ops.identity[name] = "stemma/operations/3"
-		return nil
-	}
-	for _, name := range []string{"munki", "intune", "jamf"} {
-		handler := nativeHandler(name)
-		if handlers[name] != nil {
-			handler = handlers[name]
-		}
-		if err := register(name, "reconcile", "remote", []string{"validate", "plan", "apply"}, plugin.ReconcileRequest{}, plugin.ReconcileResponse{}, func(ctx context.Context, request plugin.Request) (plugin.Response, error) {
-			var input plugin.ReconcileRequest
-			if err := json.Unmarshal(request.Input, &input); err != nil {
-				return plugin.Response{}, err
-			}
-			input.Method = request.Method
-			output, err := handler(ctx, input)
-			data, encodeErr := json.Marshal(output)
-			return plugin.Response{Output: data}, errors.Join(err, encodeErr)
-		}); err != nil {
+	for _, err := range []error{
+		plugin.Register(ops.registry, plugin.Operation{
+			Name: "munki", Kind: "reconcile", SideEffects: "remote", Methods: []string{"validate", "plan", "apply"},
+			RequiresInspection: true, Content: &plugin.ContentContract{Formats: []string{"pkg", "dmg"}, SourceFree: true},
+			MetadataSchema: schemaJSON(munkirepo.MetadataSchema()),
+		}, munkirepo.Handle),
+		plugin.Register(ops.registry, plugin.Operation{
+			Name: "intune", Kind: "reconcile", SideEffects: "remote", Methods: []string{"validate", "plan", "apply"},
+			RequiresInspection: true, Content: intune.ContentContract(), Requirements: intune.RuntimeRequirements(),
+			MetadataSchema: schemaJSON(intune.MetadataSchema()),
+		}, intune.Handle),
+		plugin.Register(ops.registry, plugin.Operation{
+			Name: "jamf", Kind: "reconcile", SideEffects: "remote", Methods: []string{"validate", "plan", "apply"},
+			Content: &plugin.ContentContract{Formats: []string{"pkg", "dmg"}}, MetadataSchema: schemaJSON(jamf.MetadataSchema()),
+		}, jamf.Handle),
+	} {
+		if err != nil {
 			return nil, err
 		}
 	}
+	for _, name := range []string{"munki", "intune", "jamf"} {
+		ops.identity[name] = "stemma/operations/4"
+	}
 	if err := registerKinds(ops); err != nil {
 		return nil, err
+	}
+	if len(handlers) != 0 {
+		registry := plugin.New("stemma", "operations/4")
+		for _, operation := range ops.registry.Descriptor().Operations {
+			handler := ops.registry.Handle
+			if replacement := handlers[operation.Name]; replacement != nil {
+				handler = func(ctx context.Context, request plugin.Request) (plugin.Response, error) {
+					var input plugin.ReconcileRequest[json.RawMessage]
+					if err := json.Unmarshal(request.Input, &input); err != nil {
+						return plugin.Response{}, err
+					}
+					input.Method = request.Method
+					output, err := replacement(ctx, input)
+					data, encodeErr := json.Marshal(output)
+					return plugin.Response{Output: data}, errors.Join(err, encodeErr)
+				}
+			}
+			if err := registry.Register(operation, handler); err != nil {
+				return nil, err
+			}
+		}
+		ops.registry = registry
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -217,19 +216,6 @@ func builtins(handlers map[string]reconcileHandler) (*operations, error) {
 		ops.identity[name] = version + "/" + implementation
 	}
 	return ops, nil
-}
-
-func nativeHandler(name string) reconcileHandler {
-	switch name {
-	case "munki":
-		return munkirepo.Handle
-	case "intune":
-		return intune.Handle
-	case "jamf":
-		return jamf.Handle
-	default:
-		return nil
-	}
 }
 
 func (o *operations) operation(name string) (plugin.Operation, error) {
@@ -303,6 +289,9 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 			return nil, fmt.Errorf("plugin %s descriptor: %w", name, err)
 		}
 		for _, operation := range descriptor.Operations {
+			if operation.Resolver != nil && source.NativeResolver(operation.Name) {
+				return nil, fmt.Errorf("plugin %s: resolver %q is built in", name, operation.Name)
+			}
 			if err := ops.registry.Register(operation, func(ctx context.Context, request plugin.Request) (plugin.Response, error) {
 				return plugin.Run(ctx, executable, request)
 			}); err != nil {

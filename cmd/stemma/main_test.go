@@ -167,6 +167,25 @@ spec:
 		}
 		return report
 	}
+	invoke(false, "schema")
+	invoke(false, "schema", "-o", "-")
+	if _, err := os.Stat(filepath.Join(project, "stemma.schema.json")); !os.IsNotExist(err) {
+		t.Fatal("schema without --output-file wrote an implicit catalog file")
+	}
+	stdoutSchema := invoke(true, "schema", "--offline", "--output-file", "-")
+	if !json.Valid(stdoutSchema) {
+		t.Fatal("stdout schema is not JSON")
+	}
+	filename := filepath.Join(t.TempDir(), "editor", "schema.json")
+	for range 2 {
+		if output := invoke(true, "schema", "--offline", "--output-file", filename); len(output) != 0 {
+			t.Fatalf("file output also wrote stdout: %s", output)
+		}
+		data, err := os.ReadFile(filename)
+		if err != nil || !bytes.Equal(stdoutSchema, data) {
+			t.Fatalf("file and stdout schemas differ: %v", err)
+		}
+	}
 	invoke(true, "validate", "--resolved", "--offline")
 	var descriptor plugin.Descriptor
 	if err := json.Unmarshal(invoke(true, "operations", "--offline"), &descriptor); err != nil {
@@ -272,5 +291,20 @@ spec:
 		if !destination.Applied || len(destination.Changes) != 0 {
 			t.Fatalf("a runner without local state replayed publication: %+v", destination)
 		}
+	}
+}
+
+func TestBuiltinSchemaWithoutProject(t *testing.T) {
+	t.Chdir(t.TempDir())
+	var out, stderr bytes.Buffer
+	cmd, finish := command(&out, &stderr)
+	cmd.SetArgs([]string{"schema", "--builtins", "--output-file", "-"})
+	err := cmd.ExecuteContext(t.Context())
+	finish(err)
+	if err != nil {
+		t.Fatalf("schema without a project: %v; %s", err, stderr.String())
+	}
+	if !json.Valid(out.Bytes()) {
+		t.Fatalf("schema output is not JSON: %s", out.String())
 	}
 }

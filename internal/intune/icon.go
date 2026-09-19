@@ -16,7 +16,7 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func (c *client) reconcileIcon(ctx context.Context, req plugin.ReconcileRequest, current object, apply bool) ([]plugin.Change, error) {
+func (c *client) reconcileIcon(ctx context.Context, req plugin.ReconcileRequest[Config], current object, apply bool) ([]plugin.Change, error) {
 	artifact := req.Inputs["icon"]
 	if artifact.Path == "" {
 		return nil, nil

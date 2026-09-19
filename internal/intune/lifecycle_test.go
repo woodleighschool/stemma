@@ -12,7 +12,7 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func changePayload(t *testing.T, req *plugin.ReconcileRequest, content string) {
+func changePayload(t *testing.T, req *plugin.ReconcileRequest[Config], content string) {
 	t.Helper()
 	data := []byte("@echo off\r\necho " + content + "\r\n")
 	if err := os.WriteFile(req.Artifact.Path, data, 0o600); err != nil {
@@ -261,7 +261,7 @@ func TestRelationshipsPreserveOmittedCategoriesAndInboundReferences(t *testing.T
 
 // peerNotes are the notes of the app another software document publishes to the
 // same destination.
-func peerNotes(req plugin.ReconcileRequest, software string) string {
+func peerNotes(req plugin.ReconcileRequest[Config], software string) string {
 	return withMarker("", publication{identity: markerIdentity(plugin.Identity{Project: req.Identity.Project, Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: software}, Destination: req.Identity.Destination})})
 }
 

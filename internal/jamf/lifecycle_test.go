@@ -170,7 +170,7 @@ func TestPatchPolicyIdentity(t *testing.T) {
 		"duplicate names are ambiguous":         {existing: []*xmlNode{testPolicy("3", "Managed rollout", "5", "0.9"), testPolicy("4", "Managed rollout", "5", "0.9")}, policy: map[string]any{"name": "Managed rollout"}, wantErr: "multiple Jamf patch policies"},
 		"declared id selects and renames":       {existing: []*xmlNode{testPolicy("3", "Legacy rollout", "5", "0.9")}, policy: map[string]any{"id": "3", "name": "Managed rollout"}, wantID: "3", wantName: "Managed rollout"},
 		"declared id must exist":                {policy: map[string]any{"id": "3"}, wantErr: "does not exist"},
-		"declared id must belong to the title":  {existing: []*xmlNode{testPolicy("3", "Elsewhere", "6", "0.9")}, policy: map[string]any{"id": "3"}, wantErr: "different title configuration"},
+		"declared id must belong to the title":  {existing: []*xmlNode{testPolicy("3", "Elsewhere", "6", "0.9")}, policy: map[string]any{"id": "3"}, wantErr: "different title Config"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server, request := newPatchFixture(t)
@@ -314,13 +314,13 @@ func patchMetadata(version string, keep int) json.RawMessage {
 
 // newNativeFixture serves the deployment objects retention reads, without
 // declaring patch deployment.
-func newNativeFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest) {
+func newNativeFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest[Config]) {
 	t.Helper()
 	server, request := newFixture(t)
 	server.native = &nativeServer{titles: map[string]*titles.ResourcePatchSoftwareTitleConfiguration{"5": {ID: "5", DisplayName: "Test title", SoftwareTitleID: "50", Packages: []titles.SubsetPackage{}}}, patchPolicies: map[string]*xmlNode{}}
 	return server, request
 }
-func newPatchFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest) {
+func newPatchFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest[Config]) {
 	t.Helper()
 	server, request := newNativeFixture(t)
 	request.Metadata = patchMetadata("1.0", 0)

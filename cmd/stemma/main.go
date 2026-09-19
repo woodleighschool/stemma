@@ -19,6 +19,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/intunewin"
 	"github.com/woodleighschool/stemma/internal/lockfile"
@@ -89,27 +90,37 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		return err
 	}
 	root.AddCommand(build)
-	var projectSchema, schemaOffline bool
-	schema := &cobra.Command{Use: "schema", Short: "Print the generated JSON schema with editor descriptions", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	var schemaOutput string
+	var schemaOffline, schemaBuiltins bool
+	schema := &cobra.Command{Use: "schema --output-file PATH", Short: "Write the catalog JSON Schema for the loaded plugin registry", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if schemaOutput == "" {
+			return errors.New("output path is required; use --output-file - for stdout")
+		}
 		var data []byte
 		var err error
-		if projectSchema {
+		if schemaBuiltins {
+			data, err = engine.BuiltinSchema()
+		} else {
 			path, resolveErr := resolve()
 			if resolveErr != nil {
 				return resolveErr
 			}
 			data, err = engine.ProjectSchema(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Lock: lockfile.Options{Offline: schemaOffline}})
-		} else {
-			data, err = config.Schema()
 		}
 		if err != nil {
 			return err
 		}
-		_, err = out.Write(data)
-		return err
+		if schemaOutput == "-" {
+			_, err = out.Write(data)
+			return err
+		}
+		return fileio.Write(schemaOutput, data, 0o644)
 	}}
-	schema.Flags().BoolVar(&projectSchema, "project", false, "Bind named connections to built-in and trusted plugin contracts")
+	schema.Flags().StringVar(&schemaOutput, "output-file", "", "Required output path; - writes to stdout")
+	_ = schema.MarkFlagRequired("output-file")
+	schema.Flags().BoolVar(&schemaBuiltins, "builtins", false, "Describe built-in operations without loading a project")
 	schema.Flags().BoolVar(&schemaOffline, "offline", false, "Require verified cached plugin bundles")
+	schema.MarkFlagsMutuallyExclusive("builtins", "offline")
 	root.AddCommand(schema)
 	var resolved, validateOffline bool
 	validate := &cobra.Command{Use: "validate", Short: "Validate configuration and operation contracts before software acquisition", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {

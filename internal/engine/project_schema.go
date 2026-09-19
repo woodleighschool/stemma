@@ -7,6 +7,15 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
+// BuiltinSchema describes built-in operations without loading a project or plugins.
+func BuiltinSchema() ([]byte, error) {
+	operations, err := builtins(nil)
+	if err != nil {
+		return nil, err
+	}
+	return config.Schema(operations.registry.Descriptor())
+}
+
 // ProjectSchema describes trusted operations without acquiring software inputs
 // or contacting destinations. Offline requires verified cached plugin bundles.
 func ProjectSchema(ctx context.Context, opts Options) (result []byte, err error) {

@@ -2,7 +2,6 @@
 package munkirepo
 
 import (
-	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -28,7 +27,7 @@ import (
 
 // Handle implements read-only planning and content-first publication to a local repository.
 // Apply serializes writers sharing this repository; external writers must use the same lock.
-func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, error) {
 	var inputErr error
 	request, inputErr = munki.DocumentInput(ctx, request)
 	if inputErr != nil {
@@ -38,7 +37,8 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 	if inputErr != nil {
 		return plugin.ReconcileResponse{}, inputErr
 	}
-	root, err := repositoryPath(request.Config)
+	root := request.Config.Path
+	err := request.Config.Validate()
 	if err == nil && !filepath.IsAbs(root) && request.Root != "" {
 		root = filepath.Join(request.Root, root)
 	}
@@ -76,22 +76,20 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 	return reconcile(ctx, root, request)
 }
 
-func repositoryPath(configuration json.RawMessage) (string, error) {
-	var connection struct {
-		Path string `json:"path"`
-	}
-	decoder := json.NewDecoder(bytes.NewReader(configuration))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&connection); err != nil {
-		return "", err
-	}
-	if connection.Path == "" {
-		return "", errors.New("munki repository path is required")
-	}
-	return connection.Path, nil
+// Config selects a local Munki repository.
+type Config struct {
+	Path string `json:"path" jsonschema:"minLength=1" jsonschema_description:"Repository directory, relative to the project root or absolute. Apply serializes writers and updates native catalogs."`
 }
 
-func nativeInput(request plugin.ReconcileRequest) (munki.Input, map[string]any, munki.Derived, error) {
+// Validate requires a repository location.
+func (config Config) Validate() error {
+	if config.Path == "" {
+		return errors.New("munki repository path is required")
+	}
+	return nil
+}
+
+func nativeInput(request plugin.ReconcileRequest[Config]) (munki.Input, map[string]any, munki.Derived, error) {
 	input := munki.Input{Name: request.Identity.Resource.Name, Version: request.Artifact.Version, SHA256: request.Artifact.SHA256, Size: request.Artifact.Size, InstallerLocation: request.Artifact.Filename}
 	if request.Artifact.Format == "pkg" || strings.EqualFold(filepath.Ext(request.Artifact.Filename), ".pkg") {
 		input.InstallerType = "pkg"
@@ -182,7 +180,7 @@ func freeName(directory, base, extension string, reusable func(string) (bool, er
 	}
 }
 
-func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, error) {
 	input, managed, derived, err := nativeInput(request)
 	if err != nil {
 		return plugin.ReconcileResponse{}, err

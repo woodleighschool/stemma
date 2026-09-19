@@ -185,24 +185,11 @@ func rulesSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(100)), Description: "Complete detection-rule collection. Selected MSI content defaults to its ProductCode and productVersion greaterThanOrEqual; a newer major version with another ProductCode needs declared file, registry or script detection. Manual rules are ANDed, with at most one MSI rule. A PowerShell rule must be the only rule. Requirement rules are unsupported.", Items: &jsonschema.Schema{OneOf: []*jsonschema.Schema{product, file, registry, script}}, Contains: product, MinContains: new(uint64(0)), MaxContains: new(uint64(1)), If: &jsonschema.Schema{Contains: script}, Then: &jsonschema.Schema{MaxItems: new(uint64(1))}}
 }
 
-// ConnectionSchema describes a shared Intune connection. App adoption belongs
-// to software metadata because one connection may publish many different apps.
-func ConnectionSchema() *jsonschema.Schema {
-	schema := objectSchema(map[string]*jsonschema.Schema{
-		"graph_url":     {Type: "string", Default: "https://graph.microsoft.com/v1.0", Description: "Graph base URL ending in /v1.0. macOS apps select /beta automatically. HTTPS is required."},
-		"token":         {Type: "string", MinLength: new(uint64(1)), Description: "Existing Graph bearer token. Choose this or all three client credentials. Use ${VAR} to supply it from the environment."},
-		"tenant_id":     {Type: "string", MinLength: new(uint64(1)), Description: "Microsoft Entra tenant ID. Use ${VAR} to supply it from the environment."},
-		"client_id":     {Type: "string", MinLength: new(uint64(1)), Description: "App registration client ID. Use ${VAR} to supply it from the environment."},
-		"client_secret": {Type: "string", MinLength: new(uint64(1)), Description: "App registration secret. Use ${VAR} to supply it from the environment."},
-	})
-	for _, field := range []string{"token", "client_secret"} {
-		property, _ := schema.Properties.Get(field)
-		property.WriteOnly = true
-	}
+// JSONSchemaExtend advertises the two complete authentication shapes.
+func (Config) JSONSchemaExtend(schema *jsonschema.Schema) {
 	schema.OneOf = []*jsonschema.Schema{
 		{Required: []string{"token"}, Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Required: []string{"tenant_id"}}, {Required: []string{"client_id"}}, {Required: []string{"client_secret"}}}}},
 		{Required: []string{"tenant_id", "client_id", "client_secret"}, Not: &jsonschema.Schema{Required: []string{"token"}}},
 	}
-	schema.Description = "Shared Graph connection for Windows and macOS apps. Each app is found by the identity marker in its notes; set metadata.app_id on a Software document to adopt or pin an existing app. Requires Graph DeviceManagementApps.ReadWrite.All for apply."
-	return schema
+	schema.Description = "Shared Graph connection. Publications are identified by native identity markers; app adoption belongs to destination metadata."
 }

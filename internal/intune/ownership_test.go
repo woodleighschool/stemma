@@ -34,8 +34,8 @@ func TestDerivedFieldWithoutArtifactValueIsClearedOrMustBeSet(t *testing.T) {
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			req := plugin.ReconcileRequest{
-				Prepared: true, Config: raw(object{"token": "synthetic"}), Metadata: raw(test.metadata), Artifact: test.artifact,
+			req := plugin.ReconcileRequest[Config]{
+				Prepared: true, Config: Config{GraphURL: "https://graph.microsoft.com/v1.0", Token: "synthetic"}, Metadata: raw(test.metadata), Artifact: test.artifact,
 				Subjects: map[string]plugin.SubjectSelector{"main": {Kind: test.subject.Kind}},
 				Facts:    plugin.Facts{Subjects: []plugin.Subject{test.subject}},
 			}
@@ -78,7 +78,7 @@ func TestClearedDerivedFieldReplacesAnEarlierInstallersValue(t *testing.T) {
 
 func TestMacDerivationAllowsExplicitReplacement(t *testing.T) {
 	// Intune has no setting for macOS 14.1, so the document settles the requirement.
-	req := plugin.ReconcileRequest{
+	req := plugin.ReconcileRequest[Config]{
 		Method: "validate", Prepared: true,
 		Subjects: map[string]plugin.SubjectSelector{"main": {Kind: "app"}},
 		Facts:    plugin.Facts{Subjects: []plugin.Subject{{Kind: "app", App: &plugin.AppFacts{BundleID: "org.example.app", Name: "Example", MinimumOS: "14.1"}}}},

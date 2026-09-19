@@ -56,13 +56,16 @@ proposes lock updates as pull requests in one finite run. The Project's
 ```sh
 stemma inspect installer.pkg
 stemma validate --resolved
-stemma schema
-stemma schema --project --offline
+stemma schema --output-file stemma.schema.json
+stemma schema --offline --output-file -
 stemma operations
 stemma version
 ```
 
-`inspect`, `validate --resolved`, `schema` and `operations` print JSON documents.
+`inspect`, `validate --resolved`, `schema --output-file -` and `operations` print JSON documents.
+`schema` requires an explicit output file and includes the locally loaded plugins.
+`--builtins` generates the default schema without loading a catalog; it uses the
+same registry and schema composition as project generation.
 `inspect` reads artifact metadata without executing the installer.
 `validate --resolved` prints merged configuration and may expose expanded
 environment values: do not share it without reviewing it.

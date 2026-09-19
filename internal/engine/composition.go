@@ -93,7 +93,7 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 			connection := project.Destinations[destination]
 			metadata, _ := json.Marshal(staticMetadata(destinationMetadata(software.Destinations[destination])))
 			settings, _ := json.Marshal(connection.Config)
-			request := plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: project.Project, Resource: software.Resource.Reference(), Destination: destination}, Root: root, Config: settings, Metadata: metadata, Subjects: software.Subjects, Peers: plan.peers}
+			request := plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: project.Project, Resource: software.Resource.Reference(), Destination: destination}, Root: root, Config: settings, Metadata: metadata, Subjects: software.Subjects, Peers: plan.peers}
 			if err := ops.call(ctx, connection.Operation, "validate", request, nil); err != nil {
 				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
 			}
