@@ -137,7 +137,7 @@ func TestIconExtractsOnlyDeclaredArtwork(t *testing.T) {
 }
 
 func TestIconDoesNotBroadenMissingArtwork(t *testing.T) {
-	for _, name := range []string{"AppIcon", "", "../outside", "*.icns"} {
+	for _, name := range []string{"AppIcon", "", "../outside", "[O]ther.icns"} {
 		t.Run(name, func(t *testing.T) {
 			root := applicationFixture(t)
 			plist := filepath.Join(root, "Example.app/Contents/Info.plist")
