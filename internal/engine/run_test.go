@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	"github.com/woodleighschool/stemma/internal/testproject"
+	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -65,9 +65,7 @@ spec:
 func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
-	if err := testproject.Write(filename, []byte(policyProject)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, policyProject)
 	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"}
 	report, err := Run(t.Context(), options)
 	if err != nil {
@@ -88,9 +86,7 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 	if err != nil || !bytes.Equal(before, after) {
 		t.Fatal("plan changed durable bindings")
 	}
-	if err := testproject.Write(filename, []byte(strings.Replace(policyProject, "description: original", "description: edited", 1))); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, strings.Replace(policyProject, "description: original", "description: edited", 1))
 	options.Method = "apply"
 	report, err = Run(t.Context(), options)
 	if err != nil {
@@ -150,9 +146,7 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 func TestPartialFailurePersistsOwnedBindingWithoutSuccess(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
-	if err := testproject.Write(filename, []byte(policyProject)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, policyProject)
 	failure := errors.New("upload failed")
 	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
 		if request.Method == "apply" {
@@ -179,9 +173,7 @@ func TestNativeValidationBeforeAcquisition(t *testing.T) {
 	filename := filepath.Join(root, "stemma.yaml")
 	manifest := strings.Replace(policyProject, "  destinations:\n    first:\n      pkginfo:", "  source:\n    path: missing.pkg\n  destinations:\n    first:\n      pkginfo:", 1)
 	manifest = strings.Replace(manifest, "description: original", "unattended_install: invalid", 1)
-	if err := testproject.Write(filename, []byte(manifest)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, manifest)
 	_, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"})
 	if err == nil || !strings.Contains(err.Error(), "unattended_install") {
 		t.Fatalf("invalid native field reached acquisition: %v", err)
@@ -195,9 +187,7 @@ func TestOpenReleasesAPartialSessionOnFailure(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
 	manifest := strings.Replace(policyProject, "  imports:\n", "  plugins:\n    missing:\n      path: plugins/missing\n      trusted: true\n  imports:\n", 1)
-	if err := testproject.Write(filename, []byte(manifest)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, manifest)
 	_, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"})
 	if err == nil || !strings.Contains(err.Error(), "plugin missing") {
 		t.Fatalf("missing plugin: %v", err)
@@ -238,9 +228,7 @@ func TestSourceFreeCannotSilentlySkipVerification(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
 	manifest := strings.Replace(policyProject, "spec:\n  destinations:\n    first:\n      pkginfo:", "spec:\n  signature:\n    signer: apple:developer-id:SMLKBTR495\n  destinations:\n    first:\n      pkginfo:", 1)
-	if err := testproject.Write(filename, []byte(manifest)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, manifest)
 	if _, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"}); err == nil || !strings.Contains(err.Error(), "require a source") {
 		t.Fatalf("sourcefree verification was skipped: %v", err)
 	}
@@ -254,7 +242,7 @@ func TestResourceWorkStaysInItsResourceTree(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(installer) }))
 	defer server.Close()
 	filename := filepath.Join(t.TempDir(), "stemma.yaml")
-	if err := testproject.Write(filename, fmt.Appendf(nil, `apiVersion: stemma/v1alpha1
+	testproject.Write(t, filename, fmt.Sprintf(`apiVersion: stemma/v1alpha1
 kind: Project
 metadata: {name: scopes}
 spec:
@@ -269,9 +257,7 @@ spec:
   source: {url: %s/app.pkg}
   destinations:
     repo: {pkginfo: {catalogs: [testing]}}
-`, server.URL)); err != nil {
-		t.Fatal(err)
-	}
+`, server.URL))
 	cache := t.TempDir()
 	for _, method := range []string{"prepare", "plan"} {
 		var logs bytes.Buffer
@@ -354,9 +340,7 @@ spec:
 `, name, server.URL, name)
 			}
 			filename := filepath.Join(root, "stemma.yaml")
-			if err := testproject.Write(filename, []byte(manifest)); err != nil {
-				t.Fatal(err)
-			}
+			testproject.Write(t, filename, manifest)
 			var logs bytes.Buffer
 			ctx = plugin.WithLogger(ctx, slog.New(slog.NewJSONHandler(&logs, nil)))
 			report, err := Run(ctx, Options{
@@ -407,9 +391,7 @@ func TestApplyKeepsCrossedPublicationDependenciesIndependent(t *testing.T) {
 		manifest += "\n---\n" + strings.Replace(parts[1], "name: policy", "name: "+name, 1)
 	}
 	filename := filepath.Join(t.TempDir(), "stemma.yaml")
-	if err := testproject.Write(filename, []byte(manifest)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, manifest)
 	var applied []string
 	report, err := Run(t.Context(), Options{
 		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply",
@@ -444,9 +426,7 @@ func TestApplyOrdersRequiredResourcesAndLeavesOthersToDestinations(t *testing.T)
 		manifest += "\n---\n" + strings.Replace(parts[1], "name: policy", "name: "+name, 1)
 	}
 	filename := filepath.Join(t.TempDir(), "stemma.yaml")
-	if err := testproject.Write(filename, []byte(manifest)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, manifest)
 	var applied []string
 	report, err := Run(t.Context(), Options{
 		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply",
@@ -488,9 +468,7 @@ func TestApplyChecksEveryReviewedInputBeforeWriting(t *testing.T) {
 		resource = strings.Replace(resource, "spec:\n", "spec:\n  source: {path: "+name+".pkg}\n", 1)
 		manifest += "\n---\n" + resource
 	}
-	if err := testproject.Write(filename, []byte(manifest)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, manifest)
 	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
 	if _, err := Run(t.Context(), options); err != nil {
 		t.Fatal(err)

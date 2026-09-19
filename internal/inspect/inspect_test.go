@@ -16,7 +16,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/woodleighschool/stemma/internal/testdiskimage"
+	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -158,9 +158,7 @@ func TestReadDMGPreservesPayloadProvenance(t *testing.T) {
 				writeFixture(t, payload, readFixture(t, "../apple/testdata/fixture.pkg"))
 			}
 			name := filepath.Join(t.TempDir(), "vendor.dmg")
-			if err := testdiskimage.Write(name, source); err != nil {
-				t.Fatal(err)
-			}
+			testdiskimage.Write(t, name, source)
 			data := readFixture(t, name)
 			facts, err := Read(t.Context(), name)
 			if err != nil {

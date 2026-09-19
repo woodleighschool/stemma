@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/icon"
-	"github.com/woodleighschool/stemma/internal/testproject"
+	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -159,9 +159,7 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 	t.Cleanup(server.Close)
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
-	if err := testproject.Write(filename, fmt.Appendf(nil, iconProject, server.URL)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, fmt.Sprintf(iconProject, server.URL))
 	bundleArtwork, setupArtwork := iconFixtures(t, root)
 	published := map[string]plugin.Artifact{}
 	applies := 0

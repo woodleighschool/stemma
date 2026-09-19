@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/icon"
-	"github.com/woodleighschool/stemma/internal/testdiskimage"
+	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -22,9 +22,7 @@ import (
 func bundleInputs(t *testing.T, root string) []plugin.Artifact {
 	t.Helper()
 	image := filepath.Join(t.TempDir(), "Example.dmg")
-	if err := testdiskimage.Write(image, root); err != nil {
-		t.Fatal(err)
-	}
+	testdiskimage.Write(t, image, root)
 	return []plugin.Artifact{
 		{Path: image, Filename: "Example.dmg", Format: "dmg"},
 		{Path: filepath.Join(root, "Example.app"), Filename: "Example.app", Tree: true},

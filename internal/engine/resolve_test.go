@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	"github.com/woodleighschool/stemma/internal/testproject"
+	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 )
 
 func TestResolveReportsEachResourceWithoutWritingTheLock(t *testing.T) {
@@ -114,9 +114,7 @@ spec:
       pkginfo:
         catalogs: [testing]
 `
-	if err := testproject.Write(filename, []byte(manifest)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, manifest)
 	options := Options{ConfigPath: filename, CacheDir: t.TempDir()}
 	candidate, err := Resolve(t.Context(), options)
 	if err != nil {

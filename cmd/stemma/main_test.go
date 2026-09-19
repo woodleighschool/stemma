@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/woodleighschool/stemma/internal/testproject"
+	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -140,9 +140,7 @@ spec:
 `, server.URL)
 	write := func(text string) {
 		t.Helper()
-		if err := testproject.Write(filepath.Join(project, "stemma.yaml"), []byte(text)); err != nil {
-			t.Fatal(err)
-		}
+		testproject.Write(t, filepath.Join(project, "stemma.yaml"), text)
 	}
 	write(manifest)
 	invoke := func(success bool, args ...string) []byte {

@@ -9,7 +9,7 @@ import (
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/woodleighschool/stemma/internal/plugins"
-	"github.com/woodleighschool/stemma/internal/testproject"
+	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"go.yaml.in/yaml/v4"
 	"net/http"
 	"net/http/httptest"
@@ -90,9 +90,7 @@ spec:
 			filename := filepath.Join(root, "stemma.yaml")
 			write := func(text string) {
 				t.Helper()
-				if err := testproject.Write(filename, []byte(text)); err != nil {
-					t.Fatal(err)
-				}
+				testproject.Write(t, filename, text)
 			}
 			if transport == "path" {
 				manifest = strings.Replace(manifest, "image: registry.example/plugins/echo:v1", "path: local-plugin", 1)

@@ -9,7 +9,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/source"
-	"github.com/woodleighschool/stemma/internal/testproject"
+	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 )
 
 func TestBuildReferencesShareLockedInputsAndPreserveMetadataOnlyCache(t *testing.T) {
@@ -72,9 +72,7 @@ spec:
 `
 	write := func(text string) {
 		t.Helper()
-		if err := testproject.Write(filename, []byte(text)); err != nil {
-			t.Fatal(err)
-		}
+		testproject.Write(t, filename, text)
 	}
 	write(manifest)
 	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
@@ -218,9 +216,7 @@ func TestSuspendedResourcesRunOnlyWhenSelected(t *testing.T) {
 	if err := os.WriteFile(private, []byte("private"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := testproject.Write(filename, []byte(suspendedProject)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, suspendedProject)
 	const vendor, build = "stemma/v1alpha1/MacSoftware/vendor", "stemma/v1alpha1/BuildMacPkg/private"
 	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
 	keys := func(report Report) []string {
@@ -275,9 +271,9 @@ func TestSuspendedResourcesRunOnlyWhenSelected(t *testing.T) {
 		t.Fatalf("explicit selection did not run the suspended closure: %v %+v", err, report)
 	}
 	// A resource the catalog no longer declares still loses its lock implicitly.
-	if err := os.Remove(filepath.Join(root, "1.software.yaml")); err != nil {
-		t.Fatal(err)
-	}
+	project, resources, _ := strings.Cut(suspendedProject, "\n---\n")
+	_, resources, _ = strings.Cut(resources, "\n---\n")
+	testproject.Write(t, filename, project+"\n---\n"+resources)
 	options.Method, options.Resources = "update", nil
 	if _, err := Run(t.Context(), options); err != nil {
 		t.Fatal(err)
@@ -296,9 +292,7 @@ func TestActiveResourceCannotConsumeSuspendedOutputs(t *testing.T) {
 		}
 	}
 	manifest := strings.Replace(suspendedProject, "suspend: true\nspec:\n  source:", "spec:\n  source:", 1)
-	if err := testproject.Write(filename, []byte(manifest)); err != nil {
-		t.Fatal(err)
-	}
+	testproject.Write(t, filename, manifest)
 	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update", Resources: []string{"MacSoftware/private"}}
 	const want = "resource stemma/v1alpha1/MacSoftware/private input source: depends on suspended resource stemma/v1alpha1/BuildMacPkg/private; suspend stemma/v1alpha1/MacSoftware/private as well"
 	if _, err := ValidateProject(t.Context(), options); err == nil || err.Error() != want {

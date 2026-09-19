@@ -15,7 +15,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/apple"
 	"github.com/woodleighschool/stemma/internal/signature"
-	"github.com/woodleighschool/stemma/internal/testdiskimage"
+	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -116,9 +116,7 @@ func TestZIPApplicationProducesPackageAndSelectedEvidence(t *testing.T) {
 func TestDMGApplicationRetainsVendorBytes(t *testing.T) {
 	root := applicationFixture(t)
 	filename := filepath.Join(t.TempDir(), "Example.dmg")
-	if err := testdiskimage.Write(filename, root); err != nil {
-		t.Fatal(err)
-	}
+	testdiskimage.Write(t, filename, root)
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		t.Fatal(err)
@@ -141,9 +139,7 @@ func TestDMGApplicationRetainsVendorBytes(t *testing.T) {
 func TestDMGMetadataDoesNotExtract(t *testing.T) {
 	source := applicationFixture(t)
 	filename := filepath.Join(t.TempDir(), "Example.dmg")
-	if err := testdiskimage.Write(filename, source); err != nil {
-		t.Fatal(err)
-	}
+	testdiskimage.Write(t, filename, source)
 	workspace := t.TempDir()
 	selected, err := selectPayload(t.Context(), Spec{}, plugin.Artifact{Path: filename, Filename: "Example.dmg"}, workspace)
 	if err != nil {
@@ -173,9 +169,7 @@ func TestDMGPackageIsPublishedAsALocalFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	filename := filepath.Join(t.TempDir(), "Example.dmg")
-	if err := testdiskimage.Write(filename, source); err != nil {
-		t.Fatal(err)
-	}
+	testdiskimage.Write(t, filename, source)
 	workspace := t.TempDir()
 	outputs, err := Prepare(t.Context(), Spec{}, Request{Input: plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}, Workspace: workspace})
 	if err != nil {
@@ -217,9 +211,7 @@ func TestDMGSignatureVerifiesSelectedApplication(t *testing.T) {
 				}
 			}
 			filename := filepath.Join(t.TempDir(), "Example.dmg")
-			if err := testdiskimage.Write(filename, root); err != nil {
-				t.Fatal(err)
-			}
+			testdiskimage.Write(t, filename, root)
 			input := plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}
 			workspace := t.TempDir()
 			outputs, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: signer}}, Request{Input: input, Workspace: workspace})

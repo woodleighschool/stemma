@@ -14,7 +14,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/signature"
-	"github.com/woodleighschool/stemma/internal/testdiskimage"
+	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 	"howett.net/plist"
 )
 
@@ -345,9 +345,7 @@ func openImage(t *testing.T, dir string) *diskimage.Image {
 		t.Skip("the fixture writer stores symlink targets with the host's separator")
 	}
 	name := filepath.Join(t.TempDir(), "fixture.dmg")
-	if err := testdiskimage.Write(name, dir); err != nil {
-		t.Fatal(err)
-	}
+	testdiskimage.Write(t, name, dir)
 	image, err := diskimage.Open(t.Context(), name)
 	if err != nil {
 		t.Fatal(err)

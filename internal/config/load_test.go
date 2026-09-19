@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/woodleighschool/stemma/internal/testproject"
+	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 )
 
 const projectFixture = `apiVersion: stemma/v1alpha1
@@ -227,9 +227,7 @@ func writeConfigStream(t *testing.T, root, name, document string) {
 func parseTest(t *testing.T, data []byte) (Project, error) {
 	t.Helper()
 	filename := filepath.Join(t.TempDir(), "stemma.yaml")
-	if err := testproject.Write(filename, data); err != nil {
-		return Project{}, err
-	}
+	testproject.Write(t, filename, string(data))
 	return Load(filename)
 }
 

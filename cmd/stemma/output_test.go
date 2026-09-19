@@ -12,7 +12,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/woodleighschool/stemma/internal/engine"
-	"github.com/woodleighschool/stemma/internal/testproject"
+	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -81,7 +81,7 @@ func TestInvalidOutputOptionsDoNotRun(t *testing.T) {
 
 func TestAcquisitionFailureProducesHonestJSONReport(t *testing.T) {
 	project := t.TempDir()
-	if err := testproject.Write(filepath.Join(project, "stemma.yaml"), []byte(`apiVersion: stemma/v1alpha1
+	testproject.Write(t, filepath.Join(project, "stemma.yaml"), `apiVersion: stemma/v1alpha1
 kind: Project
 metadata: {name: fixture}
 spec: {imports: ['*.software.yaml']}
@@ -92,9 +92,7 @@ metadata: {name: missing-installer}
 spec:
   source: {path: missing.pkg}
   signature: {signer: apple:developer-id:SMLKBTR495}
-`)); err != nil {
-		t.Fatal(err)
-	}
+`)
 	var out, logs bytes.Buffer
 	cmd, finish := command(&out, &logs)
 	cmd.SetArgs([]string{"prepare", "--root", project, "--cache-dir", t.TempDir(), "--output", "json", "--log-format", "json"})
