@@ -24,6 +24,8 @@ type AppFacts struct {
 	Version    string `json:"version" plist:"CFBundleShortVersionString"`
 	Build      string `json:"build" plist:"CFBundleVersion"`
 	Executable string `json:"executable" plist:"CFBundleExecutable"`
+	IconFile   string `json:"icon_file,omitempty" plist:"CFBundleIconFile"`
+	IconName   string `json:"icon_name,omitempty" plist:"CFBundleIconName"`
 	// MinimumOS is the scalar requirement, or the highest declared architecture
 	// requirement when LSMinimumSystemVersion is absent.
 	MinimumOS string `json:"minimum_os" plist:"LSMinimumSystemVersion"`

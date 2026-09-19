@@ -47,7 +47,7 @@ func glassy(ctx context.Context, subject Subject, size int, workspace string) ([
 
 // surrogate stages artwork as the icon of a minimal application bundle.
 // The bundle needs an executable, because Launch Services badges
-// software it cannot run as prohibited; a script is enough.
+// software it cannot run as prohibited; a native Mach-O marker is enough.
 func surrogate(subject Subject, workspace string) (string, error) {
 	icns, err := encodeICNS(subject.Artwork)
 	if err != nil {
@@ -65,22 +65,17 @@ func surrogate(subject Subject, workspace string) (string, error) {
 <key>CFBundlePackageType</key><string>APPL</string>
 </dict></plist>
 `),
-		"Contents/MacOS/application":   []byte("#!/bin/sh\nexit 0\n"),
 		"Contents/Resources/icon.icns": icns,
 	} {
 		target := filepath.Join(app, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return "", err
 		}
-		mode := os.FileMode(0o644)
-		if strings.HasPrefix(name, "Contents/MacOS/") {
-			mode = 0o755
-		}
-		if err := os.WriteFile(target, data, mode); err != nil {
+		if err := os.WriteFile(target, data, 0o644); err != nil {
 			return "", err
 		}
 	}
-	return app, nil
+	return app, StageExecutable(app, "application")
 }
 
 // icnsTypes name the PNG-backed ICNS entries by edge; other edges have none.

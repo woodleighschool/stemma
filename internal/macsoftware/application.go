@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -31,50 +30,62 @@ func Icon(ctx context.Context, installer plugin.Artifact, workspace string, pres
 	if err := json.Unmarshal(data, &app); err != nil || app.App == nil {
 		return icon.Subject{}, errors.New("macos.application evidence requires an application subject")
 	}
-	keep := archive.Leaves{"Contents/Info.plist", "Contents/Resources/*.icns"}
-	if presentation == icon.Glassy {
-		if app.App.Executable == "" {
-			return icon.Subject{}, errors.New("native icon rendering requires an application executable")
-		}
-		keep = apple.IconResources(app.App.Executable)
-	} else if presentation != icon.Raw {
+	if presentation != icon.Glassy && presentation != icon.Raw {
 		return icon.Subject{}, fmt.Errorf("unresolved icon presentation %q", presentation)
 	}
-	// Extraction writes into a new directory and expects its parent to exist.
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
-		return icon.Subject{}, err
-	}
-	expanded := filepath.Join(workspace, "expanded")
-	bundle, err := extractBundle(ctx, installer, app, expanded, keep)
+	resource, err := apple.IconPath(app.App.IconFile)
 	if err != nil {
 		return icon.Subject{}, err
 	}
-	if presentation == icon.Raw {
-		data, err := apple.AppIconFile(bundle)
-		if err != nil {
+	hasNamedIcon := presentation == icon.Glassy && app.App.IconName != ""
+	if resource == "" && !hasNamedIcon {
+		return icon.Subject{}, icon.ErrNoArtwork
+	}
+	var keep archive.Leaves
+	if resource != "" {
+		keep = append(keep, archive.Literal(resource))
+	}
+	if presentation == icon.Glassy {
+		keep = append(keep, "Contents/Info.plist", "Contents/PkgInfo")
+		if hasNamedIcon {
+			keep = append(keep, "Contents/Resources/Assets.car")
+		}
+	}
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		return icon.Subject{}, err
+	}
+	bundle, err := extractBundle(ctx, installer, app, filepath.Join(workspace, "expanded"), keep)
+	if err != nil {
+		return icon.Subject{}, err
+	}
+	data, err = apple.AppIconFile(bundle, app.App.IconFile)
+	if err != nil {
+		return icon.Subject{}, err
+	}
+	hasAssets := false
+	if hasNamedIcon {
+		info, err := os.Lstat(filepath.Join(bundle, "Contents/Resources/Assets.car"))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return icon.Subject{}, err
 		}
-		if data == nil {
-			return icon.Subject{}, icon.ErrNoArtwork
+		if err == nil {
+			if !info.Mode().IsRegular() {
+				return icon.Subject{}, errors.New("icon asset catalog must be a regular file")
+			}
+			hasAssets = true
 		}
+	}
+	if data == nil && !hasAssets {
+		return icon.Subject{}, icon.ErrNoArtwork
+	}
+	if presentation == icon.Raw {
 		artwork, err := icon.FromICNS(data)
 		return icon.Subject{Artwork: artwork}, err
 	}
-	info, err := os.Lstat(filepath.Join(bundle, "Contents", "MacOS", app.App.Executable))
-	switch {
-	case err != nil:
-		return icon.Subject{}, fmt.Errorf("application executable: %w", err)
-	case info.Mode().IsRegular():
-		return icon.Subject{Path: bundle}, nil
-	case info.Mode()&fs.ModeSymlink == 0:
-		return icon.Subject{}, fmt.Errorf("application executable %q is not a regular file", app.App.Executable)
-	}
-	// A linked executable can depend on files outside the selected subset.
-	if err := os.RemoveAll(expanded); err != nil {
+	if err := icon.StageExecutable(bundle, app.App.Executable); err != nil {
 		return icon.Subject{}, err
 	}
-	bundle, err = extractBundle(ctx, installer, app, expanded, nil)
-	return icon.Subject{Path: bundle}, err
+	return icon.Subject{Path: bundle}, nil
 }
 
 func extractBundle(ctx context.Context, installer plugin.Artifact, app plugin.Subject, destination string, keep archive.Leaves) (string, error) {

@@ -204,20 +204,21 @@ archives and vendor packages all work; a package holding several applications ne
 every declared icon that has no file yet and existing files stay unchanged, so a run
 across the catalog is safe. `--force` replaces them.
 
-Two presentations write the file. `glassy`, the default on a Mac, draws the bundle
-with the macOS icon renderer at 512 pixels, so the artwork carries the current system
-presentation exactly as Finder shows it; `--size` changes the edge. `raw`, the
-default elsewhere, writes the largest PNG entry of the bundle's icon file unchanged,
-so any host can create an icon; a bundle that keeps its icon in an asset catalog has
-no raw artwork and reports `no artwork` until a Mac creates it. `--presentation`
-selects either explicitly.
+Both presentations select the file named by `CFBundleIconFile`, adding `.icns`
+when the declaration omits an extension.
 
-The glassy renderer draws what that Mac would show. Run it on a Mac that can launch
-the application, because macOS overlays its prohibited badge on software the host
-cannot run, and review the image like any other change. Only the files the renderer
-reads leave the installer: the bundle's `Info.plist`, main executable, icon files and
-asset catalog. A package's payload is still read through once to reach them, which
-takes as long as decompressing it.
+`glassy`, the default on a Mac, uses the macOS renderer at 512 pixels; `--size`
+changes the edge. It stages the declared icon, `Info.plist`, `PkgInfo` when present,
+and `Assets.car` when `CFBundleIconName` declares an asset-backed icon. The renderer
+selects the artwork from those resources. A small native Mach-O marker prevents
+missing-executable badges; vendor executables and their symlink targets are never
+extracted or run. Applications with only a named asset icon do not require an ICNS
+fallback. Missing artwork reports `no artwork`.
+
+`raw`, the default elsewhere, extracts only the declared icon and writes its largest
+supported PNG entry unchanged. Legacy-only ICNS encodings report `no artwork`.
+`--presentation` selects either presentation explicitly. A package's payload is
+still read through once to reach the selected files, which requires decompressing it.
 
 `icons/` holds plain PNG files. Software without an application, such as a
 script-only item or a driver package, uses artwork you commit yourself: any square

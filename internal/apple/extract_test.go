@@ -91,7 +91,7 @@ func TestExtractApplicationKeepsNamedLeaves(t *testing.T) {
 		t.Fatal(err)
 	}
 	selected := facts.Applications[0]
-	bundle, err := ExtractApplication(t.Context(), name, selected.Path, selected.InstalledPath, t.TempDir(), IconResources("Example"))
+	bundle, err := ExtractApplication(t.Context(), name, selected.Path, selected.InstalledPath, t.TempDir(), archive.Leaves{"Contents/Info.plist", "Contents/Resources/AppIcon.icns"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestExtractApplicationKeepsNamedLeaves(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"Contents/Info.plist", "Contents/MacOS/Example", "Contents/Resources/AppIcon.icns", "Contents/Resources/Assets.car"}
+	want := []string{"Contents/Info.plist", "Contents/Resources/AppIcon.icns"}
 	if !slices.Equal(written, want) {
 		t.Fatalf("wrote %v, want %v", written, want)
 	}

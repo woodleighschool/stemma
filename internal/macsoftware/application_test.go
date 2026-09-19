@@ -51,46 +51,39 @@ func bundleFiles(t *testing.T, bundle string) []string {
 	return files
 }
 
-func TestBundleMaterializesWhatAnIconRenderReads(t *testing.T) {
+func TestIconExtractsOnlyDeclaredArtwork(t *testing.T) {
 	root := applicationFixture(t)
-	resources := filepath.Join(root, "Example.app/Contents/Resources")
-	if err := os.WriteFile(filepath.Join(resources, "Source.icns"), []byte("icns"), 0o644); err != nil {
+	var artwork bytes.Buffer
+	if err := png.Encode(&artwork, image.NewNRGBA(image.Rect(0, 0, 128, 128))); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("Source.icns", filepath.Join(resources, "AppIcon.icns")); err != nil {
-		t.Skip(err)
+	var icns bytes.Buffer
+	icns.WriteString("icns")
+	_ = binary.Write(&icns, binary.BigEndian, uint32(16+artwork.Len()))
+	icns.WriteString("ic07")
+	_ = binary.Write(&icns, binary.BigEndian, uint32(8+artwork.Len()))
+	icns.Write(artwork.Bytes())
+	resources := filepath.Join(root, "Example.app/Contents/Resources")
+	for _, name := range []string{"AppIcon.icns", "Unrelated.icns", "Assets.car"} {
+		if err := os.WriteFile(filepath.Join(resources, name), icns.Bytes(), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	inputs := bundleInputs(t, root)
-	for _, input := range inputs {
-		t.Run(input.Filename, func(t *testing.T) {
-			outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
-			if err != nil {
-				t.Fatal(err)
-			}
-			// The workspace is the engine's, which creates nothing under it beforehand.
-			subject, err := Icon(t.Context(), outputs["installer"], filepath.Join(t.TempDir(), "icon"), icon.Glassy)
-			bundle := subject.Path
-			if err != nil {
-				t.Fatal(err)
-			}
-			if filepath.Base(bundle) != "Example.app" {
-				t.Fatalf("bundle path %q", bundle)
-			}
-			want := []string{"Contents/Info.plist", "Contents/MacOS/example", "Contents/Resources/AppIcon.icns", "Contents/Resources/Source.icns"}
-			if files := bundleFiles(t, bundle); !slices.Equal(files, want) {
-				t.Fatalf("bundle holds %v, want %v", files, want)
-			}
-		})
+	plist := filepath.Join(root, "Example.app/Contents/Info.plist")
+	data, err := os.ReadFile(plist)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := Icon(t.Context(), plugin.Artifact{Path: inputs[0].Path, Format: "dmg"}, t.TempDir(), icon.Glassy); !errors.Is(err, ErrNoApplication) {
-		t.Fatalf("installer without a selected application: %v", err)
+	data = bytes.Replace(data, []byte("</dict>"), []byte("<key>CFBundleIconName</key><string>AppIcon</string></dict>"), 1)
+	if err := os.WriteFile(plist, data, 0644); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestBundleWithALinkedExecutableIsMaterializedWhole(t *testing.T) {
-	root := applicationFixture(t)
+	if err := os.WriteFile(filepath.Join(root, "Example.app/Contents/PkgInfo"), []byte("APPL????"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// An executable link must not pull its target or the rest of the bundle into rendering.
 	contents := filepath.Join(root, "Example.app/Contents")
-	if err := os.MkdirAll(filepath.Join(contents, "Frameworks"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(contents, "Frameworks"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Rename(filepath.Join(contents, "MacOS/example"), filepath.Join(contents, "Frameworks/example")); err != nil {
@@ -105,78 +98,127 @@ func TestBundleWithALinkedExecutableIsMaterializedWhole(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			subject, err := Icon(t.Context(), outputs["installer"], filepath.Join(t.TempDir(), "icon"), icon.Glassy)
-			bundle := subject.Path
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := []string{"Contents/Frameworks/example", "Contents/Info.plist", "Contents/MacOS/example", "Contents/Resources/manual.pdf"}
-			if files := bundleFiles(t, bundle); !slices.Equal(files, want) {
-				t.Fatalf("bundle holds %v, want %v", files, want)
+			for _, presentation := range []icon.Presentation{icon.Raw, icon.Glassy} {
+				t.Run(string(presentation), func(t *testing.T) {
+					workspace := filepath.Join(t.TempDir(), "icon")
+					subject, err := Icon(t.Context(), outputs["installer"], workspace, presentation)
+					if err != nil {
+						t.Fatal(err)
+					}
+					bundle := filepath.Join(workspace, "expanded/Example.app")
+					want := []string{"Contents/Resources/AppIcon.icns"}
+					if presentation == icon.Raw {
+						if !bytes.Equal(subject.Artwork, artwork.Bytes()) || subject.Path != "" {
+							t.Fatal("raw artwork changed")
+						}
+					} else {
+						want = []string{"Contents/Info.plist", "Contents/MacOS/example", "Contents/PkgInfo", "Contents/Resources/AppIcon.icns", "Contents/Resources/Assets.car"}
+						if subject.Path != bundle || subject.Artwork != nil {
+							t.Fatalf("subject: %+v", subject)
+						}
+						stub, err := os.ReadFile(filepath.Join(bundle, "Contents/MacOS/example"))
+						if err != nil {
+							t.Fatal(err)
+						}
+						if len(stub) != 32 || binary.LittleEndian.Uint32(stub) != 0xfeedfacf {
+							t.Fatal("vendor executable was retained instead of the rendering marker")
+						}
+					}
+					if files := bundleFiles(t, bundle); !slices.Equal(files, want) {
+						t.Fatalf("extracted %v, want %v", files, want)
+					}
+				})
 			}
 		})
 	}
+	if _, err := Icon(t.Context(), plugin.Artifact{}, t.TempDir(), icon.Glassy); !errors.Is(err, ErrNoApplication) {
+		t.Fatalf("missing selection: %v", err)
+	}
 }
 
-func TestBundleWithoutItsExecutableFails(t *testing.T) {
-	root := applicationFixture(t)
-	if err := os.Remove(filepath.Join(root, "Example.app/Contents/MacOS/example")); err != nil {
-		t.Fatal(err)
-	}
-	for _, input := range bundleInputs(t, root) {
-		t.Run(input.Filename, func(t *testing.T) {
+func TestIconDoesNotBroadenMissingArtwork(t *testing.T) {
+	for _, name := range []string{"AppIcon", "", "../outside", "*.icns"} {
+		t.Run(name, func(t *testing.T) {
+			root := applicationFixture(t)
+			plist := filepath.Join(root, "Example.app/Contents/Info.plist")
+			data, err := os.ReadFile(plist)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = bytes.ReplaceAll(data, []byte("<string>AppIcon</string>"), []byte("<string>"+name+"</string>"))
+			if err := os.WriteFile(plist, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "Example.app/Contents/Resources/Other.icns"), []byte("not declared"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			input := plugin.Artifact{Path: filepath.Join(root, "Example.app"), Filename: "Example.app", Tree: true}
 			outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if subject, err := Icon(t.Context(), outputs["installer"], filepath.Join(t.TempDir(), "icon"), icon.Glassy); !errors.Is(err, fs.ErrNotExist) {
-				t.Fatalf("bundle %q without an executable: %v", subject.Path, err)
+			for _, presentation := range []icon.Presentation{icon.Raw, icon.Glassy} {
+				workspace := filepath.Join(t.TempDir(), "icon")
+				_, err := Icon(t.Context(), outputs["installer"], workspace, presentation)
+				if name == "../outside" {
+					if err == nil {
+						t.Fatal("accepted escaping artwork")
+					}
+				} else if !errors.Is(err, icon.ErrNoArtwork) {
+					t.Fatalf("%s missing artwork: %v", presentation, err)
+				}
+				if err := filepath.WalkDir(workspace, func(_ string, e fs.DirEntry, err error) error {
+					if err == nil && e.Name() == "Other.icns" {
+						t.Fatal("undeclared artwork was extracted")
+					}
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
 			}
 		})
 	}
 }
 
-func TestIconExtractsOnlyWhatItsPresentationNeeds(t *testing.T) {
-	root := applicationFixture(t)
-	input := plugin.Artifact{Path: filepath.Join(root, "Example.app"), Filename: "Example.app", Tree: true}
-	outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The fixture declares an icon file it does not carry.
-	subject, err := Icon(t.Context(), outputs["installer"], filepath.Join(t.TempDir(), "icon"), icon.Glassy)
-	if err != nil || filepath.Base(subject.Path) != "Example.app" || subject.Artwork != nil {
-		t.Fatalf("subject without artwork: %+v %v", subject, err)
-	}
-	if _, err := Icon(t.Context(), outputs["installer"], filepath.Join(t.TempDir(), "icon"), icon.Raw); !errors.Is(err, icon.ErrNoArtwork) {
-		t.Fatalf("raw icon without artwork: %v", err)
-	}
-	var artwork bytes.Buffer
-	if err := png.Encode(&artwork, image.NewNRGBA(image.Rect(0, 0, 128, 128))); err != nil {
-		t.Fatal(err)
-	}
-	var icns bytes.Buffer
-	icns.WriteString("icns")
-	_ = binary.Write(&icns, binary.BigEndian, uint32(16+artwork.Len()))
-	icns.WriteString("ic07")
-	_ = binary.Write(&icns, binary.BigEndian, uint32(8+artwork.Len()))
-	icns.Write(artwork.Bytes())
-	if err := os.WriteFile(filepath.Join(root, "Example.app/Contents/Resources/AppIcon.icns"), icns.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Remove(filepath.Join(root, "Example.app/Contents/MacOS/example")); err != nil {
-		t.Fatal(err)
-	}
-	if outputs, err = Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()}); err != nil {
-		t.Fatal(err)
-	}
-	workspace := filepath.Join(t.TempDir(), "icon")
-	subject, err = Icon(t.Context(), outputs["installer"], workspace, icon.Raw)
-	if err != nil || !bytes.Equal(subject.Artwork, artwork.Bytes()) || subject.Path != "" {
-		t.Fatalf("subject with ICNS artwork: %d bytes %v", len(subject.Artwork), err)
-	}
-	want := []string{"Contents/Info.plist", "Contents/Resources/AppIcon.icns"}
-	if files := bundleFiles(t, filepath.Join(workspace, "expanded/Example.app")); !slices.Equal(files, want) {
-		t.Fatalf("raw artwork extracted %v, want %v", files, want)
+func TestIconWithOnlyAssetCatalog(t *testing.T) {
+	for _, declared := range []bool{false, true} {
+		root := applicationFixture(t)
+		plist := filepath.Join(root, "Example.app/Contents/Info.plist")
+		data, err := os.ReadFile(plist)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data = bytes.ReplaceAll(data, []byte("<key>CFBundleIconFile</key><string>AppIcon</string>"), nil)
+		if declared {
+			data = bytes.Replace(data, []byte("</dict>"), []byte("<key>CFBundleIconName</key><string>ModernIcon</string></dict>"), 1)
+		}
+		if err := os.WriteFile(plist, data, 0644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "Example.app/Contents/Resources/Assets.car"), []byte("catalog artwork"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		for _, input := range bundleInputs(t, root) {
+			outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, presentation := range []icon.Presentation{icon.Raw, icon.Glassy} {
+				subject, err := Icon(t.Context(), outputs["installer"], t.TempDir(), presentation)
+				if !declared || presentation == icon.Raw {
+					if !errors.Is(err, icon.ErrNoArtwork) {
+						t.Fatalf("declared=%v %s: %v", declared, presentation, err)
+					}
+					continue
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := []string{"Contents/Info.plist", "Contents/MacOS/example", "Contents/Resources/Assets.car"}
+				if files := bundleFiles(t, subject.Path); !slices.Equal(files, want) {
+					t.Fatalf("extracted %v, want %v", files, want)
+				}
+			}
+		}
 	}
 }

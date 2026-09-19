@@ -328,7 +328,7 @@ func readDirectory(ctx context.Context, name string) (plugin.Facts, error) {
 }
 
 func appFacts(app apple.AppFacts) *plugin.AppFacts {
-	return &plugin.AppFacts{BundleID: app.BundleID, Name: app.Name, Version: app.Version, Build: app.Build, Executable: app.Executable, MinimumOS: app.MinimumOS}
+	return &plugin.AppFacts{BundleID: app.BundleID, Name: app.Name, Version: app.Version, Build: app.Build, Executable: app.Executable, IconFile: app.IconFile, IconName: app.IconName, MinimumOS: app.MinimumOS}
 }
 
 func isDMG(f *os.File, size int64) bool {

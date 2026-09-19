@@ -119,6 +119,8 @@ type AppFacts struct {
 	Version    string `json:"version,omitempty"`
 	Build      string `json:"build,omitempty"`
 	Executable string `json:"executable,omitempty"`
+	IconFile   string `json:"icon_file,omitempty"`
+	IconName   string `json:"icon_name,omitempty"`
 	MinimumOS  string `json:"minimum_os,omitempty"`
 }
 
