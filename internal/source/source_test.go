@@ -92,9 +92,13 @@ func TestDownloadPageRejectsAmbiguousOrUnsafeMatches(t *testing.T) {
 	for _, tc := range []struct{ name, body, pattern, want string }{
 		{"missing", "no download", `https://cdn\.example/\S+`, "0 distinct"},
 		{"ambiguous", "https://cdn.example/one.pkg https://cdn.example/two.pkg", `https://cdn\.example/\S+`, "2 distinct"},
-		{"partial", "App.pkg", `App\.pkg`, "complete stable URL"},
-		{"signed", "https://cdn.example/App.pkg?token=secret", `https://cdn\.example/\S+`, "complete stable URL"},
-		{"downgrade", "http://cdn.example/App.pkg", `http://cdn\.example/\S+`, "HTTPS downgrade"},
+		{"scheme", "file:///App.pkg", `file:\S+`, "stable HTTP(S) URL"},
+		{"fragment", "/App.pkg#fragment", `/App\.pkg#fragment`, "stable HTTP(S) URL"},
+		{"empty", "App.pkg", `^`, "valid URL reference"},
+		{"malformed", "/App%zz.pkg", `/App%zz\.pkg`, "valid URL reference"},
+		{"signed", "https://cdn.example/App.pkg?token=secret", `https://cdn\.example/\S+`, "stable HTTP(S) URL"},
+		{"signed relative", "/App.pkg?token=secret", `/App\.pkg\?\S+`, "stable HTTP(S) URL"},
+		{"userinfo", "//user:secret@cdn.example/App.pkg", `//\S+`, "stable HTTP(S) URL"},
 		{"oversize", strings.Repeat("x", (4<<20)+1), `https://cdn\.example/\S+`, "exceeds 4 MiB"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

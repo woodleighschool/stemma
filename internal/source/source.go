@@ -78,9 +78,6 @@ func New(store *cas.Store, root string, offline bool) *Manager {
 		if !sameOrigin(req.URL, via[0].URL) || !sameOrigin(req.URL, via[len(via)-1].URL) {
 			stripPrivateHeaders(req.Header)
 		}
-		if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
-			return errors.New("refusing HTTPS downgrade")
-		}
 		return nil
 	}}}
 }

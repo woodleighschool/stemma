@@ -32,7 +32,7 @@ type nativeConfig struct {
 	Include            []string          `json:"include,omitempty" jsonschema_description:"Local tree globs using doublestar semantics. Each pattern must match at least one entry."`
 	Base               string            `json:"base,omitempty" jsonschema_description:"Local tree root, relative to the resource file. Defaults to its directory."`
 	URL                string            `json:"url,omitempty" jsonschema_description:"Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."`
-	Match              string            `json:"match,omitempty" jsonschema_description:"HTTP page regular expression whose full matches must identify one distinct absolute stable download URL."`
+	Match              string            `json:"match,omitempty" jsonschema_description:"HTTP page regular expression whose full matches are URL references resolved against the final page URL. Must identify one distinct stable HTTP(S) download URL."`
 	Path               string            `json:"path,omitempty" jsonschema_description:"Exact file or directory path relative to the resource file, confined to the project."`
 	Repository         string            `json:"repository,omitempty" jsonschema_description:"GitHub repository in owner/name form."`
 	Release            string            `json:"release,omitempty" jsonschema_description:"GitHub release tag, or latest. Omitted or empty values select latest."`
@@ -441,16 +441,6 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry *nativeEnt
 		if s.Match == "" && entry.URL != s.URL {
 			return cas.Ref{}, errors.New("locked HTTP URL does not match configuration")
 		}
-		if s.Match != "" {
-			pattern, err := regexp.Compile(s.Match)
-			if err != nil || pattern.FindString(entry.URL) != entry.URL {
-				return cas.Ref{}, errors.New("locked HTTP URL does not match source pattern")
-			}
-		}
-		origin, _ := url.Parse(s.URL)
-		if origin.Scheme == "https" && u.Scheme != "https" {
-			return cas.Ref{}, errors.New("refusing discovered HTTPS downgrade")
-		}
 	}
 	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
 		return cas.Ref{}, errors.New("locked asset does not belong to the configured GitHub repository")
@@ -600,10 +590,20 @@ func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEnt
 	if err != nil {
 		return err
 	}
+	base := req.URL
+	if res.Request != nil {
+		base = res.Request.URL
+	}
 	matches := map[string]bool{}
 	for _, address := range pattern.FindAllString(html.UnescapeString(string(data)), -1) {
+		reference, err := url.Parse(address)
+		if err != nil || address == "" {
+			return errors.New("download page match is not a valid URL reference")
+		}
+		resolved := base.ResolveReference(reference)
+		address = resolved.String()
 		if err := validateHTTPURL(address); err != nil {
-			return fmt.Errorf("download page match must be a complete stable URL: %w", err)
+			return fmt.Errorf("download page match must resolve to a stable HTTP(S) URL: %w", err)
 		}
 		matches[address] = true
 	}
