@@ -21,6 +21,9 @@ func TestNativeInputSchemaAndValidation(t *testing.T) {
 		valid             bool
 	}{
 		{"GitHub glob", `{"resolver":"github","repository":"company/application","asset":"Application-*-arm64.zip"}`, true},
+		{"GitHub prereleases", `{"resolver":"github","repository":"company/application","asset":"App.pkg","include_prereleases":true}`, true},
+		{"GitHub prereleases string", `{"resolver":"github","repository":"company/application","asset":"App.pkg","include_prereleases":"true"}`, false},
+		{"HTTP prereleases", `{"url":"https://example.test/App.pkg","include_prereleases":true}`, false},
 		{"GitHub missing asset", `{"resolver":"github","repository":"company/application"}`, false},
 		{"GitHub empty asset", `{"resolver":"github","repository":"company/application","asset":""}`, false},
 		{"GitHub foreign regex", `{"resolver":"github","repository":"company/application","asset":"App.pkg","match":""}`, false},

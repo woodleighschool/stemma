@@ -459,6 +459,10 @@
               "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming.",
               "type": "string"
             },
+            "include_prereleases": {
+              "description": "Include prereleases when discovering latest; select the newest published non-draft release. Explicit release tags are unchanged.",
+              "type": "boolean"
+            },
             "release": {
               "description": "GitHub release tag, or latest. Omitted or empty values select latest.",
               "type": "string"
@@ -7588,6 +7592,10 @@
             "filename": {
               "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming.",
               "type": "string"
+            },
+            "include_prereleases": {
+              "description": "Include prereleases when discovering latest; select the newest published non-draft release. Explicit release tags are unchanged.",
+              "type": "boolean"
             },
             "release": {
               "description": "GitHub release tag, or latest. Omitted or empty values select latest.",

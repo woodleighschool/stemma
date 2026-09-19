@@ -49,6 +49,21 @@ asset in the selected release; zero or multiple matches fail. For example,
 `release: latest` and an omitted or empty `release` select GitHub's latest release.
 Any other value selects that exact release tag. Draft releases are rejected.
 
+Set `include_prereleases: true` to select the newest published release across both
+stable releases and prereleases. Discovery compares `published_at` across all
+pages, skips drafts, and uses the higher release ID to break equal timestamps.
+An explicit `release` tag still selects that exact release. Asset matching applies
+to the selected release; a missing asset does not fall back to an older release.
+The lock continues to pin the concrete release and asset identities.
+
+```yaml
+source:
+  resolver: github
+  repository: bambulab/BambuStudio
+  asset: Bambu_Studio_mac-*.dmg
+  include_prereleases: true
+```
+
 For an HTTP page containing a download link, use `resolver: http` with `url` and a
 `match` regular expression. The full match must be an absolute download URL, and
 all matches must identify one distinct URL. Discovery belongs to the resolver; the software kind still receives

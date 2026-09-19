@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/bmatcuk/doublestar/v4"
@@ -27,25 +28,26 @@ import (
 )
 
 type nativeConfig struct {
-	Type       string            `json:"-"`
-	Include    []string          `json:"include,omitempty" jsonschema_description:"Local tree globs using doublestar semantics. Each pattern must match at least one entry."`
-	Base       string            `json:"base,omitempty" jsonschema_description:"Local tree root, relative to the resource file. Defaults to its directory."`
-	URL        string            `json:"url,omitempty" jsonschema_description:"Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."`
-	Match      string            `json:"match,omitempty" jsonschema_description:"HTTP page regular expression whose full matches must identify one distinct absolute stable download URL."`
-	Path       string            `json:"path,omitempty" jsonschema_description:"Exact file or directory path relative to the resource file, confined to the project."`
-	Repository string            `json:"repository,omitempty" jsonschema_description:"GitHub repository in owner/name form."`
-	Release    string            `json:"release,omitempty" jsonschema_description:"GitHub release tag, or latest. Omitted or empty values select latest."`
-	Asset      string            `json:"asset,omitempty" jsonschema_description:"GitHub asset-name glob using doublestar semantics. Must match exactly one release asset; exact names also work."`
-	Filename   string            `json:"filename,omitempty" jsonschema_description:"Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."`
-	SHA256     string            `json:"sha256,omitempty" jsonschema_description:"Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."`
-	Token      string            `json:"token,omitempty" jsonschema_description:"Optional bearer token. Mutually exclusive with an Authorization header."`
-	Headers    map[string]string `json:"headers,omitempty" jsonschema_description:"HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin."`
+	Type               string            `json:"-"`
+	Include            []string          `json:"include,omitempty" jsonschema_description:"Local tree globs using doublestar semantics. Each pattern must match at least one entry."`
+	Base               string            `json:"base,omitempty" jsonschema_description:"Local tree root, relative to the resource file. Defaults to its directory."`
+	URL                string            `json:"url,omitempty" jsonschema_description:"Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."`
+	Match              string            `json:"match,omitempty" jsonschema_description:"HTTP page regular expression whose full matches must identify one distinct absolute stable download URL."`
+	Path               string            `json:"path,omitempty" jsonschema_description:"Exact file or directory path relative to the resource file, confined to the project."`
+	Repository         string            `json:"repository,omitempty" jsonschema_description:"GitHub repository in owner/name form."`
+	Release            string            `json:"release,omitempty" jsonschema_description:"GitHub release tag, or latest. Omitted or empty values select latest."`
+	IncludePrereleases bool              `json:"include_prereleases,omitempty" jsonschema_description:"Include prereleases when discovering latest; select the newest published non-draft release. Explicit release tags are unchanged."`
+	Asset              string            `json:"asset,omitempty" jsonschema_description:"GitHub asset-name glob using doublestar semantics. Must match exactly one release asset; exact names also work."`
+	Filename           string            `json:"filename,omitempty" jsonschema_description:"Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."`
+	SHA256             string            `json:"sha256,omitempty" jsonschema_description:"Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."`
+	Token              string            `json:"token,omitempty" jsonschema_description:"Optional bearer token. Mutually exclusive with an Authorization header."`
+	Headers            map[string]string `json:"headers,omitempty" jsonschema_description:"HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin."`
 }
 
 // Native field sets also constrain the editor schema.
 var nativeFields = map[string][]string{
 	"http":   {"url", "match", "filename", "sha256", "token", "headers"},
-	"github": {"repository", "release", "asset", "filename", "sha256", "token"},
+	"github": {"repository", "release", "include_prereleases", "asset", "filename", "sha256", "token"},
 	"file":   {"path", "filename", "sha256"},
 	"local":  {"base", "include", "filename", "sha256"},
 }
@@ -621,31 +623,34 @@ func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry
 	if s.Release != "" && s.Release != "latest" {
 		endpoint = "https://api.github.com/repos/" + s.Repository + "/releases/tags/" + url.PathEscape(s.Release)
 	}
-	req, err := m.request(ctx, endpoint, s)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-Github-Api-Version", "2022-11-28")
-	res, err := m.Client.Do(req)
-	if err != nil {
-		return transportError("GitHub release lookup", err)
-	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("GitHub release lookup returned HTTP %d", res.StatusCode)
-	}
-	var release struct {
-		ID     int64  `json:"id"`
-		Tag    string `json:"tag_name"`
-		Draft  bool   `json:"draft"`
-		Assets []struct {
-			ID   int64  `json:"id"`
-			Name string `json:"name"`
-			URL  string `json:"browser_download_url"`
-		} `json:"assets"`
-	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(&release); err != nil {
+	var release githubRelease
+	if s.IncludePrereleases && (s.Release == "" || s.Release == "latest") {
+		// Publication time is independent of tag version and commit creation time.
+		for page := 1; ; page++ {
+			var releases []githubRelease
+			endpoint := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=100&page=%d", s.Repository, page)
+			if err := m.githubResponse(ctx, s, endpoint, &releases); err != nil {
+				return err
+			}
+			for _, candidate := range releases {
+				if candidate.Draft {
+					continue
+				}
+				if candidate.PublishedAt.IsZero() {
+					return errors.New("published GitHub release is missing published_at")
+				}
+				if candidate.PublishedAt.After(release.PublishedAt) || candidate.PublishedAt.Equal(release.PublishedAt) && candidate.ID > release.ID {
+					release = candidate
+				}
+			}
+			if len(releases) < 100 {
+				break
+			}
+		}
+		if release.ID == 0 {
+			return errors.New("no published GitHub releases found")
+		}
+	} else if err := m.githubResponse(ctx, s, endpoint, &release); err != nil {
 		return err
 	}
 	if release.Draft {
@@ -677,6 +682,36 @@ func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry
 		entry.Filename = asset.Name
 	}
 	return nil
+}
+
+type githubRelease struct {
+	ID          int64     `json:"id"`
+	Tag         string    `json:"tag_name"`
+	PublishedAt time.Time `json:"published_at"`
+	Draft       bool      `json:"draft"`
+	Assets      []struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+		URL  string `json:"browser_download_url"`
+	} `json:"assets"`
+}
+
+func (m *Manager) githubResponse(ctx context.Context, s nativeConfig, endpoint string, target any) error {
+	req, err := m.request(ctx, endpoint, s)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-Github-Api-Version", "2022-11-28")
+	res, err := m.Client.Do(req)
+	if err != nil {
+		return transportError("GitHub release lookup", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("GitHub release lookup returned HTTP %d", res.StatusCode)
+	}
+	return json.NewDecoder(io.LimitReader(res.Body, 4<<20)).Decode(target)
 }
 
 func assetNames(label string, names []string) string {
