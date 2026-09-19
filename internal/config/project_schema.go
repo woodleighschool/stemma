@@ -13,7 +13,7 @@ import (
 )
 
 // LoadSchemaProject reads connection and plugin declarations without resolving
-// credentials or loading the software documents the editor is about to author.
+// credentials or loading the software documents the editor is about to write.
 func LoadSchemaProject(filename string) (Project, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {

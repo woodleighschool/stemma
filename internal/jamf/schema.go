@@ -14,7 +14,7 @@ func MetadataSchema() *jsonschema.Schema {
 	properties := orderedmap.New[string, *jsonschema.Schema]()
 	properties.Set("package_id", &jsonschema.Schema{
 		Type: "string", Pattern: "^[1-9][0-9]*$", MaxLength: new(uint64(20)),
-		Description: "Adopt this existing Jamf package ID for the selected immutable payload. Existing content must match. Omit to discover by the artifact filename marker or create a package.",
+		Description: "Publish into this existing Jamf package ID instead of discovering one. The package takes Stemma's identity marker, the artifact filename, the artifact's content when it differs, and the declared metadata; a package marked for other software is refused. Omit to find the package by its marker and artifact filename, or create it.",
 	})
 	for _, key := range slices.Sorted(maps.Keys(managedFields)) {
 		rule := managedFields[key]
@@ -35,15 +35,15 @@ func MetadataSchema() *jsonschema.Schema {
 	reflector := &jsonschema.Reflector{DoNotReference: true}
 	patch := reflector.Reflect(patchConfig{})
 	patch.ID, patch.Version = "", ""
-	patch.Description = "Associate the immutable package with an exact version in an existing patch title. An optional native patch policy retains its ID across versions; new policies start disabled and unscoped before supplied settings are applied. Omitted fields remain unmanaged and supplied scope lists replace their collections."
+	patch.Description = "Associate the package with an exact version in an existing patch title, replacing that version's package and keeping other versions. An optional native patch policy is found by id, or by name within the title, where the name defaults to the software name; it is updated in place, or created disabled and unscoped before supplied settings are applied. Omitted fields are left unchanged and supplied scope lists replace their collections. Without patch, title associations and policies are left as they are."
 	properties.Set("patch", patch)
 	retention := reflector.Reflect(plugin.Retention{})
 	retention.ID, retention.Version = "", ""
-	retention.Description = "Keep the current payload and the N-1 most recently published distinct payloads, plus referenced packages. Only owned packages with known publication order can be deleted. Unchanged owned title-version associations outside retention are retired only when no patch policy targets that version."
+	retention.Description = "Keep the current package and the N-1 newest others carrying this software's identity marker, ordered by numeric package ID, and delete the rest. A package that a policy, PreStage or patch title still references is kept, and nothing is deleted while those references cannot be read."
 	properties.Set("retention", retention)
 	return &jsonschema.Schema{
 		Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
-		Description: "Native Jamf Pro v1 package metadata. Omitted fields are unmanaged; explicit false, zero and empty strings are managed. Only the documented nullable strings accept null. Each distinct payload has an immutable package ID. Patch deployment and retention are opt-in.",
+		Description: "Native Jamf Pro v1 package metadata. Omitted fields are left unchanged; explicit false, zero and empty strings are managed. Only the documented nullable strings accept null. Each artifact filename has its own package, named natively and identified by Stemma's marker in its notes; changed bytes under the same filename are uploaded into that package. Patch deployment and retention are opt-in.",
 	}
 }
 
@@ -55,6 +55,6 @@ func ConnectionSchema() *jsonschema.Schema {
 	if secret, ok := schema.Properties.Get("client_secret"); ok {
 		secret.WriteOnly = true
 	}
-	schema.Description = "Shared Jamf Pro connection using client credentials and the v1 package API reviewed against Jamf Pro 11.31. Requires package read/write/upload privileges and a distribution configuration that supports package upload. Put package_id in software metadata to adopt an existing package."
+	schema.Description = "Shared Jamf Pro connection using client credentials and the v1 package API reviewed against Jamf Pro 11.31. Requires package read/write/upload privileges and a distribution configuration that supports package upload; retention also deletes packages and reads policies, PreStages and patch titles. Put package_id in software metadata to adopt an existing package."
 	return schema
 }

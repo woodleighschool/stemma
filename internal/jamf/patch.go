@@ -87,17 +87,6 @@ type policyGrace struct {
 	Message  *string `json:"message,omitempty"`
 }
 
-// An association is owned only after creating it, with the exact tuple retained
-// before the write so an ambiguous response cannot lose that ownership.
-type association struct {
-	TitleID           string `json:"title_id"`
-	Version           string `json:"version"`
-	PackageID         string `json:"package_id"`
-	Pending           bool   `json:"pending,omitempty"`
-	PreviousPackageID string `json:"previous_package_id,omitempty"`
-	Removing          bool   `json:"removing,omitempty"`
-}
-
 func decodePatch(metadata map[string]json.RawMessage) (*patchConfig, error) {
 	data, ok := metadata["patch"]
 	if !ok {
@@ -191,13 +180,17 @@ func titlePackage(title *titles.ResourcePatchSoftwareTitleConfiguration, version
 	return found, nil
 }
 
-func ownedAssociation(state *binding, titleID, version, packageID string) bool {
-	return slices.ContainsFunc(state.Associations, func(a association) bool {
-		return a.TitleID == titleID && a.Version == version && (a.PackageID == packageID || a.Pending && a.PreviousPackageID == packageID)
-	})
+// policyName identifies the patch policy within its title configuration.
+func policyName(patch *patchConfig, software string) string {
+	if patch.Policy.Name != nil {
+		return *patch.Policy.Name
+	}
+	return software
 }
 
-func (c *client) checkPatch(ctx context.Context, patch *patchConfig, state *binding, response *plugin.ReconcileResponse) error {
+// planPatch validates the declared version and reports the association and
+// policy changes. packageID is empty while the package has yet to be created.
+func (c *client) planPatch(ctx context.Context, patch *patchConfig, packageID, software string, response *plugin.ReconcileResponse) error {
 	title, err := c.getTitle(ctx, patch.TitleConfigurationID)
 	if err != nil {
 		return fmt.Errorf("jamf patch title: %w", err)
@@ -213,43 +206,33 @@ func (c *client) checkPatch(ctx context.Context, patch *patchConfig, state *bind
 	if err != nil {
 		return err
 	}
-	if linked != "" && linked != state.PackageID && !ownedAssociation(state, patch.TitleConfigurationID, patch.Version, linked) {
-		return errors.New("jamf patch version already references an administrator-owned package")
-	}
-	for _, a := range state.Associations {
-		if a.TitleID == patch.TitleConfigurationID && a.Version == patch.Version && linked != a.PackageID && (!a.Pending || linked != a.PreviousPackageID) && (!a.Removing || linked != "") {
-			return errors.New("jamf patch association changed outside Stemma")
+	if linked == "" || linked != packageID {
+		change := plugin.Change{Kind: "metadata", Field: "patch.packages", Action: "associate"}
+		if linked != "" {
+			change.Before = raw(linked)
 		}
-	}
-	if linked == "" || linked != state.PackageID {
-		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "patch.packages", Action: "associate", Before: raw(linked), After: raw(patch.Version)})
+		if packageID != "" {
+			change.After = raw(packageID)
+		}
+		response.Changes = append(response.Changes, change)
 	}
 	if patch.Policy == nil {
 		return nil
 	}
-	if state.PolicyTitleID != "" && state.PolicyTitleID != patch.TitleConfigurationID {
-		return errors.New("jamf patch policy binding belongs to a different title configuration")
-	}
-	if patch.Policy.ID != "" {
-		if state.PolicyID != "" && state.PolicyID != patch.Policy.ID {
-			return errors.New("jamf patch policy id conflicts with the durable binding")
-		}
-		state.PolicyID = patch.Policy.ID
-	}
-	policy, err := c.observePolicy(ctx, patch, state)
+	name := policyName(patch, software)
+	_, policy, err := c.observePolicy(ctx, patch, name)
 	if err != nil {
 		return err
 	}
-	desired := desiredPolicy(patch, state, policy == nil)
 	if policy == nil {
-		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "patch.policy", Action: "create", After: raw(state.PolicyName)})
-	} else if !containsXML(policy, desired) {
+		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "patch.policy", Action: "create", After: raw(name)})
+	} else if !containsXML(policy, desiredPolicy(patch, name, false)) {
 		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "patch.policy", Action: "update", After: raw(patch.Version)})
 	}
 	return nil
 }
 
-func (c *client) applyPatch(ctx context.Context, patch *patchConfig, state *binding) error {
+func (c *client) applyPatch(ctx context.Context, patch *patchConfig, packageID, software string) error {
 	title, err := c.getTitle(ctx, patch.TitleConfigurationID)
 	if err != nil {
 		return err
@@ -258,63 +241,27 @@ func (c *client) applyPatch(ctx context.Context, patch *patchConfig, state *bind
 	if err != nil {
 		return err
 	}
-	if linked != state.PackageID {
-		if linked != "" && !ownedAssociation(state, patch.TitleConfigurationID, patch.Version, linked) {
-			return errors.New("jamf patch association changed before update")
-		}
-		a := association{TitleID: patch.TitleConfigurationID, Version: patch.Version, PackageID: state.PackageID, Pending: true, PreviousPackageID: linked}
-		state.Associations = slices.DeleteFunc(state.Associations, func(old association) bool { return old.TitleID == a.TitleID && old.Version == a.Version })
-		state.Associations = append(state.Associations, a)
+	if linked != packageID {
 		links := slices.DeleteFunc(slices.Clone(title.Packages), func(p titles.SubsetPackage) bool { return p.Version == patch.Version })
-		links = append(links, titles.SubsetPackage{PackageID: state.PackageID, Version: patch.Version})
+		links = append(links, titles.SubsetPackage{PackageID: packageID, Version: patch.Version})
 		if err := c.setTitlePackages(ctx, title.ID, links); err != nil {
 			return err
 		}
 	}
-	if ownedAssociation(state, patch.TitleConfigurationID, patch.Version, state.PackageID) {
-		state.Associations = slices.DeleteFunc(state.Associations, func(a association) bool { return a.TitleID == patch.TitleConfigurationID && a.Version == patch.Version })
-		state.Associations = append(state.Associations, association{TitleID: patch.TitleConfigurationID, Version: patch.Version, PackageID: state.PackageID})
-	}
 	if patch.Policy == nil {
 		return nil
 	}
-	policy, err := c.observePolicy(ctx, patch, state)
+	name := policyName(patch, software)
+	id, policy, err := c.observePolicy(ctx, patch, name)
 	if err != nil {
 		return err
 	}
 	if policy == nil {
-		if state.PendingPolicy {
-			return errors.New("jamf patch policy creation remains unresolved")
-		}
-		state.PendingPolicy, state.PolicyTitleID = true, patch.TitleConfigurationID
-		initial := desiredPolicy(patch, state, true)
-		general := initial.child("general")
-		general.set(xmlNode{XMLName: xml.Name{Local: "enabled"}, Text: "false"})
-		initial.set(xmlNode{XMLName: xml.Name{Local: "scope"}, Children: []xmlNode{{XMLName: xml.Name{Local: "all_computers"}, Text: "false"}}})
-		body, err := xml.Marshal(initial)
-		if err != nil {
+		if id, policy, err = c.createPolicy(ctx, patch, name); err != nil {
 			return err
 		}
-		result, createErr := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationXML).SetHeader("Content-Type", constants.ApplicationXML).SetBody(body).DisableRetry().Post(policyPath + "/softwaretitleconfig/id/" + patch.TitleConfigurationID)
-		createErr = requestError(ctx, result, createErr)
-		if createErr == nil {
-			created, err := parseXML(result.Bytes(), "patch_policy")
-			if err == nil {
-				state.PolicyID = created.value("id")
-				if state.PolicyID == "" {
-					state.PolicyID = created.value("general", "id")
-				}
-			}
-			if !validID(state.PolicyID) {
-				state.PolicyID = ""
-			}
-		}
-		policy, err = c.observePolicy(ctx, patch, state)
-		if err != nil || policy == nil {
-			return errors.New("jamf patch policy create outcome unresolved; no create retry was sent")
-		}
 	}
-	desired := desiredPolicy(patch, state, false)
+	desired := desiredPolicy(patch, name, false)
 	if containsXML(policy, desired) {
 		return nil
 	}
@@ -323,9 +270,9 @@ func (c *client) applyPatch(ctx context.Context, patch *patchConfig, state *bind
 	if err != nil {
 		return err
 	}
-	result, putErr := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationXML).SetHeader("Content-Type", constants.ApplicationXML).SetBody(body).DisableRetry().Put(policyPath + "/id/" + state.PolicyID)
+	result, putErr := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationXML).SetHeader("Content-Type", constants.ApplicationXML).SetBody(body).DisableRetry().Put(policyPath + "/id/" + id)
 	putErr = requestError(ctx, result, putErr)
-	actual, err := c.getPolicy(ctx, state.PolicyID)
+	actual, err := c.getPolicy(ctx, id)
 	if err != nil || actual == nil || !containsXML(actual, desired) {
 		if putErr != nil {
 			return putErr
@@ -333,6 +280,43 @@ func (c *client) applyPatch(ctx context.Context, patch *patchConfig, state *bind
 		return errors.New("jamf patch policy update did not match readback")
 	}
 	return nil
+}
+
+// createPolicy creates the policy disabled and unscoped; the declared settings
+// follow as an update, so a policy is never live before it is complete.
+func (c *client) createPolicy(ctx context.Context, patch *patchConfig, name string) (string, *xmlNode, error) {
+	initial := desiredPolicy(patch, name, true)
+	initial.child("general").set(xmlNode{XMLName: xml.Name{Local: "enabled"}, Text: "false"})
+	initial.set(xmlNode{XMLName: xml.Name{Local: "scope"}, Children: []xmlNode{{XMLName: xml.Name{Local: "all_computers"}, Text: "false"}}})
+	body, err := xml.Marshal(initial)
+	if err != nil {
+		return "", nil, err
+	}
+	result, err := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationXML).SetHeader("Content-Type", constants.ApplicationXML).SetBody(body).DisableRetry().Post(policyPath + "/softwaretitleconfig/id/" + patch.TitleConfigurationID)
+	if createErr := requestError(ctx, result, err); createErr != nil {
+		// A lost response can hide a policy Jamf did create; its name finds it.
+		id, policy, err := c.observePolicy(ctx, patch, name)
+		if err != nil || policy == nil {
+			return "", nil, createErr
+		}
+		return id, policy, nil
+	}
+	created, err := parseXML(result.Bytes(), "patch_policy")
+	if err != nil {
+		return "", nil, err
+	}
+	id := created.value("id")
+	if id == "" {
+		id = created.value("general", "id")
+	}
+	policy, err := c.getPolicy(ctx, id)
+	if err != nil {
+		return "", nil, err
+	}
+	if policy == nil {
+		return "", nil, errors.New("created Jamf patch policy could not be read back")
+	}
+	return id, policy, nil
 }
 
 func (c *client) setTitlePackages(ctx context.Context, id string, links []titles.SubsetPackage) error {
@@ -347,19 +331,27 @@ func (c *client) setTitlePackages(ctx context.Context, id string, links []titles
 	if err != nil {
 		return err
 	}
-	if len(actual.Packages) != len(links) {
+	if !sameAssociations(actual.Packages, links) {
+		if updateErr != nil {
+			return updateErr
+		}
 		return errors.New("jamf patch package associations did not match readback")
 	}
-	for _, link := range links {
-		found, err := titlePackage(actual, link.Version)
-		if err != nil || found != link.PackageID {
-			if updateErr != nil {
-				return updateErr
-			}
-			return errors.New("jamf patch package association did not match readback")
+	return nil
+}
+
+func sameAssociations(a, b []titles.SubsetPackage) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for _, link := range a {
+		if !slices.ContainsFunc(b, func(other titles.SubsetPackage) bool {
+			return other.Version == link.Version && other.PackageID == link.PackageID
+		}) {
+			return false
 		}
 	}
-	return nil
+	return true
 }
 
 func (c *client) listPatchPolicies(ctx context.Context, filter string) ([]patch_policies.ResourcePatchPolicySummary, error) {
@@ -378,47 +370,39 @@ func (c *client) listPatchPolicies(ctx context.Context, filter string) ([]patch_
 	return policies, nil
 }
 
-func (c *client) observePolicy(ctx context.Context, patch *patchConfig, state *binding) (*xmlNode, error) {
-	if state.PolicyName == "" {
-		state.PolicyName = "Stemma " + state.IdentitySHA256 + " patch"
-		if patch.Policy.Name != nil {
-			state.PolicyName = *patch.Policy.Name
-		}
-	}
-	if state.PolicyID == "" {
+// observePolicy finds the policy by its declared ID, or by name within the
+// title configuration. It returns a nil policy when that name is free.
+func (c *client) observePolicy(ctx context.Context, patch *patchConfig, name string) (string, *xmlNode, error) {
+	id := patch.Policy.ID
+	if id == "" {
 		policies, err := c.listPatchPolicies(ctx, "softwareTitleConfigurationId=="+patch.TitleConfigurationID)
 		if err != nil {
-			return nil, err
+			return "", nil, err
 		}
 		for _, p := range policies {
-			if p.PolicyName != state.PolicyName {
+			if p.SoftwareTitleConfigurationID != patch.TitleConfigurationID || p.PolicyName != name {
 				continue
 			}
-			if !state.PendingPolicy {
-				return nil, errors.New("jamf patch policy name already exists; use patch.policy.id to adopt it")
+			if id != "" {
+				return "", nil, fmt.Errorf("multiple Jamf patch policies are named %q in title configuration %s; set patch.policy.id to select one", name, patch.TitleConfigurationID)
 			}
-			if state.PolicyID != "" {
-				return nil, errors.New("multiple Jamf patch policies match the pending creation")
-			}
-			state.PolicyID = p.ID
+			id = p.ID
 		}
-		if state.PolicyID == "" {
-			return nil, nil
+		if id == "" {
+			return "", nil, nil
 		}
 	}
-	policy, err := c.getPolicy(ctx, state.PolicyID)
+	policy, err := c.getPolicy(ctx, id)
 	if err != nil {
-		return nil, err
+		return "", nil, err
 	}
 	if policy == nil {
-		return nil, errors.New("bound Jamf patch policy no longer exists")
+		return "", nil, fmt.Errorf("jamf patch policy %s does not exist", id)
 	}
 	if policy.value("software_title_configuration_id") != patch.TitleConfigurationID {
-		return nil, errors.New("jamf patch policy belongs to a different title configuration")
+		return "", nil, errors.New("jamf patch policy belongs to a different title configuration")
 	}
-	state.PendingPolicy = false
-	state.PolicyTitleID = patch.TitleConfigurationID
-	return policy, nil
+	return id, policy, nil
 }
 
 func (c *client) getPolicy(ctx context.Context, id string) (*xmlNode, error) {
@@ -537,7 +521,7 @@ func mergeXML(current, desired *xmlNode) {
 		}
 	}
 }
-func desiredPolicy(patch *patchConfig, state *binding, create bool) *xmlNode {
+func desiredPolicy(patch *patchConfig, name string, create bool) *xmlNode {
 	fields, _ := decodeObject(raw(patch.Policy))
 	delete(fields, "id")
 	general := make(map[string]json.RawMessage)
@@ -550,7 +534,7 @@ func desiredPolicy(patch *patchConfig, state *binding, create bool) *xmlNode {
 	general["target_version"] = raw(patch.Version)
 	if create {
 		if _, ok := general["name"]; !ok {
-			general["name"] = raw(state.PolicyName)
+			general["name"] = raw(name)
 		}
 		if _, ok := general["enabled"]; !ok {
 			general["enabled"] = raw(false)

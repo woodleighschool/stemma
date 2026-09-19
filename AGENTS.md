@@ -35,7 +35,7 @@ Guidance for agents and humans working in this repository. This file is self-con
 - `go.mod` declares the language floor; Mise pins the toolchain used by local tasks and CI. Use modern standard-library constructs supported by the declared version.
 - Put executable composition in `cmd/<app>/main.go` and owned behaviour under `internal`. Keep `main` to configuration, logging, dependency construction, lifecycle, and exit status. The public `plugin` package defines operation contracts and the executable protocol; native destination models and rendering stay internal.
 - Use `github.com/caarlos0/env/v11` for application-owned environment configuration. Parse into one config type, derive and validate in one load boundary, and fail at startup. Document config fields with their purpose and meaningful defaults.
-- Use `github.com/spf13/pflag` for application-owned flags and Cobra when the CLI has commands or more than a small flag surface. Structured files suit user-authored domain configuration; all sources converge on one validation path.
+- Use `github.com/spf13/pflag` for application-owned flags and Cobra when the CLI has commands or more than a small flag surface. Structured files suit domain configuration; all sources converge on one validation path.
 - Use `log/slog` for diagnostics, configured once at composition. Reserve stdout for command reports and plugin protocol responses; send diagnostics to stderr. Inject `*slog.Logger` only at a genuine reusable boundary.
 - Wrap errors with `fmt.Errorf("<component>: %w", err)`. Use sentinel errors for conditions callers branch on and classify errors once at the HTTP, CLI, job, or protocol boundary.
 - Functions that perform I/O take `context.Context` first and propagate cancellation. Long-running processes use signal-aware root contexts and bounded shutdown; use `errgroup` for related goroutines that can fail.
@@ -53,7 +53,7 @@ Guidance for agents and humans working in this repository. This file is self-con
 
 - A Git root owns the project, imported software-family files and reviewed lockfile. Keep parsing, composition, validation and the generated editor schema aligned; edit Go definitions before regenerating `stemma.schema.json`.
 - Source locks pin reviewed inputs. Unchanged bytes retain their recorded timestamp; frozen runs reject stale inputs. Destination metadata edits must not invalidate acquisition or packaging.
-- The content-addressed cache is disposable; destination bindings are durable. Losing either must not duplicate remote objects or replay completed uploads. Plugins receive leased workspaces, not cache ownership.
-- Planning is read-only. Applying reconciles each destination independently using native field names: omitted object fields remain unmanaged, supported nulls clear values, and supplied lists replace their collections.
+- The content-addressed cache is disposable. Destinations identify publications from native keys or markers; losing local files must not duplicate remote objects or repeat completed uploads. Plugins receive leased workspaces, not cache ownership.
+- Planning is read-only. Applying reconciles each destination independently using native field names. Explicit values override derived values; missing derived values clear owned fields or fail if required. Other omitted fields remain unchanged, supported nulls clear values, and supplied lists replace their collections.
 - Packaging is portable and never executes payloads or installer hooks. Preserve required metadata or reject unsupported inputs. Independent format verifiers must not share writer implementation helpers.
 - Keep documentation terse and durable. Use the CLI and generated schema for the current interface; do not add an examples tree or speculative runner configuration.

@@ -1,7 +1,7 @@
 # Windows software
 
 `WindowsSoftware` starts with an existing vendor installer. Intune prepares the
-upload envelope from that installer or setup directory. You do not author a build
+upload envelope from that installer or setup directory. You do not declare a build
 resource just to produce `.intunewin`.
 
 ## Configure Intune

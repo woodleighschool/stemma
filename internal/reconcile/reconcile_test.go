@@ -620,7 +620,7 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	reviewed := o.tip(branch)
 	sixth := run("")
 	if sixth.Updates[0].Action != "skipped" || o.tip(branch) != reviewed || len(gh.open()) != 1 {
-		t.Fatalf("touched branch was not left alone: %+v", sixth.Updates)
+		t.Fatalf("touched branch was changed: %+v", sixth.Updates)
 	}
 	if err := o.bare(t).Storer.RemoveReference(plumbing.NewBranchReferenceName(branch)); err != nil {
 		t.Fatal(err)
@@ -798,7 +798,7 @@ func TestRunLeavesSuspendedResourcesAlone(t *testing.T) {
 	if status := gh.status(o.tip("main"), applyContext); status["state"] != "success" {
 		t.Fatalf("apply status: %v", status)
 	}
-	if published, _ := filepath.Glob(filepath.Join(munki, "pkgsinfo", "stemma", "*")); len(published) != 1 {
-		t.Fatalf("published identities: %v", published)
+	if published, _ := filepath.Glob(filepath.Join(munki, "pkgsinfo", "*.plist")); len(published) != 1 {
+		t.Fatalf("published items: %v", published)
 	}
 }

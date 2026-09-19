@@ -11,14 +11,13 @@ import (
 	"io"
 	"regexp"
 	"slices"
-	"strings"
 
 	"github.com/woodleighschool/stemma/plugin"
 
 	"go.yaml.in/yaml/v4"
 )
 
-// Project is resolved configuration, rather than an authored document.
+// Project is resolved configuration, rather than a document as written.
 type Project struct {
 	Project      string                    `json:"project"`
 	Imports      []string                  `json:"imports"`
@@ -62,7 +61,7 @@ type SourceControl struct {
 	Config map[string]any `yaml:"config,omitempty" json:"config,omitempty" jsonschema_description:"Provider-specific connection configuration. Reference credential environment variables instead of embedding secrets."`
 }
 
-// Resource is one authored contract; the registered kind owns its spec.
+// Resource is one declared contract; the registered kind owns its spec.
 type Resource struct {
 	APIVersion string   `yaml:"apiVersion" json:"apiVersion"`
 	Kind       string   `yaml:"kind" json:"kind"`
@@ -269,10 +268,4 @@ func Fingerprint(value any) string {
 	}
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])
-}
-
-// ValidDigest reports whether value is a canonical SHA-256 digest.
-func ValidDigest(value string) bool {
-	decoded, err := hex.DecodeString(value)
-	return err == nil && len(decoded) == sha256.Size && strings.ToLower(value) == value
 }

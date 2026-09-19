@@ -23,11 +23,11 @@ depends = [":deps"]
 run = "pnpm run typecheck"
 
 [tasks.format]
-description = "Format authored docs files"
+description = "Format docs sources"
 run = "pnpm run format"
 
 [tasks.fmt-check]
-description = "Check authored docs formatting"
+description = "Check docs formatting"
 run = "oxfmt --check"
 
 [tasks.lint]

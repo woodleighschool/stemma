@@ -191,6 +191,10 @@ func validateMSIInformation(value any) error {
 				return errors.New("invalid MSI packageType")
 			}
 		default:
+			// Derivation clears the UpgradeCode of an MSI that declares none.
+			if value == nil && key == "upgradeCode" {
+				continue
+			}
 			if value, ok := value.(string); !ok || len(value) > 10000 {
 				return fmt.Errorf("msiInformation.%s must be a string of at most 10000 bytes", key)
 			}

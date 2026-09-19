@@ -26,11 +26,10 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 	}
 	run := func() plugin.ReconcileResponse {
 		t.Helper()
-		result, err := c.handle(t.Context(), req, configuration{}, desired)
+		result, err := c.handle(t.Context(), req, desired)
 		if err != nil {
 			t.Fatal(err)
 		}
-		req.Binding = result.Binding
 		return result
 	}
 	run()
@@ -74,7 +73,7 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 	if replaced == original {
 		t.Fatal("changed icon was not published")
 	}
-	// Without a declared icon the published artwork is unmanaged and stays.
+	// Without a declared icon the published artwork is left unchanged.
 	req.Inputs = nil
 	if result := run(); len(result.Changes) != 0 || text(fake.app["largeIcon"].(object)["value"]) != replaced {
 		t.Fatalf("undeclared icon changed the app: %+v", result.Changes)

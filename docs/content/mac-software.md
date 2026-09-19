@@ -95,7 +95,7 @@ version key is `CFBundleShortVersionString`, unless that value is missing or doe
 not begin with a digit and `CFBundleVersion` is present. Select `CFBundleVersion`
 when the publisher's build number is the version you need to manage.
 
-For an existing PKG, Stemma does not rewrite its payload to implement an authored
+For an existing PKG, Stemma does not rewrite its payload to match a declared
 endpoint path. Keep that path consistent with the vendor installer.
 
 ## Select a nested installer
@@ -120,7 +120,7 @@ it does not reconstruct its payload or run its scripts.
 
 Some packages install a staging helper which later downloads the real application.
 Their contents cannot prove the eventual installed application. Leave
-`application` unset and author the destination's detection behaviour explicitly.
+`application` unset and set the destination's detection fields explicitly.
 
 ## Publish without an installer
 
@@ -187,7 +187,7 @@ spec:
 `icon: microsoft-word` means `icons/microsoft-word.png` at the project root. Every
 destination publishes those exact bytes on any runner, and a changed file is
 ordinary drift that the next run replaces. Without `icon`, published artwork is
-unmanaged and stays as it is. A declared icon without its file fails `validate`,
+left unchanged. A declared icon without its file fails `validate`,
 `plan` and `apply`.
 
 Create the asset from the software itself:

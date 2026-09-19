@@ -89,8 +89,8 @@ installer, inspects it and writes the lockfile. On its first creation, the lockf
 is untracked: open it directly as well as checking `git status`.
 
 `plan` reads the destination and reports the changes it would make. It can fetch
-locked inputs into an empty cache, but does not write destination content or
-publication bindings. It is the dry run.
+locked inputs into an empty cache, but does not write to the destination. It is the
+dry run.
 
 The selected bundle supplies application metadata. You do not need to repeat its
 version and bundle identifier as separate extraction steps.

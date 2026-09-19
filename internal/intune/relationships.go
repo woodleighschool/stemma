@@ -16,7 +16,9 @@ const (
 	supersedenceType = "#microsoft.graph.mobileAppSupersedence"
 )
 
-func (c *client) desiredRelationships(ctx context.Context, req plugin.ReconcileRequest, l lifecycle, appID string) ([]object, error) {
+var errSelfRelationship = errors.New("an Intune app cannot depend on or supersede itself")
+
+func (c *client) desiredRelationships(ctx context.Context, req plugin.ReconcileRequest, tenant *tenantApps, l lifecycle, appID string) ([]object, error) {
 	var result []object
 	for _, group := range []struct {
 		refs  []relationshipReference
@@ -29,15 +31,18 @@ func (c *client) desiredRelationships(ctx context.Context, req plugin.ReconcileR
 		{l.Supersedes, supersedenceType, "supersedenceType", "update", "replace"},
 	} {
 		for _, ref := range group.refs {
-			var target binding
-			if err := json.Unmarshal(req.Bindings[ref.Software], &target); err != nil || target.AppID == "" {
-				return nil, fmt.Errorf("intune relationship software %q has no published binding on this connection", ref.Software)
+			if ref.Software == req.Identity.Software {
+				return nil, errSelfRelationship
 			}
-			if target.AppID == appID {
-				return nil, errors.New("an Intune app cannot depend on or supersede itself")
+			target, err := peerApp(ctx, req, tenant, ref.Software)
+			if err != nil {
+				return nil, err
+			}
+			if target == appID {
+				return nil, errSelfRelationship
 			}
 			var remote object
-			if err := c.request(ctx, abs.GET, c.app(target.AppID), nil, &remote); err != nil {
+			if err := c.request(ctx, abs.GET, c.app(target), nil, &remote); err != nil {
 				return nil, fmt.Errorf("read relationship target %q: %w", ref.Software, err)
 			}
 			if remote["@odata.type"] != win32Type || remote["publishingState"] != "published" {
@@ -47,10 +52,34 @@ func (c *client) desiredRelationships(ctx context.Context, req plugin.ReconcileR
 			if ref.Install {
 				value = group.yes
 			}
-			result = append(result, object{"@odata.type": group.kind, "targetId": target.AppID, "targetType": "child", group.field: value})
+			result = append(result, object{"@odata.type": group.kind, "targetId": target, "targetType": "child", group.field: value})
 		}
 	}
 	return result, nil
+}
+
+// peerApp resolves referenced software to its app: the app_id that software
+// declares for this destination, or else the app carrying its identity marker.
+func peerApp(ctx context.Context, req plugin.ReconcileRequest, tenant *tenantApps, software string) (string, error) {
+	var declared struct {
+		AppID string `json:"app_id"`
+	}
+	if data := req.Peers[software]; len(data) != 0 {
+		if err := json.Unmarshal(data, &declared); err != nil {
+			return "", fmt.Errorf("intune relationship software %q metadata: %w", software, err)
+		}
+	}
+	if declared.AppID != "" {
+		return declared.AppID, nil
+	}
+	id, err := tenant.find(ctx, markerIdentity(plugin.Identity{Project: req.Identity.Project, Software: software, Destination: req.Identity.Destination}))
+	if err != nil {
+		return "", fmt.Errorf("intune relationship software %q: %w", software, err)
+	}
+	if id == "" {
+		return "", fmt.Errorf("intune relationship software %q is not published to this destination yet", software)
+	}
+	return id, nil
 }
 
 func relationshipCategory(item object) string {

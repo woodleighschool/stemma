@@ -1,4 +1,6 @@
-// Package jamf reconciles immutable packages and their native Jamf deployment links.
+// Package jamf reconciles packages, patch deployment and retention with Jamf Pro.
+// It keeps no state between runs: a marker in each package's notes identifies
+// the packages that belong to a software.
 package jamf
 
 import (
@@ -17,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -35,32 +38,13 @@ import (
 const packagePath = constants.EndpointJamfProPackagesV1
 const responseLimit = 8 << 20
 
+// markerPattern matches an identity marker that has a line of the notes to itself.
+var markerPattern = regexp.MustCompile(`(?m)^\[stemma:v1 id=([0-9a-f]{64})\]$`)
+
 type configuration struct {
 	URL          string `json:"url" jsonschema:"minLength=1" jsonschema_description:"Jamf Pro server origin, such as https://school.jamfcloud.com. HTTPS is required except loopback test servers. Paths, embedded credentials, queries and fragments are rejected."`
 	ClientID     string `json:"client_id" jsonschema:"minLength=1" jsonschema_description:"Jamf API client ID. Use ${VAR} to supply it from the environment."`
 	ClientSecret string `json:"client_secret" jsonschema:"minLength=1" jsonschema_description:"Jamf API client secret. Use ${VAR} to supply it from the environment."`
-}
-
-type binding struct {
-	Server         string              `json:"server"`
-	IdentitySHA256 string              `json:"identity_sha256"`
-	PackageID      string              `json:"package_id"`
-	PayloadSHA256  string              `json:"payload_sha256,omitempty"`
-	PendingCreate  bool                `json:"pending_create,omitempty"`
-	PendingPayload string              `json:"pending_payload,omitempty"`
-	Revisions      map[string]revision `json:"revisions,omitempty"`
-	Publications   plugin.Publications `json:"publications,omitzero"`
-	Associations   []association       `json:"associations,omitempty"`
-	PolicyID       string              `json:"policy_id,omitempty"`
-	PolicyTitleID  string              `json:"policy_title_id,omitempty"`
-	PolicyName     string              `json:"policy_name,omitempty"`
-	PendingPolicy  bool                `json:"pending_policy,omitempty"`
-}
-
-type revision struct {
-	PackageID string `json:"package_id"`
-	Owned     bool   `json:"owned"`
-	SHA3512   string `json:"sha3512,omitempty"`
 }
 
 type client struct {
@@ -68,21 +52,34 @@ type client struct {
 	packages  *packages.Packages
 }
 
+// observed is a package exactly as Jamf returned it, so a whole-object update
+// preserves the fields nothing here manages.
 type observed struct {
-	Fields map[string]json.RawMessage `json:"fields"`
-	ETag   string                     `json:"etag,omitempty"`
+	Fields map[string]json.RawMessage
+	ETag   string
 }
+
+// summary is the part of a listed package that identity and retention read.
+type summary struct {
+	ID       uint64 `json:"id,string"`
+	FileName string `json:"fileName"`
+	Notes    string `json:"notes"`
+}
+
+func (s summary) id() string { return strconv.FormatUint(s.ID, 10) }
 
 type payload struct {
 	filename string
-	prefix   string
 	sha256   string
 	sha3512  string
 	size     int64
 }
 
-// Handle reconciles immutable package revisions before advancing deployment links.
-func Handle(ctx context.Context, request plugin.ReconcileRequest) (response plugin.ReconcileResponse, err error) {
+// Handle validates, plans or applies one software's publication. It converges
+// the package holding the artifact's file name, then patch deployment, then
+// retention; plan reports the same changes without writing.
+func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+	var response plugin.ReconcileResponse
 	config, metadata, adopt, err := validate(request)
 	if err != nil {
 		return response, err
@@ -112,144 +109,74 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (response plug
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
-	identity := identityDigest(request.Identity)
-	state := binding{Server: config.URL, IdentitySHA256: identity}
-	if len(request.Binding) > 0 && string(request.Binding) != "null" {
-		if err := strictDecode(request.Binding, &state); err != nil {
-			return response, fmt.Errorf("jamf binding: %w", err)
-		}
-		if state.Server != config.URL || state.IdentitySHA256 != identity {
-			return response, errors.New("jamf binding does not match this server and logical identity")
-		}
-	}
-	if state.Revisions == nil {
-		state.Revisions = make(map[string]revision)
-	}
-	// Older or recovered bindings identify records but cannot establish creation ownership.
-	if state.PackageID != "" && state.PayloadSHA256 != "" {
-		if _, ok := state.Revisions[state.PayloadSHA256]; !ok {
-			state.Revisions[state.PayloadSHA256] = revision{PackageID: state.PackageID}
-		}
-	}
-	defer func() { response.Binding = raw(state) }()
-	rev := state.Revisions[content.sha256]
-	rev.SHA3512 = content.sha3512
-	if adopt != "" {
-		if rev.PackageID != "" && rev.PackageID != adopt {
-			return response, errors.New("package_id conflicts with the durable Jamf binding")
-		}
-		rev.PackageID = adopt
-	}
-	if state.PendingCreate && state.PendingPayload != content.sha256 {
-		return response, errors.New("previous Jamf package creation must be resolved before publishing another payload")
-	}
 	c, err := newClient(ctx, config)
 	if err != nil {
 		return response, err
 	}
-	current, err := c.observe(ctx, rev.PackageID, content.filename)
+	identity := identityDigest(request.Identity)
+	family, err := c.family(ctx, identity)
 	if err != nil {
 		return response, err
 	}
-	if adopt != "" && current == nil {
-		return response, fmt.Errorf("adopted Jamf package %s does not exist", adopt)
+	current, err := c.locate(ctx, family, adopt, identity, content.filename)
+	if err != nil {
+		return response, err
 	}
+	desired := maps.Clone(metadata)
+	desired["fileName"] = raw(content.filename)
+	response.Changes = plan(current, desired, content, identity)
+	var id string
 	if current != nil {
-		rev.PackageID = stringField(current.Fields, "id")
-		state.PendingCreate, state.PendingPayload = false, ""
-		state.Revisions[content.sha256] = rev
-		// Published package IDs are immutable, including explicitly adopted records.
-		if !contentDigestMatches(current, content) && stringField(current.Fields, "cloudTransferStatus") == "READY" {
-			return response, errors.New("jamf package content conflicts with this immutable revision")
-		}
+		id = stringField(current.Fields, "id")
 	}
-	state.PackageID = rev.PackageID
-	response.Changes = plan(current, metadata, content, request.Artifact.Filename)
 	if patch != nil {
-		if err := c.checkPatch(ctx, patch, &state, &response); err != nil {
+		if err := c.planPatch(ctx, patch, id, request.Identity.Software, &response); err != nil {
 			return response, err
 		}
 	}
+	// The current record is never retired, so creating it below leaves this
+	// selection as planned.
+	var retiring []summary
+	if retention.Keep > 0 {
+		retiring = retired(family, id, retention.Keep)
+	}
 	if request.Method == "plan" {
-		if retention.Keep > 0 {
-			err = c.prune(ctx, &state, content, retention.Keep, false, &response)
+		return response, c.prune(ctx, retiring, patch, false, &response)
+	}
+	if current == nil {
+		if current, err = c.create(ctx, identity, content.filename); err != nil {
+			return response, err
 		}
+		id = stringField(current.Fields, "id")
+	}
+	// An adopted package takes the file name and marker before any content, so an
+	// interrupted run leaves a record the next one finds.
+	claim := map[string]json.RawMessage{"fileName": desired["fileName"]}
+	if current, err = c.merge(ctx, current, claim, identity); err != nil {
 		return response, err
 	}
-	createdRecord := false
-	if current == nil {
-		if state.PendingCreate {
-			return response, errors.New("previous jamf create outcome is still unresolved; restore visibility or set package_id for explicit adoption")
+	if !contentDigestMatches(current, content) {
+		if err := c.upload(ctx, id, request.Artifact.Path, content); err != nil {
+			return response, err
 		}
-		state.PendingCreate, state.PendingPayload = true, content.sha256
-		created, createErr := c.create(ctx, defaults(content.filename, request.Artifact.Filename))
-		if createErr != nil {
-			current, err = c.discover(ctx, content.filename)
-			if err != nil || current == nil {
-				return response, fmt.Errorf("jamf create outcome unresolved; no create retry was sent: %w", createErr)
-			}
-		} else {
-			createdRecord = true
-			rev.PackageID, rev.Owned = created, true
-			state.Revisions[content.sha256] = rev
-			state.PackageID = created
-			state.PendingCreate, state.PendingPayload = false, ""
-			current, err = c.get(ctx, created)
-			if err != nil || current == nil {
-				return response, errors.New("created Jamf package could not be read back")
-			}
-		}
-		rev.PackageID = stringField(current.Fields, "id")
-		state.Revisions[content.sha256] = rev
-		state.PendingCreate, state.PendingPayload = false, ""
-	}
-	state.PackageID = rev.PackageID
-	if !contentMatches(current, content) {
-		if stringField(current.Fields, "fileName") != content.filename {
-			// Renaming a matching adopted artifact does not replace its content.
-			current, err = c.merge(ctx, current, map[string]json.RawMessage{"fileName": raw(content.filename)}, nil)
-			if err != nil {
-				return response, err
-			}
-		}
-		if !contentDigestMatches(current, content) {
-			status := stringField(current.Fields, "cloudTransferStatus")
-			if createdRecord || status != "PENDING" && status != "IN_PROGRESS" && status != "UPLOADING" {
-				if uploadErr := c.upload(ctx, rev.PackageID, request.Artifact.Path, content); uploadErr != nil {
-					current, err = c.get(ctx, rev.PackageID)
-					if err != nil || current == nil {
-						return response, c.uploadFailure(ctx, &state, content, adopt, nil, fmt.Errorf("jamf upload outcome unresolved; no upload retry was sent: %w", uploadErr))
-					}
-					status = stringField(current.Fields, "cloudTransferStatus")
-					if !contentMatches(current, content) && status != "PENDING" && status != "IN_PROGRESS" && status != "UPLOADING" {
-						return response, c.uploadFailure(ctx, &state, content, adopt, current, fmt.Errorf("jamf upload failed or remains unverified; no upload retry was sent: %w", uploadErr))
-					}
-				}
-			}
-		}
-		current, err = c.awaitContent(ctx, rev.PackageID, content)
-		if err != nil {
-			return response, c.uploadFailure(ctx, &state, content, adopt, current, err)
+		if current, err = c.awaitContent(ctx, id, content); err != nil {
+			return response, err
 		}
 	}
-	current, err = c.merge(ctx, current, metadata, &content)
-	if err != nil {
+	// Declared metadata follows verified content, so a failed upload never leaves
+	// new settings over old bytes.
+	if current, err = c.merge(ctx, current, desired, identity); err != nil {
 		return response, err
 	}
 	if !contentMatches(current, content) {
 		return response, errors.New("jamf content changed during metadata reconciliation")
 	}
 	if patch != nil {
-		if err := c.applyPatch(ctx, patch, &state); err != nil {
+		if err := c.applyPatch(ctx, patch, id, request.Identity.Software); err != nil {
 			return response, err
 		}
 	}
-	state.PayloadSHA256 = content.sha256
-	state.Publications.Record(content.sha256)
-	if retention.Keep > 0 {
-		err = c.prune(ctx, &state, content, retention.Keep, true, &response)
-	}
-	return response, err
+	return response, c.prune(ctx, retiring, patch, true, &response)
 }
 
 func validate(request plugin.ReconcileRequest) (configuration, map[string]json.RawMessage, string, error) {
@@ -304,6 +231,9 @@ func validate(request plugin.ReconcileRequest) (configuration, map[string]json.R
 			return config, nil, "", fmt.Errorf("jamf %s: %w", key, err)
 		}
 	}
+	if strings.Contains(stringField(metadata, "notes"), "[stemma:v1 ") {
+		return config, nil, "", errors.New("jamf notes contains a reserved Stemma marker")
+	}
 	return config, metadata, adopt, nil
 }
 
@@ -336,10 +266,10 @@ func (r fieldRule) validate(value json.RawMessage) error {
 }
 
 var managedFields = map[string]fieldRule{
-	"packageName":          {"string", false, "Native package display name. Defaults to the artifact filename when creating a package; names are never used for identity matching."},
+	"packageName":          {"string", false, "Native package display name. Defaults to the artifact filename when creating a package. Identity comes from the notes marker, never this name."},
 	"categoryId":           {"string", false, "Native category ID as a string. Use -1 for no category."},
 	"info":                 {"string", true, "Native package information. Null clears the field."},
-	"notes":                {"string", true, "Administrator notes. Null clears the field."},
+	"notes":                {"string", true, "Administrator notes. Null clears the text. Stemma keeps its identity marker on the final line and preserves the remote text when this is omitted."},
 	"priority":             {"int", false, "Native package installation priority. Defaults to 10 when creating a package."},
 	"osRequirements":       {"string", true, "Native operating system requirement expression, such as 10.6.8, 10.7.x. Null clears the field."},
 	"fillUserTemplate":     {"bool", false, "Native option to fill the user template. Explicit false is managed."},
@@ -354,29 +284,67 @@ var managedFields = map[string]fieldRule{
 
 var readOnlyFields = []string{"id", "indexed", "cloudTransferStatus", "size"}
 
-func defaults(filename, display string) map[string]json.RawMessage {
-	return map[string]json.RawMessage{"fileName": raw(filename), "packageName": raw(display), "categoryId": raw("-1"), "priority": raw(10), "fillUserTemplate": raw(false), "osInstall": raw(false), "rebootRequired": raw(false), "suppressEula": raw(false), "suppressFromDock": raw(false), "suppressRegistration": raw(false), "suppressUpdates": raw(false)}
+// defaults is a new package record. It carries the marker from creation, so an
+// interrupted run leaves a record the next one finds.
+func defaults(filename, identity string) map[string]json.RawMessage {
+	return map[string]json.RawMessage{"fileName": raw(filename), "packageName": raw(filename), "notes": raw(marker(identity)), "categoryId": raw("-1"), "priority": raw(10), "fillUserTemplate": raw(false), "osInstall": raw(false), "rebootRequired": raw(false), "suppressEula": raw(false), "suppressFromDock": raw(false), "suppressRegistration": raw(false), "suppressUpdates": raw(false)}
 }
 
-func plan(current *observed, metadata map[string]json.RawMessage, content payload, display string) []plugin.Change {
+func plan(current *observed, desired map[string]json.RawMessage, content payload, identity string) []plugin.Change {
+	desired = markedFields(current, desired, identity)
 	var changes []plugin.Change
 	if current == nil {
 		changes = append(changes, plugin.Change{Kind: "content", Field: "package", Action: "create", After: raw(content.filename)})
-		current = &observed{Fields: defaults(content.filename, display)}
-	} else if !contentMatches(current, content) {
-		changes = append(changes, plugin.Change{Kind: "content", Field: "fileName", Action: "upload", Before: current.Fields["fileName"], After: raw(content.filename)})
+		current = &observed{Fields: defaults(content.filename, identity)}
+	} else if !contentDigestMatches(current, content) {
+		changes = append(changes, plugin.Change{Kind: "content", Field: "sha256", Action: "upload", Before: current.Fields["sha256"], After: raw(content.sha256)})
 	}
-	keys := make([]string, 0, len(metadata))
-	for key := range metadata {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	for _, key := range keys {
-		if !equalJSON(current.Fields[key], metadata[key]) {
-			changes = append(changes, plugin.Change{Kind: "metadata", Field: key, Action: "set", Before: current.Fields[key], After: metadata[key]})
+	for _, key := range slices.Sorted(maps.Keys(desired)) {
+		if !equalJSON(current.Fields[key], desired[key]) {
+			changes = append(changes, plugin.Change{Kind: "metadata", Field: key, Action: "set", Before: current.Fields[key], After: desired[key]})
 		}
 	}
 	return changes
+}
+
+func marker(identity string) string { return "[stemma:v1 id=" + identity + "]" }
+
+// identities returns the identity of every marker line in notes.
+func identities(notes string) []string {
+	var found []string
+	for _, match := range markerPattern.FindAllStringSubmatch(notes, -1) {
+		found = append(found, match[1])
+	}
+	return found
+}
+
+// unmarked returns the text of notes: no marker lines and no trailing newlines,
+// so marking it again reproduces the same notes.
+func unmarked(notes string) string {
+	lines := slices.DeleteFunc(strings.Split(notes, "\n"), markerPattern.MatchString)
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
+}
+
+// withMarker keeps the marker on a final line of its own below text.
+func withMarker(text, identity string) string {
+	if text == "" {
+		return marker(identity)
+	}
+	return text + "\n" + marker(identity)
+}
+
+// noteText is the declared notes text, or the remote text while notes are omitted.
+func noteText(current *observed, metadata map[string]json.RawMessage) string {
+	if _, declared := metadata["notes"]; declared || current == nil {
+		return stringField(metadata, "notes")
+	}
+	return unmarked(stringField(current.Fields, "notes"))
+}
+
+func markedFields(current *observed, declared map[string]json.RawMessage, identity string) map[string]json.RawMessage {
+	fields := maps.Clone(declared)
+	fields["notes"] = raw(withMarker(noteText(current, declared), identity))
+	return fields
 }
 
 func inspectPayload(ctx context.Context, identity plugin.Identity, artifact plugin.Artifact) (payload, error) {
@@ -409,8 +377,7 @@ func inspectPayload(ctx context.Context, identity plugin.Identity, artifact plug
 	if digest != artifact.SHA256 || n != artifact.Size {
 		return payload{}, errors.New("jamf artifact bytes disagree with the immutable artifact descriptor")
 	}
-	prefix := "stemma-" + identityDigest(identity) + "-"
-	return payload{filename: prefix + digest + ".pkg", prefix: prefix, sha256: digest, sha3512: hex.EncodeToString(hash3.Sum(nil)), size: n}, nil
+	return payload{filename: artifact.Filename, sha256: digest, sha3512: hex.EncodeToString(hash3.Sum(nil)), size: n}, nil
 }
 
 func identityDigest(identity plugin.Identity) string {
@@ -517,50 +484,87 @@ func (c *client) get(ctx context.Context, id string) (*observed, error) {
 	return &observed{Fields: fields, ETag: response.Header().Get("ETag")}, nil
 }
 
-func (c *client) observe(ctx context.Context, id, prefix string) (*observed, error) {
-	if id != "" {
-		current, err := c.get(ctx, id)
-		if err != nil || current != nil {
-			return current, err
-		}
-	}
-	return c.discover(ctx, prefix)
-}
-
-func (c *client) discover(ctx context.Context, filename string) (*observed, error) {
-	result, response, err := c.packages.ListV1(ctx, map[string]string{"page-size": "100", "sort": "id:asc", "filter": `fileName=="` + filename + `"`})
-	if err := requestError(ctx, response, err); err != nil {
+// family lists the packages whose notes carry this identity's marker.
+func (c *client) family(ctx context.Context, identity string) ([]summary, error) {
+	listed, err := c.list(ctx, sdkclient.NewRSQLFilterBuilder().Contains("notes", marker(identity)).Build())
+	if err != nil {
 		return nil, err
 	}
-	if result == nil {
-		return nil, errors.New("jamf package discovery returned no result")
-	}
-	var found string
-	for _, entry := range result.Results {
-		if entry.FileName != filename {
-			continue
-		}
-		if found != "" {
-			return nil, errors.New("multiple Jamf packages have this immutable identity; specify package_id for explicit adoption")
-		}
-		if !validID(entry.ID) {
-			return nil, errors.New("jamf discovery returned an invalid package ID")
-		}
-		found = entry.ID
-	}
-	if found == "" {
-		return nil, nil
-	}
-	return c.get(ctx, found)
+	// The filter finds the marker anywhere in the notes; only a marker line is identity.
+	return slices.DeleteFunc(listed, func(pkg summary) bool { return !slices.Contains(identities(pkg.Notes), identity) }), nil
 }
 
-func (c *client) create(ctx context.Context, fields map[string]json.RawMessage) (string, error) {
+func (c *client) list(ctx context.Context, filter string) ([]summary, error) {
+	objects, err := c.listObjects(ctx, packagePath, map[string]string{"filter": filter})
+	if err != nil {
+		return nil, err
+	}
+	listed := make([]summary, 0, len(objects))
+	for _, data := range objects {
+		var pkg summary
+		if err := json.Unmarshal(data, &pkg); err != nil {
+			return nil, errors.New("invalid Jamf package listing")
+		}
+		listed = append(listed, pkg)
+	}
+	return listed, nil
+}
+
+// locate selects the record this artifact publishes into: the package_id pin,
+// or the family member holding the artifact's file name. It returns nil when
+// that record has yet to be created.
+func (c *client) locate(ctx context.Context, family []summary, adopt, identity, filename string) (*observed, error) {
+	id := adopt
+	if id == "" {
+		for _, pkg := range family {
+			if pkg.FileName != filename {
+				continue
+			}
+			if id != "" {
+				return nil, fmt.Errorf("multiple Jamf packages match file name %q for this software; set package_id to select one", filename)
+			}
+			id = pkg.id()
+		}
+	}
+	var current *observed
+	if id != "" {
+		var err error
+		if current, err = c.get(ctx, id); err != nil {
+			return nil, err
+		}
+	}
+	if adopt != "" {
+		if current == nil {
+			return nil, fmt.Errorf("jamf package_id %s does not exist", adopt)
+		}
+		if slices.ContainsFunc(identities(stringField(current.Fields, "notes")), func(found string) bool { return found != identity }) {
+			return nil, fmt.Errorf("jamf package %s carries another Stemma identity", adopt)
+		}
+	}
+	if current != nil && stringField(current.Fields, "fileName") == filename {
+		return current, nil
+	}
+	// File names share one distribution point namespace, so taking a name another
+	// record holds would replace that package's content.
+	holders, err := c.list(ctx, sdkclient.NewRSQLFilterBuilder().EqualTo("fileName", filename).Build())
+	if err != nil {
+		return nil, err
+	}
+	for _, holder := range holders {
+		if holder.FileName == filename && holder.id() != id {
+			return nil, fmt.Errorf("jamf package %s already uses file name %q; set package_id to %s to adopt it", holder.id(), filename, holder.id())
+		}
+	}
+	return current, nil
+}
+
+func (c *client) create(ctx context.Context, identity, filename string) (*observed, error) {
 	var body packages.RequestPackage
-	if err := json.Unmarshal(raw(fields), &body); err != nil {
-		return "", err
+	if err := json.Unmarshal(raw(defaults(filename, identity)), &body); err != nil {
+		return nil, err
 	}
 	// CreateV1 performs a distribution-point preflight inside the create call,
-	// which would make a failed read indistinguishable from an ambiguous write.
+	// so its failure would not say whether a package was written.
 	var result packages.CreateResponse
 	response, err := c.transport.NewRequest(ctx).
 		SetHeader("Accept", constants.ApplicationJSON).
@@ -568,17 +572,48 @@ func (c *client) create(ctx context.Context, fields map[string]json.RawMessage) 
 		SetBody(&body).
 		SetResult(&result).
 		Post(packagePath)
-	if err := requestError(ctx, response, err); err != nil {
-		return "", err
+	createErr := requestError(ctx, response, err)
+	if createErr == nil && !validID(result.ID) {
+		createErr = errors.New("jamf create response has no valid package ID")
 	}
-	if !validID(result.ID) {
-		return "", errors.New("jamf create response has no valid package ID")
+	if createErr != nil {
+		// A lost response can hide a package Jamf did create; its marker finds it.
+		family, err := c.family(ctx, identity)
+		if err != nil {
+			return nil, createErr
+		}
+		created, err := c.locate(ctx, family, "", identity, filename)
+		if err != nil || created == nil {
+			return nil, createErr
+		}
+		return created, nil
 	}
-	return result.ID, nil
+	created, err := c.get(ctx, result.ID)
+	if err != nil {
+		return nil, err
+	}
+	if created == nil {
+		return nil, errors.New("created Jamf package could not be read back")
+	}
+	return created, nil
 }
 
-func (c *client) merge(ctx context.Context, current *observed, changes map[string]json.RawMessage, expected *payload) (*observed, error) {
+func differs(fields, desired map[string]json.RawMessage) bool {
+	for key, value := range desired {
+		if !equalJSON(fields[key], value) {
+			return true
+		}
+	}
+	return false
+}
+
+// merge writes the desired fields that differ and verifies them by readback.
+func (c *client) merge(ctx context.Context, current *observed, desired map[string]json.RawMessage, identity string) (*observed, error) {
+	if !differs(current.Fields, markedFields(current, desired, identity)) {
+		return current, nil
+	}
 	id := stringField(current.Fields, "id")
+	// The update replaces the whole object, so it merges over the newest read.
 	fresh, err := c.get(ctx, id)
 	if err != nil {
 		return nil, err
@@ -586,23 +621,15 @@ func (c *client) merge(ctx context.Context, current *observed, changes map[strin
 	if fresh == nil {
 		return nil, errors.New("jamf package disappeared before metadata update")
 	}
-	if expected != nil && !contentMatches(fresh, *expected) {
-		return nil, errors.New("jamf content changed before managed metadata update")
-	}
-	changed := false
-	for key, value := range changes {
-		if !equalJSON(fresh.Fields[key], value) {
-			changed = true
-		}
-	}
-	if !changed {
+	desired = markedFields(fresh, desired, identity)
+	if !differs(fresh.Fields, desired) {
 		return fresh, nil
 	}
 	body := maps.Clone(fresh.Fields)
 	for _, key := range readOnlyFields {
 		delete(body, key)
 	}
-	maps.Copy(body, changes)
+	maps.Copy(body, desired)
 	response, putErr := c.transport.NewRequest(ctx).
 		SetHeader("Accept", constants.ApplicationJSON).
 		SetHeader("Content-Type", constants.ApplicationJSON).
@@ -615,7 +642,7 @@ func (c *client) merge(ctx context.Context, current *observed, changes map[strin
 	if err != nil || readback == nil {
 		return nil, errors.New("jamf metadata update could not be read back")
 	}
-	for key, value := range changes {
+	for key, value := range desired {
 		if !equalJSON(readback.Fields[key], value) {
 			if putErr != nil {
 				return nil, fmt.Errorf("jamf metadata update was not observed: %w", putErr)
@@ -634,7 +661,8 @@ func (c *client) upload(ctx context.Context, id, file string, content payload) (
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	// UploadV1 uses the local basename; Stemma's identity marker is the remote filename.
+	// UploadV1 names the upload after the local path, which need not be the
+	// artifact's file name.
 	var lastProgress time.Time
 	response, err := c.transport.NewRequest(ctx).
 		SetHeader("Accept", constants.ApplicationJSON).
@@ -664,7 +692,7 @@ func (c *client) awaitContent(ctx context.Context, id string, content payload) (
 		}
 		status := stringField(current.Fields, "cloudTransferStatus")
 		if status == "FAILED" || status == "ERROR" {
-			return current, fmt.Errorf("jamf package cloud transfer %s", status)
+			return nil, fmt.Errorf("jamf package cloud transfer %s", status)
 		}
 		if attempt == 30 {
 			break
@@ -677,7 +705,52 @@ func (c *client) awaitContent(ctx context.Context, id string, content payload) (
 		case <-timer.C:
 		}
 	}
-	return nil, errors.New("jamf content is not READY with a matching SHA-256 or SHA3-512 after 60 seconds; binding retained for reconciliation")
+	return nil, errors.New("jamf content is not READY with a matching SHA-256 or SHA3-512 after 60 seconds")
+}
+
+func (c *client) listObjects(ctx context.Context, path string, query map[string]string) ([]json.RawMessage, error) {
+	params := maps.Clone(query)
+	if params == nil {
+		params = map[string]string{}
+	}
+	params["page-size"], params["sort"] = "100", "id:asc"
+	var objects []json.RawMessage
+	expected := -1
+	seen := map[string]bool{}
+	for page := 0; ; page++ {
+		params["page"] = strconv.Itoa(page)
+		result, data, err := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationJSON).SetQueryParams(params).GetBytes(path)
+		if err := requestError(ctx, result, err); err != nil {
+			return nil, err
+		}
+		var batch struct {
+			TotalCount *int               `json:"totalCount"`
+			Results    *[]json.RawMessage `json:"results"`
+		}
+		if err := json.Unmarshal(data, &batch); err != nil || batch.TotalCount == nil || *batch.TotalCount < 0 || batch.Results == nil {
+			return nil, errors.New("jamf collection response is incomplete")
+		}
+		if expected >= 0 && expected != *batch.TotalCount {
+			return nil, errors.New("jamf collection changed during enumeration")
+		}
+		expected = *batch.TotalCount
+		for _, object := range *batch.Results {
+			var row struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(object, &row); err != nil || !validID(row.ID) || seen[row.ID] {
+				return nil, errors.New("jamf collection IDs are invalid or duplicated")
+			}
+			seen[row.ID] = true
+		}
+		objects = append(objects, (*batch.Results)...)
+		if len(objects) == expected {
+			return objects, nil
+		}
+		if len(*batch.Results) == 0 || len(objects) > expected {
+			return nil, errors.New("jamf collection enumeration is incomplete")
+		}
+	}
 }
 
 func validID(id string) bool {

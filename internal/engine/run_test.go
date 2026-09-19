@@ -77,17 +77,12 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 	if len(report.Resources) != 1 || len(report.Resources[0].Artifacts) != 0 || len(report.Resources[0].Destinations) != 2 {
 		t.Fatalf("incomplete sourcefree result: %+v", report)
 	}
-	before, err := os.ReadFile(filepath.Join(root, ".stemma/state/policies.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	options.Method = "plan"
 	if _, err := Run(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}
-	after, err := os.ReadFile(filepath.Join(root, ".stemma/state/policies.json"))
-	if err != nil || !bytes.Equal(before, after) {
-		t.Fatal("plan changed durable bindings")
+	if _, err := os.Stat(filepath.Join(root, ".stemma", "state")); !os.IsNotExist(err) {
+		t.Fatal("publication kept local destination state")
 	}
 	testproject.Write(t, filename, strings.Replace(policyProject, "description: original", "description: edited", 1))
 	options.Method = "apply"
@@ -147,27 +142,24 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 	}
 }
 
-func TestPartialFailurePersistsOwnedBindingWithoutSuccess(t *testing.T) {
+func TestPartialFailureReportsCompletedChangesWithoutSuccess(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
 	testproject.Write(t, filename, policyProject)
 	failure := errors.New("upload failed")
 	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
 		if request.Method == "apply" {
-			return plugin.ReconcileResponse{Binding: json.RawMessage(`{"id":"owned-staging"}`)}, failure
+			return plugin.ReconcileResponse{Changes: []plugin.Change{{Kind: "metadata", Field: "description", Action: "set"}}}, failure
 		}
 		return plugin.ReconcileResponse{}, nil
 	}}}
-	if _, err := Run(t.Context(), options); !errors.Is(err, failure) {
+	report, err := Run(t.Context(), options)
+	if !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
-	current, err := loadState(filepath.Join(root, ".stemma/state/policies.json"), "policies")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, binding := range current.Bindings {
-		if compactJSON(t, binding.Binding) != `{"id":"owned-staging"}` || binding.Payload != "" {
-			t.Fatal("failed staging displaced successful payload or lost cleanup binding")
+	for _, destination := range report.Resources[0].Destinations {
+		if destination.Applied || len(destination.Changes) != 1 || destination.Error == "" {
+			t.Fatalf("failed apply lost its completed changes or reported success: %+v", destination)
 		}
 	}
 }
@@ -214,18 +206,6 @@ func TestOpenEvidencePreservesNativeTypes(t *testing.T) {
 	if _, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"value": map[string]any{"$fact": "vendor.missing.value"}}, plugin.Facts{}, nil); err == nil {
 		t.Fatal("missing evidence accepted")
 	}
-}
-
-func compactJSON(t *testing.T, data json.RawMessage) string {
-	t.Helper()
-	if len(data) == 0 {
-		return ""
-	}
-	var result bytes.Buffer
-	if err := json.Compact(&result, data); err != nil {
-		t.Fatal(err)
-	}
-	return result.String()
 }
 
 func TestSourceFreeCannotSilentlySkipVerification(t *testing.T) {
@@ -495,7 +475,7 @@ func TestApplyChecksEveryReviewedInputBeforeWriting(t *testing.T) {
 
 // TestReleaseArchiveApplicationPublishesADiskImage follows a GitHub release: one
 // MacSoftware acquires the ZIP, verifies the bundle's signer and publishes a disk
-// image that Munki installs without authored copy or detection fields.
+// image that Munki installs without declared copy or detection fields.
 func TestReleaseArchiveApplicationPublishesADiskImage(t *testing.T) {
 	release := t.TempDir()
 	if err := os.CopyFS(filepath.Join(release, "WoodSweep.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
@@ -537,7 +517,7 @@ spec:
 	if installer.Format != "dmg" || installer.Filename != "woodsweep-1.2.3.dmg" || installer.Evidence["signature"] == nil {
 		t.Fatalf("installer = %+v", installer)
 	}
-	pkginfos, err := filepath.Glob(filepath.Join(root, "repo/pkgsinfo/stemma/*/*.plist"))
+	pkginfos, err := filepath.Glob(filepath.Join(root, "repo/pkgsinfo/*.plist"))
 	if err != nil || len(pkginfos) != 1 {
 		t.Fatalf("pkginfo files %v: %v", pkginfos, err)
 	}

@@ -66,7 +66,7 @@ This uses the `munki` connection from [getting started](getting-started.md) and 
 `intune` connection and `windows-win32` component from [Windows software](windows-software.md).
 
 `metadata.name` is a stable identity, independent of the filename or display name.
-Renaming a file does not rename a destination binding. Mac and Windows documents
+Renaming a file does not rename what a destination publishes. Mac and Windows documents
 can share a name, but two resources cannot publish the same name to the same
 connection. Use separate connection aliases when that distinction is needed.
 
@@ -132,7 +132,7 @@ spec:
 ```
 
 A suspended resource still validates and keeps its reviewed lock entries, but runs
-without selectors and [reconciliation](reconcile.md) leave it alone. On a machine
+without selectors and [reconciliation](reconcile.md) skip it. On a machine
 holding the files, `stemma apply MacSoftware/fonts` runs it together with the
 builds it references. A resource that is not suspended cannot consume a suspended
 resource's outputs: suspend both and select the consumer.

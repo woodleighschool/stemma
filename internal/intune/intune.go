@@ -6,62 +6,87 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	abs "github.com/microsoft/kiota-abstractions-go"
 	"maps"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
-	"github.com/woodleighschool/stemma/internal/intunecontent"
+	abs "github.com/microsoft/kiota-abstractions-go"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
 const appsPath = "/deviceAppManagement/mobileApps"
 
-type binding struct {
-	Identity        string                        `json:"identity"`
-	AppID           string                        `json:"app_id,omitempty"`
-	PayloadSHA256   string                        `json:"payload_sha256,omitempty"`
-	EnvelopeSHA256  string                        `json:"envelope_sha256,omitempty"`
-	ContentVersion  string                        `json:"content_version,omitempty"`
-	UncertainCreate bool                          `json:"uncertain_create,omitempty"`
-	Pending         *pendingUpload                `json:"pending,omitempty"`
-	Publications    plugin.Publications           `json:"publications,omitzero"`
-	Versions        map[string]contentPublication `json:"versions,omitempty"`
-	Derived         []string                      `json:"derived,omitempty"`
+// publication is the marker kept in an app's notes. It identifies the app and,
+// because Graph exposes no plaintext digest, it is the only record of the
+// payload a content version holds.
+type publication struct {
+	identity string
+	payload  string
+	content  string
 }
 
-type pendingUpload struct {
-	PayloadSHA256  string                       `json:"payload_sha256"`
-	EnvelopeSHA256 string                       `json:"envelope_sha256,omitempty"`
-	VersionID      string                       `json:"version_id,omitempty"`
-	FileID         string                       `json:"file_id,omitempty"`
-	Name           string                       `json:"name,omitempty"`
-	PlaintextSize  int64                        `json:"plaintext_size,omitempty"`
-	EncryptedSize  int64                        `json:"encrypted_size,omitempty"`
-	EncryptionInfo intunecontent.EncryptionInfo `json:"encryption_info"`
-	Stage          string                       `json:"stage"`
+var markerPattern = regexp.MustCompile(`(?m)^\[stemma:v1 id=([0-9a-f]{64}) payload=([0-9a-f]*) content=([A-Za-z0-9-]*)\]$`)
+
+// markerIdentity is the marker id of a logical identity. It finds this app and
+// the apps of referenced software in the tenant.
+func markerIdentity(id plugin.Identity) string {
+	sum := sha256.Sum256(raw(id))
+	return hex.EncodeToString(sum[:])
 }
 
-var markerPattern = regexp.MustCompile(`(?m)^\[stemma:v1 id=([0-9a-f]{64}) payload=([0-9a-f]*) content=([A-Za-z0-9-]*) envelope=([0-9a-f]*)\]$`)
+// active returns the payload the app's committed content version holds, or ""
+// when the marker does not describe that version.
+func (p publication) active(app object) string {
+	if p.content == "" || p.content != text(app["committedContentVersion"]) {
+		return ""
+	}
+	return p.payload
+}
 
-// Handle validates, plans or applies an Intune destination request.
-// Callers must persist a returned Binding even when an error reports partial
-// progress. Connection credentials are supplied through the request configuration.
+// tenantApps lists the tenant's apps at most once per invocation. Finding this
+// app and the apps of referenced software share the listing.
+type tenantApps struct {
+	client *client
+	apps   []object
+	listed bool
+}
+
+// find returns the ID of the app whose notes carry the marker of identity, or
+// "" when no app does.
+func (t *tenantApps) find(ctx context.Context, identity string) (string, error) {
+	if !t.listed {
+		apps, err := t.client.list(ctx, t.client.apps())
+		if err != nil {
+			return "", err
+		}
+		t.apps, t.listed = apps, true
+	}
+	var found []string
+	for _, app := range t.apps {
+		carries := func(match []string) bool { return match[1] == identity }
+		if slices.ContainsFunc(markerPattern.FindAllStringSubmatch(text(app["notes"]), -1), carries) {
+			found = append(found, text(app["id"]))
+		}
+	}
+	switch len(found) {
+	case 0:
+		return "", nil
+	case 1:
+		return found[0], nil
+	default:
+		return "", fmt.Errorf("multiple Intune apps carry this Stemma identity: %s", strings.Join(found, ", "))
+	}
+}
+
+// Handle validates, plans or applies an Intune destination request. It keeps no
+// state between invocations: a declared app_id or the marker in an app's notes
+// identifies the app, and the tenant supplies its publication state.
+// Connection credentials are supplied through the request configuration.
 func Handle(ctx context.Context, req plugin.ReconcileRequest) (response plugin.ReconcileResponse, err error) {
-	authored, err := decodeObject(req.Metadata)
-	if err != nil {
-		return response, err
-	}
-	unmanaged, err := unmanagedFields(authored)
-	if err != nil {
-		return response, err
-	}
-	_, deriving := authored["derive"]
 	req, response.Origins, err = Derive(req)
 	if err != nil {
 		return response, err
@@ -79,8 +104,6 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest) (response plugin.R
 		return response, err
 	}
 	response.Requires = lifecycle.requires()
-	cfg.AppID = text(desired["app_id"])
-	delete(desired, "app_id")
 	if req.Method == "validate" {
 		if req.Artifact.Path != "" {
 			_, err := identifyArtifact(ctx, req.Artifact, text(desired["@odata.type"]), setupFile(desired))
@@ -95,22 +118,20 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest) (response plugin.R
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
 	}
-	paths := slices.Sorted(maps.Keys(response.Origins))
-	paths = slices.DeleteFunc(paths, func(path string) bool { return path == "@odata.type" })
-	c.derivation = &derivedOwnership{Active: deriving || (text(desired["@odata.type"]) == win32Type && req.Artifact.Path != ""), Unmanaged: unmanaged, Paths: paths}
-	result, err := c.handle(ctx, req, cfg, desired)
+	result, err := c.handle(ctx, req, desired)
 	result.Origins, result.Requires = response.Origins, response.Requires
 	return result, err
 }
 
-func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg configuration, desired object) (response plugin.ReconcileResponse, err error) {
+func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, desired object) (response plugin.ReconcileResponse, err error) {
 	lifecycle, err := lifecycleMetadata(desired)
 	if err != nil {
 		return response, err
 	}
 	setup := setupFile(desired)
+	pinned := text(desired["app_id"])
 	desired = maps.Clone(desired)
-	for _, key := range []string{"retention", "dependencies", "supersedes", "content"} {
+	for _, key := range []string{"app_id", "retention", "dependencies", "supersedes", "content"} {
 		delete(desired, key)
 	}
 	typedClient := *c
@@ -118,41 +139,24 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 	c = &typedClient
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
-	id := sha256.Sum256(raw(req.Identity))
-	identity := hex.EncodeToString(id[:])
-	b := binding{Identity: identity}
-	if len(req.Binding) > 0 && string(req.Binding) != "null" {
-		if err := json.Unmarshal(req.Binding, &b); err != nil {
-			return response, err
-		}
-		if b.Identity != identity {
-			return response, errors.New("intune binding belongs to a different logical identity")
-		}
-	}
-	defer func() { response.Binding = raw(b) }()
-	if err := c.derivation.check(b.Derived, desired); err != nil {
-		return response, err
-	}
 	artifact, err := identifyArtifact(ctx, req.Artifact, c.appType, setup)
 	if err != nil {
 		return response, err
 	}
-	current, err := c.observe(ctx, cfg, &b)
+	tenant := &tenantApps{client: c}
+	identity := markerIdentity(req.Identity)
+	current, err := c.observe(ctx, tenant, pinned, identity)
 	if err != nil {
 		return response, err
 	}
-	if current == nil && b.UncertainCreate {
-		return response, errors.New("prior app creation has uncertain outcome; marker discovery found no app, so creation will not be retried")
-	}
+	published := publication{identity: identity}
+	appID := text(current["id"])
 	if current != nil {
 		if current["@odata.type"] != c.appType {
-			return response, errors.New("bound Intune app has a different native subtype")
+			return response, errors.New("intune app has a different native subtype")
 		}
-		if err := recoverMarker(current, &b); err != nil {
+		if published, err = recoverMarker(current, identity); err != nil {
 			return response, err
-		}
-		if b.Pending != nil && b.Pending.VersionID != "" && text(current["committedContentVersion"]) == b.Pending.VersionID && current["publishingState"] == "published" {
-			b.activate()
 		}
 	}
 	iconChanges, err := c.reconcileIcon(ctx, req, current, false)
@@ -160,10 +164,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 		return response, err
 	}
 	response.Changes = append(response.Changes, iconChanges...)
-	contentChanged := current == nil || b.PayloadSHA256 != artifact.identity || b.ContentVersion == "" || b.ContentVersion != text(current["committedContentVersion"])
-	if b.Pending != nil && b.Pending.PayloadSHA256 != artifact.identity {
-		return response, errors.New("unfinished Intune upload belongs to different content; reconcile it before changing the source")
-	}
+	contentChanged := published.active(current) != artifact.identity
 	if current == nil {
 		if err := validateCreation(desired); err != nil {
 			return response, err
@@ -171,12 +172,12 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 		response.Changes = append(response.Changes, plugin.Change{Kind: "destination", Action: "create", Field: "app", After: raw(desired)})
 	}
 	if contentChanged {
-		response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "payload_sha256", Action: "upload", Before: raw(b.PayloadSHA256), After: raw(artifact.identity)})
+		response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "payload_sha256", Action: "upload", Before: raw(published.active(current)), After: raw(artifact.identity)})
 	}
 	if c.appType == win32Type {
 		desired["setupFilePath"] = artifact.setup
 	}
-	_, changes := metadataPatch(current, desired, b)
+	_, changes := metadataPatch(current, desired, published)
 	if current != nil {
 		response.Changes = append(response.Changes, changes...)
 	}
@@ -185,7 +186,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 	if value, owned := desired["assignments"]; owned {
 		var existing []any
 		if current != nil {
-			items, err := c.list(ctx, c.assignments(b.AppID))
+			items, err := c.list(ctx, c.assignments(appID))
 			if err != nil {
 				return response, err
 			}
@@ -201,13 +202,13 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 	var relationships []object
 	var relationshipChanged bool
 	if lifecycle.Dependencies != nil || lifecycle.Supersedes != nil {
-		wanted, err := c.desiredRelationships(ctx, req, lifecycle, b.AppID)
+		wanted, err := c.desiredRelationships(ctx, req, tenant, lifecycle, appID)
 		if err != nil {
 			return response, err
 		}
 		var existing []object
 		if current != nil {
-			existing, err = c.list(ctx, c.relationships(b.AppID))
+			existing, err = c.list(ctx, c.relationships(appID))
 			if err != nil {
 				return response, err
 			}
@@ -217,34 +218,31 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 			return response, err
 		}
 		if relationshipChanged {
-			if err := c.checkRelationships(ctx, b.AppID, relationships, existing); err != nil {
+			if err := c.checkRelationships(ctx, appID, relationships, existing); err != nil {
 				return response, err
 			}
 			response.Changes = append(response.Changes, plugin.Change{Kind: "relationships", Field: "relationships", Action: "replace", Before: raw(existing), After: raw(relationships)})
 		}
 	}
 	if req.Method == "plan" {
-		if lifecycle.Retention != nil && current != nil {
-			planned := b
-			// Predict successful publication without granting cleanup ownership to
-			// recovered or otherwise unknown content versions.
-			if contentChanged || b.Pending != nil {
-				planned.Publications.Order = maps.Clone(b.Publications.Order)
-				planned.Publications.Record(artifact.identity)
-				planned.ContentVersion = ""
-			}
-			changes, err := c.pruneContent(ctx, &planned, lifecycle.Retention.Keep, false)
-			response.Changes = append(response.Changes, changes...)
-			return response, err
+		if lifecycle.Retention == nil || current == nil {
+			return response, nil
 		}
-		return response, nil
+		// Publishing activates a new version, so every existing version then
+		// competes as an earlier publication.
+		active := text(current["committedContentVersion"])
+		if contentChanged {
+			active = ""
+		}
+		changes, err := c.pruneContent(ctx, appID, active, lifecycle.Retention.Keep, false)
+		response.Changes = append(response.Changes, changes...)
+		return response, err
 	}
-	if len(response.Changes) == 0 && b.Pending == nil && lifecycle.Retention == nil {
-		b.Derived = c.derivation.paths()
+	if len(response.Changes) == 0 && lifecycle.Retention == nil && current["publishingState"] == "published" {
 		return response, nil
 	}
 	var prepared *preparedArtifact
-	if contentChanged && (b.Pending == nil || b.Pending.Stage == "file" || b.Pending.Stage == "version" || b.Pending.Stage == "file-request") {
+	if contentChanged {
 		prepared, err = prepareArtifact(ctx, req.Identity.Software, req.Artifact, artifact)
 		if err != nil {
 			return response, err
@@ -254,68 +252,61 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 	if current == nil {
 		body := mergeOwned(nil, desired)
 		delete(body, "assignments")
-		body["notes"] = withMarker(text(body["notes"]), b)
+		body["notes"] = withMarker(text(body["notes"]), published)
 		body["fileName"] = prepared.name
 		if c.appType == win32Type {
 			body["setupFilePath"] = prepared.setup
 		}
-		b.UncertainCreate = true
 		if err := c.request(ctx, abs.POST, c.apps(), body, &current); err != nil {
 			return response, err
 		}
-		b.AppID = text(current["id"])
-		if b.AppID == "" {
-			return response, errors.New("intune creation response omitted app ID; discovery is required")
+		appID = text(current["id"])
+		if appID == "" {
+			return response, errors.New("intune creation response omitted app ID")
 		}
-		b.UncertainCreate = false
 	}
 	if contentChanged {
-		if err := c.upload(ctx, b.AppID, artifact.identity, prepared, &b); err != nil {
+		version, err := c.upload(ctx, appID, prepared)
+		if err != nil {
 			return response, err
 		}
+		published = publication{identity: identity, payload: artifact.identity, content: version}
 	}
-	// Re-observe after potentially long uploads so nested unmanaged fields and
+	// Re-observe after potentially long uploads so nested omitted fields and
 	// notes changed by another administrator are preserved by the final PATCH.
-	if err := c.request(ctx, abs.GET, c.app(b.AppID), nil, &current); err != nil {
+	if err := c.request(ctx, abs.GET, c.app(appID), nil, &current); err != nil {
 		return response, err
 	}
-	patch, _ := metadataPatch(current, desired, b)
-	if b.Pending != nil && b.Pending.Stage == "committed" {
-		patch["committedContentVersion"] = b.Pending.VersionID
-		patch["fileName"] = b.Pending.Name
+	patch, _ := metadataPatch(current, desired, published)
+	activated := ""
+	if contentChanged {
+		// Activation travels with its marker so the notes never describe
+		// content other than the committed version.
+		activated = published.content
+		patch["committedContentVersion"] = activated
+		patch["notes"] = withMarker(noteText(current, desired), published)
+		patch["fileName"] = prepared.name
 		if c.appType == win32Type {
 			patch["setupFilePath"] = artifact.setup
 		}
-		prospective := b
-		prospective.PayloadSHA256 = b.Pending.PayloadSHA256
-		prospective.EnvelopeSHA256 = b.Pending.EnvelopeSHA256
-		prospective.ContentVersion = b.Pending.VersionID
-		patch["notes"] = withMarker(noteText(current, desired), prospective)
 	}
 	if len(patch) > 0 {
 		patch["@odata.type"] = c.appType
-		if err := c.request(ctx, abs.PATCH, c.app(b.AppID), patch, nil); err != nil {
+		if err := c.request(ctx, abs.PATCH, c.app(appID), patch, nil); err != nil {
 			return response, err
 		}
 	}
-	if err := c.waitPublished(ctx, b.AppID, b, &current); err != nil {
+	if err := c.waitPublished(ctx, appID, activated, &current); err != nil {
 		return response, err
 	}
-	if b.Pending != nil {
-		if text(current["committedContentVersion"]) != b.Pending.VersionID {
-			return response, errors.New("intune did not activate the committed content version")
-		}
-		b.activate()
-	}
-	if residual, _ := metadataPatch(current, desired, b); len(residual) > 0 {
+	if residual, _ := metadataPatch(current, desired, published); len(residual) > 0 {
 		return response, errors.New("intune metadata readback differs from requested values")
 	}
 	if _, err := c.reconcileIcon(ctx, req, current, true); err != nil {
 		return response, err
 	}
-	b.Derived = c.derivation.paths()
 	if assignmentChanged {
-		items, err := c.list(ctx, c.assignments(b.AppID))
+		items, err := c.list(ctx, c.assignments(appID))
 		if err != nil {
 			return response, err
 		}
@@ -324,10 +315,10 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 			existing = append(existing, item)
 		}
 		assignments, _ = reconcileAssignments(existing, desired["assignments"].([]any))
-		if err := c.request(ctx, abs.POST, c.assign(b.AppID), object{"mobileAppAssignments": assignments}, nil); err != nil {
+		if err := c.request(ctx, abs.POST, c.assign(appID), object{"mobileAppAssignments": assignments}, nil); err != nil {
 			return response, err
 		}
-		items, err = c.list(ctx, c.assignments(b.AppID))
+		items, err = c.list(ctx, c.assignments(appID))
 		if err != nil {
 			return response, err
 		}
@@ -341,11 +332,11 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 	}
 	if lifecycle.Dependencies != nil || lifecycle.Supersedes != nil {
 		// Preserve omitted categories against changes during a long content upload.
-		existing, err := c.list(ctx, c.relationships(b.AppID))
+		existing, err := c.list(ctx, c.relationships(appID))
 		if err != nil {
 			return response, err
 		}
-		wanted, err := c.desiredRelationships(ctx, req, lifecycle, b.AppID)
+		wanted, err := c.desiredRelationships(ctx, req, tenant, lifecycle, appID)
 		if err != nil {
 			return response, err
 		}
@@ -353,15 +344,15 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 		if err != nil {
 			return response, err
 		}
-		if err := c.checkRelationships(ctx, b.AppID, relationships, existing); err != nil {
+		if err := c.checkRelationships(ctx, appID, relationships, existing); err != nil {
 			return response, err
 		}
 		if changed {
-			if err := c.request(ctx, abs.POST, c.updateRelationships(b.AppID), object{"relationships": relationships}, nil); err != nil {
+			if err := c.request(ctx, abs.POST, c.updateRelationships(appID), object{"relationships": relationships}, nil); err != nil {
 				return response, err
 			}
 		}
-		readback, err := c.list(ctx, c.relationships(b.AppID))
+		readback, err := c.list(ctx, c.relationships(appID))
 		if err != nil {
 			return response, err
 		}
@@ -375,11 +366,8 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 			return response, errors.New("intune relationship readback differs from requested references")
 		}
 	}
-	if b.Pending != nil {
-		b.published()
-	}
 	if lifecycle.Retention != nil {
-		changes, err := c.pruneContent(ctx, &b, lifecycle.Retention.Keep, true)
+		changes, err := c.pruneContent(ctx, appID, text(current["committedContentVersion"]), lifecycle.Retention.Keep, true)
 		response.Changes = append(response.Changes, changes...)
 		if err != nil {
 			return response, err
@@ -388,55 +376,40 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest, cfg co
 	return response, nil
 }
 
-func (c *client) observe(ctx context.Context, cfg configuration, b *binding) (object, error) {
-	if cfg.AppID != "" && b.AppID != "" && cfg.AppID != b.AppID {
-		return nil, errors.New("configured app_id conflicts with saved Intune binding")
-	}
-	if b.AppID == "" {
-		b.AppID = cfg.AppID
-	}
-	if b.AppID != "" {
-		var app object
-		if err := c.request(ctx, abs.GET, c.app(b.AppID), nil, &app); err != nil {
-			return nil, fmt.Errorf("read bound app; Stemma will not recreate it implicitly: %w", err)
+// observe reads the app this identity manages: the one a declared app_id pins,
+// or else the one whose notes carry the identity marker. It returns nil when no
+// app exists yet.
+func (c *client) observe(ctx context.Context, tenant *tenantApps, pinned, identity string) (object, error) {
+	id := pinned
+	if id == "" {
+		found, err := tenant.find(ctx, identity)
+		if err != nil || found == "" {
+			return nil, err
 		}
-		return app, nil
+		id = found
 	}
-	apps, err := c.list(ctx, c.apps())
-	if err != nil {
-		return nil, err
-	}
-	var found object
-	for _, app := range apps {
-		for _, match := range markerPattern.FindAllStringSubmatch(text(app["notes"]), -1) {
-			if match[1] != b.Identity {
-				continue
-			}
-			if found != nil {
-				return nil, errors.New("multiple Intune apps carry this Stemma identity")
-			}
-			found = app
+	// Collection responses can omit heavyweight properties such as largeIcon.
+	var app object
+	if err := c.request(ctx, abs.GET, c.app(id), nil, &app); err != nil {
+		if pinned != "" && errors.Is(err, errNotFound) {
+			return nil, fmt.Errorf("app_id %q does not exist in Intune", pinned)
 		}
+		return nil, fmt.Errorf("read Intune app: %w", err)
 	}
-	if found != nil {
-		b.AppID = text(found["id"])
-		b.UncertainCreate = false
-	}
-	return found, nil
+	return app, nil
 }
 
-func recoverMarker(current object, b *binding) error {
-	for _, match := range markerPattern.FindAllStringSubmatch(text(current["notes"]), -1) {
-		if match[1] != b.Identity {
-			return errors.New("adopted app carries another Stemma identity")
+// recoverMarker reads the publication recorded in the app's notes. An app that
+// carries another identity's marker belongs to other software.
+func recoverMarker(app object, identity string) (publication, error) {
+	published := publication{identity: identity}
+	for _, match := range markerPattern.FindAllStringSubmatch(text(app["notes"]), -1) {
+		if match[1] != identity {
+			return published, errors.New("intune app carries another Stemma identity")
 		}
-		if b.PayloadSHA256 == "" && match[2] != "" && match[3] == text(current["committedContentVersion"]) {
-			b.PayloadSHA256 = match[2]
-			b.ContentVersion = match[3]
-			b.EnvelopeSHA256 = match[4]
-		}
+		published.payload, published.content = match[2], match[3]
 	}
-	return nil
+	return published, nil
 }
 
 func noteText(current, desired object) string {
@@ -446,15 +419,15 @@ func noteText(current, desired object) string {
 	return strings.TrimSuffix(markerPattern.ReplaceAllString(text(current["notes"]), ""), "\n")
 }
 
-func withMarker(notes string, b binding) string {
-	marker := fmt.Sprintf("[stemma:v1 id=%s payload=%s content=%s envelope=%s]", b.Identity, b.PayloadSHA256, b.ContentVersion, b.EnvelopeSHA256)
+func withMarker(notes string, p publication) string {
+	marker := fmt.Sprintf("[stemma:v1 id=%s payload=%s content=%s]", p.identity, p.payload, p.content)
 	if notes == "" {
 		return marker
 	}
 	return notes + "\n" + marker
 }
 
-func metadataPatch(current, desired object, b binding) (object, []plugin.Change) {
+func metadataPatch(current, desired object, published publication) (object, []plugin.Change) {
 	patch := object{}
 	var changes []plugin.Change
 	keys := make([]string, 0, len(desired))
@@ -491,7 +464,7 @@ func metadataPatch(current, desired object, b binding) (object, []plugin.Change)
 		patch[key] = value
 		changes = append(changes, plugin.Change{Kind: "metadata", Field: key, Action: "set", Before: raw(current[key]), After: raw(value)})
 	}
-	notes := withMarker(noteText(current, desired), b)
+	notes := withMarker(noteText(current, desired), published)
 	if notes != text(current["notes"]) {
 		patch["notes"] = notes
 		changes = append(changes, plugin.Change{Kind: "metadata", Field: "notes", Action: "set", Before: raw(current["notes"]), After: raw(notes)})
@@ -534,12 +507,14 @@ func validateCreation(m object) error {
 	return nil
 }
 
-func (c *client) waitPublished(ctx context.Context, id string, b binding, current *object) error {
+// waitPublished polls until the app is published and, when this run activated a
+// content version, until Graph reports that version as committed.
+func (c *client) waitPublished(ctx context.Context, id, activated string, current *object) error {
 	for range 360 {
 		if err := c.request(ctx, abs.GET, c.app(id), nil, current); err != nil {
 			return err
 		}
-		if text((*current)["publishingState"]) == "published" && (b.Pending == nil || text((*current)["committedContentVersion"]) == b.Pending.VersionID) {
+		if text((*current)["publishingState"]) == "published" && (activated == "" || text((*current)["committedContentVersion"]) == activated) {
 			return nil
 		}
 		if err := c.pause(ctx); err != nil {

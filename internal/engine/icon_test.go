@@ -170,7 +170,7 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 		}
 		return plugin.ReconcileResponse{}, nil
 	}
-	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), StateDir: t.TempDir(), Icons: IconOptions{Presentation: icon.Raw}, Handlers: map[string]reconcileHandler{"munki": record, "intune": record}}
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Icons: IconOptions{Presentation: icon.Raw}, Handlers: map[string]reconcileHandler{"munki": record, "intune": record}}
 	statuses := func(method string) map[string]string {
 		t.Helper()
 		options.Method = method

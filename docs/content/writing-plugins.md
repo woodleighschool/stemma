@@ -13,7 +13,7 @@ version your catalog uses. The interface is still under development.
 
 A resource has two methods:
 
-- `validate` reads the authored spec and returns named inputs, preparation-only
+- `validate` reads the declared spec and returns named inputs, preparation-only
   configuration and destination settings.
 - `run` receives locked inputs in a leased workspace and returns named artifacts.
 
@@ -205,34 +205,39 @@ credential configuration fields with `writeOnly: true`.
 ## Destinations
 
 Register `kind: reconcile` with methods `validate`, `plan` and `apply`. Use
-`ConfigSchema` for connection settings and `MetadataSchema` for authored native
+`ConfigSchema` for connection settings and `MetadataSchema` for native
 settings. `ReconcileRequest` includes logical identity, primary artifact, named
-artifact inputs, facts, subject selectors, the prior binding and peer bindings.
+artifact inputs, facts, subject selectors and peers.
 
-`plan` reads state and returns semantic `Change` records without mutations.
-`apply` re-observes, performs the necessary changes and returns a durable binding.
-Preserve absent, null, false and empty collection values when decoding native
-metadata; they have different meanings.
+`plan` reads the destination and returns semantic `Change` records without
+mutations. `apply` re-observes and performs the necessary changes. Preserve absent,
+null, false and empty collection values when decoding native metadata; they have
+different meanings. Return the changes already made alongside an error.
 
-The binding is provider-owned JSON. Store native IDs and enough ownership evidence
-to recover an interrupted write. An omitted response binding preserves the old
-one; JSON null clears it; a value replaces it. Return partial output on failure
-when an owned object was created or an upload needs recovery. The host preserves
-returned bindings even alongside an error.
+Identify publications from native keys or a marker in a remote field. Re-running
+with an empty local cache must find existing objects and skip completed uploads.
+After an interruption, re-read the destination before writing again.
 
-Do not infer ownership from a display name. Re-running identical desired content
-must not duplicate objects or repeat uploads. Use the shared `Publications` and
-retention types for successful payload order, while implementing native reference
-checks and cleanup in the provider. See [retention](publishing.md#identity-and-retention).
+Explicit fields override derived values. Missing derived values clear owned
+fields; other omitted fields remain unchanged. Ownership follows the current
+declaration and artifact.
+Validation may return `Requires`, the names of the resources a document refers to on
+the same connection. Stemma reconciles the selected ones first and supplies, in
+`Peers`, the metadata each one declares for the destination, which is enough to find
+its publication the same way the peer itself does.
+
+Use the shared `Retention` type and order a software's publications from the
+destination's own records, while implementing native reference checks and cleanup in
+the provider. See [retention](publishing.md#identity-and-retention).
 
 ## Protocol and runtime
 
-The host launches an executable for one request. Protocol version **3** sends one
+The host launches an executable for one request. Protocol version **4** sends one
 JSON object on stdin, ending at EOF:
 
 ```json
 {
-  "protocol": 3,
+  "protocol": 4,
   "method": "describe"
 }
 ```
@@ -242,7 +247,7 @@ The final stdout response has `protocol`, optional `output` and optional `error`
 Other requests add `operation`, `input` and optionally `log_level`.
 
 Before the final response, a plugin may emit newline-delimited envelopes containing
-`protocol: 3` and `log`, a structured record with time, level and message. Messages
+`protocol: 4` and `log`, a structured record with time, level and message. Messages
 are bounded to 4 MiB. No messages may follow the final response. The SDK's `Serve`
 and `Run` handle framing and validation.
 

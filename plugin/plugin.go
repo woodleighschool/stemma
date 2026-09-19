@@ -8,7 +8,7 @@ import (
 )
 
 // ProtocolVersion is the executable protocol understood by this SDK.
-const ProtocolVersion = 3
+const ProtocolVersion = 4
 
 // Request invokes one advertised operation. Describe requests omit Operation and Input.
 type Request struct {
@@ -19,8 +19,8 @@ type Request struct {
 	LogLevel  slog.Level      `json:"log_level,omitempty"`
 }
 
-// Response retains partial Output when an operation fails. Callers must persist
-// recovered reconciliation bindings even when Error is present.
+// Response retains partial Output when an operation fails, so callers can report
+// the changes it completed.
 type Response struct {
 	Protocol int             `json:"protocol"`
 	Output   json.RawMessage `json:"output,omitempty"`
@@ -55,30 +55,32 @@ type Artifact struct {
 
 // ReconcileRequest carries native desired state. Raw JSON retains absent, null,
 // false and empty collections; Config contains provider-owned connection settings.
+//
+// A destination keeps no state between runs: it identifies what it manages from
+// Identity and the destination itself. Peers holds the declared metadata, for
+// this destination, of each resource validation listed in Requires.
 type ReconcileRequest struct {
 	Method   string                     `json:"method"`
 	Identity Identity                   `json:"identity"`
 	Config   json.RawMessage            `json:"config,omitempty"`
 	Metadata json.RawMessage            `json:"metadata,omitempty"`
-	Binding  json.RawMessage            `json:"binding,omitempty"`
 	Artifact Artifact                   `json:"artifact"`
 	Inputs   map[string]Artifact        `json:"inputs,omitempty"`
 	Facts    Facts                      `json:"facts,omitzero"`
 	Subjects map[string]SubjectSelector `json:"subjects,omitempty"`
-	Bindings map[string]json.RawMessage `json:"bindings,omitempty"`
+	Peers    map[string]json.RawMessage `json:"peers,omitempty"`
 	Prepared bool                       `json:"prepared,omitempty"`
 	Root     string                     `json:"root,omitempty"`
 }
 
-// ReconcileResponse carries changes and recovered durable bindings. An omitted
-// Binding preserves it, null clears it, and a value replaces it, including on error.
+// ReconcileResponse carries the changes a run planned or made.
 //
-// Validation may list in Requires the resources, by name, that the same
-// connection has to reconcile before this document so their bindings exist when
-// it applies. A resource the run does not reconcile is left to the destination.
+// Validation may list in Requires the resources, by name, that this document
+// refers to on the same connection. The run reconciles the ones it selects
+// first and supplies each one's declared metadata in Peers; a resource the
+// project does not declare is left to the destination.
 type ReconcileResponse struct {
 	Changes  []Change          `json:"changes,omitempty"`
-	Binding  json.RawMessage   `json:"binding,omitempty"`
 	Origins  map[string]string `json:"origins,omitempty"`
 	Requires []string          `json:"requires,omitempty"`
 }

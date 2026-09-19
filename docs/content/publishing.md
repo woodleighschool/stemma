@@ -16,17 +16,20 @@ inside the payload. Input filenames and publication names are independent.
 
 ## Native fields and derived values
 
-Stemma derives supported fields from the selected artifact. Explicit authored
-values take precedence. For fields you manage:
+Stemma derives supported fields from the selected artifact. Values you set take
+precedence. For fields you manage:
 
-- Omitted fields remain unmanaged unless supplied by derivation.
+- Omitted fields are left unchanged unless derivation owns them.
 - Supported null values clear a field.
 - Supplied lists replace the complete collection, including an empty list.
 
+A field you set or derivation owns is managed. Missing derived values clear the
+field, or fail publication if the destination requires a value. Other fields
+remain unchanged.
 For example, omitting Intune `assignments` preserves existing assignments. It does
 not assert that an app is unassigned. Likewise, removing a field from YAML is not
-an instruction to clear its remote value. `unmanaged` can relinquish supported
-derived fields; the destination schema lists the available fields.
+an instruction to clear its remote value unless derivation owns it. To publish a
+value other than the derived one, set it.
 
 ## Munki
 
@@ -55,20 +58,25 @@ destinations:
       keep: 1
 ```
 
-The provider writes pkginfo, installer objects, declared icons and catalog
-indexes. You do not need an intermediate pkginfo-rendering document. Application
+The provider writes pkginfo, installers, declared icons and catalog indexes as
+`munkiimport` and `makecatalogs` would: a new item becomes
+`pkgsinfo/<name>-<version>.plist` and `pkgs/<installer filename>`, numbered when
+another item holds the name, and catalog entries omit `notes` and private keys. An
+item already in the repository keeps its paths. You do not need an intermediate
+pkginfo-rendering document. Application
 evidence supplies detection and DMG copy details where applicable. A PKG's static
 PackageInfo and Distribution declarations supply receipts, installed size, minimum
 macOS version and restart requirement; installer scripts are never evaluated.
-Receipts or copied items also make the item uninstallable unless removal is
-authored. Without a selected application, a PKG's version is its Distribution
-product version or the version shared by its components. Explicit `installs`,
-`receipts`, `installcheck_script` and other supported native fields allow more
-specific behaviour.
+Receipts or copied items also supply the removal method, and an item with a
+method is uninstallable unless `uninstallable` is set. Without a selected
+application, a PKG's version is its Distribution product version or the version
+shared by its components. Explicit `installs`, `receipts`, `installcheck_script`
+and other supported native fields allow more specific behaviour.
 
 Munki's `supported_architectures` is an optional pkginfo restriction. There is no
 core `spec.arch`: download selection, installation eligibility and runner
-architecture are separate decisions.
+architecture are separate decisions. Items sharing a name and version are
+architecture variants; set the restriction on each so a document selects its own.
 
 A [declared icon](mac-software.md#icons) arrives as an artifact input. Munki
 publishes it by content hash and Intune through its app icon field, both
@@ -118,14 +126,15 @@ destinations:
         uninstall_previous: true
 ```
 
-References resolve stable Stemma names through durable app bindings, not display
-names or MSI ProductCodes. Publish the referenced items first. Cycles, missing
-bindings and incompatible app types fail. The provider permits up to 99 authored
+References resolve stable Stemma names to the app carrying that resource's
+identity, or to the `app_id` it sets, not display names or MSI ProductCodes. Publish
+the referenced items first. Cycles, unpublished references and incompatible app
+types fail. The provider permits up to 99 declared
 dependencies and 9 supersedence targets, subject to the service's graph limits.
 
 An ordinary update publishes new content to the same app ID. Supersedence relates
 separate apps explicitly; it does not create a new app for every release or retire
-the old app automatically. Omitted relationship categories remain unmanaged;
+the old app automatically. Omitted relationship categories are left unchanged;
 `dependencies: []` clears that outgoing category.
 
 An unassigned app may still install as a dependency of an assigned parent. Review
@@ -150,10 +159,10 @@ Jamf publishes PKG artifacts: a vendor package, one selected with `package_path`
 or a [BuildMacPkg](building-packages.md) output. Jamf installs a DMG by copying its
 contents onto the startup disk, so an application DMG is not a Jamf package.
 
-Jamf receives an immutable package ID for each distinct artifact. Package display
-names default to the installer filename. Remote filenames include ownership and
-content markers. Upload requires a Jamf distribution configuration supporting the
-package upload API.
+Each installer filename is one Jamf package record, keeping its native file and
+display names; the display name defaults to the filename. Changed bytes under the
+same filename upload into the same record. Upload requires a Jamf distribution
+configuration supporting the package upload API.
 
 To associate a package with an existing patch title and maintain a policy:
 
@@ -179,33 +188,44 @@ Use an existing title ID and an exact version known to that title. This example
 uses the selected Mac application's version. The title's definition must already
 contain that version; Stemma does not create the definition from the package.
 
-The bound policy keeps its ID as its target version changes. A disabled or unscoped
-policy still protects the version it references during cleanup. Package upload and
-patch policy management do not provide a general Jamf policy-authoring interface.
+The policy is found by `policy.id`, or else by its name under the title, which
+defaults to the resource's name, and keeps its ID as its target version changes. A
+title's link to a package protects it during cleanup, so retention reaches a
+patch-managed package only once no version links to it. Stemma manages
+no other Jamf policies.
 
 ## Identity and retention
 
-Keep `.stemma/state` durable, including when moving a catalog to another runner.
-It records native IDs, owned fields, payload identities and successful publication
-order. A similarly named remote object is not proof of ownership. Explicit
-`app_id` or `package_id` adoption must agree with an existing binding and the
-provider's content checks. Remote marker recovery cannot recreate lost historical
-publication order or association ownership.
+Destinations identify publications from native keys or markers. Planning and
+applying need no local publication state.
 
-`retention.keep: N` retains the current payload and the N−1 most recently
-successfully published distinct payloads, plus anything still needed by native
-references. Protected older payloads do not consume those N slots.
+| Destination | Identity                                                                |
+| ----------- | ----------------------------------------------------------------------- |
+| Intune      | A marker line Stemma keeps in the app's notes, or `app_id` when set     |
+| Jamf        | A marker line in the package's notes plus its filename, or `package_id` |
+| Munki       | The item's name and version, and its architectures when set             |
 
-| Destination | Cleanup                                                                  |
-| ----------- | ------------------------------------------------------------------------ |
-| Intune      | Eligible inactive content versions within the bound app; not app objects |
-| Jamf        | Eligible owned obsolete title associations, then unreferenced packages   |
-| Munki       | Eligible package-version records, then unreferenced installer objects    |
+Munki reconciles an existing item with the same identity. Intune and Jamf require
+the marker or an explicit `app_id` or `package_id`; display names are not unique.
+The marker occupies the final line of the notes and preserves the remaining text.
 
-Cleanup follows successful publication and intended reference updates. Metadata
-edits neither re-upload unchanged content nor advance publication order. Unknown
-ownership, unknown order, changed owned associations or incomplete reference reads
-block destructive cleanup.
+Changed bytes at the same version replace the existing content. After an
+interruption, the next run finds the remote object and uploads content if needed.
+Duplicate identities fail as ambiguous.
+`retention.keep: N` retains the current publication and the N−1 newest others the
+destination holds for the same software, including ones published before Stemma,
+plus anything still needed by native references. Protected publications do not
+consume those N slots.
+
+| Destination | Family and order                                              | Cleanup                                                            |
+| ----------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Intune      | The app's committed content versions, by version number       | Inactive content versions and abandoned uploads; never app objects |
+| Jamf        | Packages carrying the identity marker, by package ID          | Unreferenced package records and their content                     |
+| Munki       | Items sharing the name and declared architectures, by version | Pkginfo, catalog entries, unreferenced installers                  |
+
+Cleanup follows successful publication and intended reference updates. Incomplete
+reference reads block cleanup. Munki also preserves referenced items whose
+catalogs or installation requirements differ from the current publication.
 
 Keeping older content is not a rollback guarantee. Intune's current commands and
 detection are not versioned with historical content; uninstall files must remain

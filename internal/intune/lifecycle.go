@@ -1,11 +1,13 @@
 package intune
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 
 	abs "github.com/microsoft/kiota-abstractions-go"
 	"github.com/woodleighschool/stemma/plugin"
@@ -20,11 +22,6 @@ type lifecycle struct {
 type relationshipReference struct {
 	Software string
 	Install  bool
-}
-
-type contentPublication struct {
-	Payload  string `json:"payload"`
-	Sequence uint64 `json:"sequence"`
 }
 
 func lifecycleMetadata(m object) (lifecycle, error) {
@@ -98,80 +95,66 @@ func (l lifecycle) requires() []string {
 	return slices.Compact(names)
 }
 
-func (b *binding) activate() {
-	p := b.Pending
-	b.PayloadSHA256, b.EnvelopeSHA256, b.ContentVersion = p.PayloadSHA256, p.EnvelopeSHA256, p.VersionID
-	p.Stage = "published"
-}
-
-func (b *binding) published() {
-	p := b.Pending
-	sequence := b.Publications.Record(p.PayloadSHA256)
-	if b.Versions == nil {
-		b.Versions = map[string]contentPublication{}
-	}
-	b.Versions[p.VersionID] = contentPublication{Payload: p.PayloadSHA256, Sequence: sequence}
-	b.Pending = nil
-}
-
-func (c *client) pruneContent(ctx context.Context, b *binding, keep int, apply bool) ([]plugin.Change, error) {
-	versions, err := c.list(ctx, c.content(b.AppID, "", "", ""))
+// pruneContent keeps the active version and the newest keep-1 other committed
+// versions, ordered by numeric ID because mobileAppContent has no timestamp.
+// Uncommitted versions are removed. Planning an upload passes no active version.
+func (c *client) pruneContent(ctx context.Context, appID, active string, keep int, apply bool) ([]plugin.Change, error) {
+	versions, err := c.list(ctx, c.content(appID, "", "", ""))
 	if err != nil {
 		return nil, err
 	}
-	retained := b.Publications.Retained(keep)
-	if len(retained) == 0 {
-		return nil, nil
-	}
-	latest := map[string]uint64{}
-	for _, version := range versions {
-		publication := b.Versions[text(version["id"])]
-		latest[publication.Payload] = max(latest[publication.Payload], publication.Sequence)
-	}
-	if !apply && b.ContentVersion == "" {
-		latest[b.Publications.Current] = b.Publications.Order[b.Publications.Current]
-	}
-	var candidates []string
+	numbers := map[string]uint64{}
+	var publications, stale []string
 	for _, version := range versions {
 		id := text(version["id"])
-		publication, owned := b.Versions[id]
-		ordered := publication.Sequence != 0 && b.Publications.Order[publication.Payload] != 0
-		if !owned || !ordered || (retained[publication.Payload] && publication.Sequence == latest[publication.Payload]) || id == b.ContentVersion || (b.Pending != nil && id == b.Pending.VersionID) {
+		number, err := strconv.ParseUint(id, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("intune content version %q is not a version number; refusing retention", id)
+		}
+		numbers[id] = number
+		if id == active {
 			continue
 		}
-		candidates = append(candidates, id)
+		files, err := c.list(ctx, c.content(appID, id, "", ""))
+		if err != nil {
+			return nil, err
+		}
+		if slices.ContainsFunc(files, func(file object) bool { return file["isCommitted"] == true }) {
+			publications = append(publications, id)
+		} else {
+			stale = append(stale, id)
+		}
 	}
-	slices.Sort(candidates)
-	changes := make([]plugin.Change, 0, len(candidates))
-	for _, id := range candidates {
+	slices.SortFunc(publications, func(a, b string) int { return cmp.Compare(numbers[b], numbers[a]) })
+	stale = append(stale, publications[min(keep-1, len(publications)):]...)
+	slices.SortFunc(stale, func(a, b string) int { return cmp.Compare(numbers[a], numbers[b]) })
+	changes := make([]plugin.Change, 0, len(stale))
+	for _, id := range stale {
 		changes = append(changes, plugin.Change{Kind: "retention", Field: "contentVersions", Action: "delete", Before: raw(id)})
 		if !apply {
 			continue
 		}
 		// A concurrent administrator may have activated a historical version.
 		var current object
-		if err := c.request(ctx, abs.GET, c.app(b.AppID), nil, &current); err != nil {
+		if err := c.request(ctx, abs.GET, c.app(appID), nil, &current); err != nil {
 			return changes, err
 		}
-		if text(current["committedContentVersion"]) != b.ContentVersion || current["publishingState"] != "published" {
+		if text(current["committedContentVersion"]) != active || current["publishingState"] != "published" {
 			return changes, errors.New("intune content changed before retention; refusing deletion")
 		}
-		if err := c.request(ctx, abs.DELETE, c.contentVersion(b.AppID, id), nil, nil); err != nil {
+		if err := c.request(ctx, abs.DELETE, c.contentVersion(appID, id), nil, nil); err != nil {
 			return changes, err
 		}
 	}
-	if apply && len(candidates) != 0 {
-		remaining, err := c.list(ctx, c.content(b.AppID, "", "", ""))
+	if apply && len(stale) != 0 {
+		remaining, err := c.list(ctx, c.content(appID, "", "", ""))
 		if err != nil {
 			return changes, err
 		}
 		for _, version := range remaining {
-			if slices.Contains(candidates, text(version["id"])) {
+			if slices.Contains(stale, text(version["id"])) {
 				return changes, errors.New("intune content deletion readback still contains a pruned version")
 			}
-		}
-		for _, id := range candidates {
-			delete(b.Versions, id)
 		}
 	}
 	return changes, nil

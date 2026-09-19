@@ -78,8 +78,8 @@ Further behaviour of the update phase:
 ## Ownership
 
 A branch stays managed while it is exactly one commit ahead of the reviewed
-branch, that commit carries the trailer `Stemma-Managed: reconcile/v1`, and its
-author and committer are the identity the provider derives for its credentials:
+branch, that commit carries the trailer `Stemma-Managed: reconcile/v1`, and it was
+created by the identity the provider derives for its credentials:
 the App's bot user, or the token's user, under the host's noreply address. Push
 your own commit to take a proposal over: the command never rewrites, closes or
 deletes it afterwards. Every push and deletion carries a lease against the tip
@@ -114,11 +114,10 @@ enough.
 ## Cache and state
 
 The cache is disposable and shared by the reviewed branch and every proposal;
-a proposal warms it for its own merge. The state directory is durable: it holds
-the destination bindings and `reconcile.json`, the applied marker. Back it up
-and never publish the same catalog from elsewhere with different bindings. To
-take over by hand, stop the schedule and run `stemma apply` with the real or a
-copied state directory.
+a proposal warms it for its own merge. The state directory holds only
+`reconcile.json`, the applied marker. Losing it repeats one apply, which
+converges on what the destinations already hold. To take over by hand, stop the
+schedule and run `stemma apply` from any checkout.
 
 After losing the cache, run `stemma plan` in a checkout of the reviewed branch
 with the same cache directory. Frozen runs acquire every locked input from its
@@ -133,5 +132,6 @@ The shape is the same everywhere:
 - a checkout of the repository, produced by whatever the scheduler already uses
   to clone, in disposable space;
 - a large cache volume for `STEMMA_CACHE_DIR` that need not be backed up;
-- a small state volume for `STEMMA_STATE_DIR` that is;
+- a small state volume for `STEMMA_STATE_DIR`, which keeps a run from applying
+  an unchanged commit again;
 - the variables `stemma.yaml` references, from the scheduler's secret store.

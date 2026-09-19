@@ -42,10 +42,9 @@ func Catalog(ctx context.Context, opts Options) (result plugin.Descriptor, err e
 	return ops.registry.Descriptor(), nil
 }
 
-// ValidateProject checks authored fields and available operation contracts.
+// ValidateProject checks declared fields and available operation contracts.
 // Values that depend on artifacts are validated after preparation.
 func ValidateProject(ctx context.Context, opts Options) (result config.Project, err error) {
-	// Authoring mistakes are answered directly; the stage covers contract work.
 	p, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		return p, err
@@ -75,7 +74,7 @@ func ValidateProject(ctx context.Context, opts Options) (result config.Project, 
 	if err := verifyIcons(root, plans, sortedKeys(plans)); err != nil {
 		return p, err
 	}
-	_, _, err = orderDestinations(ctx, p, plans, ops, root, selected)
+	_, err = planDestinations(ctx, p, plans, ops, root, selected)
 	return p, err
 }
 

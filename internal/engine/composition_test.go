@@ -30,14 +30,26 @@ func TestDestinationReferencesStayOnTheirConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	order, _, err := orderDestinations(t.Context(), project, plans, operations, t.TempDir(), []string{"a", "b"})
+	destinations, err := planDestinations(t.Context(), project, plans, operations, t.TempDir(), []string{"a", "b"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, pair := range [][2]destinationRef{{{"b", "one"}, {"a", "one"}}, {{"a", "two"}, {"b", "two"}}} {
-		if slices.Index(order, pair[0]) >= slices.Index(order, pair[1]) {
-			t.Fatalf("reference order lost: %+v", order)
+	if string(destinations[destinationRef{"a", "one"}].peers["b"]) != `{"type":"win32"}` || string(destinations[destinationRef{"b", "two"}].peers["a"]) != `{"type":"win32"}` {
+		t.Fatalf("peer metadata: %v", destinations)
+	}
+	for _, pair := range [][2]destinationRef{{{"a", "one"}, {"b", "one"}}, {{"b", "two"}, {"a", "two"}}} {
+		if !slices.Equal(destinations[pair[0]].requires, []destinationRef{pair[1]}) {
+			t.Fatalf("dependencies for %v: %v", pair[0], destinations[pair[0]].requires)
 		}
+	}
+	// An unselected peer supplies metadata but adds no dependency to the run.
+	destinations, err = planDestinations(t.Context(), project, plans, operations, t.TempDir(), []string{"a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := destinations[destinationRef{"a", "one"}]
+	if string(plan.peers["b"]) != `{"type":"win32"}` || len(plan.requires) != 0 {
+		t.Fatalf("unselected peer: %+v", plan)
 	}
 }
 
@@ -51,9 +63,9 @@ func TestConnectionIdentityFollowsCredentialSchemaReferences(t *testing.T) {
 		return config.Fingerprint(value)
 	}
 	if identity("first", "a") != identity("rotated", "a") {
-		t.Fatal("credential rotation changed binding identity")
+		t.Fatal("credential rotation changed connection identity")
 	}
 	if identity("first", "a") == identity("first", "b") {
-		t.Fatal("changed connection reused old binding identity")
+		t.Fatal("changed connection reused old connection identity")
 	}
 }

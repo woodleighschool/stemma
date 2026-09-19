@@ -8,7 +8,7 @@ func MetadataSchema() *jsonschema.Schema {
 	metadataReflector := &jsonschema.Reflector{DoNotReference: true, RequiredFromJSONSchemaTags: true}
 	metadata := metadataReflector.Reflect(&Metadata{})
 	metadata.ID = ""
-	metadata.Description = "Native Munki metadata. Omitted fields remain unmanaged; explicit lists own the whole collection."
+	metadata.Description = "Native Munki metadata. Omitted fields are left unchanged unless derivation owns them; explicit lists own the whole collection."
 	for _, name := range []string{"display_name", "description", "category", "developer", "icon_name", "icon_hash"} {
 		field, _ := metadata.Properties.Get(name)
 		metadata.Properties.Set(name, &jsonschema.Schema{Description: field.Description, AnyOf: []*jsonschema.Schema{field, {Type: "null"}}})

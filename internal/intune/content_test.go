@@ -42,11 +42,10 @@ func TestSetupTreePublicationAndEntrypointIdentity(t *testing.T) {
 	desired, _ := validateMetadata(req.Metadata)
 	delete(desired, "assignments")
 	desired["content"] = object{"setup_file": `bin\setup.cmd`}
-	response, err := c.handle(t.Context(), req, configuration{}, desired)
-	if err != nil {
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
-	first := readBinding(t, response.Binding)
+	first := publishedMarker(t, fake)
 	fake.mu.Lock()
 	payload := bytes.Clone(fake.plaintext)
 	if fake.app["setupFilePath"] != `bin\setup.cmd` || fake.app["fileName"] != "test-4.2.intunewin" || fake.app["content"] != nil {
@@ -68,23 +67,22 @@ func TestSetupTreePublicationAndEntrypointIdentity(t *testing.T) {
 			t.Fatalf("payload member %s is incomplete: %v", name, err)
 		}
 	}
-	req.Binding = response.Binding
 	desired["displayName"] = "Metadata only"
-	response, err = c.handle(t.Context(), req, configuration{}, desired)
-	if err != nil || readBinding(t, response.Binding).Publications.Sequence != first.Publications.Sequence {
-		t.Fatalf("metadata change advanced publication: %v", err)
-	}
-	req.Binding = response.Binding
-	req.Artifact.EntryPoint = "bin/repair.cmd"
-	delete(desired, "content")
-	response, err = c.handle(t.Context(), req, configuration{}, desired)
-	if err != nil {
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
-	last := readBinding(t, response.Binding)
+	if publishedMarker(t, fake) != first {
+		t.Fatal("metadata change published content again")
+	}
+	req.Artifact.EntryPoint = "bin/repair.cmd"
+	delete(desired, "content")
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
+		t.Fatal(err)
+	}
+	last := publishedMarker(t, fake)
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if last.AppID != first.AppID || last.PayloadSHA256 == first.PayloadSHA256 || last.Publications.Sequence != 2 || fake.commits != 2 || fake.creates != 1 || fake.app["setupFilePath"] != `bin\repair.cmd` {
+	if last.payload == first.payload || last.content != "2" || fake.commits != 2 || fake.creates != 1 || fake.app["setupFilePath"] != `bin\repair.cmd` {
 		t.Fatal("entrypoint change did not publish distinct content in the same app")
 	}
 }
@@ -112,7 +110,7 @@ func TestSetupTreeRejectsChangedBytesAndUnsafeEntrypoints(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, err := c.handle(t.Context(), req, configuration{}, desired)
+			_, err := c.handle(t.Context(), req, desired)
 			if err == nil {
 				t.Fatal("accepted invalid setup content")
 			}

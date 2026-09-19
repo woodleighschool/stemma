@@ -9,8 +9,8 @@ import (
 	"github.com/woodleighschool/stemma/internal/fileio"
 )
 
-// marker records the last reviewed commit whose apply completed in full. It
-// lives beside the destination bindings because both describe what was published.
+// marker records the last reviewed commit whose apply completed in full. Losing
+// it only repeats an apply, which converges on what destinations already hold.
 type marker struct {
 	Version int    `json:"version"`
 	Applied string `json:"applied"`

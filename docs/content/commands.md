@@ -32,7 +32,7 @@ destinations. Commit the icons so publication sends the same bytes on every host
 
 `signature` acquires and prepares inputs like `prepare`, verifies each published
 artifact against the signer it observes and prints the `signature` fragment to
-author. It never writes documents, and a document that already names a different
+add. It never writes documents, and a document that already names a different
 signer fails. See [macOS](mac-software.md#signature) and
 [Windows](windows-software.md#signature) signature policy.
 
@@ -78,8 +78,8 @@ stemma cache prune
 ```
 
 `--cache-dir` / `STEMMA_CACHE_DIR` relocates disposable cached content.
-`--state-dir` / `STEMMA_STATE_DIR` relocates durable destination bindings.
-`cache prune` does not remove destination bindings or published packages.
+`reconcile --state-dir` / `STEMMA_STATE_DIR` relocates the applied marker.
+`cache prune` does not remove published packages.
 
 ## Reports and diagnostics
 

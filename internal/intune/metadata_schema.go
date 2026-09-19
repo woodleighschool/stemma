@@ -15,10 +15,9 @@ func MetadataSchema() *jsonschema.Schema {
 	for _, appType := range []string{win32Type, dmgType, pkgType} {
 		alias := map[string]string{win32Type: "win32", dmgType: "dmg", pkgType: "pkg"}[appType]
 		p := map[string]*jsonschema.Schema{
-			"unmanaged":             {Type: "array", MaxItems: new(uint64(100)), Items: &jsonschema.Schema{Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(256))}, Description: "Native field paths excluded from derivation and relinquished from previous derived ownership. Must not overlap authored native values. Removing derive relinquishes all derived ownership."},
 			"type":                  {Const: alias, Description: "Short name for the native app subtype. Must agree with @odata.type if both are supplied."},
 			"@odata.type":           {Const: appType, Description: "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."},
-			"app_id":                {Type: "string", MinLength: new(uint64(1)), Description: "Adopt this existing Intune app for this software. Must match any saved binding. Omit to discover by Stemma's stable identity marker or create an app."},
+			"app_id":                {Type: "string", MinLength: new(uint64(1)), Description: "Pin this software to an existing Intune app, which must exist and must not carry another software's identity marker. Omit to find the app by the identity marker in its notes, or create one."},
 			"displayName":           {Type: "string", MaxLength: new(uint64(10000)), Description: "Company Portal display name. Required for creation."},
 			"description":           {Type: "string", MaxLength: new(uint64(10000)), Description: "Native app description. Required for creation."},
 			"publisher":             {Type: "string", MaxLength: new(uint64(10000)), Description: "Native publisher name. Required for creation."},
@@ -26,14 +25,14 @@ func MetadataSchema() *jsonschema.Schema {
 			"informationUrl":        {Type: "string", MaxLength: new(uint64(10000)), Description: "Publisher information URL."},
 			"owner":                 {Type: "string", MaxLength: new(uint64(10000)), Description: "App owner label."},
 			"developer":             {Type: "string", MaxLength: new(uint64(10000)), Description: "App developer label."},
-			"notes":                 {Type: "string", MaxLength: new(uint64(10000)), Description: "Administrator notes. Stemma preserves a reserved identity marker alongside these notes."},
+			"notes":                 {Type: "string", MaxLength: new(uint64(10000)), Description: "Administrator notes. A reserved marker line follows them: it identifies the app and records its published content, so it must stay intact."},
 			"isFeatured":            {Type: "boolean", Description: "Show the app as featured. Explicit false is managed."},
 			"assignments":           assignmentSchema(),
-			"retention":             objectSchema(map[string]*jsonschema.Schema{"keep": {Type: "integer", Minimum: "1", Description: "Keep the current and N-1 most recently published distinct payloads in this app. Unknown content ownership or publication order is always protected."}}, "keep"),
+			"retention":             objectSchema(map[string]*jsonschema.Schema{"keep": {Type: "integer", Minimum: "1", Description: "Keep the active content version and the N-1 newest other committed versions of this app, ordered by version number. Every other version is deleted, including uploads that never committed a file."}}, "keep"),
 		}
 		if appType == win32Type {
 			p["content"] = objectSchema(map[string]*jsonschema.Schema{"setup_file": {Type: "string", MinLength: new(uint64(1)), Description: "Relative entrypoint inside the immutable setup tree. Defaults to the artifact entrypoint, or the filename for a single file; conflicting entries are rejected. All tree members are included in the provider-prepared Intune envelope."}}, "setup_file")
-			p["derive"] = objectSchema(map[string]*jsonschema.Schema{"msi": {Type: "string", MinLength: new(uint64(1)), Description: "Named subject for explicit MSI descriptive and identity selection. Selected setup MSI content supplies standard commands and detection defaults; native authored fields override them."}}, "msi")
+			p["derive"] = objectSchema(map[string]*jsonschema.Schema{"msi": {Type: "string", MinLength: new(uint64(1)), Description: "Named subject for explicit MSI descriptive and identity selection. Selected setup MSI content supplies standard commands and detection defaults; declared native fields override them."}}, "msi")
 			p["msiInformation"] = msiSchema()
 			p["dependencies"] = referencesSchema("auto_install", 99)
 			p["supersedes"] = referencesSchema("uninstall_previous", 9)
@@ -42,7 +41,7 @@ func MetadataSchema() *jsonschema.Schema {
 			p["minimumSupportedWindowsRelease"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Native minimum Windows release, such as Windows11_23H2. Required for creation."}
 			p["allowedArchitectures"] = &jsonschema.Schema{Enum: []any{"x86", "x64", "arm64", nil}, Description: "Supported processor architecture; null clears it on an existing app. A non-null value is required for creation."}
 			for _, key := range []string{"minimumFreeDiskSpaceInMB", "minimumMemoryInMB", "minimumNumberOfProcessors", "minimumCpuSpeedInMHz"} {
-				p[key] = &jsonschema.Schema{Type: "integer", Minimum: "0", Maximum: "2147483647", Description: "Native minimum hardware requirement. Omit to leave unmanaged."}
+				p[key] = &jsonschema.Schema{Type: "integer", Minimum: "0", Maximum: "2147483647", Description: "Native minimum hardware requirement. Omit to leave unchanged."}
 			}
 			p["installExperience"] = objectSchema(map[string]*jsonschema.Schema{
 				"@odata.type":           {Const: "#microsoft.graph.win32LobAppInstallExperience"},
@@ -80,11 +79,11 @@ func MetadataSchema() *jsonschema.Schema {
 		variant.Title = appType
 		variants = append(variants, variant)
 	}
-	return &jsonschema.Schema{OneOf: variants, Description: "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG and PKG (beta). Sources are preserved; signing and installer authoring are separate software policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."}
+	return &jsonschema.Schema{OneOf: variants, Description: "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG and PKG (beta). Sources are preserved; signing and installer building are separate software policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."}
 }
 
 func referencesSchema(flag string, limit uint64) *jsonschema.Schema {
-	return &jsonschema.Schema{Type: "array", MaxItems: new(limit), Description: "Own this outgoing relationship category. Omission preserves its relationships; [] clears it. Referenced software must use the same Intune connection and be published first.", Items: objectSchema(map[string]*jsonschema.Schema{
+	return &jsonschema.Schema{Type: "array", MaxItems: new(limit), Description: "Own this outgoing relationship category. Omission preserves its relationships; [] clears it. Referenced software must publish to the same Intune destination first; it resolves to the app_id it declares, or else to the app carrying its identity marker.", Items: objectSchema(map[string]*jsonschema.Schema{
 		"software": {Type: "string", MinLength: new(uint64(1))},
 		flag:       {Type: "boolean"},
 	}, "software", flag)}
@@ -146,7 +145,7 @@ func rulesSchema() *jsonschema.Schema {
 	}
 	product := objectSchema(map[string]*jsonschema.Schema{
 		"@odata.type": {Const: "#microsoft.graph.win32LobAppProductCodeRule"}, "ruleType": {Const: "detection"},
-		"productCode":            {Type: "string", MinLength: new(uint64(1)), Description: "Exact MSI ProductCode GUID. Major MSI upgrades can change it; a version comparison only detects installations with this code. Authored detection overrides selected MSI defaults."},
+		"productCode":            {Type: "string", MinLength: new(uint64(1)), Description: "Exact MSI ProductCode GUID. Major MSI upgrades can change it; a version comparison only detects installations with this code. Declared detection overrides selected MSI defaults."},
 		"productVersionOperator": operator(), "productVersion": {Type: "string", MaxLength: new(uint64(10000)), Description: "Version used when comparison is configured."},
 	}, "@odata.type", "ruleType", "productCode", "productVersionOperator")
 	product.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"productVersionOperator": {Not: &jsonschema.Schema{Const: "notConfigured"}}}).Properties, Required: []string{"productVersionOperator"}}
@@ -176,7 +175,7 @@ func rulesSchema() *jsonschema.Schema {
 		"scriptContent": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(266668)), ContentEncoding: "base64", Description: "Base64 PowerShell detection script, at most 200000 decoded bytes. Detection requires exit code 0, nonempty STDOUT and empty STDERR. Runs in the app install context. This is an alternative to manual rules; preparation never executes it."},
 		"operationType": {Const: "notConfigured"}, "operator": {Const: "notConfigured"},
 	}, "@odata.type", "ruleType", "scriptContent")
-	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(100)), Description: "Complete detection-rule collection. Selected MSI content defaults to its ProductCode and productVersion greaterThanOrEqual; a newer major version with another ProductCode needs authored file, registry or script detection. Manual rules are ANDed, with at most one MSI rule. A PowerShell rule must be the only rule. Requirement rules are unsupported.", Items: &jsonschema.Schema{OneOf: []*jsonschema.Schema{product, file, registry, script}}, Contains: product, MinContains: new(uint64(0)), MaxContains: new(uint64(1)), If: &jsonschema.Schema{Contains: script}, Then: &jsonschema.Schema{MaxItems: new(uint64(1))}}
+	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(100)), Description: "Complete detection-rule collection. Selected MSI content defaults to its ProductCode and productVersion greaterThanOrEqual; a newer major version with another ProductCode needs declared file, registry or script detection. Manual rules are ANDed, with at most one MSI rule. A PowerShell rule must be the only rule. Requirement rules are unsupported.", Items: &jsonschema.Schema{OneOf: []*jsonschema.Schema{product, file, registry, script}}, Contains: product, MinContains: new(uint64(0)), MaxContains: new(uint64(1)), If: &jsonschema.Schema{Contains: script}, Then: &jsonschema.Schema{MaxItems: new(uint64(1))}}
 }
 
 // ConnectionSchema describes a shared Intune connection. App adoption belongs
@@ -197,6 +196,6 @@ func ConnectionSchema() *jsonschema.Schema {
 		{Required: []string{"token"}, Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Required: []string{"tenant_id"}}, {Required: []string{"client_id"}}, {Required: []string{"client_secret"}}}}},
 		{Required: []string{"tenant_id", "client_id", "client_secret"}, Not: &jsonschema.Schema{Required: []string{"token"}}},
 	}
-	schema.Description = "Shared Graph connection for Windows and macOS apps. Set metadata.app_id on a Software document to adopt an existing app. Requires Graph DeviceManagementApps.ReadWrite.All for apply."
+	schema.Description = "Shared Graph connection for Windows and macOS apps. Each app is found by the identity marker in its notes; set metadata.app_id on a Software document to adopt or pin an existing app. Requires Graph DeviceManagementApps.ReadWrite.All for apply."
 	return schema
 }

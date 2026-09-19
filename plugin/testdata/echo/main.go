@@ -31,8 +31,8 @@ func main() {
 	if err := registry.Register(plugin.Operation{
 		Name: "echo.reconcile", Kind: "reconcile", SideEffects: "remote", Methods: []string{"validate", "plan", "apply"},
 		ConfigSchema: json.RawMessage(`{"type":"object","properties":{"fail":{"type":"boolean"},"wait_url":{"type":"string"}}}`),
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"method":{"type":"string"},"identity":{"type":"object"},"config":true,"metadata":true,"binding":true,"bindings":{"type":"object"},"subjects":{"type":"object"},"prepared":{"type":"boolean"},"root":{"type":"string"},"artifact":{"type":"object"},"inputs":{"type":"object","additionalProperties":{"type":"object"}},"facts":{"type":"object"}},"additionalProperties":false}`),
-		OutputSchema: json.RawMessage(`{"type":"object","properties":{"changes":{"type":"array"},"binding":true},"additionalProperties":false}`),
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"method":{"type":"string"},"identity":{"type":"object"},"config":true,"metadata":true,"peers":{"type":"object"},"subjects":{"type":"object"},"prepared":{"type":"boolean"},"root":{"type":"string"},"artifact":{"type":"object"},"inputs":{"type":"object","additionalProperties":{"type":"object"}},"facts":{"type":"object"}},"additionalProperties":false}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"changes":{"type":"array"}},"additionalProperties":false}`),
 	}, reconcile); err != nil {
 		os.Exit(1)
 	}
@@ -82,7 +82,7 @@ func reconcile(ctx context.Context, envelope plugin.Request) (plugin.Response, e
 	if envelope.Method == "validate" {
 		return plugin.Response{}, nil
 	}
-	result := plugin.ReconcileResponse{Binding: request.Binding}
+	result := plugin.ReconcileResponse{Changes: []plugin.Change{{Kind: "metadata", Field: "applied", Action: "replace"}}}
 	if envelope.Method == "plan" {
 		result.Changes = []plugin.Change{
 			{Kind: "metadata", Field: "config", Action: "replace", After: request.Config},

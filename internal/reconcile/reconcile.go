@@ -35,8 +35,8 @@ const (
 )
 
 // Options locate the project. The checkout holding it is the repository
-// reconciled, and the cache and state directories are the ones every
-// command uses.
+// reconciled; the cache directory is the one every command uses, and the state
+// directory holds the applied marker.
 type Options struct {
 	ConfigPath         string
 	CacheDir, StateDir string
@@ -217,7 +217,7 @@ func (r *runner) configIn(worktree *git.Worktree) string {
 }
 
 func (r *runner) engineOptions(method, configPath string, resources []string, offline bool) engine.Options {
-	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, StateDir: r.stateDir, Method: method, Resources: resources, Lock: lockfile.Options{Frozen: true, Offline: offline}}
+	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Method: method, Resources: resources, Lock: lockfile.Options{Frozen: true, Offline: offline}}
 	if r.opts.ResourceDone != nil {
 		opts.ResourceDone = func(resource engine.ResourceReport) error { return r.opts.ResourceDone(method, resource) }
 	}
@@ -431,10 +431,10 @@ func (r *runner) hints(reviewed *git.Worktree, branches []string) (map[string]ma
 }
 
 // managed reports whether the reconciler still owns a branch: exactly one
-// commit beyond the reviewed branch, carrying the trailer, authored and
-// committed by the configured identity. A branch the reviewed branch already
+// commit beyond the reviewed branch, carrying the trailer, with the configured
+// identity as its author and committer. A branch the reviewed branch already
 // contains was merged and may be replaced or removed. Anything else was
-// touched by a person and is left alone.
+// touched by a person and stays as it is.
 func (r *runner) managed(branch string) (bool, error) {
 	ref := "refs/remotes/origin/" + branch
 	count, err := r.repo.Count("refs/remotes/origin/"+r.base, ref)
@@ -458,7 +458,7 @@ func (r *runner) managed(branch string) (bool, error) {
 
 // propose keeps one branch per resource: regenerated from the reviewed branch
 // whenever the proposal or its base moved, verified again when its last
-// verification did not succeed, and left alone once a person touched it.
+// verification did not succeed, and kept as it is once a person touched it.
 func (r *runner) propose(ctx context.Context, head, key string, change change, candidate engine.Candidate, pulls map[string]sourcecontrol.PullRequest) (Update, error) {
 	branch := branchName(change.kind, change.name)
 	update := Update{Resource: change.kind + "/" + change.name, Branch: branch}
@@ -710,7 +710,7 @@ func (r *runner) verify(ctx context.Context, worktree *git.Worktree, key string,
 }
 
 // retire closes and deletes a managed branch whose resource no longer differs
-// from the reviewed lock. Branches a person touched are left alone.
+// from the reviewed lock. Branches a person touched stay as they are.
 func (r *runner) retire(ctx context.Context, branch string, pulls map[string]sourcecontrol.PullRequest) (Update, error) {
 	update := Update{Resource: strings.TrimPrefix(branch, prefix), Branch: branch}
 	managed, err := r.managed(branch)

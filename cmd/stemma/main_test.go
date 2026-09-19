@@ -262,13 +262,15 @@ spec:
 	if downloads.Load() != 2 {
 		t.Fatal("cold cache did not reacquire once")
 	}
-	if err := os.RemoveAll(filepath.Join(project, ".stemma", "state")); err != nil {
+	// A runner keeps nothing about a destination: the repository identifies its
+	// own publications, so a fresh checkout converges without replaying them.
+	if err := os.RemoveAll(filepath.Join(project, ".stemma")); err != nil {
 		t.Fatal(err)
 	}
-	unbound := run(false, "apply")
-	for _, destination := range unbound.Resources[0].Destinations {
-		if destination.Applied || !strings.Contains(destination.Error, "not owned") {
-			t.Fatal("lost bindings silently adopted a destination")
+	fresh := run(true, "apply")
+	for _, destination := range fresh.Resources[0].Destinations {
+		if !destination.Applied || len(destination.Changes) != 0 {
+			t.Fatalf("a runner without local state replayed publication: %+v", destination)
 		}
 	}
 }

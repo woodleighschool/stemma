@@ -100,7 +100,7 @@ func printResource(out io.Writer, method string, resource engine.ResourceReport)
 	return err
 }
 
-// signatureDetails renders the derived signer and the fragment to author.
+// signatureDetails renders the derived signer and the fragment to add.
 func signatureDetails(resource engine.ResourceReport) string {
 	var text strings.Builder
 	for _, name := range slices.Sorted(maps.Keys(resource.Artifacts)) {

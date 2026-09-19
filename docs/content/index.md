@@ -27,8 +27,8 @@ how to organise those files.
 3. It inspects or prepares an immutable artifact: a file or a directory tree.
 4. Each destination uses that artifact and its metadata to plan or apply native changes.
 
-Mac and Windows software share input resolution, locks, caching and publication
-state. Their installation settings stay platform-specific. For example, an MSI
+Mac and Windows software share input resolution, locks, caching and publication.
+Their installation settings stay platform-specific. For example, an MSI
 ProductCode and a Mac bundle identifier describe different things.
 
 Stemma is under active development. Read the [current limitations](limitations.md)

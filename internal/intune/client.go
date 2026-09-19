@@ -29,14 +29,12 @@ type configuration struct {
 	TenantID     string `json:"tenant_id,omitempty"`
 	ClientID     string `json:"client_id,omitempty"`
 	ClientSecret string `json:"client_secret,omitempty"`
-	AppID        string `json:"-"`
 }
 
 type client struct {
 	stable       *dam.DeviceAppManagementRequestBuilder
 	beta         *betadam.DeviceAppManagementRequestBuilder
 	appType      string
-	derivation   *derivedOwnership
 	http         *http.Client
 	pollInterval time.Duration
 }
@@ -166,6 +164,9 @@ func (t boundedTransport) RoundTrip(request *http.Request) (*http.Response, erro
 	return response, err
 }
 
+// errNotFound lets a caller tell a missing resource from a failed request.
+var errNotFound = errors.New("intune HTTP status 404")
+
 func graphError(ctx context.Context, err error) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -175,6 +176,9 @@ func graphError(ctx context.Context, err error) error {
 	}
 	var apiErr interface{ GetStatusCode() int }
 	if errors.As(err, &apiErr) && apiErr.GetStatusCode() != 0 {
+		if apiErr.GetStatusCode() == http.StatusNotFound {
+			return errNotFound
+		}
 		return fmt.Errorf("intune HTTP status %d", apiErr.GetStatusCode())
 	}
 	return errors.New("intune request failed; remote outcome may be uncertain")

@@ -145,6 +145,5 @@ example, `stemma --cache-dir .stemma/cache prepare` keeps it visible in the cata
 `stemma cache prune` clears cached content after active runs finish. Locked remote
 inputs can be fetched again if the publisher still serves the recorded bytes.
 
-Destination bindings are separate. Back up `.stemma/state`, or the directory set
-with `STEMMA_STATE_DIR`. Never treat publication state as a cache. See
-[publication identity and retention](publishing.md#identity-and-retention).
+Destinations keep no local state either: each one identifies its publications
+itself. See [publication identity and retention](publishing.md#identity-and-retention).

@@ -69,7 +69,7 @@ native metadata in the software document.
 `stemma schema --project --offline` includes their schemas for your editor.
 
 Woodstar's experimental plugin is an external consumer of this interface. Its
-Munki-compatible authoring belongs to that plugin; Stemma does not register it as
+Munki-compatible publishing belongs to that plugin; Stemma does not register it as
 a built-in or require it to run a catalog.
 
 `trusted: true` authorises execution with your privileges. Workspaces isolate
@@ -83,13 +83,13 @@ A destination may name, while validating a document, the resources the same
 connection has to reconcile first, such as the software an Intune app depends on.
 Stemma applies those peers before the document and fails validation on a cycle.
 A named resource the run does not reconcile is left to the destination, which
-resolves it from its published binding or its own state. How native fields refer
-to other software remains each destination's contract.
+finds its publication in its own state. How native fields refer to other software
+remains each destination's contract.
 
 ## Icons
 
 A resource that declares an icon supplies the committed PNG as the `icon` artifact in
 reconciliation `inputs`. Publish those exact bytes: create a missing icon, replace
-one whose content differs and leave the published icon alone when the input is
+one whose content differs and keep the published icon when the input is
 absent. Icon publication must not trigger installer uploads. The destination owns
 API calls, content storage and icon presence detection.

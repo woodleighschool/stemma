@@ -12,10 +12,10 @@ import (
 func TestMSIDerivationRequiresSelectedFactsAndLeavesExecutionExplicit(t *testing.T) {
 	req := plugin.ReconcileRequest{
 		Method: "validate", Prepared: true,
-		Metadata: raw(object{"derive": object{"msi": "installer"}, "displayName": "Authored name", "msiInformation": object{"publisher": "Authored publisher"}}),
+		Metadata: raw(object{"derive": object{"msi": "installer"}, "displayName": "Declared name", "msiInformation": object{"publisher": "Declared publisher"}}),
 		Subjects: map[string]plugin.SubjectSelector{"installer": {Kind: "msi", Path: "setup.msi"}},
 		Facts: plugin.Facts{Version: 1, Subjects: []plugin.Subject{
-			{Kind: "msi", Path: "setup.msi", MSI: &plugin.MSIFacts{ProductName: "Observed name", Manufacturer: "Observed publisher", ProductVersion: "2.0", ProductCode: "{11111111-1111-4111-8111-111111111111}"}},
+			{Kind: "msi", Path: "setup.msi", MSI: &plugin.MSIFacts{ProductName: "Observed name", Manufacturer: "Observed publisher", ProductVersion: "2.0", ProductCode: "{11111111-1111-4111-8111-111111111111}", UpgradeCode: "{33333333-3333-4333-8333-333333333333}"}},
 			{Kind: "msi", Path: "helper.msi", MSI: &plugin.MSIFacts{ProductName: "Wrong MSI", ProductVersion: "9.0"}},
 		}},
 	}
@@ -27,11 +27,11 @@ func TestMSIDerivationRequiresSelectedFactsAndLeavesExecutionExplicit(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m["@odata.type"] != win32Type || m["displayName"] != "Authored name" || m["publisher"] != "Observed publisher" {
-		t.Fatalf("wrong selected or authored metadata: %+v", m)
+	if m["@odata.type"] != win32Type || m["displayName"] != "Declared name" || m["publisher"] != "Observed publisher" {
+		t.Fatalf("wrong selected or declared metadata: %+v", m)
 	}
 	info := m["msiInformation"].(object)
-	if info["productVersion"] != "2.0" || info["publisher"] != "Authored publisher" || origins["msiInformation.productVersion"] == "" {
+	if info["productVersion"] != "2.0" || info["publisher"] != "Declared publisher" || origins["msiInformation.productVersion"] == "" {
 		t.Fatalf("lost native MSI overrides or provenance: %+v / %+v", info, origins)
 	}
 	for _, key := range []string{"installCommandLine", "uninstallCommandLine", "installExperience", "rules", "allowedArchitectures"} {
@@ -45,7 +45,7 @@ func TestMSIDerivationRequiresSelectedFactsAndLeavesExecutionExplicit(t *testing
 	}
 }
 
-func TestMacDerivationKeepsExactOSAndAuthoredDetection(t *testing.T) {
+func TestMacDerivationKeepsExactOSAndExplicitDetection(t *testing.T) {
 	req := plugin.ReconcileRequest{
 		Method: "validate", Prepared: true,
 		Metadata: raw(object{"type": "pkg", "derive": object{"app": "main"}}),
@@ -65,7 +65,7 @@ func TestMacDerivationKeepsExactOSAndAuthoredDetection(t *testing.T) {
 		t.Fatal(err)
 	}
 	if m["includedApps"].([]any)[0].(object)["bundleVersion"] != "3.0" || selectedOS(m["minimumSupportedOperatingSystem"]) != "v15_0" {
-		t.Fatalf("authored version or OS was replaced: %+v", m)
+		t.Fatalf("declared version or OS was replaced: %+v", m)
 	}
 	for _, version := range []string{"14", "14.0", "14.0.0", "26.0"} {
 		if _, err := minimumOS(version); err != nil {
@@ -100,7 +100,7 @@ func TestApplicationDiskImageDerivesADmgApp(t *testing.T) {
 	}
 }
 
-func TestStaticValidationDeclaresReferencesWithoutContentOrBindings(t *testing.T) {
+func TestStaticValidationDeclaresReferencesWithoutContent(t *testing.T) {
 	req := plugin.ReconcileRequest{Method: "validate", Config: raw(object{"token": "synthetic"}),
 		Subjects: map[string]plugin.SubjectSelector{"installer": {Kind: "msi"}},
 		Metadata: raw(object{
@@ -120,7 +120,7 @@ func TestStaticValidationDeclaresReferencesWithoutContentOrBindings(t *testing.T
 	}
 }
 
-func TestIntuneAuthoringSchemaAndProviderAgree(t *testing.T) {
+func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 	script := base64.StdEncoding.EncodeToString([]byte("Write-Output 'installed'\nexit 0\n"))
 	for _, test := range []struct {
 		name     string

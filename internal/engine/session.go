@@ -90,7 +90,7 @@ func declarations(plans map[string]resourcePlan, selected []string) map[string]m
 	return result
 }
 
-// suspended lists the resources implicit runs leave alone. Their reviewed
+// suspended lists the resources implicit runs skip. Their reviewed
 // lock entries outlive every run that does not select them.
 func suspended(plans map[string]resourcePlan) []string {
 	var keys []string

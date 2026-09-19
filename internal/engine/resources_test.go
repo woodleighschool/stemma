@@ -94,9 +94,8 @@ spec:
 			t.Fatalf("resource lost the named, unchanged installer: %+v", artifact)
 		}
 	}
-	installers, err := filepath.Glob(filepath.Join(root, "repo", "pkgs", "stemma", "*", "branding-1.0.pkg"))
-	if err != nil || len(installers) != 1 {
-		t.Fatalf("published installer name: %v %v", installers, err)
+	if _, err := os.Stat(filepath.Join(root, "repo", "pkgs", "branding-1.0.pkg")); err != nil {
+		t.Fatalf("published installer name: %v", err)
 	}
 	write(strings.Replace(manifest, "description: original", "description: edited", 1))
 	edited, err := Run(t.Context(), options)

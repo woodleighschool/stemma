@@ -54,45 +54,97 @@ func TestRetentionPreservesManifestPinsAndSharedInstallerReferences(t *testing.T
 	assertConverged(t, request)
 }
 
-func TestRetentionPlanIsReadOnlyAndBindingLossDoesNotReclaim(t *testing.T) {
+func TestRetentionPlansWithoutWritingAndCoversTheWholeFamily(t *testing.T) {
 	root, request := repositoryRequest(t, "App.pkg", `{}`)
-	first := apply(t, root, &request)
-	var before, after struct {
-		Publications plugin.Publications `json:"publications"`
+	// The family is whatever the repository holds for the name, including
+	// versions another tool imported, ordered as Munki orders versions.
+	imported := map[string]string{}
+	for _, version := range []string{"0.9", "0.10"} {
+		imported[version] = filepath.Join(root, "pkgsinfo", "apps", "App-"+version+".plist")
+		writeNative(t, imported[version], map[string]any{"name": "App", "version": version, "catalogs": []string{"testing"}, "installer_item_location": "apps/App-" + version + ".pkg"})
+		if err := os.MkdirAll(filepath.Join(root, "pkgs", "apps"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "pkgs", "apps", "App-"+version+".pkg"), []byte(version), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := json.Unmarshal(request.Binding, &before); err != nil {
-		t.Fatal(err)
-	}
-	request.Artifact.Version = "2"
-	apply(t, root, &request)
-	if err := json.Unmarshal(request.Binding, &after); err != nil {
-		t.Fatal(err)
-	}
-	if before.Publications.Sequence != after.Publications.Sequence || len(after.Publications.Order) != 1 {
-		t.Fatal("metadata-only native version edit advanced payload publication order")
-	}
-	request.Metadata = json.RawMessage(`{"retention":{"keep":1},"pkginfo":{}}`)
+	writeNative(t, filepath.Join(root, "manifests", "site_default"), map[string]any{"managed_installs": []string{"App"}})
+	request.Metadata = json.RawMessage(`{"retention":{"keep":2},"pkginfo":{}}`)
 	request.Method = "plan"
 	response, err := munkirepo.Handle(t.Context(), request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	found := false
+	var planned []string
 	for _, change := range response.Changes {
 		if change.Kind == "retention" {
-			found = true
+			planned = append(planned, change.Field)
 		}
 	}
-	if !found {
-		t.Fatal("plan omitted retention deletion")
+	if len(planned) != 1 || planned[0] != "pkgsinfo/apps/App-0.9.plist" {
+		t.Fatalf("planned retention: %v", planned)
 	}
-	if _, err := os.Stat(first); err != nil {
+	if _, err := os.Stat(imported["0.9"]); err != nil {
 		t.Fatal("plan deleted a publication")
 	}
-	request.Binding = nil
-	request.Method = "apply"
-	if _, err := munkirepo.Handle(t.Context(), request); err == nil {
-		t.Fatal("reclaimed owned path from its marker after binding loss")
+	apply(t, root, &request)
+	if _, err := os.Stat(imported["0.9"]); !os.IsNotExist(err) {
+		t.Fatal("the oldest version outlived retention")
+	}
+	if _, err := os.Stat(filepath.Join(root, "pkgs", "apps", "App-0.9.pkg")); !os.IsNotExist(err) {
+		t.Fatal("the pruned version kept its unreferenced installer")
+	}
+	if _, err := os.Stat(imported["0.10"]); err != nil {
+		t.Fatal("a manifest naming the item held no version, yet the newer version was pruned")
+	}
+	assertConverged(t, request)
+}
+
+func TestRetentionPreservesBareReferencesWithDifferentAvailability(t *testing.T) {
+	for _, test := range []struct {
+		field  string
+		before any
+		after  any
+	}{
+		{"catalogs", []string{"production"}, []string{"testing"}},
+		{"supported_architectures", []string{"arm64"}, nil},
+		{"minimum_os_version", "12.0", "13.0"},
+		{"maximum_os_version", "14.0", "15.0"},
+		{"minimum_munki_version", "6.0", "7.0"},
+		{"installable_condition", "machine_type == 'laptop'", "machine_type == 'desktop'"},
+	} {
+		t.Run(test.field, func(t *testing.T) {
+			root, request := repositoryRequest(t, "App.pkg", `{}`)
+			request.Metadata, _ = json.Marshal(map[string]any{"pkginfo": map[string]any{test.field: test.before}})
+			first := apply(t, root, &request)
+			catalog := "testing"
+			if test.field == "catalogs" {
+				catalog = "production"
+			}
+			writeNative(t, filepath.Join(root, "manifests", "client"), map[string]any{"catalogs": []string{catalog}, "managed_installs": []string{"App"}})
+			metadata := map[string]any{}
+			if test.after != nil {
+				metadata[test.field] = test.after
+			}
+			request.Metadata, _ = json.Marshal(map[string]any{"retention": map[string]int{"keep": 1}, "pkginfo": metadata})
+			request.Artifact.Version = "2"
+			for _, method := range []string{"plan", "apply"} {
+				request.Method = method
+				response, err := munkirepo.Handle(t.Context(), request)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, change := range response.Changes {
+					if change.Kind == "retention" {
+						t.Fatalf("%s prunes a referenced publication with different %s", method, test.field)
+					}
+				}
+			}
+			if _, err := os.Stat(first); err != nil {
+				t.Fatalf("referenced publication removed: %v", err)
+			}
+		})
 	}
 }
 
@@ -105,6 +157,40 @@ func TestDisappearingDerivedMetadataIsCleared(t *testing.T) {
 	if value, exists := readNative[map[string]any](t, file)["minimum_os_version"]; exists {
 		t.Fatalf("retained stale derived field: %#v", value)
 	}
+}
+
+func TestInstallerFormatChangeClearsInapplicableDerivedFields(t *testing.T) {
+	root, request := repositoryRequest(t, "App.pkg", `{}`)
+	pkg := plugin.Facts{Subjects: []plugin.Subject{
+		{Kind: "package", Package: &plugin.PackageFacts{Identifier: "example.app", Version: "1", HasPayload: true, InstalledSize: 20}},
+		{Kind: "installer", Installer: &plugin.InstallerFacts{RestartAction: "RequireRestart"}},
+	}}
+	request.Facts = pkg
+	file := apply(t, root, &request)
+	request.Artifact.Filename, request.Artifact.Format = "App.dmg", "dmg"
+	request.Facts = plugin.Facts{Subjects: []plugin.Subject{{Kind: "app", Path: "App.app", App: &plugin.AppFacts{BundleID: "example.app", Version: "1"}}}}
+	apply(t, root, &request)
+	document := readNative[map[string]any](t, file)
+	for _, field := range []string{"receipts", "installed_size", "RestartAction"} {
+		if _, exists := document[field]; exists {
+			t.Fatalf("DMG retained PKG-derived %s", field)
+		}
+	}
+	if document["items_to_copy"] == nil || document["uninstall_method"] != "remove_copied_items" {
+		t.Fatalf("DMG copy and removal metadata: %#v", document)
+	}
+	request.Artifact.Filename, request.Artifact.Format, request.Facts = "App.pkg", "pkg", pkg
+	apply(t, root, &request)
+	document = readNative[map[string]any](t, file)
+	for _, field := range []string{"items_to_copy", "items_to_remove", "installs"} {
+		if _, exists := document[field]; exists {
+			t.Fatalf("PKG retained DMG-derived %s", field)
+		}
+	}
+	if document["receipts"] == nil || document["uninstall_method"] != "removepackages" {
+		t.Fatalf("PKG receipt and removal metadata: %#v", document)
+	}
+	assertConverged(t, request)
 }
 
 func TestRetentionRejectsUnreadableReferenceDocuments(t *testing.T) {
@@ -146,7 +232,7 @@ func TestRetentionRejectsUnreadableReferenceDocuments(t *testing.T) {
 			_, err := munkirepo.Handle(t.Context(), request)
 			want := "symlink"
 			if kind == "oversized" {
-				want = "retention read limit"
+				want = "read limit"
 			}
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("unsafe reference document: %v", err)

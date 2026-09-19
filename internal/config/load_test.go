@@ -76,7 +76,7 @@ spec:
 	}
 	for _, resource := range p.Resources {
 		if resource.Base != "software/Branding" {
-			t.Fatal("resource lost its authoring directory")
+			t.Fatal("resource lost its document directory")
 		}
 	}
 	if p.Resources["stemma/v1alpha1/MacSoftware/branding"].Spec["signature"].(map[string]any)["signer"] != "apple:developer-id:SMLKBTR495" || p.Resources["stemma/v1alpha1/WindowsSoftware/branding"].Spec["source"].(map[string]any)["path"] != "../Shared/setup.exe" {

@@ -12,16 +12,16 @@ arbitrary plugin code.
 
 ## Files and packages
 
-| Operation             | Supported scope                                                                                                       |
-| --------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Mac PKG inspection    | Flat XAR packages and supported component payloads; streams file contents while retaining bounded inventory metadata  |
-| DMG inspection        | Raw, ADC, zlib, bzip2, LZFSE and LZMA chunks; supported HFS+, HFSX and single-volume APFS filesystems                 |
-| Application DMGs      | One application at the root of a zlib-compressed HFS+ image; bytes, modes and confined relative symlinks              |
-| Custom Mac packaging  | Unsigned component packages, payload layouts and endpoint installer scripts                                           |
-| MSI inspection        | Reads MSI database metadata without Windows or executing the installer                                                |
-| EXE preparation       | Preserves the vendor installer; commands, version-specific detection and other installation semantics remain authored |
-| Intune Win32 wrapping | Portable `.intunewin` preparation with a 2 GiB implementation bound                                                   |
-| Icon creation         | `stemma icon` extracts icon artwork on any host; the glassy presentation needs the macOS renderer                     |
+| Operation             | Supported scope                                                                                                      |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Mac PKG inspection    | Flat XAR packages and supported component payloads; streams file contents while retaining bounded inventory metadata |
+| DMG inspection        | Raw, ADC, zlib, bzip2, LZFSE and LZMA chunks; supported HFS+, HFSX and single-volume APFS filesystems                |
+| Application DMGs      | One application at the root of a zlib-compressed HFS+ image; bytes, modes and confined relative symlinks             |
+| Custom Mac packaging  | Unsigned component packages, payload layouts and endpoint installer scripts                                          |
+| MSI inspection        | Reads MSI database metadata without Windows or executing the installer                                               |
+| EXE preparation       | Preserves the vendor installer; commands, version-specific detection and other installation semantics are declared   |
+| Intune Win32 wrapping | Portable `.intunewin` preparation with a 2 GiB implementation bound                                                  |
+| Icon creation         | `stemma icon` extracts icon artwork on any host; the glassy presentation needs the macOS renderer                    |
 
 PKG inspection bounds entry counts and retained path metadata, rather than imposing
 a small total payload size. Exceptionally large inventories can still hit those
@@ -60,7 +60,7 @@ notarisation, Gatekeeper, SmartScreen or WDAC policy, nor certificate revocation
 
 Installer scripts and application executables are never run to infer their effects.
 An installer containing a downloader cannot prove what that downloader eventually
-installs. Author endpoint detection from the vendor's installation behaviour.
+installs. Set endpoint detection from the vendor's installation behaviour.
 
 Stemma's Intune wrapper does not invoke Microsoft's content-preparation tool.
 Using that tool separately requires its supported Windows runtime and
@@ -76,7 +76,7 @@ resources and arbitrary workflows are not built-in contracts.
 
 There is no distributed transaction across destinations, background scheduler,
 Git watcher or continuous reconciliation controller. An external runner can invoke
-the CLI, but must retain reviewed locks, credentials and durable destination state.
+the CLI, but must retain reviewed locks and credentials.
 
 Retention is provider-owned and reference-aware. It is not a hard storage ceiling,
 an app retirement policy or an automatic rollback mechanism. See

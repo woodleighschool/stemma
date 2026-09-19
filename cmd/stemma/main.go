@@ -78,7 +78,6 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	root.PersistentFlags().StringVar(&rootDir, "root", "", "Stemma project directory (discovered from the current directory)")
 	root.PersistentFlags().StringVar(&configPath, "config", "", "Path to stemma.yaml")
 	root.PersistentFlags().StringVar(&cacheDir, "cache-dir", os.Getenv("STEMMA_CACHE_DIR"), "Disposable content cache directory")
-	root.PersistentFlags().StringVar(&stateDir, "state-dir", os.Getenv("STEMMA_STATE_DIR"), "Durable destination binding directory")
 	resolve := func() (string, error) { return findConfig(rootDir, configPath) }
 	build := &cobra.Command{Use: "version", Short: "Print build information", Args: cobra.NoArgs}
 	buildJSON := jsonFlag(build)
@@ -162,7 +161,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 					return err
 				}
 			}
-			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, Method: method, Resources: args, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error {
+			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Method: method, Resources: args, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error {
 				return display.resourceDone(out, *asJSON, method, resource)
 			}, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply" || method == "icon", Refresh: method == "update", Offline: offline}})
 			if err := display.report(out, *asJSON, method, report, runErr); err != nil {
@@ -181,6 +180,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	}
 	reconciler := &cobra.Command{Use: "reconcile", Short: "Apply the reviewed branch of this checkout and propose lock updates as pull requests", Args: cobra.NoArgs}
 	reconcileJSON := jsonFlag(reconciler)
+	reconciler.Flags().StringVar(&stateDir, "state-dir", os.Getenv("STEMMA_STATE_DIR"), "Directory recording the last reviewed commit applied in full")
 	reconciler.RunE = func(cmd *cobra.Command, _ []string) error {
 		path, err := resolve()
 		if err != nil {
@@ -214,7 +214,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		}
 	}})
 	root.AddCommand(packageCommand(out))
-	cache := &cobra.Command{Use: "cache", Short: "Manage disposable content; destination bindings are separate"}
+	cache := &cobra.Command{Use: "cache", Short: "Manage disposable cached content"}
 	cache.AddCommand(&cobra.Command{Use: "path", Short: "Print the cache location", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
 		store, err := cas.Open(cacheDir)
 		if err != nil {

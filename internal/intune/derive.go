@@ -13,17 +13,14 @@ import (
 )
 
 // Derive resolves selected artifact facts into native app metadata.
-// Authored fields win over MSI defaults and explicitly selected application facts.
+// Declared fields win over MSI defaults and explicitly selected application facts.
+// A derivation manages every field it can supply: one the artifact gives no
+// value is cleared, or must be set where Graph requires a value.
 func Derive(req plugin.ReconcileRequest) (plugin.ReconcileRequest, map[string]string, error) {
 	m, err := decodeObject(req.Metadata)
 	if err != nil {
 		return req, nil, err
 	}
-	unmanaged, err := unmanagedFields(m)
-	if err != nil {
-		return req, nil, err
-	}
-	delete(m, "unmanaged")
 	origins := map[string]string{}
 	if value, exists := m["type"]; exists {
 		types := map[string]string{"win32": win32Type, "pkg": pkgType, "dmg": dmgType}
@@ -39,7 +36,7 @@ func Derive(req plugin.ReconcileRequest) (plugin.ReconcileRequest, map[string]st
 	}
 	derive, exists := m["derive"]
 	if !exists {
-		m, err = deriveInstaller(req, m, unmanaged, origins)
+		m, err = deriveInstaller(req, m, origins)
 		req.Metadata = raw(m)
 		return req, origins, err
 	}
@@ -72,33 +69,17 @@ func Derive(req plugin.ReconcileRequest) (plugin.ReconcileRequest, map[string]st
 		if err != nil {
 			return req, nil, fmt.Errorf("derive.%s: %w", kind, err)
 		}
-		defaults := object{}
+		var defaults object
 		if kind == "msi" {
 			if subject.MSI == nil {
 				return req, nil, errors.New("derive.msi selected a subject without MSI facts")
 			}
-			msi := subject.MSI
-			info := object{}
-			for key, value := range map[string]string{"productCode": msi.ProductCode, "productVersion": msi.ProductVersion, "upgradeCode": msi.UpgradeCode, "productName": msi.ProductName, "publisher": msi.Manufacturer} {
-				if value != "" {
-					info[key] = value
-				}
-			}
-			defaults["msiInformation"] = info
-			if msi.ProductName != "" {
-				defaults["displayName"] = msi.ProductName
-			}
-			if msi.Manufacturer != "" {
-				defaults["publisher"] = msi.Manufacturer
-			}
+			defaults = msiDefaults(subject.MSI)
 		} else {
 			if subject.App == nil || !enum(m["@odata.type"], pkgType, dmgType) {
 				return req, nil, errors.New("derive.app requires application facts and a macOS PKG or DMG app")
 			}
 			app := subject.App
-			if app.Name != "" {
-				defaults["displayName"] = app.Name
-			}
 			id, version := app.BundleID, app.Version
 			if value, exists := m["primaryBundleId"]; exists {
 				id = text(value)
@@ -118,32 +99,34 @@ func Derive(req plugin.ReconcileRequest) (plugin.ReconcileRequest, map[string]st
 				}
 				id, version = text(first["bundleId"]), text(first["bundleVersion"])
 			}
-			if id != "" {
-				defaults["primaryBundleId"] = id
-			}
-			if version != "" {
-				defaults["primaryBundleVersion"] = version
-			}
+			defaults = object{"displayName": app.Name, "primaryBundleId": id, "primaryBundleVersion": version, "includedApps": nil}
 			if id != "" && version != "" {
 				defaults["includedApps"] = []any{object{"bundleId": id, "bundleVersion": version}}
 			}
-			if _, authored := m["minimumSupportedOperatingSystem"]; !authored && app.MinimumOS != "" && !suppressedField("minimumSupportedOperatingSystem", unmanaged) {
-				minimum, err := minimumOS(app.MinimumOS)
-				if err != nil {
-					return req, nil, err
+			// An unrepresentable minimum OS only matters when derivation supplies the field.
+			if _, declared := m["minimumSupportedOperatingSystem"]; !declared {
+				defaults["minimumSupportedOperatingSystem"] = nil
+				if app.MinimumOS != "" {
+					minimum, err := minimumOS(app.MinimumOS)
+					if err != nil {
+						return req, nil, err
+					}
+					defaults["minimumSupportedOperatingSystem"] = minimum
 				}
-				defaults["minimumSupportedOperatingSystem"] = minimum
 			}
 		}
-		m = mergeDerived(m, defaults, "", "derive."+kind+":"+name, unmanaged, origins)
+		m, err = mergeDerived(m, defaults, "derive."+kind+":"+name, origins)
+		if err != nil {
+			return req, nil, err
+		}
 	}
 	delete(m, "derive")
-	m, err = deriveInstaller(req, m, unmanaged, origins)
+	m, err = deriveInstaller(req, m, origins)
 	req.Metadata = raw(m)
 	return req, origins, err
 }
 
-func deriveInstaller(req plugin.ReconcileRequest, metadata object, unmanaged []string, origins map[string]string) (object, error) {
+func deriveInstaller(req plugin.ReconcileRequest, metadata object, origins map[string]string) (object, error) {
 	if metadata["@odata.type"] != win32Type {
 		return metadata, nil
 	}
@@ -178,25 +161,14 @@ func deriveInstaller(req plugin.ReconcileRequest, metadata object, unmanaged []s
 		return metadata, nil
 	}
 	msi := selected.MSI
-	defaults, info := object{}, object{}
-	for key, value := range map[string]string{"productCode": msi.ProductCode, "productVersion": msi.ProductVersion, "upgradeCode": msi.UpgradeCode, "productName": msi.ProductName, "publisher": msi.Manufacturer} {
-		if value != "" {
-			info[key] = value
-		}
-	}
-	defaults["msiInformation"] = info
-	if msi.ProductName != "" {
-		defaults["displayName"] = msi.ProductName
-	}
-	if msi.Manufacturer != "" {
-		defaults["publisher"] = msi.Manufacturer
-	}
-	if strings.ContainsAny(setup, "\"%\r\n") && metadata["installCommandLine"] == nil && !suppressedField("installCommandLine", unmanaged) {
+	defaults := msiDefaults(msi)
+	if strings.ContainsAny(setup, "\"%\r\n") && metadata["installCommandLine"] == nil {
 		return nil, errors.New("MSI setup path cannot be represented safely in a standard command")
 	}
 	defaults["installCommandLine"] = `msiexec /i "` + strings.ReplaceAll(setup, "/", `\`) + `" /qn /norestart`
+	defaults["uninstallCommandLine"], defaults["rules"] = "", nil
 	if msi.ProductCode != "" {
-		if strings.ContainsAny(msi.ProductCode, "\"%\r\n") && metadata["uninstallCommandLine"] == nil && !suppressedField("uninstallCommandLine", unmanaged) {
+		if strings.ContainsAny(msi.ProductCode, "\"%\r\n") && metadata["uninstallCommandLine"] == nil {
 			return nil, errors.New("MSI ProductCode cannot be represented safely in a standard command")
 		}
 		defaults["uninstallCommandLine"] = `msiexec /x "` + msi.ProductCode + `" /qn /norestart`
@@ -204,7 +176,21 @@ func deriveInstaller(req plugin.ReconcileRequest, metadata object, unmanaged []s
 			defaults["rules"] = []any{object{"@odata.type": "#microsoft.graph.win32LobAppProductCodeRule", "ruleType": "detection", "productCode": msi.ProductCode, "productVersionOperator": "greaterThanOrEqual", "productVersion": msi.ProductVersion}}
 		}
 	}
-	return mergeDerived(metadata, defaults, "", "windows.installer", unmanaged, origins), nil
+	return mergeDerived(metadata, defaults, "windows.installer", origins)
+}
+
+// msiDefaults lists every descriptive field an MSI supplies; an empty value is
+// one this MSI does not declare. Only the UpgradeCode is optional to both.
+func msiDefaults(msi *plugin.MSIFacts) object {
+	var upgradeCode any = cleared{}
+	if msi.UpgradeCode != "" {
+		upgradeCode = msi.UpgradeCode
+	}
+	return object{
+		"msiInformation": object{"productCode": msi.ProductCode, "productVersion": msi.ProductVersion, "upgradeCode": upgradeCode, "productName": msi.ProductName, "publisher": msi.Manufacturer},
+		"displayName":    msi.ProductName,
+		"publisher":      msi.Manufacturer,
+	}
 }
 
 func minimumOS(version string) (object, error) {
@@ -224,5 +210,5 @@ func minimumOS(version string) (object, error) {
 	if slices.Contains(minimumOSFields(), field) {
 		return object{field: true}, nil
 	}
-	return nil, fmt.Errorf("minimum macOS %q has no exact supported Intune setting; author minimumSupportedOperatingSystem explicitly", version)
+	return nil, fmt.Errorf("minimum macOS %q has no exact supported Intune setting; set minimumSupportedOperatingSystem explicitly", version)
 }

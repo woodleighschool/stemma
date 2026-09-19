@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,39 +22,43 @@ import (
 
 func TestOmittedNativeMetadataSurvivesReconciliation(t *testing.T) {
 	for _, test := range []struct {
-		name, filename, metadata string
-		preserved                []string
+		name, filename, first, second string
 	}{
-		{"copied-app", "App.dmg", `{"installer_type":"copy_from_dmg","uninstallable":true,"uninstall_method":"remove_copied_items","items_to_copy":[{"source_item":"App.app","destination_path":"/Applications"}]}`, []string{"installer_type", "items_to_copy", "items_to_remove", "uninstall_method"}},
-		{"package", "App.pkg", `{"uninstallable":true,"uninstall_method":"removepackages","receipts":[{"packageid":"example.app","version":"1"}]}`, []string{"receipts", "uninstall_method"}},
+		{
+			"copied-app", "App.dmg",
+			`{"installer_type":"copy_from_dmg","display_name":"App","uninstallable":true,"uninstall_method":"remove_copied_items","items_to_copy":[{"source_item":"App.app","destination_path":"/Applications"}]}`,
+			`{"uninstallable":true,"items_to_copy":[{"source_item":"App.app","destination_path":"/Applications"}],"description":"Updated description"}`,
+		},
+		{
+			"package", "App.pkg",
+			`{"display_name":"App","uninstallable":true,"uninstall_method":"removepackages","receipts":[{"packageid":"example.app","version":"1"}]}`,
+			`{"uninstallable":true,"receipts":[{"packageid":"example.app","version":"1"}],"description":"Updated description"}`,
+		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			root, request := repositoryRequest(t, test.filename, test.metadata)
+			root, request := repositoryRequest(t, test.filename, test.first)
 			pkginfo := apply(t, root, &request)
 			old := readNative[map[string]any](t, pkginfo)
+			old["display_name"] = "Operator title"
 			old["vendor_extension"] = "keep"
-			old["_metadata"].(map[string]any)["created_by"] = "operator"
-			if test.name == "copied-app" {
-				old["items_to_remove"] = []any{map[string]any{"path": "/Applications/App.app"}, map[string]any{"path": "/Library/Application Support/App"}}
-			}
+			old["_metadata"] = map[string]any{"created_by": "operator"}
 			writeNative(t, pkginfo, old)
 
-			request.Metadata = nativeMetadata(`{"uninstallable":true,"description":"Updated description"}`)
+			request.Metadata = nativeMetadata(test.second)
 			apply(t, root, &request)
 			got := readNative[map[string]any](t, pkginfo)
-			for _, key := range test.preserved {
-				if !reflect.DeepEqual(got[key], old[key]) {
-					t.Errorf("omitted %s changed: got %#v, want %#v", key, got[key], old[key])
-				}
+			if got["display_name"] != "Operator title" || got["vendor_extension"] != "keep" || got["_metadata"].(map[string]any)["created_by"] != "operator" {
+				t.Fatalf("omitted native metadata changed: %#v", got)
 			}
-			if got["description"] != "Updated description" || got["vendor_extension"] != "keep" || got["_metadata"].(map[string]any)["created_by"] != "operator" {
-				t.Fatalf("managed change or unowned native metadata was lost: %#v", got)
+			// The removal method is derived again from the declared detection.
+			if got["description"] != "Updated description" || !reflect.DeepEqual(got["uninstall_method"], old["uninstall_method"]) || !reflect.DeepEqual(got["items_to_remove"], old["items_to_remove"]) {
+				t.Fatalf("declared or derived metadata was lost: %#v", got)
 			}
 			assertConverged(t, request)
 			if test.name == "package" {
-				request.Metadata = nativeMetadata(`{"receipts":[]}`)
+				request.Metadata = nativeMetadata(`{"uninstallable":true,"receipts":[]}`)
 				if _, err := munkirepo.Handle(t.Context(), request); err == nil {
-					t.Fatal("cleared receipts required by the preserved removal method")
+					t.Fatal("an uninstallable item without a removal method was accepted")
 				}
 				if after := readNative[map[string]any](t, pkginfo); !reflect.DeepEqual(after, got) {
 					t.Fatal("invalid effective metadata changed the repository")
@@ -89,7 +94,8 @@ func TestNoPkgDocumentWithoutInstaller(t *testing.T) {
 	if _, err := munkirepo.Handle(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
-	document := readNative[map[string]any](t, apply(t, root, &request))
+	apply(t, root, &request)
+	document := readNative[map[string]any](t, published(t, root, "Browser Policy", "1.0"))
 	if document["installer_type"] != "nopkg" || document["version"] != "1.0" || document["name"] != "Browser Policy" {
 		t.Fatalf("native policy changed: %#v", document)
 	}
@@ -123,65 +129,166 @@ func TestNoPkgDocumentWithoutInstaller(t *testing.T) {
 	}
 }
 
-func TestCatalogsPreserveForeignNameAndVersionVariants(t *testing.T) {
-	root, request := repositoryRequest(t, "App.pkg", `{"name":"App","description":"First"}`)
-	foreign := []map[string]any{
-		{"name": "App", "version": "1", "supported_architectures": []string{"arm64"}, "installer_item_location": "foreign/arm.pkg"},
-		{"name": "App", "version": "1", "installer_item_location": "foreign/intel.pkg", "_metadata": map[string]any{"stemma": "another-owner"}},
+func TestCatalogsReplaceTheItemAndPreserveItsVariants(t *testing.T) {
+	root, request := repositoryRequest(t, "App.pkg", `{"name":"App","description":"First","notes":"operator only"}`)
+	existing := []map[string]any{
+		{"name": "App", "version": "1", "supported_architectures": []string{"arm64"}, "installer_item_location": "variant/arm.pkg"},
+		{"name": "App", "version": "1", "description": "Stale", "installer_item_location": "stale.pkg"},
+		{"name": "Other", "version": "1", "installer_item_location": "other.pkg"},
 	}
 	for _, name := range []string{"all", "testing"} {
-		writeNative(t, filepath.Join(root, "catalogs", name), foreign)
+		writeNative(t, filepath.Join(root, "catalogs", name), existing)
 	}
+	pkginfo := apply(t, root, &request)
+	request.Metadata = nativeMetadata(`{"name":"App","description":"Second","notes":"operator only"}`)
 	apply(t, root, &request)
-	request.Metadata = nativeMetadata(`{"name":"App","description":"Second"}`)
-	apply(t, root, &request)
+	if readNative[map[string]any](t, pkginfo)["notes"] != "operator only" {
+		t.Fatal("pkginfo lost its administrator notes")
+	}
 	for _, name := range []string{"all", "testing"} {
 		entries := readNative[[]map[string]any](t, filepath.Join(root, "catalogs", name))
 		if len(entries) != 3 {
-			t.Fatalf("%s contains %d entries, want two foreign variants and one owned entry", name, len(entries))
+			t.Fatalf("%s contains %d entries, want the variant, the other item and one current entry", name, len(entries))
 		}
 		locations := map[string]bool{}
-		owned := 0
 		for _, entry := range entries {
 			location, _ := entry["installer_item_location"].(string)
 			locations[location] = true
-			if entry["description"] == "Second" {
-				owned++
+			if _, exists := entry["notes"]; exists {
+				t.Fatalf("%s published administrator notes: %#v", name, entry)
+			}
+			if entry["installer_item_location"] == "App.pkg" && entry["description"] != "Second" {
+				t.Fatalf("%s kept a stale entry: %#v", name, entry)
 			}
 		}
-		if !locations["foreign/arm.pkg"] || !locations["foreign/intel.pkg"] || owned != 1 {
-			t.Fatalf("%s replaced foreign variants or duplicated the owned entry: %#v", name, entries)
+		if !locations["variant/arm.pkg"] || !locations["other.pkg"] || !locations["App.pkg"] || locations["stale.pkg"] {
+			t.Fatalf("%s lost a variant or kept the replaced entry: %#v", name, entries)
 		}
 	}
 	assertConverged(t, request)
 }
 
-func TestRejectForeignPkginfoAtOwnedPath(t *testing.T) {
-	for _, metadata := range []map[string]any{nil, {"stemma": "another-owner"}} {
-		root, request := repositoryRequest(t, "App.pkg", `{}`)
-		request.Method = "plan"
-		response, err := munkirepo.Handle(t.Context(), request)
-		if err != nil {
-			t.Fatal(err)
+func TestNewPkginfoNeverReplacesAnotherItemsFile(t *testing.T) {
+	root, request := repositoryRequest(t, "App.pkg", `{}`)
+	occupied := filepath.Join(root, "pkgsinfo", "App-1.plist")
+	writeNative(t, occupied, map[string]any{"name": "Foreign", "version": "1"})
+	before, err := os.ReadFile(occupied)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := apply(t, root, &request); got != filepath.Join(root, "pkgsinfo", "App-1__1.plist") {
+		t.Fatalf("pkginfo published at %s", got)
+	}
+	if after, err := os.ReadFile(occupied); err != nil || !bytes.Equal(before, after) {
+		t.Fatal("publication changed another item's pkginfo")
+	}
+	assertConverged(t, request)
+}
+
+func TestExistingRepositoryItemIsAdoptedInPlace(t *testing.T) {
+	root, request := repositoryRequest(t, "App.pkg", `{"description":"Managed"}`)
+	installer, err := os.ReadFile(request.Artifact.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "pkgs", "apps"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkgs", "apps", "App-1.pkg"), installer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Desktop tools leave dotfiles that Munki itself ignores.
+	if err := os.WriteFile(filepath.Join(root, "pkgs", "apps", ".DS_Store"), []byte{0, 1}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	imported := map[string]any{"name": "App", "version": "1", "catalogs": []string{"production"}, "display_name": "Operator title", "installer_item_location": "apps/App-1.pkg", "installer_item_hash": request.Artifact.SHA256, "installer_item_size": 1, "_metadata": map[string]any{"created_by": "operator"}}
+	pkginfo := filepath.Join(root, "pkgsinfo", "apps", "App-1.plist")
+	writeNative(t, pkginfo, imported)
+	if err := os.WriteFile(filepath.Join(root, "pkgsinfo", "apps", ".DS_Store"), []byte{0, 1}, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeNative(t, filepath.Join(root, "catalogs", "production"), []map[string]any{imported})
+	request.Method = "plan"
+	response, err := munkirepo.Handle(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range response.Changes {
+		if change.Kind == "content" {
+			t.Fatalf("matching installer bytes planned an upload: %+v", change)
 		}
-		pkginfo := bindingPath(t, root, response)
-		foreign := map[string]any{"name": "Foreign", "version": "1"}
-		if metadata != nil {
-			foreign["_metadata"] = metadata
-		}
-		writeNative(t, pkginfo, foreign)
-		before, err := os.ReadFile(pkginfo)
-		if err != nil {
-			t.Fatal(err)
-		}
-		request.Method = "apply"
-		if _, err := munkirepo.Handle(t.Context(), request); err == nil {
-			t.Fatal("replaced foreign pkginfo at the deterministic owned path")
-		}
-		after, err := os.ReadFile(pkginfo)
-		if err != nil || !bytes.Equal(before, after) {
-			t.Fatal("failed ownership check changed existing pkginfo")
-		}
+	}
+	if got := apply(t, root, &request); got != pkginfo {
+		t.Fatalf("existing item republished at %s", got)
+	}
+	document := readNative[map[string]any](t, pkginfo)
+	if document["description"] != "Managed" || document["display_name"] != "Operator title" || document["installer_item_location"] != "apps/App-1.pkg" {
+		t.Fatalf("adoption lost its repository layout or omitted metadata: %#v", document)
+	}
+	if entries := readNative[[]map[string]any](t, filepath.Join(root, "catalogs", "production")); len(entries) != 1 || entries[0]["description"] != "Managed" || entries[0]["_metadata"] != nil {
+		t.Fatalf("catalog entry: %#v", entries)
+	}
+	assertConverged(t, request)
+
+	// The same version with different bytes is drift, replaced where it lives.
+	replacement := []byte("rebuilt installer content")
+	if err := os.WriteFile(request.Artifact.Path, replacement, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(replacement)
+	request.Artifact.SHA256, request.Artifact.Size = hex.EncodeToString(digest[:]), int64(len(replacement))
+	request.Method = "plan"
+	response, err = munkirepo.Handle(t.Context(), request)
+	if err != nil || len(response.Changes) == 0 || response.Changes[0].Kind != "content" {
+		t.Fatalf("changed bytes plan: %+v %v", response.Changes, err)
+	}
+	apply(t, root, &request)
+	if published, err := os.ReadFile(filepath.Join(root, "pkgs", "apps", "App-1.pkg")); err != nil || !bytes.Equal(published, replacement) {
+		t.Fatalf("installer was not replaced in place: %v", err)
+	}
+	if readNative[map[string]any](t, pkginfo)["installer_item_hash"] != request.Artifact.SHA256 {
+		t.Fatal("pkginfo kept the replaced installer hash")
+	}
+	assertConverged(t, request)
+
+	writeNative(t, filepath.Join(root, "pkgsinfo", "Bundle-1.plist"), map[string]any{"name": "Bundle", "version": "1", "installer_item_location": "apps/App-1.pkg"})
+	if err := os.WriteFile(request.Artifact.Path, installer, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	digest = sha256.Sum256(installer)
+	request.Artifact.SHA256, request.Artifact.Size = hex.EncodeToString(digest[:]), int64(len(installer))
+	if _, err := munkirepo.Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), "shared") {
+		t.Fatalf("replaced installer bytes another item installs: %v", err)
+	}
+}
+
+func TestArchitectureVariantsAreSeparateItems(t *testing.T) {
+	root, arm := repositoryRequest(t, "App-arm64.pkg", `{"supported_architectures":["arm64"]}`)
+	intel := arm
+	intel.Artifact.Filename = "App-x86_64.pkg"
+	intel.Metadata = nativeMetadata(`{"supported_architectures":["x86_64"]}`)
+	first, second := apply(t, root, &arm), apply(t, root, &intel)
+	if first == second || filepath.Base(first) != "App-1-arm64.plist" || filepath.Base(second) != "App-1-x86_64.plist" {
+		t.Fatalf("variants published at %s and %s", first, second)
+	}
+	assertConverged(t, arm)
+	assertConverged(t, intel)
+	// One variant's retention never reaches the other's publications.
+	arm.Artifact.Version = "2"
+	arm.Metadata = json.RawMessage(`{"retention":{"keep":1},"pkginfo":{"supported_architectures":["arm64"]}}`)
+	apply(t, root, &arm)
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Fatal("retention kept the variant's own old version")
+	}
+	if _, err := os.Stat(second); err != nil {
+		t.Fatal("retention removed another variant")
+	}
+	// Without a declared architecture the declaration cannot choose a variant.
+	unscoped := intel
+	unscoped.Metadata = nativeMetadata(`{}`)
+	writeNative(t, filepath.Join(root, "pkgsinfo", "App-1-arm64.plist"), map[string]any{"name": "App", "version": "1", "supported_architectures": []string{"arm64"}})
+	if _, err := munkirepo.Handle(t.Context(), unscoped); err == nil || !strings.Contains(err.Error(), "supported_architectures") {
+		t.Fatalf("ambiguous variants: %v", err)
 	}
 }
 
@@ -250,23 +357,54 @@ func repositoryRequest(t *testing.T, filename, metadata string) (string, plugin.
 func apply(t *testing.T, root string, request *plugin.ReconcileRequest) string {
 	t.Helper()
 	request.Method = "apply"
-	response, err := munkirepo.Handle(t.Context(), *request)
+	if _, err := munkirepo.Handle(t.Context(), *request); err != nil {
+		t.Fatal(err)
+	}
+	var declared struct {
+		Pkginfo struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"pkginfo"`
+	}
+	if err := json.Unmarshal(request.Metadata, &declared); err != nil {
+		t.Fatal(err)
+	}
+	name, version := request.Identity.Software, request.Artifact.Version
+	if declared.Pkginfo.Name != "" {
+		name = declared.Pkginfo.Name
+	}
+	if declared.Pkginfo.Version != "" {
+		version = declared.Pkginfo.Version
+	}
+	if request.Artifact.Format == "json" {
+		return ""
+	}
+	return published(t, root, name, version)
+}
+
+// published finds the newest-written pkginfo for an item the way the
+// repository identifies it, by Munki name and version.
+func published(t *testing.T, root, name, version string) string {
+	t.Helper()
+	var found []string
+	err := filepath.WalkDir(filepath.Join(root, "pkgsinfo"), func(filename string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			return err
+		}
+		document := readNative[map[string]any](t, filename)
+		if document["name"] == name && document["version"] == version {
+			found = append(found, filename)
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request.Binding = response.Binding
-	return bindingPath(t, root, response)
-}
-
-func bindingPath(t *testing.T, root string, response plugin.ReconcileResponse) string {
-	t.Helper()
-	var binding struct {
-		Pkginfo string `json:"pkginfo"`
+	if len(found) == 0 {
+		t.Fatalf("no pkginfo publishes %s %s", name, version)
 	}
-	if err := json.Unmarshal(response.Binding, &binding); err != nil {
-		t.Fatal(err)
-	}
-	return filepath.Join(root, filepath.FromSlash(binding.Pkginfo))
+	slices.Sort(found)
+	return found[len(found)-1]
 }
 
 func assertConverged(t *testing.T, request plugin.ReconcileRequest) {
@@ -339,7 +477,7 @@ func TestPreparedIconPublishesAndRetainsExplicitOverride(t *testing.T) {
 	apply(t, root, &request)
 	values = readNative[map[string]any](t, pkginfo)
 	if values["icon_name"] != "manual.png" {
-		t.Fatal("authored icon overwritten")
+		t.Fatal("declared icon overwritten")
 	}
 }
 
@@ -390,12 +528,12 @@ func TestDeclaredIconReplacesOnChangeAndStaysWhenUndeclared(t *testing.T) {
 	request.Artifact.Version = "2.0"
 	pkginfo = apply(t, root, &request)
 	check(second)
-	// Without a declared icon the artwork is unmanaged and stays.
+	// Without a declared icon the artwork reference is left unchanged.
 	request.Artifact.Version = "3.0"
 	request.Inputs = nil
 	pkginfo = apply(t, root, &request)
 	check(second)
-	// Remote absence is authoritative even when the software and binding exist.
+	// Repository absence is authoritative even when the pkginfo references it.
 	request.Inputs = map[string]plugin.Artifact{"icon": second}
 	content := filepath.Join(root, "icons", "stemma", second.SHA256+".png")
 	if err := os.Remove(content); err != nil {

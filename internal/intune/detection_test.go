@@ -44,7 +44,7 @@ func TestNativeDetectionComparisons(t *testing.T) {
 				t.Fatalf("schema valid=%v: %v", tt.valid, err)
 			}
 			if string(raw(tt.rules)) != before {
-				t.Fatal("validation changed authored native detection")
+				t.Fatal("validation changed declared native detection")
 			}
 		})
 	}
@@ -55,22 +55,20 @@ func TestChangedProductCodeUpdatesDetectionInSameApp(t *testing.T) {
 	req := fixtureRequest(t)
 	desired, _ := validateMetadata(req.Metadata)
 	delete(desired, "assignments")
-	response, err := c.handle(t.Context(), req, configuration{}, desired)
-	if err != nil {
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
-	req.Binding = response.Binding
 	changePayload(t, &req, "new major MSI product")
 	rule := desired["rules"].([]any)[0].(object)
 	rule["productCode"] = "{22222222-2222-4222-8222-222222222222}"
 	rule["productVersionOperator"], rule["productVersion"] = "greaterThanOrEqual", "3.0.0"
-	if _, err := c.handle(t.Context(), req, configuration{}, desired); err != nil {
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
 	if fake.creates != 1 || fake.commits != 2 || !reflect.DeepEqual(fake.app["rules"], desired["rules"]) {
-		t.Fatal("major upgrade did not publish the explicit new ProductCode and >= rule in the bound app")
+		t.Fatal("major upgrade did not publish the explicit new ProductCode and >= rule in the same app")
 	}
 }
 
@@ -81,8 +79,8 @@ func TestDependenciesRequirePublishedWin32Apps(t *testing.T) {
 			c.appType = win32Type
 			fake.relatedApps["dependency"] = object{"id": "dependency", "@odata.type": appType, "publishingState": "published"}
 			req := fixtureRequest(t)
-			req.Bindings = map[string]json.RawMessage{"runtime": raw(binding{AppID: "dependency"})}
-			_, err := c.desiredRelationships(t.Context(), req, lifecycle{Dependencies: []relationshipReference{{Software: "runtime", Install: true}}}, "")
+			req.Peers = map[string]json.RawMessage{"runtime": raw(object{"app_id": "dependency"})}
+			_, err := c.desiredRelationships(t.Context(), req, &tenantApps{client: c}, lifecycle{Dependencies: []relationshipReference{{Software: "runtime", Install: true}}}, "")
 			if (err == nil) != (appType == win32Type) {
 				t.Fatalf("target type %s: %v", appType, err)
 			}

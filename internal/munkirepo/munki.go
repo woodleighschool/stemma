@@ -3,6 +3,7 @@ package munkirepo
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -45,7 +46,7 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest) (plugin.Reconc
 		return plugin.ReconcileResponse{}, err
 	}
 	if request.Method == "validate" {
-		input, _, err := nativeInput(request)
+		input, _, _, err := nativeInput(request)
 		if err == nil {
 			_, err = munki.Build(input)
 		}
@@ -86,81 +87,155 @@ func repositoryPath(configuration json.RawMessage) (string, error) {
 	return connection.Path, nil
 }
 
-func nativeInput(request plugin.ReconcileRequest) (munki.Input, map[string]any, error) {
-	input := munki.Input{Name: request.Identity.Software, Version: request.Artifact.Version, SHA256: request.Artifact.SHA256, Size: request.Artifact.Size, InstallerLocation: "stemma/" + request.Artifact.SHA256 + "/" + request.Artifact.Filename}
+func nativeInput(request plugin.ReconcileRequest) (munki.Input, map[string]any, munki.Derived, error) {
+	input := munki.Input{Name: request.Identity.Software, Version: request.Artifact.Version, SHA256: request.Artifact.SHA256, Size: request.Artifact.Size, InstallerLocation: request.Artifact.Filename}
 	if request.Artifact.Format == "pkg" || strings.EqualFold(filepath.Ext(request.Artifact.Filename), ".pkg") {
 		input.InstallerType = "pkg"
 	}
-	values, _, err := munki.Derive(request)
+	derived, err := munki.Derive(request)
 	if err != nil {
-		return input, nil, err
+		return input, nil, derived, err
 	}
-	data, err := json.Marshal(values)
+	data, err := json.Marshal(derived.Values)
 	if err != nil {
-		return input, nil, err
+		return input, nil, derived, err
 	}
-	return munki.Compose(input, data)
+	input, managed, err := munki.Compose(input, data)
+	return input, managed, derived, err
+}
+
+// item is one pkginfo document, located relative to the repository root.
+type item struct {
+	path     string
+	document map[string]any
+}
+
+// target is the repository's own identity for a publication: Munki name and
+// version, and the architectures when the declaration sets that variant.
+type target struct {
+	name, version string
+	architectures []string
+	scoped        bool
+}
+
+func (t target) family(document map[string]any) bool {
+	return document["name"] == t.name && (!t.scoped || slices.Equal(sortedStrings(document["supported_architectures"]), t.architectures))
+}
+
+func sortedStrings(value any) []string {
+	var result []string
+	switch values := value.(type) {
+	case []any:
+		for _, value := range values {
+			if name, ok := value.(string); ok {
+				result = append(result, name)
+			}
+		}
+	case []string:
+		result = slices.Clone(values)
+	}
+	slices.Sort(result)
+	return result
+}
+
+func pkgsinfo(root string) ([]item, error) {
+	var items []item
+	err := walkDocuments(filepath.Join(root, "pkgsinfo"), func(filename string, value any) {
+		if document, ok := value.(map[string]any); ok {
+			relative, _ := filepath.Rel(root, filename)
+			items = append(items, item{filepath.ToSlash(relative), document})
+		}
+	})
+	slices.SortFunc(items, func(a, b item) int { return strings.Compare(a.path, b.path) })
+	return items, err
+}
+
+// newer orders pkginfo by descending Munki version, then by path.
+func newer(a, b item) int {
+	left, _ := a.document["version"].(string)
+	right, _ := b.document["version"].(string)
+	return cmp.Or(munki.CompareVersions(right, left), strings.Compare(a.path, b.path))
+}
+
+// New files are named as munkiimport names them, numbered when the name is taken.
+func freeName(directory, base, extension string, reusable func(string) (bool, error)) (string, error) {
+	if base == "" || base+extension != filepath.Base(base+extension) || !filepath.IsLocal(base+extension) {
+		return "", fmt.Errorf("unsafe repository filename %q", base+extension)
+	}
+	for index := 0; ; index++ {
+		name := base + extension
+		if index > 0 {
+			name = fmt.Sprintf("%s__%d%s", base, index, extension)
+		}
+		if _, err := os.Lstat(filepath.Join(directory, name)); errors.Is(err, os.ErrNotExist) {
+			return name, nil
+		} else if err != nil {
+			return "", err
+		}
+		if reuse, err := reusable(name); err != nil || reuse {
+			return name, err
+		}
+	}
 }
 
 func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
-	input, managed, err := nativeInput(request)
+	input, managed, derived, err := nativeInput(request)
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
 	}
-	identity := hashValue(request.Identity)
-	var binding repositoryBinding
-	if len(request.Binding) > 0 && string(request.Binding) != "null" {
-		if err := json.Unmarshal(request.Binding, &binding); err != nil {
-			return plugin.ReconcileResponse{}, err
+	destination, err := munki.DecodeDestination(request.Metadata)
+	if err != nil {
+		return plugin.ReconcileResponse{}, err
+	}
+	items, err := pkgsinfo(root)
+	if err != nil {
+		return plugin.ReconcileResponse{}, err
+	}
+	want := target{name: input.Name, version: input.Version}
+	if value, declared := managed["supported_architectures"]; declared {
+		want.scoped, want.architectures = true, sortedStrings(value)
+	}
+	var current *item
+	var others []item
+	for i, candidate := range items {
+		switch {
+		case !want.family(candidate.document):
+		case candidate.document["version"] != want.version:
+			others = append(others, candidate)
+		case current != nil:
+			return plugin.ReconcileResponse{}, fmt.Errorf("pkginfo %s and %s both publish %s %s; set supported_architectures or remove one", current.path, candidate.path, want.name, want.version)
+		default:
+			current = &items[i]
 		}
 	}
-	if binding.Identity != "" && binding.Identity != identity {
-		return plugin.ReconcileResponse{}, errors.New("munki binding belongs to a different destination")
-	}
-	if binding.Entries == nil {
-		binding.Entries = map[string]publication{}
-	}
-	fingerprint := hashValue([]any{input.Name, input.Version, input.SHA256, managed["supported_architectures"]})
-	payload := input.SHA256
-	if input.InstallerType == "nopkg" {
-		payload = hashValue([]any{"nopkg", input.Version})
-	}
-	if binding.Latest == nil {
-		binding.Latest = map[string]string{}
-	}
-	pkginfoPath := filepath.Join("pkgsinfo", "stemma", identity, fingerprint+".plist")
-	entry, known := binding.Entries[fingerprint]
-	if known && (entry.Pkginfo != filepath.ToSlash(pkginfoPath) || entry.Name != input.Name || entry.Version != input.Version || entry.Location != input.InstallerLocation) {
-		return plugin.ReconcileResponse{}, errors.New("munki publication binding differs from installer tuple")
-	}
-	old, err := readObject(filepath.Join(root, pkginfoPath))
-	if err != nil {
-		return plugin.ReconcileResponse{}, err
-	}
-	if old != nil && (!known || owner(old) != identity) {
-		return plugin.ReconcileResponse{}, fmt.Errorf("pkginfo %s is not owned by this destination", pkginfoPath)
-	}
-	desired := mergeFields(old, nil)
-	_, origins, _ := munki.Derive(request)
-	destinationMetadata, _ := munki.DecodeDestination(request.Metadata)
-	// Artwork belongs to the software, so a new installer can retain the previous reference.
-	previous := old
-	if previous == nil && binding.Pkginfo != "" {
-		previous, err = readObject(filepath.Join(root, filepath.FromSlash(binding.Pkginfo)))
+	slices.SortFunc(others, newer)
+	var old map[string]any
+	var pkginfoPath string
+	if current != nil {
+		old, pkginfoPath = current.document, current.path
+	} else {
+		base := want.name + "-" + want.version
+		if len(want.architectures) == 1 {
+			base += "-" + want.architectures[0]
+		}
+		name, err := freeName(filepath.Join(root, "pkgsinfo"), base, ".plist", func(string) (bool, error) { return false, nil })
 		if err != nil {
 			return plugin.ReconcileResponse{}, err
 		}
-		if previous != nil && owner(previous) != identity {
-			return plugin.ReconcileResponse{}, errors.New("previous pkginfo has a different owner")
-		}
+		pkginfoPath = "pkgsinfo/" + name
+	}
+	desired := mergeFields(old, nil)
+	origins := derived.Origins
+	// Artwork belongs to the software, so a new installer can retain the newest reference.
+	previous := old
+	if previous == nil && len(others) > 0 {
+		previous = others[0].document
 	}
 	_, managedName := managed["icon_name"]
 	_, managedHash := managed["icon_hash"]
-	// A declared icon publishes its exact bytes; without one the artwork is
-	// unmanaged and the previous reference stays.
-	retainIcon := origins["pkginfo.icon_name"] != "input.icon" && !managedName && !managedHash
-	retainIcon = retainIcon && !slices.Contains(destinationMetadata.Unmanaged, "pkginfo.icon_name") && !slices.Contains(destinationMetadata.Unmanaged, "pkginfo.icon_hash")
-	if retainIcon {
+	// A declared icon publishes its exact bytes; without one the previous
+	// reference stays.
+	if origins["pkginfo.icon_name"] != "input.icon" && !managedName && !managedHash {
 		name, _ := previous["icon_name"].(string)
 		if name != "" && filepath.IsLocal(name) {
 			if info, err := os.Stat(filepath.Join(root, "icons", filepath.FromSlash(name))); err == nil && info.Mode().IsRegular() {
@@ -171,22 +246,9 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 			}
 		}
 	}
-
-	for _, field := range entry.Derived {
-		if field == "icon_name" || field == "icon_hash" {
-			continue
-		}
-		if _, exists := managed[field]; !exists && !slices.Contains(destinationMetadata.Unmanaged, "pkginfo."+field) {
-			delete(desired, field)
-		}
+	for _, field := range derived.Cleared {
+		delete(desired, field)
 	}
-	derived := []string{}
-	for field, origin := range origins {
-		if origin != "authored" {
-			derived = append(derived, strings.TrimPrefix(field, "pkginfo."))
-		}
-	}
-	slices.Sort(derived)
 	for key, value := range managed {
 		if value == nil {
 			delete(desired, key)
@@ -199,6 +261,17 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	}
 	if input.InstallerType == "nopkg" {
 		input.Size, input.SHA256, input.InstallerLocation = 0, "", ""
+	} else if location, _ := old["installer_item_location"].(string); location != "" {
+		// An adopted item keeps the place its repository gave the installer.
+		input.InstallerLocation = location
+	} else {
+		extension := filepath.Ext(request.Artifact.Filename)
+		input.InstallerLocation, err = freeName(filepath.Join(root, "pkgs"), strings.TrimSuffix(request.Artifact.Filename, extension), extension, func(name string) (bool, error) {
+			return fileMatches(ctx, filepath.Join(root, "pkgs", name), request.Artifact)
+		})
+		if err != nil {
+			return plugin.ReconcileResponse{}, err
+		}
 	}
 	// Validate the effective supported fields while retaining unknown native fields.
 	effective := map[string]any{}
@@ -232,9 +305,12 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 			delete(desired, key)
 		}
 	}
-	_, copiesManaged := managed["items_to_copy"]
-	_, removalManaged := managed["uninstall_method"]
-	if old == nil || copiesManaged || removalManaged {
+	removalManaged := old == nil
+	for _, key := range []string{"items_to_copy", "uninstall_method"} {
+		_, declared := managed[key]
+		removalManaged = removalManaged || declared || slices.Contains(derived.Cleared, key)
+	}
+	if removalManaged {
 		if value, exists := generated["items_to_remove"]; exists {
 			desired["items_to_remove"] = value
 		} else {
@@ -244,9 +320,6 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	if _, managedCatalogs := managed["catalogs"]; !managedCatalogs && old == nil {
 		desired["catalogs"] = []string{"testing"}
 	}
-	metadata, _ := desired["_metadata"].(map[string]any)
-	metadata = mergeFields(metadata, map[string]any{"stemma": identity})
-	desired["_metadata"] = metadata
 	response := plugin.ReconcileResponse{Origins: origins}
 	contentPath := ""
 	if input.InstallerType != "nopkg" {
@@ -256,7 +329,13 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 			return response, err
 		}
 		if !matches {
-			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "installer_item_hash", Action: "upload", After: raw(request.Artifact.SHA256)})
+			// Replacing bytes in place must not break another item that installs them.
+			for _, other := range items {
+				if other.path != pkginfoPath && other.document["installer_item_location"] == input.InstallerLocation {
+					return response, fmt.Errorf("installer %s is shared with %s, so its bytes cannot be replaced", input.InstallerLocation, other.path)
+				}
+			}
+			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "installer_item_hash", Action: "upload", Before: raw(old["installer_item_hash"]), After: raw(request.Artifact.SHA256)})
 		}
 	}
 	iconPath := ""
@@ -292,22 +371,11 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		a, b := response.Changes[i], response.Changes[j]
 		return a.Kind+"/"+a.Field < b.Kind+"/"+b.Field
 	})
-	binding.Pkginfo, binding.Identity = filepath.ToSlash(pkginfoPath), identity
-	binding.Entries[fingerprint] = publication{Payload: payload, Pkginfo: filepath.ToSlash(pkginfoPath), Location: input.InstallerLocation, Name: input.Name, Version: input.Version, SHA256: input.SHA256, Derived: derived}
-	response.Binding = raw(binding)
 	if request.Method != "apply" {
-		destination, err := munki.DecodeDestination(request.Metadata)
-		if err != nil {
-			return response, err
-		}
 		if destination.Retention != nil {
-			binding.Publications.Record(payload)
-			binding.Latest[payload] = fingerprint
-			if err := prune(ctx, root, &binding, destination.Retention.Keep, false, &response); err != nil {
-				return response, err
-			}
+			err = prune(ctx, root, desired, others, destination.Retention.Keep, false, &response)
 		}
-		return response, nil
+		return response, err
 	}
 	// No catalog references an installer before its complete bytes are available.
 	if contentPath != "" {
@@ -341,24 +409,14 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		if err != nil {
 			return response, err
 		}
-		if err := fileio.Write(filepath.Join(root, pkginfoPath), data, 0o644); err != nil {
+		if err := fileio.Write(filepath.Join(root, filepath.FromSlash(pkginfoPath)), data, 0o644); err != nil {
 			return response, err
 		}
-	}
-	binding.Publications.Record(payload)
-	binding.Latest[payload] = fingerprint
-	response.Binding = raw(binding)
-	destination, err := munki.DecodeDestination(request.Metadata)
-	if err != nil {
-		return response, err
 	}
 	if destination.Retention != nil {
-		if err := prune(ctx, root, &binding, destination.Retention.Keep, true, &response); err != nil {
-			return response, err
-		}
+		err = prune(ctx, root, desired, others, destination.Retention.Keep, true, &response)
 	}
-	response.Binding = raw(binding)
-	return response, nil
+	return response, err
 }
 
 func catalogChanges(root string, old, desired map[string]any) (map[string][]map[string]any, error) {
@@ -388,7 +446,7 @@ func catalogChanges(root string, old, desired map[string]any) (map[string][]map[
 		}
 		var merged []map[string]any
 		for _, entry := range existing {
-			if samePublication(entry, old) || samePublication(entry, desired) {
+			if sameItem(entry, old) || sameItem(entry, desired) {
 				continue
 			}
 			merged = append(merged, entry)
@@ -400,14 +458,16 @@ func catalogChanges(root string, old, desired map[string]any) (map[string][]map[
 			}
 		}
 		if include {
-			merged = append(merged, desired)
+			merged = append(merged, catalogEntry(desired))
 		}
 		if merged == nil {
 			merged = []map[string]any{}
 		}
-		sort.SliceStable(merged, func(i, j int) bool {
-			return fmt.Sprint(merged[i]["name"])+"/"+fmt.Sprint(merged[i]["version"]) < fmt.Sprint(merged[j]["name"])+"/"+fmt.Sprint(merged[j]["version"])
-		})
+		// Variants share a name and version, so their architectures settle the order.
+		key := func(entry map[string]any) string {
+			return fmt.Sprint(entry["name"]) + "/" + fmt.Sprint(entry["version"]) + "/" + strings.Join(sortedStrings(entry["supported_architectures"]), ",")
+		}
+		sort.SliceStable(merged, func(i, j int) bool { return key(merged[i]) < key(merged[j]) })
 		if hashValue(existing) != hashValue(merged) {
 			changes[name] = merged
 		}
@@ -415,10 +475,20 @@ func catalogChanges(root string, old, desired map[string]any) (map[string][]map[
 	return changes, nil
 }
 
-func owner(item map[string]any) string {
-	metadata, _ := item["_metadata"].(map[string]any)
-	identity, _ := metadata["stemma"].(string)
-	return identity
+// sameItem compares the identity Munki itself gives an item.
+func sameItem(a, b map[string]any) bool {
+	return a != nil && b != nil && a["name"] == b["name"] && a["version"] == b["version"] && slices.Equal(sortedStrings(a["supported_architectures"]), sortedStrings(b["supported_architectures"]))
+}
+
+// catalogEntry omits what makecatalogs omits: administrator notes and private keys.
+func catalogEntry(pkginfo map[string]any) map[string]any {
+	entry := make(map[string]any, len(pkginfo))
+	for key, value := range pkginfo {
+		if key != "notes" && !strings.HasPrefix(key, "_") {
+			entry[key] = value
+		}
+	}
+	return entry
 }
 func catalogNames(item map[string]any) []string {
 	var result []string
@@ -433,21 +503,6 @@ func catalogNames(item map[string]any) []string {
 		result = values
 	}
 	return result
-}
-func readObject(path string) (map[string]any, error) {
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > 8<<20 {
-		return nil, errors.New("pkginfo exceeds 8 MiB")
-	}
-	var value map[string]any
-	_, err = plist.Unmarshal(data, &value)
-	return value, err
 }
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 

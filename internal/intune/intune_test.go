@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,16 +35,12 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := c.handle(t.Context(), req, configuration{}, desired)
-	if err != nil {
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
-	var b binding
-	if err := json.Unmarshal(response.Binding, &b); err != nil {
-		t.Fatal(err)
-	}
-	if b.AppID != "app-1" || b.ContentVersion != "1" || b.PayloadSHA256 == "" || b.EnvelopeSHA256 == "" || b.Pending != nil {
-		t.Fatalf("incomplete binding: %+v", b)
+	published := publishedMarker(t, fake)
+	if published.identity != markerIdentity(req.Identity) || published.content != "1" || published.payload == "" {
+		t.Fatalf("incomplete marker: %+v", published)
 	}
 	fake.mu.Lock()
 	if fake.creates != 1 || fake.versions != 1 || fake.blobLists != 1 || fake.commits != 1 || fake.assigns != 1 {
@@ -56,14 +53,12 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	fake.app["isFeatured"] = true
 	fake.app["installExperience"].(object)["deviceRestartBehavior"] = "suppress"
 	fake.mu.Unlock()
-	req.Binding = response.Binding
 	req.Metadata = raw(object{"@odata.type": win32Type, "displayName": "Renamed", "isFeatured": false, "installExperience": object{"runAsAccount": "user"}})
 	desired, err = validateMetadata(req.Metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err = c.handle(t.Context(), req, configuration{}, desired)
-	if err != nil {
+	if _, err = c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()
@@ -73,18 +68,23 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	if fake.app["owner"] != "Remote owner" || fake.app["isFeatured"] != false || fake.app["installExperience"].(object)["deviceRestartBehavior"] != "suppress" {
 		t.Fatalf("lost omitted fields or false: %+v", fake.app)
 	}
+	writes := fake.writes
 	fake.mu.Unlock()
-	req.Binding = response.Binding
-	response, err = c.handle(t.Context(), req, configuration{}, desired)
+	response, err := c.handle(t.Context(), req, desired)
 	if err != nil || len(response.Changes) != 0 {
 		t.Fatalf("unchanged reconciliation: %+v, %v", response.Changes, err)
 	}
+	fake.mu.Lock()
+	if fake.writes != writes {
+		t.Fatal("unchanged reconciliation wrote to the tenant")
+	}
+	fake.mu.Unlock()
 	req.Metadata = raw(object{"@odata.type": win32Type, "allowedArchitectures": nil, "assignments": []any{}})
 	desired, err = validateMetadata(req.Metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.handle(t.Context(), req, configuration{}, desired)
+	_, err = c.handle(t.Context(), req, desired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	}
 }
 
-func TestInterruptedCommitResumesWithoutReupload(t *testing.T) {
+func TestInterruptedFirstPublicationIsRepeatedInTheSameApp(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	fake.failCommit = true
 	req := fixtureRequest(t)
@@ -103,59 +103,107 @@ func TestInterruptedCommitResumesWithoutReupload(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := c.handle(t.Context(), req, configuration{}, desired)
-	if err == nil {
+	if _, err := c.handle(t.Context(), req, desired); err == nil {
 		t.Fatal("expected interrupted commit")
 	}
-	var b binding
-	if err := json.Unmarshal(response.Binding, &b); err != nil {
+	if published := publishedMarker(t, fake); published.payload != "" || published.content != "" {
+		t.Fatalf("marker records content that was never activated: %+v", published)
+	}
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
-	if b.AppID == "" || b.Pending == nil || b.Pending.Stage != "committing" || b.Pending.EncryptionInfo.Mac == "" {
-		t.Fatalf("lost resumable progress: %+v", b)
-	}
-	if strings.Contains(string(response.Binding), "sig=") {
-		t.Fatal("persisted expiring SAS URL")
-	}
-	req.Binding = response.Binding
-	response, err = c.handle(t.Context(), req, configuration{}, desired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Unmarshal into a fresh value because absent fields intentionally clear state.
-	b = binding{}
-	if err := json.Unmarshal(response.Binding, &b); err != nil {
-		t.Fatal(err)
-	}
-	if b.Pending != nil || b.ContentVersion != "1" {
-		t.Fatalf("unfinished resumed binding: %+v", b)
+	if published := publishedMarker(t, fake); published.content != "2" {
+		t.Fatalf("retry did not publish a fresh content version: %+v", published)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if fake.creates != 1 || fake.versions != 1 || fake.blobLists != 1 || fake.commits != 1 {
-		t.Fatal("resuming a completed commit repeated creation or upload")
+	if fake.creates != 1 || fake.versions != 2 || fake.blobLists != 2 || fake.commits != 2 || fake.app["committedContentVersion"] != "2" {
+		t.Fatal("retry created another app or resumed the interrupted upload")
 	}
 }
 
-func TestRecoverBindingByIdentityMarker(t *testing.T) {
+func TestUnchangedApplyWaitsForPendingPublication(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
 	desired, err := validateMetadata(req.Metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.handle(t.Context(), req, configuration{}, desired); err != nil {
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
+	fake.mu.Lock()
+	fake.app["publishingState"] = "processing"
+	fake.pendingAppReads = 5
+	writes := fake.writes
+	fake.mu.Unlock()
 	req.Method = "plan"
-	response, err := c.handle(t.Context(), req, configuration{}, desired)
-	if err != nil || len(response.Changes) != 0 {
-		t.Fatalf("lost-state recovery: %+v, %v", response.Changes, err)
+	if response, err := c.handle(t.Context(), req, desired); err != nil || len(response.Changes) != 0 {
+		t.Fatalf("pending plan: %+v, %v", response, err)
+	}
+	fake.mu.Lock()
+	if fake.writes != writes || fake.app["publishingState"] != "processing" {
+		t.Fatal("plan changed or waited for publication")
+	}
+	fake.mu.Unlock()
+	req.Method = "apply"
+	if response, err := c.handle(t.Context(), req, desired); err != nil || len(response.Changes) != 0 {
+		t.Fatalf("pending apply: %+v, %v", response, err)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if fake.creates != 1 || fake.versions != 1 {
-		t.Fatal("recovery duplicated app/content")
+	if fake.app["publishingState"] != "published" {
+		t.Fatal("apply succeeded while publication was pending")
+	}
+	if fake.writes != writes {
+		t.Fatal("waiting replayed content or metadata writes")
+	}
+}
+
+func TestFreshRequestRediscoversPublishedApp(t *testing.T) {
+	for _, discovery := range []string{"marker", "app_id"} {
+		t.Run(discovery, func(t *testing.T) {
+			fake, c := newGraphFixture(t)
+			req := fixtureRequest(t)
+			desired, err := validateMetadata(req.Metadata)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.handle(t.Context(), req, desired); err != nil {
+				t.Fatal(err)
+			}
+			fake.mu.Lock()
+			lists, writes := fake.appLists, fake.writes
+			fake.mu.Unlock()
+			// A later invocation starts from the catalog and the tenant alone.
+			req = fixtureRequest(t)
+			desired, err = validateMetadata(req.Metadata)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if discovery == "app_id" {
+				desired["app_id"] = "app-1"
+			}
+			for _, method := range []string{"plan", "apply"} {
+				req.Method = method
+				response, err := c.handle(t.Context(), req, desired)
+				if err != nil || len(response.Changes) != 0 {
+					t.Fatalf("%s after rediscovery: %+v, %v", method, response.Changes, err)
+				}
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if fake.creates != 1 || fake.versions != 1 || fake.writes != writes {
+				t.Fatal("rediscovery duplicated the app or its content")
+			}
+			// The marker is found in one listing per invocation; app_id needs none.
+			if discovery == "marker" {
+				lists += 2
+			}
+			if fake.appLists != lists {
+				t.Fatalf("tenant listings = %d, want %d", fake.appLists, lists)
+			}
+		})
 	}
 }
 
@@ -167,13 +215,13 @@ func TestPlanAndValidationDoNotWrite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := c.handle(t.Context(), req, configuration{}, desired)
+	response, err := c.handle(t.Context(), req, desired)
 	if err != nil || len(response.Changes) == 0 {
 		t.Fatalf("plan: %+v, %v", response, err)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if fake.creates != 0 || fake.versions != 0 || fake.blobLists != 0 {
+	if fake.writes != 0 {
 		t.Fatal("plan wrote remote state")
 	}
 	for _, data := range []string{
@@ -189,23 +237,138 @@ func TestPlanAndValidationDoNotWrite(t *testing.T) {
 	}
 }
 
-func TestUncertainCreationIsNotRepeated(t *testing.T) {
+func TestPayloadChangeActivatesFreshVersionWithItsMarker(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	hash := sha256.Sum256(raw(req.Identity))
-	req.Binding = raw(binding{Identity: hex.EncodeToString(hash[:]), UncertainCreate: true})
 	desired, err := validateMetadata(req.Metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.handle(t.Context(), req, configuration{}, desired); err == nil {
-		t.Fatal("retried uncertain creation")
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
+		t.Fatal(err)
+	}
+	first := publishedMarker(t, fake)
+	fake.mu.Lock()
+	fake.patches = nil
+	fake.mu.Unlock()
+	changePayload(t, &req, "second release")
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
+		t.Fatal(err)
+	}
+	second := publishedMarker(t, fake)
+	if second.content != "2" || second.payload == first.payload || second.identity != first.identity {
+		t.Fatalf("marker does not describe the new content: %+v after %+v", second, first)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if fake.creates != 0 {
-		t.Fatal("issued duplicate app creation")
+	if fake.creates != 1 || fake.versions != 2 || fake.app["committedContentVersion"] != "2" {
+		t.Fatal("payload change did not publish a fresh version in the same app")
 	}
+	// A marker written apart from activation could describe content that is not active.
+	activated := false
+	for _, patch := range fake.patches {
+		_, activates := patch["committedContentVersion"]
+		_, marks := patch["notes"]
+		if activates != marks {
+			t.Fatalf("activation and marker were written separately: %+v", fake.patches)
+		}
+		activated = activated || activates
+	}
+	if !activated {
+		t.Fatalf("no patch activated the new content: %+v", fake.patches)
+	}
+}
+
+func TestMarkerDriftRepublishesContent(t *testing.T) {
+	for _, drift := range []string{"edited", "removed", "other version activated"} {
+		t.Run(drift, func(t *testing.T) {
+			fake, c := newGraphFixture(t)
+			req := fixtureRequest(t)
+			desired, err := validateMetadata(req.Metadata)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.handle(t.Context(), req, desired); err != nil {
+				t.Fatal(err)
+			}
+			published := publishedMarker(t, fake)
+			fake.mu.Lock()
+			fake.app["notes"] = withMarker("Edited by an administrator", published)
+			switch drift {
+			case "edited":
+				edited := published
+				edited.payload = strings.Repeat("0", 64)
+				fake.app["notes"] = withMarker("Edited by an administrator", edited)
+			case "removed":
+				// Without its marker only a declared app_id still identifies the app.
+				fake.app["notes"] = "Edited by an administrator"
+				desired["app_id"] = "app-1"
+			default:
+				// The marker still describes version 1, which is no longer the active one.
+				fake.files["7"] = committedFile()
+				fake.app["committedContentVersion"] = "7"
+			}
+			fake.mu.Unlock()
+			if _, err := c.handle(t.Context(), req, desired); err != nil {
+				t.Fatal(err)
+			}
+			if restored := publishedMarker(t, fake); restored.content != "2" || restored.payload != published.payload {
+				t.Fatalf("marker was not rewritten for fresh content: %+v", restored)
+			}
+			fake.mu.Lock()
+			writes := fake.writes
+			if fake.creates != 1 || fake.versions != 2 || !strings.HasPrefix(text(fake.app["notes"]), "Edited by an administrator\n") {
+				t.Fatalf("drift was not repaired in place: %+v", fake.app["notes"])
+			}
+			fake.mu.Unlock()
+			response, err := c.handle(t.Context(), req, desired)
+			if err != nil || len(response.Changes) != 0 {
+				t.Fatalf("repaired drift did not settle: %+v, %v", response.Changes, err)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if fake.writes != writes {
+				t.Fatal("settled reconciliation wrote to the tenant")
+			}
+		})
+	}
+}
+
+func TestDuplicateMarkerAppsAreAmbiguous(t *testing.T) {
+	fake, c := newGraphFixture(t)
+	req := fixtureRequest(t)
+	desired, err := validateMetadata(req.Metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	notes := withMarker("", publication{identity: markerIdentity(req.Identity)})
+	for _, id := range []string{"first-copy", "second-copy"} {
+		fake.relatedApps[id] = object{"id": id, "@odata.type": win32Type, "notes": notes}
+	}
+	for _, method := range []string{"plan", "apply"} {
+		req.Method = method
+		_, err := c.handle(t.Context(), req, desired)
+		if err == nil || !strings.Contains(err.Error(), "multiple Intune apps carry this Stemma identity") || !strings.Contains(err.Error(), "first-copy, second-copy") {
+			t.Fatalf("%s: %v", method, err)
+		}
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.writes != 0 {
+		t.Fatal("ambiguous identity wrote to the tenant")
+	}
+}
+
+// publishedMarker reads the publication recorded in the fixture app's notes.
+func publishedMarker(t *testing.T, fake *graphFixture) publication {
+	t.Helper()
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	match := markerPattern.FindStringSubmatch(text(fake.app["notes"]))
+	if match == nil {
+		t.Fatalf("app notes carry no marker: %q", fake.app["notes"])
+	}
+	return publication{identity: match[1], payload: match[2], content: match[3]}
 }
 
 func fixtureRequest(t *testing.T) plugin.ReconcileRequest {
@@ -226,30 +389,33 @@ func fixtureRequest(t *testing.T) plugin.ReconcileRequest {
 }
 
 type graphFixture struct {
-	mu                                             sync.Mutex
-	url                                            string
-	app                                            object
-	assignments                                    []any
-	file                                           object
-	blocks                                         map[string][]byte
-	uploaded                                       []byte
-	creates, versions, blobLists, commits, assigns int
-	failCommit                                     bool
-	plaintext                                      []byte
-	expectedAPI                                    string
-	contentTypes                                   []string
-	paths                                          []string
-	contentVersions                                map[string]bool
-	deletedVersions                                []string
-	relations                                      map[string][]object
-	relatedApps                                    map[string]object
-	relationshipWrites                             int
-	failRelationships                              bool
+	mu          sync.Mutex
+	url         string
+	app         object
+	assignments []any
+	files       map[string]object // content version ID to its file, nil until an upload creates one
+	versionBase int               // numbers new content versions after history a test seeds
+	blocks      map[string][]byte
+	uploaded    []byte
+	plaintext   []byte
+
+	creates, versions, blobLists, commits, assigns, appLists, writes int
+	failBlob, failCommit, failRelationships                          bool
+
+	expectedAPI        string
+	pendingAppReads    int
+	contentTypes       []string
+	paths              []string
+	patches            []object
+	deletedVersions    []string
+	relations          map[string][]object
+	relatedApps        map[string]object
+	relationshipWrites int
 }
 
 func newGraphFixture(t *testing.T) (*graphFixture, *client) {
 	t.Helper()
-	fake := &graphFixture{blocks: map[string][]byte{}, contentVersions: map[string]bool{}, relations: map[string][]object{}, relatedApps: map[string]object{}}
+	fake := &graphFixture{blocks: map[string][]byte{}, files: map[string]object{}, relations: map[string][]object{}, relatedApps: map[string]object{}}
 	server := httptest.NewTLSServer(http.HandlerFunc(fake.serve))
 	t.Cleanup(server.Close)
 	fake.url = server.URL
@@ -298,6 +464,12 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "read error", http.StatusBadRequest)
 			return
 		}
+		f.writes++
+		if f.failBlob {
+			f.failBlob = false
+			http.Error(w, "interrupted upload", http.StatusForbidden)
+			return
+		}
 		switch r.URL.Query().Get("comp") {
 		case "block":
 			f.blocks[r.URL.Query().Get("blockid")] = data
@@ -337,7 +509,12 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.paths = append(f.paths, r.URL.Path)
+	if r.Method != http.MethodGet {
+		f.writes++
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/"+api)
+	_, version, _ := strings.Cut(path, "/contentVersions/")
+	version, _, _ = strings.Cut(version, "/")
 	switch {
 	case strings.HasSuffix(path, "/relationships") && r.Method == http.MethodGet:
 		id := strings.TrimSuffix(strings.TrimPrefix(path, appsPath+"/"), "/relationships")
@@ -371,9 +548,19 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, appsPath+"/") && f.relatedApps[strings.TrimPrefix(path, appsPath+"/")] != nil && r.Method == http.MethodGet:
 		write(f.relatedApps[strings.TrimPrefix(path, appsPath+"/")])
 	case path == appsPath && r.Method == http.MethodGet:
+		f.appLists++
 		apps := []any{}
+		listed := func(app object) {
+			// Collection responses may omit heavyweight properties such as largeIcon.
+			app = maps.Clone(app)
+			delete(app, "largeIcon")
+			apps = append(apps, app)
+		}
 		if f.app != nil {
-			apps = append(apps, f.app)
+			listed(f.app)
+		}
+		for _, id := range slices.Sorted(maps.Keys(f.relatedApps)) {
+			listed(f.relatedApps[id])
 		}
 		write(object{"value": apps})
 	case path == appsPath && r.Method == http.MethodPost:
@@ -383,8 +570,15 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.app["publishingState"] = "notPublished"
 		write(f.app)
 	case path == appsPath+"/app-1" && r.Method == http.MethodGet:
+		if f.pendingAppReads > 0 {
+			f.pendingAppReads--
+			if f.pendingAppReads == 0 {
+				f.app["publishingState"] = "published"
+			}
+		}
 		write(f.app)
 	case path == appsPath+"/app-1" && r.Method == http.MethodPatch:
+		f.patches = append(f.patches, body)
 		maps.Copy(f.app, body)
 		if body["committedContentVersion"] != nil {
 			f.app["publishingState"] = "published"
@@ -397,32 +591,39 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.contentTypes = append(f.contentTypes, text(f.app["@odata.type"]))
 		f.versions++
-		f.contentVersions[strconv.Itoa(f.versions)] = true
-		write(object{"id": strconv.Itoa(f.versions)})
+		id := strconv.Itoa(f.versionBase + f.versions)
+		f.files[id] = nil
+		write(object{"id": id})
 	case strings.HasSuffix(path, "/contentVersions") && r.Method == http.MethodGet:
 		items := []object{}
-		for id := range f.contentVersions {
+		for id := range f.files {
 			items = append(items, object{"id": id})
 		}
 		write(object{"value": items})
 	case strings.Contains(path, "/contentVersions/") && r.Method == http.MethodDelete:
-		id := path[strings.LastIndex(path, "/")+1:]
-		if id == f.app["committedContentVersion"] {
+		if version == f.app["committedContentVersion"] {
 			http.Error(w, "cannot delete active content", http.StatusBadRequest)
 			return
 		}
-		delete(f.contentVersions, id)
-		f.deletedVersions = append(f.deletedVersions, id)
+		delete(f.files, version)
+		f.deletedVersions = append(f.deletedVersions, version)
 		w.WriteHeader(http.StatusNoContent)
 	case strings.HasSuffix(path, "/files") && r.Method == http.MethodPost:
-		f.file = body
-		f.file["id"] = "file-1"
-		f.file["uploadState"] = "azureStorageUriRequestSuccess"
-		f.file["azureStorageUri"] = f.url + "/blob?sig=temporary"
-		write(f.file)
+		body["id"] = "file-1"
+		body["uploadState"] = "azureStorageUriRequestSuccess"
+		body["azureStorageUri"] = f.url + "/blob?sig=temporary"
+		f.files[version] = body
+		write(body)
+	case strings.HasSuffix(path, "/files") && r.Method == http.MethodGet:
+		items := []object{}
+		if file := f.files[version]; file != nil {
+			items = append(items, file)
+		}
+		write(object{"value": items})
 	case strings.HasSuffix(path, "/files/file-1") && r.Method == http.MethodGet:
-		write(f.file)
+		write(f.files[version])
 	case strings.HasSuffix(path, "/commit"):
+		file := f.files[version]
 		info, ok := body["fileEncryptionInfo"].(object)
 		if !ok || len(f.uploaded) < 48 {
 			http.Error(w, "bad commit body", http.StatusBadRequest)
@@ -457,14 +658,14 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		plaintext = plaintext[:len(plaintext)-padding]
 		actualDigest := sha256.Sum256(plaintext)
-		if !bytes.Equal(actualDigest[:], digest) || f.file["size"] != float64(len(plaintext)) || f.file["sizeEncrypted"] != float64(len(f.uploaded)) || info["profileIdentifier"] != "ProfileVersion1" || info["fileDigestAlgorithm"] != "SHA256" {
+		if !bytes.Equal(actualDigest[:], digest) || file["size"] != float64(len(plaintext)) || file["sizeEncrypted"] != float64(len(f.uploaded)) || info["profileIdentifier"] != "ProfileVersion1" || info["fileDigestAlgorithm"] != "SHA256" {
 			http.Error(w, "bad plaintext digest or sizes", http.StatusBadRequest)
 			return
 		}
 		f.plaintext = plaintext
 		f.commits++
-		f.file["isCommitted"] = true
-		f.file["uploadState"] = "commitFileSuccess"
+		file["isCommitted"] = true
+		file["uploadState"] = "commitFileSuccess"
 		if f.failCommit {
 			f.failCommit = false
 			http.Error(w, "ambiguous commit", http.StatusInternalServerError)
@@ -489,7 +690,6 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 			fake.expectedAPI = "beta"
 			extension := ".dmg"
 			if appType == pkgType {
-				fake.expectedAPI = "beta"
 				extension = ".pkg"
 			}
 			// Transport fixtures deliberately do not claim installer-format validity.
@@ -509,8 +709,7 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			response, err := c.handle(t.Context(), req, configuration{}, desired)
-			if err != nil {
+			if _, err := c.handle(t.Context(), req, desired); err != nil {
 				t.Fatal(err)
 			}
 			if !bytes.Equal(fake.plaintext, source) {
@@ -519,22 +718,17 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 			if fake.app["fileName"] != "vendor"+extension || fake.app["setupFilePath"] != nil || fake.app["installCommandLine"] != nil || fake.versions != 1 || fake.commits != 1 {
 				t.Fatalf("incorrect native macOS contract: %+v", fake.app)
 			}
-			var b binding
-			if err := json.Unmarshal(response.Binding, &b); err != nil {
-				t.Fatal(err)
-			}
-			if b.PayloadSHA256 != req.Artifact.SHA256 || b.EnvelopeSHA256 == req.Artifact.SHA256 {
-				t.Fatal("confused source identity and randomized encrypted transport")
+			if published := publishedMarker(t, fake); published.payload != req.Artifact.SHA256 {
+				t.Fatalf("marker does not identify the source bytes: %+v", published)
 			}
 			fake.app["owner"] = "Remote owner"
 			fake.app["ignoreVersionDetection"] = true
-			req.Binding = response.Binding
 			req.Metadata = raw(object{"@odata.type": appType, "primaryBundleVersion": "1.1", "ignoreVersionDetection": false, "minimumSupportedOperatingSystem": object{"v14_0": true}})
 			desired, err = validateMetadata(req.Metadata)
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = c.handle(t.Context(), req, configuration{}, desired)
+			_, err = c.handle(t.Context(), req, desired)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -545,11 +739,10 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 			if fake.app["owner"] != "Remote owner" || fake.app["ignoreVersionDetection"] != false || fake.versions != 1 || fake.blobLists != 1 {
 				t.Fatal("metadata update lost omission/false or uploaded unchanged bytes")
 			}
-			req.Binding = nil
 			req.Method = "plan"
-			response, err = c.handle(t.Context(), req, configuration{}, desired)
+			response, err := c.handle(t.Context(), req, desired)
 			if err != nil || len(response.Changes) != 0 {
-				t.Fatalf("cold binding recovery: %v, %v", response.Changes, err)
+				t.Fatalf("settled plan: %v, %v", response.Changes, err)
 			}
 		})
 	}
@@ -576,21 +769,31 @@ func TestMacValidationAndAdoption(t *testing.T) {
 	req.Artifact.Filename = "existing.dmg"
 	req.Config = raw(object{"graph_url": fake.url + "/v1.0", "token": "test-token"})
 	req.Metadata = raw(object{"@odata.type": dmgType, "app_id": "app-1", "displayName": "Adopted"})
-	cfg, err := parseConfiguration(req.Config)
-	if err != nil {
-		t.Fatal(err)
-	}
 	desired, err := validateMetadata(req.Metadata)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.AppID = text(desired["app_id"])
-	delete(desired, "app_id")
-	if _, err := c.handle(t.Context(), req, cfg, desired); err != nil {
+	response, err := c.handle(t.Context(), req, desired)
+	if err != nil {
 		t.Fatal(err)
+	}
+	// Graph exposes no digest of adopted content, so adoption publishes it again.
+	if !slices.ContainsFunc(response.Changes, func(change plugin.Change) bool { return change.Kind == "content" }) {
+		t.Fatalf("adoption did not plan publication: %+v", response.Changes)
 	}
 	if len(fake.paths) != 1 || fake.paths[0] != "/beta"+appsPath+"/app-1" {
 		t.Fatalf("adoption did not read explicit per-software ID: %v", fake.paths)
+	}
+	fake.app["notes"] = withMarker("", publication{identity: strings.Repeat("a", 64)})
+	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), "another Stemma identity") {
+		t.Fatalf("adopted an app that belongs to other software: %v", err)
+	}
+	desired["app_id"] = "absent"
+	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), `app_id "absent" does not exist`) {
+		t.Fatalf("missing adopted app: %v", err)
+	}
+	if fake.writes != 0 || fake.appLists != 0 {
+		t.Fatal("adoption planning wrote to or listed the tenant")
 	}
 	req.Method = "validate"
 	if _, err := Handle(t.Context(), req); err != nil {
@@ -602,52 +805,23 @@ func TestMacValidationAndAdoption(t *testing.T) {
 	}
 }
 
-func TestMacInterruptedCommitRetainsActualTransport(t *testing.T) {
+func TestAppSubtypeCannotBeChanged(t *testing.T) {
 	fake, c := newGraphFixture(t)
+	req := fixtureRequest(t)
+	desired, err := validateMetadata(req.Metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
+		t.Fatal(err)
+	}
+	fake.mu.Lock()
 	fake.expectedAPI = "beta"
-	fake.failCommit = true
-	req := fixtureRequest(t)
-	req.Artifact.Filename = "vendor.pkg"
-	req.Metadata = raw(object{"@odata.type": pkgType, "displayName": "Vendor", "description": "Raw installer", "publisher": "Vendor", "primaryBundleId": "org.example.app", "primaryBundleVersion": "1.0", "includedApps": []any{object{"bundleId": "org.example.app", "bundleVersion": "1.0"}}, "minimumSupportedOperatingSystem": object{"v26_0": true}})
-	desired, err := validateMetadata(req.Metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
-	response, err := c.handle(t.Context(), req, configuration{}, desired)
-	if err == nil {
-		t.Fatal("expected lost commit response")
-	}
-	var partial binding
-	if err := json.Unmarshal(response.Binding, &partial); err != nil {
-		t.Fatal(err)
-	}
-	if partial.Pending == nil || partial.Pending.Stage != "committing" || partial.Pending.EnvelopeSHA256 == "" {
-		t.Fatal("lost actual ciphertext identity")
-	}
-	uploaded := append([]byte(nil), fake.uploaded...)
-	req.Binding = response.Binding
-	if _, err := c.handle(t.Context(), req, configuration{}, desired); err != nil {
-		t.Fatal(err)
-	}
-	if fake.versions != 1 || fake.blobLists != 1 || fake.commits != 1 || !bytes.Equal(uploaded, fake.uploaded) {
-		t.Fatal("retry regenerated randomized transport after commit")
-	}
-}
-
-func TestBoundSubtypeCannotBeChanged(t *testing.T) {
-	fake, c := newGraphFixture(t)
-	req := fixtureRequest(t)
-	desired, err := validateMetadata(req.Metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.handle(t.Context(), req, configuration{}, desired); err != nil {
-		t.Fatal(err)
-	}
+	fake.mu.Unlock()
 	req.Artifact.Filename = "vendor.dmg"
 	desired = object{"@odata.type": dmgType}
-	if _, err := c.handle(t.Context(), req, configuration{}, desired); err == nil {
-		t.Fatal("created another app for the same identity under a new subtype")
+	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), "different native subtype") {
+		t.Fatalf("identity moved to another subtype: %v", err)
 	}
 	if fake.creates != 1 {
 		t.Fatal("duplicated cross-subtype identity")

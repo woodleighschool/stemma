@@ -12,10 +12,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/gofrs/flock"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/internal/fileio"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/plugin"
@@ -23,12 +21,12 @@ import (
 
 // Options configures one finite execution of the CLI.
 type Options struct {
-	ConfigPath, CacheDir, StateDir string
-	Method                         string
-	Resources                      []string
-	Lock                           lockfile.Options
-	Icons                          IconOptions
-	Handlers                       map[string]reconcileHandler
+	ConfigPath, CacheDir string
+	Method               string
+	Resources            []string
+	Lock                 lockfile.Options
+	Icons                IconOptions
+	Handlers             map[string]reconcileHandler
 	// ResourceDone receives each final resource result, including failures.
 	ResourceDone func(ResourceReport) error
 }
@@ -63,25 +61,11 @@ type ResourceReport struct {
 
 // DestinationReport describes semantic drift independently of cache hits.
 type DestinationReport struct {
-	Name            string            `json:"name"`
-	Origins         map[string]string `json:"origins,omitempty"`
-	SourceChanged   bool              `json:"source_changed"`
-	PreparedChanged bool              `json:"prepared_changed"`
-	Changes         []plugin.Change   `json:"changes"`
-	Applied         bool              `json:"applied"`
-	Error           string            `json:"error,omitempty"`
-}
-
-type binding struct {
-	Connection string          `json:"connection"`
-	Source     string          `json:"source,omitempty"`
-	Payload    string          `json:"payload,omitempty"`
-	Binding    json.RawMessage `json:"binding"`
-}
-type state struct {
-	Version  int                `json:"version"`
-	Project  string             `json:"project"`
-	Bindings map[string]binding `json:"bindings"`
+	Name    string            `json:"name"`
+	Origins map[string]string `json:"origins,omitempty"`
+	Changes []plugin.Change   `json:"changes"`
+	Applied bool              `json:"applied"`
+	Error   string            `json:"error,omitempty"`
 }
 
 // Run resolves locked resources in dependency order and reconciles destinations independently.
@@ -139,7 +123,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err := registerResolvers(manager, ops, s.work); err != nil {
 		return report, err
 	}
-	destinations, dependencies, err := orderDestinations(ctx, p, plans, ops, root, selected)
+	destinations, err := planDestinations(ctx, p, plans, ops, root, selected)
 	if err != nil {
 		return report, err
 	}
@@ -186,34 +170,6 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		}
 		return report, err
 	}
-	stateDir := opts.StateDir
-	if stateDir == "" {
-		stateDir = filepath.Join(root, ".stemma", "state")
-	}
-	statePath := filepath.Join(stateDir, p.Project+".json")
-	if opts.Method == "apply" {
-		if err := os.MkdirAll(stateDir, 0o700); err != nil {
-			return report, err
-		}
-		lock := flock.New(filepath.Join(stateDir, p.Project+".lock"))
-		ok, err := lock.TryLock()
-		if err == nil && !ok {
-			waited := plugin.Stage(ctx, "Waiting for destination state lock")
-			ok, err = lock.TryLockContext(ctx, 50*time.Millisecond)
-			waited(err)
-		}
-		if err != nil {
-			return report, err
-		}
-		if !ok {
-			return report, ctx.Err()
-		}
-		defer func() { _ = lock.Close() }()
-	}
-	current, err := loadState(statePath, p.Project)
-	if err != nil {
-		return report, err
-	}
 	type preparedResource struct {
 		work    string
 		outputs map[string]Prepared
@@ -222,7 +178,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	preparedItems := map[string]preparedResource{}
 	pending := map[string]int{}
-	for _, destination := range destinations {
+	for destination := range destinations {
 		pending[destination.Resource]++
 	}
 	complete := func(item ResourceReport) error {
@@ -344,7 +300,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			return nil
 		}
 		if !preparing {
-			for _, dependency := range dependencies[destination] {
+			for _, dependency := range destinations[destination].requires {
 				if _, selected := declarations[dependency.Resource]; selected {
 					if err := reconcile(dependency); err != nil {
 						return err
@@ -364,7 +320,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		}
 		var destinationErr error
 		if !preparing {
-			for _, dependency := range dependencies[destination] {
+			for _, dependency := range destinations[destination].requires {
 				if failed[dependency] {
 					destinationErr = fmt.Errorf("required publication %s/%s failed", dependency.Resource, dependency.Destination)
 					break
@@ -373,7 +329,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		}
 		before := len(item.Destinations)
 		if destinationErr == nil {
-			destinationErr = reconcileDestination(ctx, opts, p, plans, ops, store, root, prepared.work, destination.Resource, destination.Destination, prepared.outputs, &current, statePath, item)
+			destinationErr = reconcileDestination(ctx, opts, p, plans, ops, store, root, prepared.work, destination.Resource, destination.Destination, prepared.outputs, destinations[destination].peers, item)
 		}
 		if destinationErr != nil {
 			failed[destination] = true
@@ -479,13 +435,12 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 }
 
 type destinationInput struct {
-	name     string
-	prepared Prepared
-	request  plugin.ReconcileRequest
-	report   DestinationReport
+	name    string
+	request plugin.ReconcileRequest
+	report  DestinationReport
 }
 
-func reconcileDestination(ctx context.Context, opts Options, p config.Project, plans map[string]resourcePlan, ops *operations, store *cas.Store, root, work, name, destination string, outputs map[string]Prepared, current *state, statePath string, item *ResourceReport) (runErr error) {
+func reconcileDestination(ctx context.Context, opts Options, p config.Project, plans map[string]resourcePlan, ops *operations, store *cas.Store, root, work, name, destination string, outputs map[string]Prepared, peers map[string]json.RawMessage, item *ResourceReport) (runErr error) {
 	software := plans[name]
 	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", software.Resource.Kind+"/"+software.Resource.Metadata.Name, "destination", destination))
 	done := plugin.Stage(ctx, "Validating destination")
@@ -524,7 +479,7 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 			return err
 		}
 	}
-	input, err := makeDestinationInput(ops, p, plans, root, name, destination, prepared, effective, origins, current)
+	input, err := makeDestinationInput(p, plans, root, name, destination, prepared, effective, origins, peers)
 	if err != nil {
 		return err
 	}
@@ -573,7 +528,7 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 	err = errors.Join(err, verifyLeases(ctx, store, work, input.request))
 	done(err, "changes", len(response.Changes))
 	if err == nil && opts.Method == "apply" {
-		input.report, err = deliver(ctx, ops, p, store, work, name, input, current, statePath)
+		input.report, err = deliver(ctx, ops, p, store, work, input)
 	}
 	if err != nil {
 		input.report.Error = err.Error()
@@ -585,58 +540,34 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 	return nil
 }
 
-func makeDestinationInput(ops *operations, p config.Project, plans map[string]resourcePlan, root, software, name string, prepared Prepared, metadata map[string]any, origins map[string]string, current *state) (destinationInput, error) {
-	d := p.Destinations[name]
-	previous := current.Bindings[software+"/"+name]
-	if previous.Connection != ops.fingerprint(d) {
-		previous = binding{Connection: ops.fingerprint(d)}
-	}
-	input := destinationInput{name: name, prepared: prepared, report: DestinationReport{Name: name, Origins: origins, SourceChanged: previous.Source != prepared.InputsHash, PreparedChanged: previous.Payload != prepared.Payload.SHA256}}
+func makeDestinationInput(p config.Project, plans map[string]resourcePlan, root, software, name string, prepared Prepared, metadata map[string]any, origins map[string]string, peers map[string]json.RawMessage) (destinationInput, error) {
+	input := destinationInput{name: name, report: DestinationReport{Name: name, Origins: origins}}
 	metadataData, err := json.Marshal(metadata)
 	if err != nil {
 		return input, err
 	}
-	settings := d.Config
-	configData, err := json.Marshal(settings)
+	configData, err := json.Marshal(p.Destinations[name].Config)
 	if err != nil {
 		return input, err
 	}
-	input.request = plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: p.Project, Software: plans[software].Resource.Metadata.Name, Destination: name}, Config: configData, Metadata: metadataData, Artifact: prepared.artifact(), Facts: prepared.Facts, Binding: previous.Binding, Prepared: true, Root: root, Subjects: plans[software].Subjects, Bindings: peerBindings(ops, p, plans, name, current)}
+	input.request = plugin.ReconcileRequest{Method: "validate", Identity: plugin.Identity{Project: p.Project, Software: plans[software].Resource.Metadata.Name, Destination: name}, Config: configData, Metadata: metadataData, Artifact: prepared.artifact(), Facts: prepared.Facts, Prepared: true, Root: root, Subjects: plans[software].Subjects, Peers: peers}
 	return input, nil
 }
 
-func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.Store, work, software string, input destinationInput, current *state, statePath string) (result DestinationReport, runErr error) {
-	d := p.Destinations[input.name]
+func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.Store, work string, input destinationInput) (result DestinationReport, runErr error) {
 	done := plugin.Stage(ctx, "Applying destination")
 	defer func() { done(runErr) }()
 	report := input.report
-	previous := current.Bindings[software+"/"+input.name]
-	if previous.Connection != ops.fingerprint(d) {
-		previous = binding{Connection: ops.fingerprint(d)}
-	}
 	if err := verifyLeases(ctx, store, work, input.request); err != nil {
 		return report, err
 	}
 	input.request.Method = "apply"
 	var response plugin.ReconcileResponse
-	err := ops.call(ctx, d.Operation, "apply", input.request, &response)
+	err := ops.call(ctx, p.Destinations[input.name].Operation, "apply", input.request, &response)
 	err = errors.Join(err, verifyLeases(ctx, store, work, input.request))
 	report.Changes = response.Changes
 	report.Origins = mergeOrigins(report.Origins, response.Origins)
-	if err == nil || len(response.Binding) > 0 {
-		if len(response.Binding) > 0 {
-			previous.Binding = response.Binding
-		}
-		if err == nil {
-			previous.Source = input.prepared.InputsHash
-			previous.Payload = input.prepared.Payload.SHA256
-			report.Applied = true
-		}
-		current.Bindings[software+"/"+input.name] = previous
-		if saveErr := saveState(statePath, *current); saveErr != nil {
-			return report, errors.Join(err, saveErr)
-		}
-	}
+	report.Applied = err == nil
 	done(err, "changes", len(report.Changes))
 	return report, err
 }
@@ -713,32 +644,4 @@ func sortedKeys[T any](values map[string]T) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func loadState(path, project string) (state, error) {
-	s := state{Version: 2, Project: project, Bindings: map[string]binding{}}
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return s, nil
-	}
-	if err != nil {
-		return s, err
-	}
-	if len(data) > 16<<20 {
-		return s, errors.New("destination state exceeds 16 MiB")
-	}
-	if err := json.Unmarshal(data, &s); err != nil {
-		return s, fmt.Errorf("destination state is corrupt; restore it before publication: %w", err)
-	}
-	if s.Version != 2 || s.Project != project || s.Bindings == nil {
-		return s, errors.New("destination state has an unsupported version or different project identity")
-	}
-	return s, nil
-}
-func saveState(path string, s state) error {
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	return fileio.Write(path, append(data, '\n'), 0o600)
 }

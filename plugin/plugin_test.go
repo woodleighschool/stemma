@@ -122,25 +122,23 @@ func TestExecutableProtocol(t *testing.T) {
 			}
 		}
 	})
-	t.Run("apply preserves binding presence and partial failure", func(t *testing.T) {
-		for _, bound := range []string{"", `null`, `{"object_id":42}`} {
-			for _, fail := range []bool{false, true} {
-				request := plugin.ReconcileRequest{Method: "apply", Config: raw(t, map[string]bool{"fail": fail}), Binding: json.RawMessage(bound)}
-				response, err := plugin.Run(t.Context(), binary, reconcileRequest(t, request))
-				result := reconcileResponse(t, response)
-				if (err != nil) != fail || string(result.Binding) != bound {
-					t.Fatalf("binding %q, fail=%v: response=%+v error=%v", bound, fail, result, err)
-				}
-				if fail && (response.Error != "later upload failed" || !strings.Contains(err.Error(), response.Error)) {
-					t.Fatalf("handler error lost: response=%+v error=%v", response, err)
-				}
+	t.Run("apply retains its changes through a partial failure", func(t *testing.T) {
+		for _, fail := range []bool{false, true} {
+			request := plugin.ReconcileRequest{Method: "apply", Config: raw(t, map[string]bool{"fail": fail})}
+			response, err := plugin.Run(t.Context(), binary, reconcileRequest(t, request))
+			result := reconcileResponse(t, response)
+			if (err != nil) != fail || len(result.Changes) != 1 || result.Changes[0].Field != "applied" {
+				t.Fatalf("fail=%v: response=%+v error=%v", fail, result, err)
+			}
+			if fail && (response.Error != "later upload failed" || !strings.Contains(err.Error(), response.Error)) {
+				t.Fatalf("handler error lost: response=%+v error=%v", response, err)
 			}
 		}
 	})
-	t.Run("authored configuration obeys its declared schema", func(t *testing.T) {
+	t.Run("configuration obeys its declared schema", func(t *testing.T) {
 		request := plugin.ReconcileRequest{Method: "validate", Config: json.RawMessage(`{"fail":"yes"}`)}
 		if _, err := plugin.Run(t.Context(), binary, reconcileRequest(t, request)); err == nil || !strings.Contains(err.Error(), "config") {
-			t.Fatalf("invalid authored configuration error = %v", err)
+			t.Fatalf("invalid configuration error = %v", err)
 		}
 	})
 	t.Run("cancellation stops an active executable", func(t *testing.T) {
@@ -164,10 +162,10 @@ func TestExecutableProtocol(t *testing.T) {
 			<-r.Context().Done()
 		}))
 		defer server.Close()
-		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":3,"output":{"binding":{"id":7}}}`)
+		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":4,"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
 		t.Setenv("STEMMA_ECHO_WAIT_URL", server.URL)
 		response, err := plugin.Run(ctx, binary, plugin.Request{Method: "describe"})
-		if !errors.Is(err, context.Canceled) || response.Protocol != plugin.ProtocolVersion || string(response.Output) != `{"binding":{"id":7}}` {
+		if !errors.Is(err, context.Canceled) || response.Protocol != plugin.ProtocolVersion || string(response.Output) != `{"changes":[{"kind":"content","field":"installer","action":"upload"}]}` {
 			t.Fatalf("cancellation lost buffered response: response=%+v err=%v", response, err)
 		}
 	})
@@ -184,7 +182,7 @@ func TestExecutableProtocol(t *testing.T) {
 	})
 	t.Run("reject malformed responses", func(t *testing.T) {
 		for _, response := range []string{
-			`{"protocol":1,"output":{}}`, `{"protocol":"2"}`, `{"protocol":3,"unknown":true}`, `{"protocol":3}{}`, `null`, `{"protocol":3`,
+			`{"protocol":1,"output":{}}`, `{"protocol":"2"}`, `{"protocol":4,"unknown":true}`, `{"protocol":4}{}`, `null`, `{"protocol":4`,
 		} {
 			t.Setenv("STEMMA_ECHO_RESPONSE", response)
 			if _, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"}); err == nil {
@@ -193,10 +191,10 @@ func TestExecutableProtocol(t *testing.T) {
 		}
 	})
 	t.Run("process errors retain partial output without diagnostics", func(t *testing.T) {
-		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":3,"output":{"binding":{"id":7}}}`)
+		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":4,"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
 		t.Setenv("STEMMA_ECHO_FAIL", "1")
 		response, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"})
-		if err == nil || string(reconcileResponse(t, response).Binding) != `{"id":7}` || strings.Contains(err.Error(), "credential") {
+		if err == nil || len(reconcileResponse(t, response).Changes) != 1 || strings.Contains(err.Error(), "credential") {
 			t.Fatalf("partial output=%s error=%v", response.Output, err)
 		}
 	})
@@ -282,7 +280,7 @@ func TestRegistryChecksOutputAndPreservesPartialErrors(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		registry := plugin.New("fixture", "1")
 		if err := registry.Register(echoOperation("fixture.echo"), func(context.Context, plugin.Request) (plugin.Response, error) {
-			response := plugin.Response{Output: json.RawMessage(`{"binding":{"id":7}}`)}
+			response := plugin.Response{Output: json.RawMessage(`{"object":{"id":7}}`)}
 			if fail {
 				return response, errors.New("later write failed")
 			}
@@ -294,7 +292,7 @@ func TestRegistryChecksOutputAndPreservesPartialErrors(t *testing.T) {
 		if err == nil {
 			t.Fatal("accepted output missing a required contract field")
 		}
-		if string(response.Output) != `{"binding":{"id":7}}` {
+		if string(response.Output) != `{"object":{"id":7}}` {
 			t.Fatalf("partial failure output lost: %+v", response)
 		}
 		if !fail && !strings.Contains(err.Error(), "output") {
@@ -384,10 +382,10 @@ func TestSchemaValidation(t *testing.T) {
 
 func TestServeRejectsMalformedProtocolBeforeHandler(t *testing.T) {
 	for _, input := range []string{
-		`{"protocol":1,"method":"describe"}`, `{"protocol":3,"method":"describe","unknown":true}`,
-		`{"protocol":3,"method":"describe"}{"protocol":3}`, `{"protocol":3`, `{"protocol":3}`,
-		`{"protocol":3,"method":"observe"}`, `{"protocol":"2","method":"describe"}`, `null`, `[]`,
-		`{"protocol":3,"method":"run","operation":"fixture.echo"}`, `{"protocol":3,"method":"describe","input":{}}`,
+		`{"protocol":1,"method":"describe"}`, `{"protocol":4,"method":"describe","unknown":true}`,
+		`{"protocol":4,"method":"describe"}{"protocol":4}`, `{"protocol":4`, `{"protocol":4}`,
+		`{"protocol":4,"method":"observe"}`, `{"protocol":"2","method":"describe"}`, `null`, `[]`,
+		`{"protocol":4,"method":"run","operation":"fixture.echo"}`, `{"protocol":4,"method":"describe","input":{}}`,
 	} {
 		t.Run(input, func(t *testing.T) {
 			registry := plugin.New("fixture", "1")
@@ -420,11 +418,11 @@ func TestServeBounds(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	input := `{"protocol":3,"operation":"fixture.echo","method":"run","input":{"padding":"` + strings.Repeat("x", 4<<20) + `"}}`
+	input := `{"protocol":4,"operation":"fixture.echo","method":"run","input":{"padding":"` + strings.Repeat("x", 4<<20) + `"}}`
 	if err := plugin.Serve(t.Context(), strings.NewReader(input), &out, registry); err == nil || !strings.Contains(err.Error(), "size limit") || called {
 		t.Fatalf("oversized request: error=%v handler called=%v", err, called)
 	}
-	input = `{"protocol":3,"operation":"fixture.echo","method":"run","input":{"value":7}}`
+	input = `{"protocol":4,"operation":"fixture.echo","method":"run","input":{"value":7}}`
 	if err := plugin.Serve(t.Context(), strings.NewReader(input), &out, registry); err == nil || !strings.Contains(err.Error(), "size limit") || !called || out.Len() != 0 {
 		t.Fatalf("oversized response: error=%v handler called=%v output size=%d", err, called, out.Len())
 	}
@@ -454,7 +452,7 @@ func TestRegistryCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	if err := registry.Register(echoOperation("fixture.echo"), func(ctx context.Context, _ plugin.Request) (plugin.Response, error) {
 		cancel()
-		return plugin.Response{Output: json.RawMessage(`{"binding":{"id":7}}`)}, ctx.Err()
+		return plugin.Response{Output: json.RawMessage(`{"object":{"id":7}}`)}, ctx.Err()
 	}); err != nil {
 		t.Fatal(err)
 	}

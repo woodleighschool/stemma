@@ -25,7 +25,7 @@ type Descriptor struct {
 // Operation advertises a capability. Empty Platforms means portable; otherwise
 // entries are GOOS/GOARCH pairs. SideEffects is none, workspace, or remote.
 // Methods contains validate, run, plan, or apply; describe is implicit.
-// ConfigSchema constrains authored configuration independently of runtime inputs;
+// ConfigSchema constrains declared configuration independently of runtime inputs;
 // providers must supply it when configuration is constrained.
 // RequiresInspection requests facts for the primary reconciliation artifact.
 type Operation struct {

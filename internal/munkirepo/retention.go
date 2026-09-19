@@ -16,76 +16,25 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-type repositoryBinding struct {
-	Identity     string                 `json:"identity"`
-	Pkginfo      string                 `json:"pkginfo"`
-	Publications plugin.Publications    `json:"publications"`
-	Entries      map[string]publication `json:"entries"`
-	Latest       map[string]string      `json:"latest"`
-}
-
-type publication struct {
-	Payload  string   `json:"payload"`
-	Pkginfo  string   `json:"pkginfo"`
-	Location string   `json:"location,omitempty"`
-	Name     string   `json:"name"`
-	Version  string   `json:"version"`
-	SHA256   string   `json:"sha256,omitempty"`
-	Derived  []string `json:"derived,omitempty"`
-}
-
-func samePublication(a, b map[string]any) bool {
-	return a != nil && b != nil && owner(a) != "" && owner(a) == owner(b) && a["name"] == b["name"] && a["version"] == b["version"] && a["installer_item_hash"] == b["installer_item_hash"] && hashValue(a["supported_architectures"]) == hashValue(b["supported_architectures"])
-}
-
-func prune(ctx context.Context, root string, binding *repositoryBinding, keep int, apply bool, response *plugin.ReconcileResponse) error {
-	retained := binding.Publications.Retained(keep)
-	fingerprints := make([]string, 0, len(binding.Entries))
-	for fingerprint := range binding.Entries {
-		fingerprints = append(fingerprints, fingerprint)
-	}
-	slices.Sort(fingerprints)
-	for _, fingerprint := range fingerprints {
+// prune keeps the newest others beside the current publication and removes the
+// rest of the family, newest first, unless the repository still pins them.
+func prune(ctx context.Context, root string, current map[string]any, others []item, keep int, apply bool, response *plugin.ReconcileResponse) error {
+	for _, old := range others[min(keep-1, len(others)):] {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		entry := binding.Entries[fingerprint]
-		payload := entry.Payload
-		if entry.Pkginfo == binding.Pkginfo || payload == "" || binding.Publications.Order[payload] == 0 || binding.Latest[payload] == "" {
-			continue
-		}
-		if retained[payload] && binding.Latest[payload] == fingerprint {
-			continue
-		}
-		expected := filepath.ToSlash(filepath.Join("pkgsinfo", "stemma", binding.Identity, fingerprint+".plist"))
-		if entry.Pkginfo != expected {
-			return errors.New("retention binding contains an invalid pkginfo path")
-		}
-		document, err := readObject(filepath.Join(root, filepath.FromSlash(entry.Pkginfo)))
-		if err != nil {
-			return err
-		}
-		if document == nil {
-			continue
-		}
-		if owner(document) != binding.Identity || document["name"] != entry.Name || document["version"] != entry.Version {
-			return errors.New("retention pkginfo no longer matches owned publication")
-		}
-		if entry.SHA256 != "" && (document["installer_item_hash"] != entry.SHA256 || document["installer_item_location"] != entry.Location) {
-			return errors.New("retention installer no longer matches owned publication")
-		}
-		protected, err := protectedPublication(root, entry)
+		protected, err := protectedPublication(root, old, current)
 		if err != nil {
 			return err
 		}
 		if protected {
 			continue
 		}
+		response.Changes = append(response.Changes, plugin.Change{Kind: "retention", Field: old.path, Action: "delete"})
 		if !apply {
-			response.Changes = append(response.Changes, plugin.Change{Kind: "retention", Field: entry.Pkginfo, Action: "delete"})
 			continue
 		}
-		catalogs, err := catalogChanges(root, document, nil)
+		catalogs, err := catalogChanges(root, old.document, nil)
 		if err != nil {
 			return err
 		}
@@ -98,49 +47,43 @@ func prune(ctx context.Context, root string, binding *repositoryBinding, keep in
 				return err
 			}
 		}
-		if err := os.Remove(filepath.Join(root, filepath.FromSlash(entry.Pkginfo))); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := os.Remove(filepath.Join(root, filepath.FromSlash(old.path))); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		if entry.Location != "" {
-			referenced, err := installerReferenced(root, entry.Location)
-			if err != nil {
-				return err
-			}
-			if !referenced {
-				if !strings.HasPrefix(entry.Location, "stemma/"+entry.SHA256+"/") || !filepath.IsLocal(entry.Location) {
-					return errors.New("retention binding contains an invalid installer location")
-				}
-				if err := os.Remove(filepath.Join(root, "pkgs", filepath.FromSlash(entry.Location))); err != nil && !errors.Is(err, os.ErrNotExist) {
-					return err
-				}
-			}
+		location, _ := old.document["installer_item_location"].(string)
+		if location == "" {
+			continue
 		}
-		delete(binding.Entries, fingerprint)
-		referenced := false
-		for _, other := range binding.Entries {
-			if other.Payload == payload {
-				referenced = true
-				break
-			}
+		if !filepath.IsLocal(filepath.FromSlash(location)) {
+			return fmt.Errorf("pkginfo %s has an unsafe installer location", old.path)
+		}
+		referenced, err := installerReferenced(root, location)
+		if err != nil {
+			return err
 		}
 		if !referenced {
-			delete(binding.Publications.Order, payload)
-			delete(binding.Latest, payload)
+			if err := os.Remove(filepath.Join(root, "pkgs", filepath.FromSlash(location))); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
 		}
-		response.Binding = raw(binding)
-		response.Changes = append(response.Changes, plugin.Change{Kind: "retention", Field: entry.Pkginfo, Action: "delete"})
 	}
 	return nil
 }
 
-func protectedPublication(root string, entry publication) (bool, error) {
+func protectedPublication(root string, old item, current map[string]any) (bool, error) {
+	name, _ := old.document["name"].(string)
+	version, _ := old.document["version"].(string)
+	pins := []string{name + "-" + version, name + "--" + version}
+	if !sameAvailability(old.document, current) {
+		pins = append(pins, name)
+	}
 	protected := false
 	for _, directory := range []string{"manifests", "pkgsinfo"} {
 		err := walkDocuments(filepath.Join(root, directory), func(filename string, value any) {
-			if directory == "pkgsinfo" && filename == filepath.Join(root, filepath.FromSlash(entry.Pkginfo)) {
+			if directory == "pkgsinfo" && filename == filepath.Join(root, filepath.FromSlash(old.path)) {
 				return
 			}
-			if references(value, entry.Name, entry.Version) {
+			if references(value, pins) {
 				protected = true
 			}
 		})
@@ -151,13 +94,29 @@ func protectedPublication(root string, entry publication) (bool, error) {
 	return protected, nil
 }
 
-func references(value any, name, version string) bool {
+// A bare name can only replace an older item when its catalogs and installation
+// constraints still make it available to the same clients.
+func sameAvailability(a, b map[string]any) bool {
+	for _, key := range []string{"catalogs", "supported_architectures"} {
+		if !slices.Equal(sortedStrings(a[key]), sortedStrings(b[key])) {
+			return false
+		}
+	}
+	for _, key := range []string{"minimum_os_version", "maximum_os_version", "minimum_munki_version", "installable_condition"} {
+		if hashValue(a[key]) != hashValue(b[key]) {
+			return false
+		}
+	}
+	return true
+}
+
+func references(value any, pins []string) bool {
 	switch value := value.(type) {
 	case string:
-		return value == name || value == name+"-"+version || value == name+"--"+version
+		return slices.Contains(pins, value)
 	case []any:
 		for _, item := range value {
-			if references(item, name, version) {
+			if references(item, pins) {
 				return true
 			}
 		}
@@ -165,7 +124,7 @@ func references(value any, name, version string) bool {
 		for key, item := range value {
 			switch key {
 			case "requires", "update_for", "managed_installs", "managed_uninstalls", "managed_updates", "optional_installs", "featured_items", "default_installs", "conditional_items":
-				if references(item, name, version) {
+				if references(item, pins) {
 					return true
 				}
 			}
@@ -218,7 +177,7 @@ func walkDocuments(root string, visit func(string, any)) error {
 		return err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("refusing retention with symlink %s", root)
+		return fmt.Errorf("refusing to read symlink %s", root)
 	}
 	scoped, err := os.OpenRoot(root)
 	if err != nil {
@@ -233,11 +192,18 @@ func walkDocuments(root string, visit func(string, any)) error {
 		if err != nil {
 			return err
 		}
+		// Munki ignores dotfiles, which desktop tools scatter through a repository.
+		if name != "." && strings.HasPrefix(entry.Name(), ".") {
+			if entry.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
 		if entry.IsDir() {
 			return nil
 		}
 		if entry.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing retention with symlink %s", filename)
+			return fmt.Errorf("refusing to read symlink %s", filename)
 		}
 		file, err := scoped.Open(filepath.FromSlash(name))
 		if err != nil {
@@ -249,11 +215,11 @@ func walkDocuments(root string, visit func(string, any)) error {
 			return err
 		}
 		if len(data) > 32<<20 {
-			return errors.New("repository document exceeds retention read limit")
+			return fmt.Errorf("%s exceeds the repository read limit", filename)
 		}
 		var value any
 		if err := munki.Unmarshal(data, &value); err != nil {
-			return err
+			return fmt.Errorf("%s: %w", filename, err)
 		}
 		visit(filename, value)
 		return nil

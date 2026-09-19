@@ -111,7 +111,7 @@ func TestLoadExpandsImportedValuesWithoutRequiringEnvironmentForDiscovery(t *tes
 	}
 	data, err := os.ReadFile(filepath.Join(root, "software/stemma.yaml"))
 	if err != nil || !strings.Contains(string(data), "${STEMMA_TEST_SECRET}") {
-		t.Fatal("loading rewrote authored configuration")
+		t.Fatal("loading rewrote the configuration file")
 	}
 }
 
