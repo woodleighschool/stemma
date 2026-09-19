@@ -1,4 +1,5 @@
-// Package diskimage reads selected installer payloads from portable HFS+ and APFS DMGs.
+// Package diskimage reads selected installer payloads from portable HFS+ and APFS
+// DMGs and writes application DMGs.
 package diskimage
 
 import (

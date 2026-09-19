@@ -16,6 +16,7 @@ arbitrary plugin code.
 | --------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | Mac PKG inspection    | Flat XAR packages and supported component payloads; streams file contents while retaining bounded inventory metadata  |
 | DMG inspection        | Raw, ADC, zlib, bzip2, LZFSE and LZMA chunks; supported HFS+, HFSX and single-volume APFS filesystems                 |
+| Application DMGs      | One application at the root of a zlib-compressed HFS+ image; bytes, modes and confined relative symlinks              |
 | Custom Mac packaging  | Unsigned component packages, payload layouts and endpoint installer scripts                                           |
 | MSI inspection        | Reads MSI database metadata without Windows or executing the installer                                                |
 | EXE preparation       | Preserves the vendor installer; commands, version-specific detection and other installation semantics remain authored |
@@ -39,8 +40,8 @@ entry and output limits catch malformed or unexpectedly large inputs; they do no
 provide a sandbox or guarantee bounded resource use for deliberately adversarial
 files.
 
-New payload trees retain bytes, modes and confined relative symlinks, which is
-what a Git checkout carries. Extended attributes, ACLs and resource forks are left
+New payload trees and application DMGs retain bytes, modes and confined relative
+symlinks, which is what a Git checkout carries. Extended attributes, ACLs and resource forks are left
 behind, and AppleDouble sidecars in vendor archives are skipped.
 This is distinct from preserving an existing vendor PKG or DMG unchanged.
 

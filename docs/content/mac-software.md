@@ -6,12 +6,12 @@ Use [BuildMacPkg](building-packages.md) when you need to construct a custom payl
 
 ## Start with the vendor's installer
 
-| Source                          | What Stemma prepares                                                          |
-| ------------------------------- | ----------------------------------------------------------------------------- |
-| PKG                             | The original vendor package                                                   |
-| DMG containing an application   | The original DMG, with the selected application described for the destination |
-| ZIP containing an application   | An unsigned PKG containing the selected application                           |
-| DMG containing an installer PKG | The selected nested package, preserving its bytes                             |
+| Source                                     | What Stemma prepares                                                          |
+| ------------------------------------------ | ----------------------------------------------------------------------------- |
+| PKG                                        | The original vendor package                                                   |
+| DMG containing an application              | The original DMG, with the selected application described for the destination |
+| DMG or archive containing an installer PKG | The selected nested package, preserving its bytes                             |
+| Archive or tree containing an application  | A new DMG holding the selected application                                    |
 
 For an application in a DMG:
 
@@ -32,8 +32,39 @@ spec:
 ```
 
 This assumes an `Assets/Example.dmg` beside the document and a Project connection
-named `munki`. Substitute your application's actual path. For a ZIP application,
-change the source to the ZIP; no separate build document is needed.
+named `munki`. Substitute your application's actual path.
+
+## Publish an application from an archive
+
+A vendor's PKG or DMG keeps its original bytes. An application that arrives on its
+own, in a ZIP or TAR archive or as a committed `.app` tree, is placed at the root
+of a new DMG. One document covers a GitHub release:
+
+```yaml
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: example-app
+spec:
+  source:
+    resolver: github
+    repository: company/application
+    asset: Example-*.zip
+  signature:
+    signer: apple:developer-id:ABCDE12345
+  destinations:
+    munki:
+      pkginfo:
+        description: Example application.
+```
+
+The image holds the application and nothing else: its files, permission bits and
+symlinks, dated from the locked source, so the same source prepares the same bytes
+on any runner. Munki copies the application with `copy_from_dmg` and Intune
+publishes the image as `type: dmg`. The application installs to
+`/Applications/<name>.app` unless `application.installed_path` says otherwise.
+[Signature](#signature) verifies the application; the image is a container and
+carries no signature of its own.
 
 ## Select an application once
 
@@ -135,7 +166,8 @@ signature:
 `stemma signature MacSoftware/<name>` derives the value from the acquired source,
 verifying it first, and prints this fragment to paste. The comment is display
 information only. The vendor PKG is verified when that is what Stemma publishes
-(a PKG source or `package_path`); otherwise the selected application is:
+(a PKG source or `package_path`); otherwise the selected application is, whether it
+sits in the vendor's DMG or goes into a new one:
 every architecture's code, Info.plist, the resource envelope, symlinks and nested
 code by its exact recorded cdhash, chained to Apple's roots at the signature's
 trusted timestamp. A different team fails preparation until the document is

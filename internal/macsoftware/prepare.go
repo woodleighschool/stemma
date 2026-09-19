@@ -16,9 +16,8 @@ import (
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/apple"
+	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/fileio"
-	"github.com/woodleighschool/stemma/internal/inspect"
-	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -33,8 +32,8 @@ type Request struct {
 	DeriveSignature bool
 }
 
-// Prepare retains vendor installer bytes and wraps selected archive applications
-// in an unsigned component package. It never executes applications or hooks.
+// Prepare retains vendor installer bytes and places a selected archive
+// application in a disk image. It never executes applications or hooks.
 func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin.Artifact, error) {
 	if err := spec.Validate(); err != nil {
 		return nil, err
@@ -91,21 +90,28 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 			app.InstalledPath = path.Join("/Applications", path.Base(payload.name))
 		}
 	}
+	var verified *signature.Result
+	if spec.Signature != nil || request.DeriveSignature {
+		done := plugin.Stage(ctx, "Verifying signature")
+		verified, err = verifySignature(ctx, spec, payload, selected, info.IsDir())
+		done(err)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var installer plugin.Artifact
 	switch {
-	case info.IsDir() && dmg:
-		installer, err = retain(ctx, input.Path, input.Filename, workspace)
-		installer.Format = "dmg"
-		app.ID, app.Path, app.Parent = archivePath, archivePath, "."
-		facts = plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: ".", Path: ".", Kind: "container", SHA256: installer.SHA256}, *app}}
 	case info.IsDir():
-		installer, err = wrapApp(ctx, selected, *app, options, workspace, timestamp)
-		if err == nil {
-			facts, err = inspect.Read(ctx, installer.Path)
-			if err == nil {
-				app, err = selectApp(facts, &Application{BundleID: app.App.BundleID, InstalledPath: app.InstalledPath})
-			}
+		location := archivePath
+		if dmg {
+			installer, err = retain(ctx, input.Path, input.Filename, workspace)
+		} else {
+			location = payload.name
+			installer, err = writeImage(ctx, selected, workspace, timestamp)
 		}
+		installer.Format = "dmg"
+		app.ID, app.Path, app.Parent = location, location, "."
+		facts = plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: ".", Path: ".", Kind: "container", SHA256: installer.SHA256}, *app}}
 	default:
 		if !strings.EqualFold(path.Ext(payload.name), ".pkg") {
 			return nil, errors.New("macOS software requires an application, PKG or DMG installer")
@@ -115,15 +121,6 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	}
 	if err != nil {
 		return nil, err
-	}
-	var verified *signature.Result
-	if spec.Signature != nil || request.DeriveSignature {
-		done := plugin.Stage(ctx, "Verifying signature")
-		verified, err = verifySignature(ctx, spec, payload, selected, info.IsDir())
-		done(err)
-		if err != nil {
-			return nil, err
-		}
 	}
 	installer.Facts = facts
 	installer.Version = installerVersion(facts)
@@ -175,20 +172,18 @@ func selectApp(facts plugin.Facts, options *Application) (*plugin.Subject, error
 	return selected, nil
 }
 
-func wrapApp(ctx context.Context, source string, subject plugin.Subject, options *Application, workspace string, timestamp time.Time) (plugin.Artifact, error) {
-	version := appVersion(subject, options)
-	if subject.App.BundleID == "" || version == "" {
-		return plugin.Artifact{}, errors.New("application packaging requires bundle identifier and selected version")
-	}
+// writeImage places the selected application alone at the root of a new disk
+// image. The image is our container around the publisher's software and carries
+// no signature of its own.
+func writeImage(ctx context.Context, app, workspace string, timestamp time.Time) (plugin.Artifact, error) {
 	if timestamp.IsZero() {
 		timestamp = time.Unix(0, 0).UTC()
 	}
-	filename := strings.TrimSuffix(filepath.Base(source), filepath.Ext(source)) + ".pkg"
-	output := filepath.Join(workspace, filename)
-	if err := pkgbuild.Build(ctx, source, output, pkgbuild.Options{Identifier: subject.App.BundleID, Version: version, InstallLocation: subject.InstalledPath, Payload: ".", Timestamp: timestamp}); err != nil {
+	output := filepath.Join(workspace, strings.TrimSuffix(filepath.Base(app), filepath.Ext(app))+".dmg")
+	if err := diskimage.WriteApplication(ctx, app, output, timestamp); err != nil {
 		return plugin.Artifact{}, err
 	}
-	return describeArtifact(ctx, output, "pkg")
+	return describeArtifact(ctx, output, "dmg")
 }
 
 func retain(ctx context.Context, source, filename, workspace string) (plugin.Artifact, error) {
@@ -272,8 +267,9 @@ func installerVersion(facts plugin.Facts) string {
 }
 
 // verifySignature checks the vendor package when that is what we publish,
-// otherwise the selected application. A retained DMG is a container, so its
-// application carries the signature and is verified inside the image.
+// otherwise the selected application. A disk image is a container, whether the
+// vendor's or ours, so its application carries the signature: inside a vendor
+// image, or on disk before we build one.
 func verifySignature(ctx context.Context, spec Spec, payload *payload, selected string, app bool) (*signature.Result, error) {
 	var want signature.Signer
 	if spec.Signature != nil {

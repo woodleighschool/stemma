@@ -17,9 +17,12 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
+	"howett.net/plist"
 )
 
 const policyProject = `apiVersion: stemma/v1alpha1
@@ -486,5 +489,86 @@ func TestApplyChecksEveryReviewedInputBeforeWriting(t *testing.T) {
 	}}
 	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "local input content changed") || writes != 0 {
 		t.Fatalf("apply wrote before checking the later resource: writes=%d error=%v", writes, err)
+	}
+}
+
+// TestReleaseArchiveApplicationPublishesADiskImage follows a GitHub release: one
+// MacSoftware acquires the ZIP, verifies the bundle's signer and publishes a disk
+// image that Munki installs without authored copy or detection fields.
+func TestReleaseArchiveApplicationPublishesADiskImage(t *testing.T) {
+	release := t.TempDir()
+	if err := os.CopyFS(filepath.Join(release, "WoodSweep.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "WoodSweep-1.2.3.zip")
+	testarchive.Zip(t, archive, release)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.ServeFile(w, r, archive) }))
+	defer server.Close()
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, fmt.Sprintf(`apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: release}
+spec:
+  imports: ['*.software.yaml']
+  destinations:
+    repo: {operation: munki, config: {path: repo}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: woodsweep}
+spec:
+  source: {url: %s/WoodSweep-1.2.3.zip}
+  signature: {signer: 'apple:developer-id:SMLKBTR495'}
+  destinations:
+    repo: {pkginfo: {catalogs: [testing]}}
+`, server.URL))
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	options.Method = "apply"
+	report, err := Run(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := report.Resources[0].Artifacts["installer"]
+	if installer.Format != "dmg" || installer.Filename != "woodsweep-1.2.3.dmg" || installer.Evidence["signature"] == nil {
+		t.Fatalf("installer = %+v", installer)
+	}
+	pkginfos, err := filepath.Glob(filepath.Join(root, "repo/pkgsinfo/stemma/*/*.plist"))
+	if err != nil || len(pkginfos) != 1 {
+		t.Fatalf("pkginfo files %v: %v", pkginfos, err)
+	}
+	data, err := os.ReadFile(pkginfos[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pkginfo struct {
+		InstallerType string `plist:"installer_type"`
+		Location      string `plist:"installer_item_location"`
+		Version       string `plist:"version"`
+		ItemsToCopy   []struct {
+			SourceItem      string `plist:"source_item"`
+			DestinationPath string `plist:"destination_path"`
+		} `plist:"items_to_copy"`
+		Installs []struct {
+			Path     string `plist:"path"`
+			BundleID string `plist:"CFBundleIdentifier"`
+		} `plist:"installs"`
+	}
+	if _, err := plist.Unmarshal(data, &pkginfo); err != nil {
+		t.Fatal(err)
+	}
+	if pkginfo.InstallerType != "copy_from_dmg" || pkginfo.Version != "1.2.3" || len(pkginfo.ItemsToCopy) != 1 || pkginfo.ItemsToCopy[0].SourceItem != "WoodSweep.app" || pkginfo.ItemsToCopy[0].DestinationPath != "/Applications" || len(pkginfo.Installs) != 1 || pkginfo.Installs[0].Path != "/Applications/WoodSweep.app" || pkginfo.Installs[0].BundleID != "au.edu.vic.woodleigh.stemma.fixture" {
+		t.Fatalf("pkginfo = %+v", pkginfo)
+	}
+	published, err := diskimage.Open(t.Context(), filepath.Join(root, "repo/pkgs", filepath.FromSlash(pkginfo.Location)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = published.Close() }()
+	if selected, err := published.Select(t.Context(), ""); err != nil || selected != "WoodSweep.app" {
+		t.Fatalf("published image holds %q: %v", selected, err)
 	}
 }

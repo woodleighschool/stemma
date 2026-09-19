@@ -3,6 +3,7 @@ package intune
 import (
 	"encoding/base64"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/plugin"
@@ -70,6 +71,32 @@ func TestMacDerivationKeepsExactOSAndAuthoredDetection(t *testing.T) {
 		if _, err := minimumOS(version); err != nil {
 			t.Fatalf("supported exact OS %s: %v", version, err)
 		}
+	}
+}
+
+func TestApplicationDiskImageDerivesADmgApp(t *testing.T) {
+	app := plugin.Subject{ID: "WoodSweep.app", Path: "WoodSweep.app", Parent: ".", Kind: "app", InstalledPath: "/Applications/WoodSweep.app", App: &plugin.AppFacts{BundleID: "org.example.woodsweep", Version: "1.2.3", Name: "WoodSweep", MinimumOS: "14.0"}}
+	req := plugin.ReconcileRequest{
+		Method: "validate", Prepared: true,
+		Metadata: raw(object{"type": "dmg", "derive": object{"app": "main"}}),
+		Subjects: map[string]plugin.SubjectSelector{"main": {Kind: "app"}},
+		Artifact: plugin.Artifact{Path: "leased.dmg", Filename: "woodsweep-1.2.3.dmg", Format: "dmg", SHA256: strings.Repeat("a", 64)},
+		Facts:    plugin.Facts{Subjects: []plugin.Subject{{ID: ".", Path: ".", Kind: "container"}, app}},
+	}
+	derived, _, err := Derive(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := validateMetadata(derived.Metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	included := m["includedApps"].([]any)[0].(object)
+	if m["@odata.type"] != dmgType || included["bundleId"] != "org.example.woodsweep" || included["bundleVersion"] != "1.2.3" || selectedOS(m["minimumSupportedOperatingSystem"]) != "v14_0" {
+		t.Fatalf("derived app: %+v", m)
+	}
+	if identity, err := identifyArtifact(t.Context(), req.Artifact, dmgType, ""); err != nil || !identity.raw {
+		t.Fatalf("disk image was not published as it is: %+v: %v", identity, err)
 	}
 }
 

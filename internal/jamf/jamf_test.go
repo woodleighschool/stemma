@@ -361,6 +361,20 @@ func TestDigestAndIdentityMismatchBlockWrites(t *testing.T) {
 	}
 }
 
+func TestApplicationDiskImageIsNotAPackage(t *testing.T) {
+	server, request := newFixture(t)
+	request.Artifact.Filename, request.Artifact.Format = "vendor-1.0.dmg", "dmg"
+	for _, method := range []string{"validate", "apply"} {
+		request.Method = method
+		if _, err := Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), "PKG") {
+			t.Fatalf("%s accepted a disk image: %v", method, err)
+		}
+	}
+	if len(server.operations()) != 0 {
+		t.Fatalf("disk image reached Jamf: %v", server.operations())
+	}
+}
+
 func TestPublicationHonorsCancellation(t *testing.T) {
 	server, request := newFixture(t)
 	response, err := Handle(t.Context(), request)

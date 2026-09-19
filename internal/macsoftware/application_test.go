@@ -13,18 +13,24 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/icon"
+	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// bundleInputs offers one application as a disk image and as a tree, which
-// preparation wraps in a package.
+// bundleInputs offers one application as a vendor disk image, as a vendor
+// package and as a tree, which preparation places in a disk image.
 func bundleInputs(t *testing.T, root string) []plugin.Artifact {
 	t.Helper()
 	image := filepath.Join(t.TempDir(), "Example.dmg")
 	testdiskimage.Write(t, image, root)
+	installer := filepath.Join(t.TempDir(), "Example.pkg")
+	if err := pkgbuild.Build(t.Context(), filepath.Join(root, "Example.app"), installer, pkgbuild.Options{Identifier: "org.example.app", Version: "1.2", InstallLocation: "/Applications/Example.app", Payload: "."}); err != nil {
+		t.Fatal(err)
+	}
 	return []plugin.Artifact{
 		{Path: image, Filename: "Example.dmg", Format: "dmg"},
+		{Path: installer, Filename: "Example.pkg", Format: "pkg"},
 		{Path: filepath.Join(root, "Example.app"), Filename: "Example.app", Tree: true},
 	}
 }

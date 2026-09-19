@@ -383,8 +383,10 @@ func inspectPayload(ctx context.Context, identity plugin.Identity, artifact plug
 	if identity.Project == "" || identity.Software == "" || identity.Destination == "" {
 		return payload{}, errors.New("jamf requires a complete logical identity")
 	}
+	// Jamf installs a DMG as a filesystem layout copied onto the startup disk,
+	// which an application DMG is not.
 	if strings.ToLower(filepath.Ext(artifact.Filename)) != ".pkg" {
-		return payload{}, errors.New("jamf package adapter currently requires an original .pkg file")
+		return payload{}, fmt.Errorf("jamf publishes PKG artifacts, not %s", artifact.Filename)
 	}
 	f, err := os.Open(artifact.Path)
 	if err != nil {

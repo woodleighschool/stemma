@@ -146,6 +146,10 @@ spec:
         client_secret: ${JAMF_CLIENT_SECRET}
 ```
 
+Jamf publishes PKG artifacts: a vendor package, one selected with `package_path`
+or a [BuildMacPkg](building-packages.md) output. Jamf installs a DMG by copying its
+contents onto the startup disk, so an application DMG is not a Jamf package.
+
 Jamf receives an immutable package ID for each distinct artifact. Package display
 names default to the installer filename. Remote filenames include ownership and
 content markers. Upload requires a Jamf distribution configuration supporting the

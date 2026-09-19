@@ -1,7 +1,6 @@
 package macsoftware
 
 import (
-	"archive/zip"
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,11 +9,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
+	"reflect"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/apple"
+	"github.com/woodleighschool/stemma/internal/diskimage"
+	"github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/signature"
+	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -42,51 +44,9 @@ func applicationFixture(t *testing.T) string {
 	return root
 }
 
-func TestZIPApplicationProducesPackageAndSelectedEvidence(t *testing.T) {
-	root := applicationFixture(t)
+func TestZIPApplicationIsPublishedInADiskImage(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "Example.zip")
-	file, err := os.Create(filename)
-	if err != nil {
-		t.Fatal(err)
-	}
-	writer := zip.NewWriter(file)
-	err = filepath.WalkDir(root, func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		header, err := zip.FileInfoHeader(info)
-		if err != nil {
-			return err
-		}
-		header.Name, _ = filepath.Rel(root, name)
-		header.Name = filepath.ToSlash(header.Name)
-		out, err := writer.CreateHeader(header)
-		if err != nil {
-			return err
-		}
-		data, err := os.ReadFile(name)
-		if err != nil {
-			return err
-		}
-		_, err = out.Write(data)
-		return err
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatal(err)
-	}
+	testarchive.Zip(t, filename, applicationFixture(t))
 	input := plugin.Artifact{Path: filename, Filename: "Example.zip", Format: "zip", Evidence: map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"release":"preview"}`)}}
 	spec := Spec{Application: &Application{Path: "Example.app", VersionKey: "CFBundleVersion"}}
 	outputs, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()})
@@ -101,15 +61,59 @@ func TestZIPApplicationProducesPackageAndSelectedEvidence(t *testing.T) {
 	if err := json.Unmarshal(installer.Evidence["macos.application"], &app); err != nil {
 		t.Fatal(err)
 	}
-	if installer.Format != "pkg" || installer.Version != "123" || app.App.BundleID != "org.example.app" || app.InstalledPath != "/Applications/Example.app" || len(outputs) != 1 {
+	if installer.Format != "dmg" || installer.Filename != "Example.dmg" || installer.Version != "123" || app.Path != "Example.app" || app.InstalledPath != "/Applications/Example.app" || len(outputs) != 1 {
 		t.Fatalf("outputs=%+v app=%+v", outputs, app)
 	}
-	if _, err := apple.VerifyPackage(t.Context(), installer.Path, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "not signed") {
-		t.Fatalf("built package claimed a signer: %v", err)
+	reopened, err := inspect.Read(t.Context(), installer.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reopened.Subjects) != 2 || reopened.Subjects[0].SHA256 != installer.SHA256 || reopened.Subjects[1].Path != app.Path || !reflect.DeepEqual(reopened.Subjects[1].App, app.App) {
+		t.Fatalf("image holds %+v, evidence describes %+v", reopened.Subjects, app)
 	}
 	again, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()})
 	if err != nil || again["installer"].SHA256 != installer.SHA256 {
-		t.Fatalf("nondeterministic package: %v", err)
+		t.Fatalf("nondeterministic image: %v", err)
+	}
+}
+
+// TestZIPSignatureVerifiesTheApplication prepares the shape of a GitHub release:
+// a versioned ZIP holding one Developer ID signed bundle.
+func TestZIPSignatureVerifiesTheApplication(t *testing.T) {
+	const signer = "apple:developer-id:SMLKBTR495"
+	release := t.TempDir()
+	if err := os.CopyFS(filepath.Join(release, "WoodSweep.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
+		t.Fatal(err)
+	}
+	filename := filepath.Join(t.TempDir(), "WoodSweep-1.2.3.zip")
+	testarchive.Zip(t, filename, release)
+	input := plugin.Artifact{Path: filename, Filename: "WoodSweep-1.2.3.zip", Format: "zip"}
+	outputs, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: signer}}, Request{Input: input, Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := outputs["installer"]
+	var evidence signature.Result
+	if err := json.Unmarshal(installer.Evidence["signature"], &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if installer.Format != "dmg" || evidence.Signer != signer || evidence.Target != "WoodSweep.app" {
+		t.Fatalf("installer=%+v evidence=%+v", installer, evidence)
+	}
+	image, err := diskimage.Open(t.Context(), installer.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = image.Close() }()
+	if inside, err := apple.VerifyAppFS(t.Context(), image, "WoodSweep.app", signature.Signer{}); err != nil || inside != evidence {
+		t.Fatalf("bundle in the image verifies as %+v, evidence is %+v: %v", inside, evidence, err)
+	}
+	workspace := t.TempDir()
+	if _, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: "apple:developer-id:AAAAAAAAAA"}}, Request{Input: input, Workspace: workspace}); !errors.Is(err, signature.ErrMismatch) {
+		t.Fatalf("unexpected signer accepted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "WoodSweep.dmg")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("image built for a rejected application: %v", err)
 	}
 }
 
