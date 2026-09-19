@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"strings"
@@ -29,16 +30,17 @@ type Content struct {
 	Mode     uint32  `json:"mode" yaml:"mode"`
 }
 
-// Entry is the common lock envelope. Observation belongs to the named resolver
-// and must contain only stable, nonsecret data needed to fetch this exact input.
+// Entry is the common lock envelope. Observation belongs to the named resolver;
+// Evidence is reviewed JSON passed to consumers. Both must be nonsecret.
 type Entry struct {
-	Version         int             `json:"version" yaml:"version"`
-	Resolver        string          `json:"resolver" yaml:"resolver"`
-	ResolverVersion string          `json:"resolver_version" yaml:"resolver_version"`
-	Declaration     string          `json:"declaration" yaml:"declaration"`
-	ResolvedAt      time.Time       `json:"resolved_at" yaml:"resolved_at"`
-	Observation     json.RawMessage `json:"observation" yaml:"observation"`
-	Content         Content         `json:"content" yaml:"content"`
+	Version         int                        `json:"version" yaml:"version"`
+	Resolver        string                     `json:"resolver" yaml:"resolver"`
+	ResolverVersion string                     `json:"resolver_version" yaml:"resolver_version"`
+	Declaration     string                     `json:"declaration" yaml:"declaration"`
+	ResolvedAt      time.Time                  `json:"resolved_at" yaml:"resolved_at"`
+	Observation     json.RawMessage            `json:"observation" yaml:"observation"`
+	Content         Content                    `json:"content" yaml:"content"`
+	Evidence        map[string]json.RawMessage `json:"evidence,omitempty" yaml:"evidence,omitempty"`
 }
 
 // Resolution returns a leased resolver output for import into the shared cache.
@@ -217,6 +219,7 @@ func (m *Manager) observe(ctx context.Context, input plugin.Input, previous *Ent
 		if err == nil {
 			entry.Content, err = m.importArtifact(ctx, result.Artifact)
 			entry.Observation = result.Observation
+			entry.Evidence = result.Artifact.Evidence
 		}
 	}
 	if err != nil {
@@ -225,6 +228,10 @@ func (m *Manager) observe(ctx context.Context, input plugin.Input, previous *Ent
 	entry.Observation, err = canonicalJSON(entry.Observation)
 	if err != nil {
 		return Entry{}, fmt.Errorf("resolver observation: %w", err)
+	}
+	entry.Evidence, err = canonicalEvidence(entry.Evidence)
+	if err != nil {
+		return Entry{}, err
 	}
 	return entry, entry.Validate()
 }
@@ -344,17 +351,30 @@ func (entry Entry) Validate() error {
 	if !json.Valid(entry.Observation) {
 		return errors.New("invalid resolver observation")
 	}
+	for name, value := range entry.Evidence {
+		if !json.Valid(value) {
+			return fmt.Errorf("invalid resolver evidence %q", name)
+		}
+	}
 	return nil
 }
 
-// Equal compares semantic lock state, including resolver-owned JSON observations.
+// Equal compares semantic lock state, including JSON observations and evidence.
 func (entry Entry) Equal(other Entry) bool {
 	left, err := canonicalJSON(entry.Observation)
 	if err != nil {
 		return false
 	}
 	right, err := canonicalJSON(other.Observation)
-	return err == nil && entry.Version == other.Version && entry.Resolver == other.Resolver && entry.ResolverVersion == other.ResolverVersion && entry.Declaration == other.Declaration && entry.ResolvedAt.Equal(other.ResolvedAt) && entry.Content == other.Content && bytes.Equal(left, right)
+	if err != nil || entry.Version != other.Version || entry.Resolver != other.Resolver || entry.ResolverVersion != other.ResolverVersion || entry.Declaration != other.Declaration || !entry.ResolvedAt.Equal(other.ResolvedAt) || entry.Content != other.Content || !bytes.Equal(left, right) {
+		return false
+	}
+	leftEvidence, err := canonicalEvidence(entry.Evidence)
+	if err != nil {
+		return false
+	}
+	rightEvidence, err := canonicalEvidence(other.Evidence)
+	return err == nil && maps.EqualFunc(leftEvidence, rightEvidence, func(a, b json.RawMessage) bool { return bytes.Equal(a, b) })
 }
 
 // MarshalYAML preserves resolver JSON as ordinary YAML objects, including exact
@@ -394,7 +414,26 @@ func (entry *Entry) UnmarshalYAML(node *yaml.Node) error {
 		return err
 	}
 	entry.Observation, err = canonicalJSON(entry.Observation)
+	if err != nil {
+		return err
+	}
+	entry.Evidence, err = canonicalEvidence(entry.Evidence)
 	return err
+}
+
+func canonicalEvidence(evidence map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+	if len(evidence) == 0 {
+		return nil, nil
+	}
+	result := make(map[string]json.RawMessage, len(evidence))
+	for name, value := range evidence {
+		canonical, err := canonicalJSON(value)
+		if err != nil {
+			return nil, fmt.Errorf("resolver evidence %q: %w", name, err)
+		}
+		result[name] = canonical
+	}
+	return result, nil
 }
 
 func yamlJSON(node *yaml.Node) (any, error) {

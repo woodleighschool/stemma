@@ -202,6 +202,18 @@ versioned lock, declaration fingerprint and content verification; your resolver
 owns the observation body. Keep credentials out of observations and identify
 credential configuration fields with `writeOnly: true`.
 
+Return consumer metadata in namespaced `artifact.evidence`, for example
+`{"vendor.release":{"version":"1.2"}}`. Evidence is reviewed in the source lock
+and passed to resource inputs; destination metadata can reference it with
+`{$fact: vendor.release.version}`. Changing evidence invalidates preparation even
+when the bytes are unchanged. The byte timestamp stays the same.
+
+Observation remains private to the resolver. A locked fetch verifies bytes and
+uses the lock's saved evidence, ignoring evidence returned by the fetch. Resolver
+artifact versions, formats and typed facts are not persisted; resource kinds own
+their interpretation of the downloaded content. Keep credentials and temporary
+URLs out of evidence as well as observations.
+
 ## Destinations
 
 Register `kind: reconcile` with methods `validate`, `plan` and `apply`. Use

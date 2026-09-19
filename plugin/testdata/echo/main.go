@@ -140,7 +140,8 @@ func download(ctx context.Context, envelope plugin.Request) (plugin.Response, er
 		return plugin.Response{}, nil
 	}
 	var config struct {
-		URL string `json:"url"`
+		URL      string `json:"url"`
+		Revision string `json:"revision,omitempty"`
 	}
 	if err := json.Unmarshal(request.Config, &config); err != nil {
 		return plugin.Response{}, err
@@ -172,10 +173,19 @@ func download(ctx context.Context, envelope plugin.Request) (plugin.Response, er
 	if err != nil {
 		return plugin.Response{}, err
 	}
+	config.Revision = response.Header.Get("X-Fixture-Revision")
 	observation, err := json.Marshal(config)
 	if err != nil {
 		return plugin.Response{}, err
 	}
-	output, err := json.Marshal(plugin.ResolveResponse{Observation: observation, Artifact: plugin.Artifact{Path: filename, Filename: "vendor.pkg"}})
+	artifact := plugin.Artifact{Path: filename, Filename: "vendor.pkg"}
+	if version := response.Header.Get("X-Fixture-Version"); version != "" {
+		evidence, err := json.Marshal(map[string]string{"version": version})
+		if err != nil {
+			return plugin.Response{}, err
+		}
+		artifact.Evidence = map[string]json.RawMessage{"vendor.release": evidence}
+	}
+	output, err := json.Marshal(plugin.ResolveResponse{Observation: observation, Artifact: artifact})
 	return plugin.Response{Output: output}, err
 }

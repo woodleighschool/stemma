@@ -248,7 +248,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 					inputs[name] = artifact
 				} else {
 					entry := entries[name]
-					inputs[name] = Prepared{Timestamp: entry.ResolvedAt, Payload: entry.Content.Artifact, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, InputsHash: entry.Content.Artifact.SHA256}
+					inputs[name] = Prepared{Timestamp: entry.ResolvedAt, Payload: entry.Content.Artifact, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, InputsHash: entry.Content.Artifact.SHA256, Evidence: entry.Evidence}
 				}
 			}
 		}

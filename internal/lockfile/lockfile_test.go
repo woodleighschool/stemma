@@ -296,7 +296,7 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(data)
-	artifact := plugin.Artifact{Path: file, Filename: "input.bin"}
+	artifact := plugin.Artifact{Path: file, Filename: "input.bin", Evidence: map[string]json.RawMessage{"vendor.release": json.RawMessage(`{ "version": "1.2", "id": 9007199254740993 }`)}}
 	observation := json.RawMessage(`{"revision":{"id":9007199254740993,"labels":["stable"]},"cursor":"opaque"}`)
 	resolves, fetches := 0, 0
 	resolver := source.Resolver{Version: "resolver-1", Fingerprint: func(input plugin.Input) (string, error) {
@@ -337,18 +337,35 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 	if entry(first).Content.Artifact.SHA256 != hex.EncodeToString(digest[:]) || entry(first).Content.Artifact.Size != int64(len(data)) {
 		t.Fatal("manager did not establish the resolver output's content identity")
 	}
+	original := entry(first)
+	original.ResolvedAt = time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
+	first.File.Inputs[resource]["source"] = original
+	save(t, m, first.File)
 	before := lockedBytes(t, m)
 	if bytes.Contains(before, []byte("private")) || !bytes.Contains(before, []byte("9007199254740993")) || !bytes.Contains(before, []byte("observation:\n")) {
 		t.Fatal("lock leaked credentials or lost opaque observation")
 	}
+	if got := string(entry(first).Evidence["vendor.release"]); got != `{"id":9007199254740993,"version":"1.2"}` {
+		t.Fatalf("resolver evidence was not canonicalized: %s", got)
+	}
+	warm, err := prepare(t, m, inputs, Options{Frozen: true, Offline: true})
+	if err != nil || warm.Changed || !entry(warm).Equal(entry(first)) || resolves != 1 || fetches != 0 {
+		t.Fatalf("warm offline resolver evidence changed: %v", err)
+	}
+	artifact.Evidence = map[string]json.RawMessage{"vendor.release": json.RawMessage(`{"version":"2.0"}`)}
 	object, _ := m.Store.Path(entry(first).Content.Artifact)
 	if err := os.Remove(object); err != nil {
 		t.Fatal(err)
 	}
 	recovered, err := prepare(t, m, inputs, Options{Frozen: true})
-	if err != nil || recovered.Changed || fetches != 1 || resolves != 1 {
+	if err != nil || recovered.Changed || fetches != 1 || resolves != 1 || !entry(recovered).Equal(entry(first)) {
 		t.Fatalf("cold fetch rediscovered or changed locked resolver content: %v", err)
 	}
+	refreshed, err := prepare(t, m, inputs, Options{Refresh: true})
+	if err != nil || !refreshed.Changed || entry(refreshed).Content != entry(first).Content || !entry(refreshed).ResolvedAt.Equal(entry(first).ResolvedAt) || string(entry(refreshed).Evidence["vendor.release"]) != `{"version":"2.0"}` {
+		t.Fatalf("evidence refresh lost content identity or timestamp: %v", err)
+	}
+	before = lockedBytes(t, m)
 	resolver.Version = "resolver-2"
 	m.Resolvers["example.release"] = resolver
 	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil {

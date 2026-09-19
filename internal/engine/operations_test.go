@@ -3,6 +3,7 @@ package engine
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/klauspost/compress/zstd"
@@ -25,7 +26,121 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/source"
+	"github.com/woodleighschool/stemma/plugin"
 )
+
+func TestExternalResolverEvidenceFeedsNativeMetadata(t *testing.T) {
+	root := t.TempDir()
+	pluginDir := filepath.Join(root, "local-plugin")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(pluginDir, "plugin")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../plugin/testdata/echo")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build plugin: %v\n%s", err, output)
+	}
+	payload, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var version, revision atomic.Value
+	version.Store("1.2")
+	revision.Store("first")
+	var downloads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		downloads.Add(1)
+		w.Header().Set("X-Fixture-Version", version.Load().(string))
+		w.Header().Set("X-Fixture-Revision", revision.Load().(string))
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, fmt.Sprintf(`apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: evidence}
+spec:
+  imports: ['*.software.yaml']
+  plugins:
+    provider: {trusted: true, path: local-plugin}
+  destinations:
+    repo: {operation: munki, config: {path: repo}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: fixture}
+spec:
+  source: {resolver: echo.download, url: %s/vendor.pkg}
+  destinations:
+    repo:
+      pkginfo:
+        version: {$fact: vendor.release.version}
+`, server.URL))
+	wantVersion := "1.2"
+	validated := false
+	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "prepare", Handlers: map[string]reconcileHandler{
+		"munki": func(_ context.Context, request plugin.ReconcileRequest) (plugin.ReconcileResponse, error) {
+			if request.Prepared {
+				var metadata struct {
+					Pkginfo struct {
+						Version string `json:"version"`
+					} `json:"pkginfo"`
+				}
+				if err := json.Unmarshal(request.Metadata, &metadata); err != nil {
+					t.Fatal(err)
+				}
+				if metadata.Pkginfo.Version != wantVersion {
+					t.Fatalf("destination version %q, want reviewed evidence %q", metadata.Pkginfo.Version, wantVersion)
+				}
+				validated = true
+			}
+			return plugin.ReconcileResponse{}, nil
+		},
+	}}
+	run := func() ResourceReport {
+		t.Helper()
+		validated = false
+		report, err := Run(t.Context(), opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Resources) != 1 || !validated {
+			t.Fatalf("resolver evidence did not reach destination validation: %+v", report)
+		}
+		return report.Resources[0]
+	}
+	first := run()
+	installer := first.Artifacts["installer"]
+	if got := string(installer.Evidence["vendor.release"]); got != `{"version":"1.2"}` {
+		t.Fatalf("MacSoftware dropped resolver evidence: %s", got)
+	}
+	version.Store("2.0")
+	opts.Lock = lockfile.Options{Frozen: true, Offline: true}
+	if warm := run(); !warm.Cached || downloads.Load() != 1 {
+		t.Fatal("warm offline preparation did not reuse reviewed evidence")
+	}
+	if err := os.RemoveAll(opts.CacheDir); err != nil {
+		t.Fatal(err)
+	}
+	opts.Lock.Offline = false
+	if cold := run(); cold.Cached || downloads.Load() != 2 || cold.Artifacts["installer"].InputsHash != installer.InputsHash {
+		t.Fatal("cold fetch changed reviewed preparation inputs")
+	}
+	opts.Lock = lockfile.Options{Refresh: true}
+	wantVersion = "2.0"
+	refreshed := run()
+	updated := refreshed.Artifacts["installer"]
+	if refreshed.Cached || updated.InputsHash == installer.InputsHash || updated.Payload != installer.Payload || !updated.Timestamp.Equal(installer.Timestamp) {
+		t.Fatal("evidence refresh did not invalidate preparation while retaining byte identity")
+	}
+	revision.Store("second")
+	if observed := run(); !observed.Cached || observed.Artifacts["installer"].InputsHash != updated.InputsHash {
+		t.Fatal("private observation change invalidated preparation")
+	}
+}
 
 func TestExternalResolverBuilderAndNativeDestination(t *testing.T) {
 	for _, transport := range []string{"image", "path"} {
