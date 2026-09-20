@@ -139,6 +139,6 @@ require (
 // Temporary: https://github.com/charmbracelet/bubbletea/pull/1801
 replace charm.land/bubbletea/v2 => github.com/drawmeanelephant/bubbletea/v2 v2.0.10-0.20260911173320-21176428f2e1
 
-replace github.com/deploymenttheory/go-macos-pkg => github.com/hydazz/go-macos-pkg v0.5.1-0.20260914115450-fe9df7f284f9
+replace github.com/deploymenttheory/go-macos-pkg => github.com/hydazz/go-macos-pkg v0.5.1-0.20260920063721-56326027c7e0
 
 replace github.com/deploymenttheory/go-apfs-v2 => github.com/hydazz/go-apfs-v2 v0.3.1-0.20260918112611-3fa975b65ad2
