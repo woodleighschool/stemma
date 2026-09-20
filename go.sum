@@ -136,8 +136,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef h1:A9HsByNhogrvm9cWb28sjiS3i7tcKCkflWFEkHfuAgM=
 github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef/go.mod h1:lADxMC39cJJqL93Duh1xhAs4I2Zs8mKS89XWXFGp9cs=
-github.com/hydazz/go-apfs-v2 v0.3.1-0.20260918112611-3fa975b65ad2 h1:ovdMDzZuZRRdtLqSBEU4AsmKSfVaZZwEDtIp4q1JQfw=
-github.com/hydazz/go-apfs-v2 v0.3.1-0.20260918112611-3fa975b65ad2/go.mod h1:8F+giXscCXK717Q0dV8RSXL+eWhXSOn3eQ1EarZl1LA=
+github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0 h1:k5/zDGNs/dNqH78pe+LFuAKVS/Ucqwwj84RkYi5pQ64=
+github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0/go.mod h1:8F+giXscCXK717Q0dV8RSXL+eWhXSOn3eQ1EarZl1LA=
 github.com/hydazz/go-macos-pkg v0.5.1-0.20260914115450-fe9df7f284f9 h1:1pBd5Q+Rpyp6zYmQxKkaP48dja9s+QfRjxUYbbbRQLs=
 github.com/hydazz/go-macos-pkg v0.5.1-0.20260914115450-fe9df7f284f9/go.mod h1:vv/76RQRy5Zo8G1IygPbYn2K+8GFN0Y/Q62lOriVoRI=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
