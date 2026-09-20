@@ -99,7 +99,6 @@ func TestDownloadPageRejectsAmbiguousOrUnsafeMatches(t *testing.T) {
 		{"signed", "https://cdn.example/App.pkg?token=secret", `https://cdn\.example/\S+`, "stable HTTP(S) URL"},
 		{"signed relative", "/App.pkg?token=secret", `/App\.pkg\?\S+`, "stable HTTP(S) URL"},
 		{"userinfo", "//user:secret@cdn.example/App.pkg", `//\S+`, "stable HTTP(S) URL"},
-		{"downgrade", "http://cdn.example/App.pkg", `http://cdn\.example/\S+`, "HTTPS downgrade"},
 		{"oversize", strings.Repeat("x", (4<<20)+1), `https://cdn\.example/\S+`, "exceeds 4 MiB"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

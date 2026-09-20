@@ -441,10 +441,6 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry *nativeEnt
 		if s.Match == "" && entry.URL != s.URL {
 			return cas.Ref{}, errors.New("locked HTTP URL does not match configuration")
 		}
-		origin, _ := url.Parse(s.URL)
-		if origin.Scheme == "https" && u.Scheme != "https" {
-			return cas.Ref{}, errors.New("refusing discovered HTTPS downgrade")
-		}
 	}
 	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
 		return cas.Ref{}, errors.New("locked asset does not belong to the configured GitHub repository")
@@ -608,9 +604,6 @@ func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEnt
 		address = resolved.String()
 		if err := validateHTTPURL(address); err != nil {
 			return fmt.Errorf("download page match must resolve to a stable HTTP(S) URL: %w", err)
-		}
-		if base.Scheme == "https" && resolved.Scheme != "https" {
-			return errors.New("refusing discovered HTTPS downgrade")
 		}
 		matches[address] = true
 	}

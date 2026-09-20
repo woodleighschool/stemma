@@ -96,7 +96,7 @@ func TestHTTPHeadersStayWithinTheirOrigin(t *testing.T) {
 				_, _ = io.WriteString(w, "payload")
 			}))
 			defer cdn.Close()
-			source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			source := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Header.Get("Authorization") != "Bearer synthetic-secret" || r.Header.Get("X-Vendor-Key") != "synthetic-key" {
 					t.Error("source credentials were lost")
 				}
@@ -121,7 +121,9 @@ func TestHTTPHeadersStayWithinTheirOrigin(t *testing.T) {
 			if discovery {
 				input.Config["match"] = `http://127\.0\.0\.1:\d+/redirect`
 			}
-			entry, err := New(store, t.TempDir(), false).Resolve(t.Context(), input)
+			manager := New(store, t.TempDir(), false)
+			manager.Client.Transport = source.Client().Transport
+			entry, err := manager.Resolve(t.Context(), input)
 			if err != nil || cdnReads.Load() != 2 {
 				t.Fatalf("download: CDN requests=%d error=%v", cdnReads.Load(), err)
 			}
@@ -175,6 +177,7 @@ func TestHTTPHeaderValidationAndDeclaration(t *testing.T) {
 func TestHTTPDiscoveryResolvesURLReferences(t *testing.T) {
 	for _, test := range []struct{ name, references, want string }{
 		{"absolute", "https://cdn.example/App.pkg", "https://cdn.example/App.pkg"},
+		{"absolute HTTP", "http://cdn.example/App.pkg", "http://cdn.example/App.pkg"},
 		{"protocol relative", "//cdn.example/App.pkg", "https://cdn.example/App.pkg"},
 		{"root relative", "/App.pkg", "https://pages.example/App.pkg"},
 		{"path relative", "../files/App.pkg", "https://pages.example/releases/files/App.pkg"},
