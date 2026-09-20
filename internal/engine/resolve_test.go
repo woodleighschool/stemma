@@ -140,8 +140,8 @@ spec:
 		t.Fatalf("output reference was not recorded as a producer: %+v", resource)
 	}
 	const private = "stemma/v1alpha1/MacSoftware/private"
-	if resource := candidate.Resources[private]; !resource.Suspended || resource.Inputs != nil || resource.Error != "" || len(resource.Producers) != 1 || resource.Producers[0] != build {
-		t.Fatalf("suspended resource was resolved or lost its producers: %+v", resource)
+	if resource := candidate.Resources[private]; !resource.Suspended || resource.Inputs != nil || resource.Error != "" || len(resource.Producers) != 0 {
+		t.Fatalf("suspended resource was evaluated or resolved: %+v", resource)
 	}
 	if dependents := candidate.Dependents(build); len(dependents) != 1 || dependents[0] != consumer {
 		t.Fatalf("dependents of the build: %v", dependents)

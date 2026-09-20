@@ -28,136 +28,68 @@ type resourcePlan struct {
 	Environment map[string]string
 }
 
-func discover(ctx context.Context, p config.Project, ops *operations) (map[string]resourcePlan, error) {
-	plans := map[string]resourcePlan{}
+// selectResources resolves selectors against declared identity alone, so the
+// selector is an execution boundary rather than a filter applied after the
+// whole catalog has been evaluated. An empty selection takes every unsuspended
+// resource; a suspended resource becomes a root only through a selector naming
+// it or a selected resource consuming its outputs.
+func selectResources(resources map[string]config.Resource, selectors []string) ([]string, error) {
+	if len(selectors) == 0 {
+		var roots []string
+		for _, key := range sortedKeys(resources) {
+			if !resources[key].Suspend {
+				roots = append(roots, key)
+			}
+		}
+		return roots, nil
+	}
+	var roots []string
+	for _, selection := range selectors {
+		if _, declared := resources[selection]; declared {
+			roots = append(roots, selection)
+			continue
+		}
+		var matches []string
+		for _, key := range sortedKeys(resources) {
+			resource := resources[key]
+			if resource.Metadata.Name == selection || resource.Kind+"/"+resource.Metadata.Name == selection {
+				matches = append(matches, key)
+			}
+		}
+		if len(matches) != 1 {
+			return nil, fmt.Errorf("selection %q matches %d resources; use Kind/name or apiVersion/Kind/name", selection, len(matches))
+		}
+		roots = append(roots, matches[0])
+	}
+	return roots, nil
+}
+
+// discoverClosure evaluates the requested resources and everything they
+// consume, and returns the evaluated plans alongside the roots' closure in
+// dependency-first order. Nothing outside the closure is evaluated, so a
+// resource that fails its own operation contract cannot fail a run that does
+// not reach it.
+func discoverClosure(ctx context.Context, p config.Project, ops *operations, roots []string) (map[string]resourcePlan, []string, error) {
 	kinds := map[plugin.ResourceKind]plugin.Operation{}
 	for _, op := range ops.registry.Descriptor().Operations {
 		if op.Resource != nil {
 			kinds[*op.Resource] = op
 		}
 	}
-	for _, key := range sortedKeys(p.Resources) {
-		r := p.Resources[key]
-		op, ok := kinds[plugin.ResourceKind{APIVersion: r.APIVersion, Kind: r.Kind}]
-		if !ok {
-			return nil, fmt.Errorf("resource %s: no installed operation registers this apiVersion and kind", key)
+	plans := map[string]resourcePlan{}
+	// Callers reach evaluate with declared keys: selection resolves roots
+	// against the project, resource inputs name their producer before the walk
+	// follows it, and publication references are checked before they join it.
+	evaluate := func(key string) error {
+		if _, evaluated := plans[key]; evaluated {
+			return nil
 		}
-		if err := ops.check(op.Name, true); err != nil {
-			return nil, err
-		}
-		declaration, bindings, err := resourceDeclaration(r)
+		plan, err := discoverResource(ctx, p, ops, kinds, key, p.Resources[key])
 		if err != nil {
-			return nil, fmt.Errorf("resource %s: %w", key, err)
+			return err
 		}
-		encoded, err := json.Marshal(declaration)
-		if err != nil {
-			return nil, err
-		}
-		var result plugin.ResourceResult
-		schema := op.ConfigSchema
-		if deferredPreparation(r) {
-			schema, err = config.ExpressionSchema(schema)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if len(schema) > 0 {
-			if err := plugin.ValidateSchema(schema, encoded); err != nil {
-				return nil, fmt.Errorf("resource %s config: %w", key, err)
-			}
-		}
-		if err := ops.call(ctx, op.Name, "discover", plugin.ResourceRequest[json.RawMessage]{Config: encoded, Identity: r.Reference()}, &result); err != nil {
-			return nil, fmt.Errorf("resource %s: %w", key, err)
-		}
-		if len(result.Config) == 0 {
-			return nil, fmt.Errorf("resource %s: kind did not return preparation configuration", key)
-		}
-		for inputName, input := range result.Inputs {
-			if inputName == "" {
-				return nil, fmt.Errorf("resource %s has an unnamed input", key)
-			}
-			input.Base = r.Base
-			result.Inputs[inputName] = input
-			if input.Resource == nil {
-				var err error
-				if source.NativeResolver(input.Resolver) {
-					err = source.ValidateInput(input)
-				} else if operation, lookupErr := ops.operation(input.Resolver); lookupErr != nil || operation.Resolver == nil {
-					err = fmt.Errorf("unknown resolver %q", input.Resolver)
-				} else {
-					var settings []byte
-					settings, err = json.Marshal(input.Config)
-					if err == nil {
-						err = ops.call(ctx, input.Resolver, "validate", plugin.ResolveRequest[json.RawMessage]{Config: settings, Base: input.Base}, nil)
-					}
-				}
-				if err != nil {
-					return nil, fmt.Errorf("resource %s input %s: %w", key, inputName, err)
-				}
-			}
-			if input.Resource != nil {
-				ref := input.Resource
-				producer, ok := p.Resources[ref.Key()]
-				if !ok {
-					return nil, fmt.Errorf("resource %s input %s: unknown resource %s", key, inputName, ref.Key())
-				}
-				if producer.Suspend && !r.Suspend {
-					return nil, fmt.Errorf("resource %s input %s: depends on suspended resource %s; suspend %s as well", key, inputName, ref.Key(), key)
-				}
-				if ref.Output != "" && !safeOutputName(ref.Output) {
-					return nil, errors.New("invalid resource output name")
-				}
-			}
-		}
-		for destination := range result.Destinations {
-			d, ok := p.Destinations[destination]
-			if !ok {
-				return nil, fmt.Errorf("resource %s: unknown destination %s", key, destination)
-			}
-			if err := ops.check(d.Operation, false); err != nil {
-				return nil, err
-			}
-			if err := ops.configuration(d.Operation, d.Config); err != nil {
-				return nil, err
-			}
-		}
-		for destination, metadata := range result.Destinations {
-			if err := expression.Check(destinationMetadata(metadata), "env", "facts", "evidence"); err != nil {
-				return nil, fmt.Errorf("resource %s destination %s: %w", key, destination, err)
-			}
-		}
-		plans[key] = resourcePlan{Resource: r, Operation: op.Name, ResourceResult: result, Environment: bindings}
-	}
-	return plans, nil
-}
-
-func orderResources(plans map[string]resourcePlan, selected []string) ([]string, error) {
-	var roots []string
-	if len(selected) == 0 {
-		// A suspended resource runs only through a selector naming it or a
-		// selected resource consuming its outputs.
-		for _, key := range sortedKeys(plans) {
-			if !plans[key].Resource.Suspend {
-				roots = append(roots, key)
-			}
-		}
-	} else {
-		for _, selection := range selected {
-			if _, ok := plans[selection]; ok {
-				roots = append(roots, selection)
-				continue
-			}
-			var matches []string
-			for key, plan := range plans {
-				if plan.Resource.Metadata.Name == selection || plan.Resource.Kind+"/"+plan.Resource.Metadata.Name == selection {
-					matches = append(matches, key)
-				}
-			}
-			if len(matches) != 1 {
-				return nil, fmt.Errorf("selection %q matches %d resources; use Kind/name or apiVersion/Kind/name", selection, len(matches))
-			}
-			roots = append(roots, matches[0])
-		}
+		plans[key] = plan
+		return nil
 	}
 	var ordered []string
 	active, done := map[string]bool{}, map[string]bool{}
@@ -169,11 +101,13 @@ func orderResources(plans map[string]resourcePlan, selected []string) ([]string,
 		if done[key] {
 			return nil
 		}
+		if err := evaluate(key); err != nil {
+			return err
+		}
 		active[key] = true
 		for _, name := range sortedKeys(plans[key].Inputs) {
-			input := plans[key].Inputs[name]
-			if input.Resource != nil {
-				if err := visit(input.Resource.Key()); err != nil {
+			if ref := plans[key].Inputs[name].Resource; ref != nil {
+				if err := visit(ref.Key()); err != nil {
 					return err
 				}
 			}
@@ -185,10 +119,129 @@ func orderResources(plans map[string]resourcePlan, selected []string) ([]string,
 	}
 	for _, key := range roots {
 		if err := visit(key); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return ordered, nil
+	// A publication reference contributes peer metadata to a destination in the
+	// closure, so its resource is evaluated without joining the run.
+	// planDestinations owns whether the references themselves are valid.
+	for queue := slices.Clone(ordered); len(queue) > 0; {
+		key := queue[0]
+		queue = queue[1:]
+		for _, destination := range sortedKeys(plans[key].Destinations) {
+			references, _ := publicationReferences(destinationMetadata(plans[key].Destinations[destination]))
+			for _, reference := range references {
+				peer := reference.Key()
+				if _, evaluated := plans[peer]; evaluated {
+					continue
+				}
+				if _, declared := p.Resources[peer]; !declared {
+					continue
+				}
+				if err := evaluate(peer); err != nil {
+					return nil, nil, err
+				}
+				queue = append(queue, peer)
+			}
+		}
+	}
+	return plans, ordered, nil
+}
+
+// discoverResource evaluates one resource against its registered kind and
+// validates everything the declaration owns: its configuration, the resolvers
+// of its non-resource inputs, the resources it consumes and the destinations it
+// publishes to.
+func discoverResource(ctx context.Context, p config.Project, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, key string, r config.Resource) (resourcePlan, error) {
+	op, ok := kinds[plugin.ResourceKind{APIVersion: r.APIVersion, Kind: r.Kind}]
+	if !ok {
+		return resourcePlan{}, fmt.Errorf("resource %s: no installed operation registers this apiVersion and kind", key)
+	}
+	if err := ops.check(op.Name, true); err != nil {
+		return resourcePlan{}, err
+	}
+	declaration, bindings, err := resourceDeclaration(r)
+	if err != nil {
+		return resourcePlan{}, fmt.Errorf("resource %s: %w", key, err)
+	}
+	encoded, err := json.Marshal(declaration)
+	if err != nil {
+		return resourcePlan{}, err
+	}
+	var result plugin.ResourceResult
+	schema := op.ConfigSchema
+	if deferredPreparation(r) {
+		schema, err = config.ExpressionSchema(schema)
+		if err != nil {
+			return resourcePlan{}, err
+		}
+	}
+	if len(schema) > 0 {
+		if err := plugin.ValidateSchema(schema, encoded); err != nil {
+			return resourcePlan{}, fmt.Errorf("resource %s config: %w", key, err)
+		}
+	}
+	if err := ops.call(ctx, op.Name, "discover", plugin.ResourceRequest[json.RawMessage]{Config: encoded, Identity: r.Reference()}, &result); err != nil {
+		return resourcePlan{}, fmt.Errorf("resource %s: %w", key, err)
+	}
+	if len(result.Config) == 0 {
+		return resourcePlan{}, fmt.Errorf("resource %s: kind did not return preparation configuration", key)
+	}
+	for inputName, input := range result.Inputs {
+		if inputName == "" {
+			return resourcePlan{}, fmt.Errorf("resource %s has an unnamed input", key)
+		}
+		input.Base = r.Base
+		result.Inputs[inputName] = input
+		if input.Resource == nil {
+			var err error
+			if source.NativeResolver(input.Resolver) {
+				err = source.ValidateInput(input)
+			} else if operation, lookupErr := ops.operation(input.Resolver); lookupErr != nil || operation.Resolver == nil {
+				err = fmt.Errorf("unknown resolver %q", input.Resolver)
+			} else {
+				var settings []byte
+				settings, err = json.Marshal(input.Config)
+				if err == nil {
+					err = ops.call(ctx, input.Resolver, "validate", plugin.ResolveRequest[json.RawMessage]{Config: settings, Base: input.Base}, nil)
+				}
+			}
+			if err != nil {
+				return resourcePlan{}, fmt.Errorf("resource %s input %s: %w", key, inputName, err)
+			}
+		}
+		if input.Resource != nil {
+			ref := input.Resource
+			producer, ok := p.Resources[ref.Key()]
+			if !ok {
+				return resourcePlan{}, fmt.Errorf("resource %s input %s: unknown resource %s", key, inputName, ref.Key())
+			}
+			if producer.Suspend && !r.Suspend {
+				return resourcePlan{}, fmt.Errorf("resource %s input %s: depends on suspended resource %s; suspend %s as well", key, inputName, ref.Key(), key)
+			}
+			if ref.Output != "" && !safeOutputName(ref.Output) {
+				return resourcePlan{}, errors.New("invalid resource output name")
+			}
+		}
+	}
+	for destination := range result.Destinations {
+		d, ok := p.Destinations[destination]
+		if !ok {
+			return resourcePlan{}, fmt.Errorf("resource %s: unknown destination %s", key, destination)
+		}
+		if err := ops.check(d.Operation, false); err != nil {
+			return resourcePlan{}, err
+		}
+		if err := ops.configuration(d.Operation, d.Config); err != nil {
+			return resourcePlan{}, err
+		}
+	}
+	for destination, metadata := range result.Destinations {
+		if err := expression.Check(destinationMetadata(metadata), "env", "facts", "evidence"); err != nil {
+			return resourcePlan{}, fmt.Errorf("resource %s destination %s: %w", key, destination, err)
+		}
+	}
+	return resourcePlan{Resource: r, Operation: op.Name, ResourceResult: result, Environment: bindings}, nil
 }
 
 func preflight(plans map[string]resourcePlan, selected []string, p config.Project, ops *operations) error {

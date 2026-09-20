@@ -147,8 +147,9 @@ spec:
       $input: fonts
 ```
 
-A suspended resource still validates and keeps its reviewed lock entries, but runs
-without selectors and [reconciliation](reconcile.md) skip it. On a machine
+A suspended resource keeps its reviewed lock entries and is still checked by
+`stemma validate`, but runs without selectors and [reconciliation](reconcile.md)
+skip it. On a machine
 holding the files, `stemma apply MacSoftware/fonts` runs it together with the
 builds it references. A resource that is not suspended cannot consume a suspended
 resource's outputs: suspend both and select the consumer.

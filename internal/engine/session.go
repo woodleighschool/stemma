@@ -92,10 +92,10 @@ func declarations(plans map[string]resourcePlan, selected []string) map[string]m
 
 // suspended lists the resources implicit runs skip. Their reviewed
 // lock entries outlive every run that does not select them.
-func suspended(plans map[string]resourcePlan) []string {
+func suspended(resources map[string]config.Resource) []string {
 	var keys []string
-	for _, key := range sortedKeys(plans) {
-		if plans[key].Resource.Suspend {
+	for _, key := range sortedKeys(resources) {
+		if resources[key].Suspend {
 			keys = append(keys, key)
 		}
 	}

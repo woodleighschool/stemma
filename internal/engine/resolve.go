@@ -74,11 +74,11 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 	defer s.close()
 	done := plugin.Stage(ctx, "Validating operation contracts")
 	defer func() { done(runErr) }()
-	plans, err := discover(ctx, s.project, s.ops)
+	roots, err := selectResources(s.project.Resources, nil)
 	if err != nil {
 		return candidate, err
 	}
-	selected, err := orderResources(plans, nil)
+	plans, selected, err := discoverClosure(ctx, s.project, s.ops, roots)
 	if err != nil {
 		return candidate, err
 	}
@@ -115,9 +115,11 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 		}
 		candidate.Resources[key] = resource
 	}
-	for _, key := range suspended(plans) {
-		plan := plans[key]
-		candidate.Resources[key] = CandidateResource{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Producers: producers(plan), Suspended: true}
+	// A suspended resource is reported from its declaration alone; nothing
+	// implicit runs it, so the run never evaluates its operation contract.
+	for _, key := range suspended(s.project.Resources) {
+		resource := s.project.Resources[key]
+		candidate.Resources[key] = CandidateResource{Name: resource.Metadata.Name, Kind: resource.Kind, Suspended: true}
 	}
 	return candidate, nil
 }

@@ -21,6 +21,11 @@ ambiguous identity. Omitting selectors processes every resource that is not
 [suspended](catalogs.md#suspend-a-resource); a selector runs a suspended resource
 and the builds it references.
 
+A selector scopes evaluation as well as execution. Only the selected resources
+and the resources they consume are checked against their operation contracts, so
+an unrelated document that fails its own validation does not block the run. Use
+`stemma validate` to check the whole catalog, including suspended resources.
+
 `icon` writes [declared icons](mac-software.md#icons) to `icons/<name>.png` from
 locked software. `--presentation raw` extracts the original artwork;
 `--presentation glassy` uses the macOS renderer at `--size` pixels (512 by default).

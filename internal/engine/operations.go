@@ -58,11 +58,9 @@ func ValidateProject(ctx context.Context, opts Options) (result config.Project, 
 		return p, err
 	}
 	defer cleanup()
-	plans, err := discover(ctx, p, ops)
-	if err != nil {
-		return p, err
-	}
-	selected, err := orderResources(plans, nil)
+	// Validation answers whether the whole catalog is valid, so every declared
+	// resource is a root, including the suspended resources that runs skip.
+	plans, selected, err := discoverClosure(ctx, p, ops, sortedKeys(p.Resources))
 	if err != nil {
 		return p, err
 	}
@@ -70,7 +68,7 @@ func ValidateProject(ctx context.Context, opts Options) (result config.Project, 
 	if err != nil {
 		return p, err
 	}
-	if err := verifyIcons(root, plans, sortedKeys(plans)); err != nil {
+	if err := verifyIcons(root, plans, selected); err != nil {
 		return p, err
 	}
 	_, err = planDestinations(ctx, p, plans, ops, root, selected)

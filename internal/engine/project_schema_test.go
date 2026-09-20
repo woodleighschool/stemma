@@ -105,7 +105,7 @@ func TestDiscoveryValidatesResolverConfigBeforeAcquisition(t *testing.T) {
 		input := maps.Clone(test.settings)
 		input["resolver"] = test.resolver
 		project := config.Project{Resources: map[string]config.Resource{"app": {APIVersion: "stemma/v1alpha1", Kind: "MacSoftware", Metadata: config.Metadata{Name: "app"}, Spec: map[string]any{"source": input}}}}
-		_, err := discover(t.Context(), project, ops)
+		_, _, err := discoverClosure(t.Context(), project, ops, sortedKeys(project.Resources))
 		if test.message == "" && err != nil || test.message != "" && (err == nil || !strings.Contains(err.Error(), test.message)) {
 			t.Fatalf("%s %v: %v", test.resolver, test.settings, err)
 		}

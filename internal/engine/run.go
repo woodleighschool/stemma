@@ -110,11 +110,11 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	p, root, store, manager, ops := s.project, s.root, s.store, s.manager, s.ops
 	done := plugin.Stage(ctx, "Validating operation contracts")
 	defer func() { done(runErr) }()
-	plans, err := discover(ctx, p, ops)
+	roots, err := selectResources(p.Resources, opts.Resources)
 	if err != nil {
 		return report, err
 	}
-	selected, err := orderResources(plans, opts.Resources)
+	plans, selected, err := discoverClosure(ctx, p, ops, roots)
 	if err != nil {
 		return report, err
 	}
@@ -138,7 +138,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	done(nil)
 	declarations := declarations(plans, selected)
 	opts.Lock.PreserveUnselected = len(opts.Resources) > 0
-	opts.Lock.Retain = suspended(plans)
+	opts.Lock.Retain = suspended(p.Resources)
 	plugin.Logger(ctx).DebugContext(ctx, "Resources selected", "count", len(selected), "suspended", len(opts.Lock.Retain))
 	locked, err := lockfile.Begin(ctx, root, declarations, ops.plugins, manager, opts.Lock)
 	if err != nil {
