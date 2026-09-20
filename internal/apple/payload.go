@@ -370,7 +370,12 @@ func readPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudge
 
 // streamPayload decodes a component payload, hands the CPIO stream to consume
 // and then verifies the stream ended within budget without trailing data.
-func streamPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudget, consume func(io.Reader) error) error {
+func streamPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudget, consume func(io.Reader) error) (result error) {
+	defer func() {
+		if err := ctx.Err(); err != nil {
+			result = err
+		}
+	}()
 	stop := context.AfterFunc(ctx, func() { _ = source.Close() })
 	defer stop()
 	defer func() { _ = source.Close() }()
