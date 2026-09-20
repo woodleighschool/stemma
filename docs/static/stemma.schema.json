@@ -1008,7 +1008,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Exact file or directory path relative to the resource file, confined to the project."
+              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
             },
             "sha256": {
               "anyOf": [
@@ -1059,7 +1059,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Exact file or directory path relative to the resource file, confined to the project."
+              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
             },
             "resolver": {
               "const": "file",
@@ -8535,7 +8535,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Exact file or directory path relative to the resource file, confined to the project."
+              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
             },
             "sha256": {
               "anyOf": [
@@ -8583,7 +8583,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Exact file or directory path relative to the resource file, confined to the project."
+              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
             },
             "resolver": {
               "const": "file",

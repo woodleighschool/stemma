@@ -93,10 +93,10 @@ func TestFamilyRelativeInputDeclarations(t *testing.T) {
 	if _, hash, err := m.Declaration(equivalent); err != nil || hash != entry.Declaration {
 		t.Fatalf("same project input has a different declaration: %v", err)
 	}
-	for _, name := range []string{"../../../outside", "/absolute", `C:\outside`} {
+	for _, name := range []string{`Shared\script`, "Shared:script", "Shared/\x00"} {
 		input.Config["path"] = name
 		if _, _, err := m.Declaration(input); err == nil {
-			t.Fatalf("accepted escaping family-relative input %q", name)
+			t.Fatalf("accepted unusable family-relative input %q", name)
 		}
 	}
 	remote := plugin.Input{Resolver: "http", Config: map[string]any{"url": "https://example.invalid/app.pkg"}}
@@ -144,5 +144,44 @@ func writeInput(t *testing.T, filename, content string, mode os.FileMode) {
 	}
 	if err := os.WriteFile(filename, []byte(content), mode); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestFileInputsUseFilesystemPathSemantics(t *testing.T) {
+	host := t.TempDir()
+	root := filepath.Join(host, "catalog")
+	outside := filepath.Join(host, "Applications")
+	writeInput(t, filepath.Join(outside, "Vendor.pkg"), "vendor installer", 0o644)
+	writeInput(t, filepath.Join(outside, "App.app", "Contents", "Info.plist"), "bundle", 0o644)
+	writeInput(t, filepath.Join(root, "software", "Vendor", "stemma.yaml"), "configuration", 0o644)
+	if err := os.Symlink(filepath.Join(outside, "Vendor.pkg"), filepath.Join(root, "Vendor.link")); err != nil {
+		t.Fatal(err)
+	}
+	store, err := cas.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(store, root, false)
+
+	absolute, err := m.Resolve(t.Context(), plugin.Input{Resolver: "file", Base: "software/Vendor", Config: map[string]any{"path": filepath.Join(outside, "Vendor.pkg")}})
+	if err != nil || absolute.Content.Filename != "Vendor.pkg" || absolute.Content.Tree {
+		t.Fatalf("absolute file input: %#v %v", absolute.Content, err)
+	}
+	bundle, err := m.Resolve(t.Context(), plugin.Input{Resolver: "file", Config: map[string]any{"path": filepath.Join(outside, "App.app")}})
+	if err != nil || bundle.Content.Filename != "App.app" || !bundle.Content.Tree {
+		t.Fatalf("absolute directory input: %#v %v", bundle.Content, err)
+	}
+
+	escaping, err := m.Resolve(t.Context(), plugin.Input{Resolver: "file", Base: "software/Vendor", Config: map[string]any{"path": "../../../Applications/Vendor.pkg"}})
+	if err != nil || escaping.Content.Artifact != absolute.Content.Artifact {
+		t.Fatalf("relative input above the project: %#v %v", escaping.Content, err)
+	}
+	if escaping.Declaration == absolute.Declaration {
+		t.Fatal("project-relative and host paths share a declaration")
+	}
+
+	link, err := m.Resolve(t.Context(), plugin.Input{Resolver: "file", Config: map[string]any{"path": "Vendor.link"}})
+	if err != nil || link.Content.Artifact != absolute.Content.Artifact {
+		t.Fatalf("symlinked input: %#v %v", link.Content, err)
 	}
 }

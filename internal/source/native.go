@@ -33,7 +33,7 @@ type nativeConfig struct {
 	Base               string            `json:"base,omitempty" jsonschema_description:"Local tree root, relative to the resource file. Defaults to its directory."`
 	URL                string            `json:"url,omitempty" jsonschema_description:"Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."`
 	Match              string            `json:"match,omitempty" jsonschema_description:"HTTP page regular expression whose full matches are URL references resolved against the final page URL. Must identify one distinct stable HTTP(S) download URL."`
-	Path               string            `json:"path,omitempty" jsonschema_description:"Exact file or directory path relative to the resource file, confined to the project."`
+	Path               string            `json:"path,omitempty" jsonschema_description:"Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."`
 	Repository         string            `json:"repository,omitempty" jsonschema_description:"GitHub repository in owner/name form."`
 	Release            string            `json:"release,omitempty" jsonschema_description:"GitHub release tag, or latest. Omitted or empty values select latest."`
 	IncludePrereleases bool              `json:"include_prereleases,omitempty" jsonschema_description:"Include prereleases when discovering latest; select the newest published non-draft release. Explicit release tags are unchanged."`
@@ -106,9 +106,9 @@ func native(input plugin.Input) (nativeConfig, error) {
 	}
 	s.Type = input.Resolver
 	if s.Type == "file" && s.Path != "" {
-		s.Path, err = relativeTo(input.Base, s.Path)
+		s.Path, err = resolvePath(input.Base, s.Path)
 	} else if s.Type == "local" {
-		s.Base, err = relativeTo(input.Base, s.Base)
+		s.Base, err = projectPath(input.Base, s.Base)
 	}
 	if err != nil {
 		return s, err
@@ -126,18 +126,54 @@ func native(input plugin.Input) (nativeConfig, error) {
 	return s, nil
 }
 
-func relativeTo(base, name string) (string, error) {
-	if path.IsAbs(name) || path.IsAbs(base) || strings.ContainsAny(base+name, "\\:\x00\r\n") {
-		return "", errors.New("local input path must be relative to its resource file")
+// absolutePath reports whether a declared path names a host location instead of
+// one resolved from the project. A slash-rooted path counts on every platform so
+// that a catalog reads the same way everywhere.
+func absolutePath(name string) bool { return path.IsAbs(name) || filepath.IsAbs(name) }
+
+// resolvePath resolves a declared path with ordinary filesystem semantics:
+// absolute paths name a host location, and relative paths resolve from the
+// resource file's directory. Relative results stay relative to the project, so
+// they identify the same input on any checkout.
+func resolvePath(base, name string) (string, error) {
+	if strings.ContainsAny(name, "\x00\r\n") {
+		return "", errors.New("input path must not contain control characters")
+	}
+	if filepath.IsAbs(name) {
+		return filepath.Clean(name), nil
+	}
+	if path.IsAbs(name) {
+		return path.Clean(name), nil
+	}
+	if path.IsAbs(base) || strings.ContainsAny(base+name, "\\:") {
+		return "", errors.New("input path must be absolute or a slash-separated relative path")
 	}
 	resolved := path.Join(base, name)
 	if resolved == "" {
 		resolved = "."
 	}
-	if !safeRelative(resolved) {
-		return "", errors.New("local input path must stay inside the project")
+	return resolved, nil
+}
+
+// projectPath resolves a tree root, which stays inside the project because its
+// contents are selected by globs walked from that root without following links.
+func projectPath(base, name string) (string, error) {
+	resolved, err := resolvePath(base, name)
+	if err != nil {
+		return "", err
+	}
+	if absolutePath(resolved) || !safeRelative(resolved) {
+		return "", errors.New("local input base must stay inside the project")
 	}
 	return resolved, nil
+}
+
+// hostPath locates a file input on the filesystem.
+func (s nativeConfig) hostPath(root string) string {
+	if absolutePath(s.Path) {
+		return filepath.FromSlash(s.Path)
+	}
+	return filepath.Join(root, filepath.FromSlash(s.Path))
 }
 
 func (m *Manager) resolveNative(ctx context.Context, input plugin.Input) (Content, json.RawMessage, error) {
@@ -179,25 +215,30 @@ func (m *Manager) observeNative(ctx context.Context, input plugin.Input, previou
 	}
 	entry := nativeEntry{URL: s.URL, Filename: s.Filename, Tree: s.Type == "local"}
 	mode := uint32(0o644)
-	if s.Type == "file" || s.Type == "local" {
+	if s.Type == "file" {
+		info, err := os.Stat(s.hostPath(m.Root))
+		if err != nil {
+			return Content{}, nil, false, err
+		}
+		entry.Tree = info.IsDir()
+		mode = uint32(info.Mode().Perm())
+	}
+	if s.Type == "local" {
 		root, err := os.OpenRoot(m.Root)
 		if err != nil {
 			return Content{}, nil, false, err
 		}
 		defer func() { _ = root.Close() }()
-		name := s.Path
-		if s.Type == "local" {
-			name = s.Base
-			if name == "" {
-				name = "."
-			}
+		name := s.Base
+		if name == "" {
+			name = "."
 		}
 		info, err := root.Lstat(name)
 		if err != nil {
 			return Content{}, nil, false, err
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return Content{}, nil, false, errors.New("input root must not be a symlink")
+			return Content{}, nil, false, errors.New("local input base must not be a symlink")
 		}
 		entry.Tree = info.IsDir()
 		mode = uint32(info.Mode().Perm())
@@ -316,8 +357,8 @@ func (s nativeConfig) Validate() error {
 			return fmt.Errorf("invalid GitHub asset pattern %q", s.Asset)
 		}
 	case "file":
-		if !safeRelative(s.Path) {
-			return errors.New("file source requires a project-relative path only")
+		if s.Path == "" {
+			return errors.New("file source requires a file or directory path")
 		}
 	case "local":
 		if len(s.Include) == 0 || (s.Base != "" && !safeRelative(s.Base)) {
@@ -403,12 +444,8 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry *nativeEnt
 	if s.Type == "file" {
 		done := plugin.Stage(ctx, "Reading local input")
 		defer func() { done(err) }()
-		root, err := os.OpenRoot(m.Root)
-		if err != nil {
-			return cas.Ref{}, err
-		}
-		defer func() { _ = root.Close() }()
-		f, err := root.Open(s.Path)
+		name := s.hostPath(m.Root)
+		f, err := os.Open(name)
 		if err != nil {
 			return cas.Ref{}, err
 		}
@@ -421,7 +458,7 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry *nativeEnt
 			if !info.IsDir() || !entry.Tree {
 				return cas.Ref{}, errors.New("file source changed type or is not a regular file/directory")
 			}
-			tree, err := root.OpenRoot(s.Path)
+			tree, err := os.OpenRoot(name)
 			if err != nil {
 				return cas.Ref{}, err
 			}

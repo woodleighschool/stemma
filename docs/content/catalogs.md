@@ -24,7 +24,7 @@ software/
 
 Names and directories are your choice. `spec.imports` accepts paths and globs such
 as `software/**/*.yaml`; every pattern must match. Asset paths are relative to the
-document containing the declaration and must remain inside the project. `icons/` is
+document containing the declaration; absolute paths name a host location. `icons/` is
 the one fixed name: a resource's `icon: chrome` publishes `icons/chrome.png`. See
 [icons](mac-software.md#icons).
 

@@ -73,15 +73,25 @@ repeat discovery or reapply the pattern. Credentials remain confined to the
 configured source origin. Discovery belongs to the resolver; the software kind still receives
 one file. External plugins can supply other [resolvers](writing-plugins.md#resolvers).
 
-## Use repository files
+## Use local files
 
 ```yaml
 source:
   path: Assets/Vendor.pkg
 ```
 
-`path` can select a file or directory. Paths resolve from the resource file, not
-the shell's working directory. To snapshot selected files from a directory:
+`path` can select a file or directory. Relative paths resolve from the resource
+file, not the shell's working directory. An absolute path names a location on the
+host running the command:
+
+```yaml
+source:
+  path: /Applications/GarageBand.app
+```
+
+Host paths are machine-specific, so the content identity in the lockfile is what
+travels. Symlinks behave as they do everywhere else: a link resolves to its target.
+To snapshot selected files from a directory:
 
 ```yaml
 source:
@@ -94,8 +104,9 @@ source:
 
 `include` uses doublestar globs; each pattern must match at least one entry.
 Overlapping patterns select each entry once. `base` defaults to the resource file's
-directory. `file.path` is an exact path, not a glob. Native resolvers reject fields
-belonging to another resolver.
+directory and stays inside the project, because its contents are walked without
+following symlinks. `file.path` is an exact path, not a glob. Native resolvers
+reject fields belonging to another resolver.
 
 Files and trees have content identities. Tree identity also includes permission
 modes and supported symlinks. Packaging cannot silently discard required metadata;
