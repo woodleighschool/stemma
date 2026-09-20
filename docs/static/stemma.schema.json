@@ -32,7 +32,7 @@
                   "additionalProperties": {
                     "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/Input"
                   },
-                  "description": "Named source files or trees leased into the build. Refer to them with $input in payload and scripts.",
+                  "description": "Named source artifacts leased into the build. Refer to them with $input in payload and scripts.",
                   "type": "object"
                 },
                 "package": {
@@ -90,7 +90,7 @@
                         "description": "Octal permissions for the mapped root, for example 0644 for a file or 0755 for a directory."
                       },
                       "path": {
-                        "description": "Relative path within the selected input. Omit to use the input itself.",
+                        "description": "Exact relative path in a tree, ZIP, TAR or DMG. A dot selects the contents root. Omit to retain the original input; PKGs remain opaque files.",
                         "type": "string"
                       },
                       "uid": {
@@ -112,17 +112,42 @@
                         "description": "Name of a declared input supplying this file or tree.",
                         "type": "string"
                       },
-                      "path": {
-                        "description": "Relative path within the selected input. Omit to use the input itself.",
+                      "content": {
+                        "description": "Literal UTF-8 file contents. Mutually exclusive with $input; omit both to create a directory.",
                         "type": "string"
+                      },
+                      "gid": {
+                        "description": "Numeric group applied to the mapped subtree. Defaults to wheel (0).",
+                        "maximum": 262143,
+                        "type": "integer"
+                      },
+                      "mode": {
+                        "anyOf": [
+                          {
+                            "description": "Octal permissions for the mapped root, for example 0644 for a file or 0755 for a directory.",
+                            "pattern": "^0?[0-7]{3}$",
+                            "type": "string"
+                          },
+                          {
+                            "pattern": "^\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}$",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Octal permissions for the mapped root, for example 0644 for a file or 0755 for a directory."
+                      },
+                      "path": {
+                        "description": "Exact relative path in a tree, ZIP, TAR or DMG. A dot selects the contents root. Omit to retain the original input; PKGs remain opaque files.",
+                        "type": "string"
+                      },
+                      "uid": {
+                        "description": "Numeric owner applied to the mapped subtree. Defaults to root (0).",
+                        "maximum": 262143,
+                        "type": "integer"
                       }
                     },
-                    "required": [
-                      "$input"
-                    ],
                     "type": "object"
                   },
-                  "description": "Installer lifecycle scripts keyed by their native role, such as preinstall or postinstall. Scripts are packaged, never executed by Stemma.",
+                  "description": "Paths in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma.",
                   "type": "object"
                 }
               },
@@ -145,7 +170,7 @@
                       "additionalProperties": {
                         "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/PartialInput"
                       },
-                      "description": "Named source files or trees leased into the build. Refer to them with $input in payload and scripts.",
+                      "description": "Named source artifacts leased into the build. Refer to them with $input in payload and scripts.",
                       "type": "object"
                     },
                     "package": {
@@ -199,7 +224,7 @@
                             "description": "Octal permissions for the mapped root, for example 0644 for a file or 0755 for a directory."
                           },
                           "path": {
-                            "description": "Relative path within the selected input. Omit to use the input itself.",
+                            "description": "Exact relative path in a tree, ZIP, TAR or DMG. A dot selects the contents root. Omit to retain the original input; PKGs remain opaque files.",
                             "type": "string"
                           },
                           "uid": {
@@ -221,14 +246,42 @@
                             "description": "Name of a declared input supplying this file or tree.",
                             "type": "string"
                           },
-                          "path": {
-                            "description": "Relative path within the selected input. Omit to use the input itself.",
+                          "content": {
+                            "description": "Literal UTF-8 file contents. Mutually exclusive with $input; omit both to create a directory.",
                             "type": "string"
+                          },
+                          "gid": {
+                            "description": "Numeric group applied to the mapped subtree. Defaults to wheel (0).",
+                            "maximum": 262143,
+                            "type": "integer"
+                          },
+                          "mode": {
+                            "anyOf": [
+                              {
+                                "description": "Octal permissions for the mapped root, for example 0644 for a file or 0755 for a directory.",
+                                "pattern": "^0?[0-7]{3}$",
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "^\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}$",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Octal permissions for the mapped root, for example 0644 for a file or 0755 for a directory."
+                          },
+                          "path": {
+                            "description": "Exact relative path in a tree, ZIP, TAR or DMG. A dot selects the contents root. Omit to retain the original input; PKGs remain opaque files.",
+                            "type": "string"
+                          },
+                          "uid": {
+                            "description": "Numeric owner applied to the mapped subtree. Defaults to root (0).",
+                            "maximum": 262143,
+                            "type": "integer"
                           }
                         },
                         "type": "object"
                       },
-                      "description": "Installer lifecycle scripts keyed by their native role, such as preinstall or postinstall. Scripts are packaged, never executed by Stemma.",
+                      "description": "Paths in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma.",
                       "type": "object"
                     }
                   },

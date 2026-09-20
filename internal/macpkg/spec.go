@@ -15,13 +15,13 @@ import (
 )
 
 // Version changes when the layout or package derivation changes.
-const Version = "stemma.macpkg/2"
+const Version = "stemma.macpkg/3"
 
 type Spec struct {
-	Inputs  map[string]plugin.Input `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema_description:"Named source files or trees leased into the build. Refer to them with $input in payload and scripts."`
+	Inputs  map[string]plugin.Input `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema_description:"Named source artifacts leased into the build. Refer to them with $input in payload and scripts."`
 	Payload map[string]Entry        `json:"payload,omitempty" yaml:"payload,omitempty" jsonschema_description:"Installed absolute paths mapped to files, trees, literal text or directory declarations."`
 	Package Package                 `json:"package" yaml:"package" jsonschema_description:"Component package identity and version recorded in macOS receipts."`
-	Scripts map[string]InputFileRef `json:"scripts,omitempty" yaml:"scripts,omitempty" jsonschema_description:"Installer lifecycle scripts keyed by their native role, such as preinstall or postinstall. Scripts are packaged, never executed by Stemma."`
+	Scripts map[string]Entry        `json:"scripts,omitempty" yaml:"scripts,omitempty" jsonschema_description:"Paths in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma."`
 }
 
 type Package struct {
@@ -30,20 +30,15 @@ type Package struct {
 	Filename   string `json:"filename,omitempty" yaml:"filename,omitempty" jsonschema_description:"Optional published PKG basename. Omit to derive it from the resource name and package version."`
 }
 
-// Entry maps a file or tree to its payload key. No input or content declares a
+// Entry maps a file or tree into an output area. No input or content declares a
 // directory. Mode applies to the mapped root; ownership applies to its subtree.
 type Entry struct {
 	Input   string  `json:"$input,omitempty" yaml:"$input,omitempty" jsonschema_description:"Name of a declared input supplying this file or tree."`
-	Path    string  `json:"path,omitempty" yaml:"path,omitempty" jsonschema_description:"Relative path within the selected input. Omit to use the input itself."`
+	Path    string  `json:"path,omitempty" yaml:"path,omitempty" jsonschema_description:"Exact relative path in a tree, ZIP, TAR or DMG. A dot selects the contents root. Omit to retain the original input; PKGs remain opaque files."`
 	Content *string `json:"content,omitempty" yaml:"content,omitempty" jsonschema_description:"Literal UTF-8 file contents. Mutually exclusive with $input; omit both to create a directory."`
 	Mode    string  `json:"mode,omitempty" yaml:"mode,omitempty" jsonschema:"pattern=^0?[0-7]{3}$" jsonschema_description:"Octal permissions for the mapped root, for example 0644 for a file or 0755 for a directory."`
 	UID     uint32  `json:"uid,omitempty" yaml:"uid,omitempty" jsonschema:"maximum=262143" jsonschema_description:"Numeric owner applied to the mapped subtree. Defaults to root (0)."`
 	GID     uint32  `json:"gid,omitempty" yaml:"gid,omitempty" jsonschema:"maximum=262143" jsonschema_description:"Numeric group applied to the mapped subtree. Defaults to wheel (0)."`
-}
-
-type InputFileRef struct {
-	Input string `json:"$input" yaml:"$input" jsonschema_description:"Name of a declared input supplying this file or tree."`
-	Path  string `json:"path,omitempty" yaml:"path,omitempty" jsonschema_description:"Relative path within the selected input. Omit to use the input itself."`
 }
 
 func (s Spec) Filename() string {
@@ -58,7 +53,7 @@ func (s Spec) Validate() error {
 	if !validPath(filename) || path.Base(filename) != filename || !strings.HasSuffix(filename, ".pkg") {
 		return errors.New("package filename must be a base filename ending in .pkg")
 	}
-	opts := pkgbuild.Options{Identifier: s.Package.Identifier, Version: s.Package.Version, Scripts: map[string]string{}}
+	opts := pkgbuild.Options{Identifier: s.Package.Identifier, Version: s.Package.Version}
 	if len(s.Payload) > 0 {
 		opts.Payload = "Payload"
 	}
@@ -76,21 +71,31 @@ func (s Spec) Validate() error {
 			return fmt.Errorf("payload %q: %w", endpoint, err)
 		}
 		if entry.Input != "" {
-			if err := s.validateRef(InputFileRef{Input: entry.Input, Path: entry.Path}); err != nil {
+			if err := s.validateRef(entry); err != nil {
 				return fmt.Errorf("payload %q: %w", endpoint, err)
 			}
 		}
 	}
-	for role, ref := range s.Scripts {
-		if err := s.validateRef(ref); err != nil {
-			return fmt.Errorf("scripts.%s: %w", role, err)
+	if len(s.Scripts) > 0 {
+		opts.Scripts = "Scripts"
+	}
+	for name, entry := range s.Scripts {
+		if !validPath(name) {
+			return fmt.Errorf("scripts %q: destination must be confined and relative", name)
 		}
-		opts.Scripts[role] = "Scripts/" + role
+		if err := entry.validate(); err != nil {
+			return fmt.Errorf("scripts %q: %w", name, err)
+		}
+		if entry.Input != "" {
+			if err := s.validateRef(entry); err != nil {
+				return fmt.Errorf("scripts %q: %w", name, err)
+			}
+		}
 	}
 	return pkgbuild.Validate(opts)
 }
 
-func (s Spec) validateRef(ref InputFileRef) error {
+func (s Spec) validateRef(ref Entry) error {
 	if _, exists := s.Inputs[ref.Input]; ref.Input == "" || !exists {
 		return fmt.Errorf("unknown input %q", ref.Input)
 	}

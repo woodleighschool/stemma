@@ -92,6 +92,43 @@ func TestNativeLargeAppPayloadAndBOM(t *testing.T) {
 	}
 }
 
+func TestNativeWrapperScriptsResources(t *testing.T) {
+	root, opts := wrapperFixture(t)
+	output := filepath.Join(t.TempDir(), "wrapper.pkg")
+	if err := Build(t.Context(), root, output, opts); err != nil {
+		t.Fatal(err)
+	}
+	expanded := filepath.Join(t.TempDir(), "expanded")
+	native(t, "/usr/sbin/pkgutil", "--expand-full", output, expanded)
+	for name, mode := range map[string]os.FileMode{
+		".": 0o750, "Media.dmg": 0o640, "config": 0o710,
+		"config/defaults.plist": 0o440, "config/preinstall": 0o750, "postinstall": 0o755,
+	} {
+		extracted := filepath.Join(expanded, "Scripts", name)
+		info, err := os.Stat(extracted)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != mode || info.Mode().IsRegular() && !info.ModTime().Equal(opts.Timestamp) {
+			t.Fatalf("native scripts metadata for %s: mode %v, modified %v", name, info.Mode(), info.ModTime())
+		}
+		if info.Mode().IsRegular() && fileDigest(t, extracted) != fileDigest(t, filepath.Join(root, "Scripts", name)) {
+			t.Fatalf("native extraction changed resource %s", name)
+		}
+	}
+	for name, want := range map[string]string{"defaults.plist": "config/defaults.plist", "preinstall": "config/preinstall"} {
+		link, err := os.Readlink(filepath.Join(expanded, "Scripts", name))
+		if err != nil || link != want {
+			t.Fatalf("native scripts symlink %s: %q %v", name, link, err)
+		}
+	}
+	for _, name := range []string{"Payload", "Bom"} {
+		if _, err := os.Stat(filepath.Join(expanded, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("wrapper unexpectedly includes %s", name)
+		}
+	}
+}
+
 func native(t *testing.T, tool string, args ...string) string {
 	t.Helper()
 	data, err := exec.CommandContext(t.Context(), tool, args...).CombinedOutput()

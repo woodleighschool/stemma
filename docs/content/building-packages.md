@@ -81,30 +81,106 @@ An entry with neither `$input` nor `content` creates a directory. Confined relat
 symlinks are supported. Extended attributes, ACLs and resource forks are not
 carried into new payload trees. Vendor installers retain their original bytes.
 
-## Include installer scripts
+## Select contents from an input
 
-Add a script input and reference it by installer role:
+An omitted `path` uses the original input. For a file, this preserves its bytes;
+for a directory, it copies the directory tree. An explicit `path` selects an exact
+member of a directory, ZIP, TAR or DMG. `path: .` selects the contents root:
 
 ```yaml
 inputs:
-  scripts:
-    path: Scripts
-scripts:
-  preinstall:
-    $input: scripts
-    path: preinstall
-  postinstall:
-    $input: scripts
-    path: postinstall
+  vendor:
+    path: Assets/Vendor.zip
+payload:
+  /Library/Application Support/Example:
+    $input: vendor
+    path: resources
 ```
 
-Those files are endpoint payload. Stemma packages them but never runs them. A
-scripts-only package can omit `payload`.
+The same declaration works when `vendor` is a directory, TAR or DMG containing
+`resources`. Build paths are exact, without globs or automatic app selection.
+An ordinary file permits only itself; PKGs retain their package semantics and
+cannot be traversed as a generic directory.
+
+The lock always identifies the original input. Selecting another member changes
+the build, not the source lock. ZIP/TAR contents expand once per input in the
+build workspace. DMG members are read through the disk-image reader without
+mounting the image or expanding unrelated files. Temporary build files disappear
+when preparation finishes.
+
+## Include installer scripts and resources
+
+`scripts` describes the package's temporary Scripts area using the same entries
+as `payload`. Root files named `preinstall` and `postinstall` become installer
+hooks, with mode `0755`. Other paths hold files or trees those hooks use. A Scripts
+area must contain at least one regular hook; hooks and resources are never run by
+Stemma.
+
+An Adobe-style wrapper can carry the original DMG beside its installer hook:
+
+```yaml
+apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata:
+  name: vendor-wrapper
+spec:
+  inputs:
+    media:
+      path: Assets/Vendor.dmg
+    hooks:
+      path: Scripts
+  package:
+    identifier: org.example.vendor-wrapper
+    version: "1.0"
+  scripts:
+    postinstall:
+      $input: hooks
+      path: postinstall
+    installer.dmg:
+      $input: media
+```
+
+On the endpoint, the hook can find `installer.dmg` beside `$0`, mount it, run the
+vendor installer and detach it on exit. macOS Installer owns the temporary Scripts
+area. The package does not install that DMG into a persistent payload directory.
+
+A Sophos-style ZIP needs no intermediate DMG. Copy its contents into the same
+temporary area, including any configuration files next to the installer app:
+
+```yaml
+inputs:
+  vendor:
+    path: Assets/Vendor.zip
+  hooks:
+    path: Scripts
+scripts:
+  postinstall:
+    $input: hooks
+    path: postinstall
+  installer:
+    $input: vendor
+    path: .
+    mode: "0755"
+```
+
+The hook runs the app from `installer/` beside `$0`. Use `payload` instead when
+files must remain installed after the hook returns. A vendor-supplied PKG normally
+belongs in `MacSoftware`, preserving its original bytes and installer behaviour.
+
+Both areas preserve file modes and confined relative symlinks. Selected paths
+cannot traverse a symlink; links inside copied trees must remain within that
+selection. Overlapping entries fail. Each output area is limited to 100,000 entries
+and 16 GiB; individual files must fit the package writer's 32-bit size field.
+Hooks are limited to 1 MiB each, independently of their accompanying media.
+Archive expansion is also bounded to 100,000 entries and 16 GiB. The locked source
+timestamp normalises output dates, and entries are written in sorted order.
 
 Keep destination behaviour out of the builder. For example, a GarageBand content
 package can carry a downloader and its installer hook, while Munki's detection and
 configuration scripts belong in the publishing document's `pkginfo`.
 
-The builder produces unsigned component PKGs. It does not sign packages, build
-arbitrary distribution installers or execute an AutoPkg-style processor chain.
-Set `package.filename` only when the default output name needs to be overridden.
+The builder produces unsigned component PKGs. It does not sign packages, derive a
+vendor's version from arbitrary files, build distribution installers or execute
+an AutoPkg-style processor chain. `package.version` is explicit; vendor-specific
+discovery and metadata belong in a resolver or resource plugin. Set
+`package.filename` only when the default output name needs to be overridden.

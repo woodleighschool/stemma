@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/plugin"
@@ -39,37 +40,45 @@ func Build(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, wo
 		return plugin.Artifact{}, err
 	}
 	defer func() { _ = os.RemoveAll(root) }()
-	stage := layout{root: root, metadata: map[string]pkgbuild.EntryMetadata{}, claimed: map[string]bool{}}
-	opts := pkgbuild.Options{Identifier: spec.Package.Identifier, Version: spec.Package.Version, Scripts: map[string]string{}, Timestamp: timestamp}
-	if len(spec.Payload) > 0 {
-		opts.Payload = "Payload"
-		opts.Metadata = stage.metadata
+	sources := map[string]*contents.Source{}
+	defer func() {
+		for _, source := range sources {
+			_ = source.Close()
+		}
+	}()
+	opts := pkgbuild.Options{Identifier: spec.Package.Identifier, Version: spec.Package.Version, Timestamp: timestamp}
+	for _, area := range []struct {
+		name    string
+		entries map[string]Entry
+	}{{"Payload", spec.Payload}, {"Scripts", spec.Scripts}} {
+		if len(area.entries) == 0 {
+			continue
+		}
+		stage := layout{root: filepath.Join(root, area.name), metadata: map[string]pkgbuild.EntryMetadata{}, claimed: map[string]bool{}}
 		if err := stage.parents("."); err != nil {
 			return plugin.Artifact{}, err
 		}
-	}
-	endpoints := make([]string, 0, len(spec.Payload))
-	for endpoint := range spec.Payload {
-		endpoints = append(endpoints, endpoint)
-	}
-	slices.Sort(endpoints)
-	for _, endpoint := range endpoints {
-		entry := spec.Payload[endpoint]
-		name, _ := payloadPath(endpoint)
-		if err := stage.entry(ctx, name, entry, inputs); err != nil {
-			return plugin.Artifact{}, fmt.Errorf("payload %q: %w", endpoint, err)
+		names := make([]string, 0, len(area.entries))
+		for name := range area.entries {
+			names = append(names, name)
 		}
-	}
-	for _, role := range []string{"preinstall", "postinstall"} {
-		ref, exists := spec.Scripts[role]
-		if !exists {
-			continue
+		slices.Sort(names)
+		for _, name := range names {
+			destination := name
+			if area.name == "Payload" {
+				destination, _ = payloadPath(name)
+			}
+			if err := stage.entry(ctx, destination, area.entries[name], inputs, sources, root); err != nil {
+				return plugin.Artifact{}, fmt.Errorf("%s %q: %w", strings.ToLower(area.name), name, err)
+			}
 		}
-		name := "Scripts/" + role
-		if err := stage.script(ctx, name, ref, inputs); err != nil {
-			return plugin.Artifact{}, fmt.Errorf("scripts.%s: %w", role, err)
+		if area.name == "Payload" {
+			opts.Payload = "Payload"
+			opts.Metadata = stage.metadata
+		} else {
+			opts.Scripts = "Scripts"
+			opts.ScriptMetadata = stage.metadata
 		}
-		opts.Scripts[role] = name
 	}
 	output := filepath.Join(workspace, spec.Filename())
 	if err := pkgbuild.Build(ctx, root, output, opts); err != nil {
@@ -97,7 +106,7 @@ func describe(ctx context.Context, output string, spec Spec) (plugin.Artifact, e
 	return plugin.Artifact{Path: output, SHA256: hex.EncodeToString(hash.Sum(nil)), Size: size, Filename: spec.Filename(), Version: spec.Package.Version, Format: "pkg", Facts: plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: "package", Kind: "package", Package: &plugin.PackageFacts{Identifier: spec.Package.Identifier, Version: spec.Package.Version, InstallLocation: "/", HasPayload: len(spec.Payload) > 0}}}}}, nil
 }
 
-func (stage *layout) entry(ctx context.Context, name string, entry Entry, inputs map[string]plugin.Artifact) error {
+func (stage *layout) entry(ctx context.Context, name string, entry Entry, inputs map[string]plugin.Artifact, sources map[string]*contents.Source, workspace string) error {
 	mode, _ := entry.mode()
 	attrs := pkgbuild.EntryMetadata{Mode: mode, UID: entry.UID, GID: entry.GID}
 	if entry.Content != nil {
@@ -106,10 +115,25 @@ func (stage *layout) entry(ctx context.Context, name string, entry Entry, inputs
 	if entry.Input == "" {
 		return stage.directory(name, attrs)
 	}
-	root, selected, err := openInput(InputFileRef{Input: entry.Input, Path: entry.Path}, inputs)
-	if err != nil {
-		return err
+	source := sources[entry.Input]
+	if source == nil {
+		input, ok := inputs[entry.Input]
+		if !ok {
+			return fmt.Errorf("unknown input %q", entry.Input)
+		}
+		var err error
+		source, err = contents.Open(input, workspace)
+		if err != nil {
+			return fmt.Errorf("input %q: %w", entry.Input, err)
+		}
+		sources[entry.Input] = source
 	}
-	defer func() { _ = root.Close() }()
-	return stage.copy(ctx, root, selected, name, attrs)
+	node, err := source.At(ctx, entry.Path)
+	if err != nil {
+		return fmt.Errorf("input %q path %q: %w", entry.Input, entry.Path, err)
+	}
+	if err := stage.copy(ctx, node, name, attrs); err != nil {
+		return fmt.Errorf("input %q path %q: %w", entry.Input, entry.Path, err)
+	}
+	return nil
 }

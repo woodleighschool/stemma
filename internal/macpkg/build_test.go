@@ -33,7 +33,7 @@ func fixture(t *testing.T) (Spec, map[string]plugin.Artifact) {
 			"/Library/Fonts": {Input: "fonts", Mode: "0755", UID: 501, GID: 20},
 			"Library/Application Support/Fixture/note.txt": {Content: &note, Mode: "0000", UID: 502, GID: 80},
 		},
-		Scripts: map[string]InputFileRef{"postinstall": {Input: "script"}},
+		Scripts: map[string]Entry{"postinstall": {Input: "script"}},
 	}
 	return spec, map[string]plugin.Artifact{"fonts": {Path: filepath.Join(root, "fonts"), Tree: true}, "script": {Path: filepath.Join(root, "postinstall")}}
 }
@@ -78,7 +78,7 @@ func TestBuildRejectsUnsafeLayout(t *testing.T) {
 			case "ownership":
 				spec.Payload["private"] = Entry{UID: 1 << 18}
 			case "symlink":
-				if err := os.Symlink("Example.otf", filepath.Join(inputs["fonts"].Path, "linked")); err != nil {
+				if err := os.Symlink("../outside", filepath.Join(inputs["fonts"].Path, "linked")); err != nil {
 					t.Skip(err)
 				}
 			case "cancelled":
