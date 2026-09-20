@@ -130,17 +130,17 @@ func (c *checkedConfig) Validate() error {
 func TestResourceDeclarationValidation(t *testing.T) {
 	registry := plugin.New("fixture", "1")
 	calls := 0
-	operation := plugin.Operation{Name: "fixture.resource", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "fixture/v1", Kind: "Item"}, SideEffects: "none", Methods: []string{"validate", "run"}}
+	operation := plugin.Operation{Name: "fixture.resource", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "fixture/v1", Kind: "Item"}, SideEffects: "none", Methods: []string{"discover", "run"}}
 	if err := plugin.Register(registry, operation, func(_ context.Context, _ plugin.ResourceRequest[checkedConfig]) (plugin.ResourceResult, error) {
 		calls++
 		return plugin.ResourceResult{}, nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	for _, method := range []string{"validate", "run"} {
+	for _, method := range []string{"discover", "run"} {
 		data, _ := json.Marshal(plugin.ResourceRequest[checkedConfig]{Identity: plugin.ResourceReference{Kind: "Item", Name: "example"}, Config: checkedConfig{Name: "blocked"}})
 		_, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: method, Input: data})
-		if method == "validate" && (err == nil || !strings.Contains(err.Error(), "name is blocked")) {
+		if method == "discover" && (err == nil || !strings.Contains(err.Error(), "name is blocked")) {
 			t.Fatalf("semantic validation: %v", err)
 		}
 		if method == "run" && err != nil {

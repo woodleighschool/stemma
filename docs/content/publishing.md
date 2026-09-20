@@ -195,8 +195,8 @@ spec:
       operation: jamf
       config:
         url: https://example.jamfcloud.com
-        client_id: ${JAMF_CLIENT_ID}
-        client_secret: ${JAMF_CLIENT_SECRET}
+        client_id: "{{ env.JAMF_CLIENT_ID }}"
+        client_secret: "{{ env.JAMF_CLIENT_SECRET }}"
 ```
 
 Jamf publishes PKG artifacts: a vendor package, one selected with `package_path`
@@ -217,8 +217,7 @@ destinations:
       keep: 1
     patch:
       title_configuration_id: "42"
-      version:
-        $fact: macos.application.app.version
+      version: "{{ evidence['macos.application'].app.version }}"
       policy:
         name: Example updates
         enabled: false

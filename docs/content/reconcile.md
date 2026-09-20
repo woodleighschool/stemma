@@ -25,7 +25,7 @@ command.
    `spec.reconcile.source_control` names the host that reviews proposals and
    records publication, with the provider's own connection settings.
 3. **The environment supplies referenced secrets.** Settings use the same
-   `${VARIABLE}` placeholders as destinations, plus `STEMMA_CACHE_DIR` and
+   `{{ env.VARIABLE }}` expressions as destinations, plus `STEMMA_CACHE_DIR` and
    `STEMMA_STATE_DIR` for the cache and state locations. The environment
    supplies values; it never configures the provider by itself.
 4. **The scheduler supplies the checkout, storage, timing and resources.** It
@@ -96,9 +96,9 @@ spec:
     source_control:
       type: github
       config:
-        client_id: ${GITHUB_APP_CLIENT_ID}
+        client_id: "{{ env.GITHUB_APP_CLIENT_ID }}"
         installation_id: 12345678
-        private_key: ${GITHUB_APP_PRIVATE_KEY}
+        private_key: "{{ env.GITHUB_APP_PRIVATE_KEY }}"
 ```
 
 | Setting                                       | Purpose                                                                                                                                                         |

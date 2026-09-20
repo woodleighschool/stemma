@@ -145,7 +145,7 @@ type ResourceKind struct {
 	Kind       string `json:"kind"`
 }
 
-// ResourceRequest uses validate to discover inputs and publication intentions;
+// ResourceRequest uses discover to return inputs and publication intentions;
 // run receives only locked, leased inputs and produces immutable outputs.
 type ResourceRequest[C any] struct {
 	Method string `json:"-"`
@@ -157,6 +157,9 @@ type ResourceRequest[C any] struct {
 	Inputs    map[string]Artifact `json:"inputs,omitempty"`
 	Workspace string              `json:"workspace,omitempty"`
 	Timestamp time.Time           `json:"timestamp,omitzero"`
+	// Environment contains the immutable process values referenced by delayed
+	// preparation expressions. The host includes them in preparation identity.
+	Environment map[string]string `json:"environment,omitempty"`
 }
 
 // ResourceResult separates preparation configuration from destination metadata,
@@ -227,7 +230,7 @@ func (request ResolveRequest[C]) validateConfig() error { return validateConfig(
 func (request *ResourceRequest[C]) setMethod(method string) { request.Method = method }
 
 func (request ResourceRequest[C]) validateConfig() error {
-	if request.Method == "validate" {
+	if request.Method == "discover" {
 		return validateConfig(request.Config)
 	}
 	return nil

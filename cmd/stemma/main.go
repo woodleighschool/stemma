@@ -330,7 +330,6 @@ func packageCommand(out io.Writer) *cobra.Command {
 	}
 	cmd.AddCommand(envelope)
 	var options pkgbuild.Options
-	var preinstall, postinstall string
 	pkg := &cobra.Command{Use: "pkg SOURCE_DIRECTORY OUTPUT", Short: "Build a portable payload or scripts-only Apple package", Long: "Build a portable Apple package, preserving source modification times.\nSet SOURCE_DATE_EPOCH to normalize timestamps for reproducible standalone builds.", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		if value, ok := os.LookupEnv("SOURCE_DATE_EPOCH"); ok {
 			seconds, err := strconv.ParseUint(value, 10, 32)
@@ -339,21 +338,13 @@ func packageCommand(out io.Writer) *cobra.Command {
 			}
 			options.Timestamp = time.Unix(int64(seconds), 0).UTC()
 		}
-		options.Scripts = map[string]string{}
-		if preinstall != "" {
-			options.Scripts["preinstall"] = preinstall
-		}
-		if postinstall != "" {
-			options.Scripts["postinstall"] = postinstall
-		}
 		return pkgbuild.Build(cmd.Context(), args[0], args[1], options)
 	}}
 	pkg.Flags().StringVar(&options.Identifier, "identifier", "", "Package receipt identifier")
 	pkg.Flags().StringVar(&options.Version, "version", "", "Package receipt version")
 	pkg.Flags().StringVar(&options.Payload, "payload", "", "Payload directory relative to the source; omit for scripts-only")
 	pkg.Flags().StringVar(&options.InstallLocation, "install-location", "/", "Absolute target installation location")
-	pkg.Flags().StringVar(&preinstall, "preinstall", "", "Preinstall script relative to the source")
-	pkg.Flags().StringVar(&postinstall, "postinstall", "", "Postinstall script relative to the source")
+	pkg.Flags().StringVar(&options.Scripts, "scripts", "", "Directory of installer hooks and resources relative to the source")
 	cmd.AddCommand(pkg)
 	return cmd
 }

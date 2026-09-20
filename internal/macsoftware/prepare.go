@@ -50,7 +50,7 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 		return nil, err
 	}
 	defer payload.close()
-	selected, archivePath, dmg := payload.local, payload.archivePath, payload.image != nil
+	selected, archivePath, dmg := payload.local, payload.archivePath, payload.source.IsImage()
 	info, err := payload.stat()
 	if err != nil {
 		return nil, err
@@ -223,11 +223,6 @@ func describeArtifact(ctx context.Context, name, format string) (plugin.Artifact
 		return plugin.Artifact{}, err
 	}
 	return plugin.Artifact{Path: name, Filename: filepath.Base(name), Size: size, SHA256: hex.EncodeToString(hash.Sum(nil)), Format: format}, nil
-}
-
-func isArchive(name string) bool {
-	name = strings.ToLower(name)
-	return strings.HasSuffix(name, ".zip") || strings.HasSuffix(name, ".tar") || strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".tgz")
 }
 
 func versionKey(options *Application, subject plugin.Subject) string {

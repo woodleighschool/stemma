@@ -153,12 +153,13 @@ holding the files, `stemma apply MacSoftware/fonts` runs it together with the
 builds it references. A resource that is not suspended cannot consume a suspended
 resource's outputs: suspend both and select the consumer.
 
-## Environment and editor support
+## Expressions and editor support
 
-Use a whole-value placeholder such as `client_secret: ${INTUNE_CLIENT_SECRET}` for
-credentials. Stemma reads the process environment; it does not source `.env`.
-Interpolation inside larger strings and mapping keys is unsupported. Document
-identities must remain literal.
+Use [expressions](expressions.md) for environment values and inspected metadata:
+`client_secret: "{{ env.INTUNE_CLIENT_SECRET }}"`. Stemma reads the process
+environment; it does not source `.env`. Expressions can fill a whole value or
+interpolate into text. Document identities, mapping keys and resource references
+remain literal.
 
 The [default schema](https://woodleighschool.github.io/stemma/stemma.schema.json)
 describes built-in operations and accepts arbitrary destination names. Generate a

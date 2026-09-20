@@ -3,10 +3,12 @@ package reconcile
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -50,9 +52,9 @@ spec:
     source_control:
       type: github
       config:
-        client_id: ${GITHUB_APP_CLIENT_ID}
-        installation_id: ${GITHUB_APP_INSTALLATION_ID}
-        private_key: ${GITHUB_APP_PRIVATE_KEY}
+        client_id: "{{ env.GITHUB_APP_CLIENT_ID }}"
+        installation_id: "{{ env.GITHUB_APP_INSTALLATION_ID }}"
+        private_key: "{{ env.GITHUB_APP_PRIVATE_KEY }}"
   imports:
     - '*.software.yaml'
   destinations:
@@ -490,8 +492,9 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	payload.Store(buildPackage(t, "1.0"))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data := payload.Load().([]byte)
-		w.Header().Set("ETag", strconv.Itoa(len(data)))
-		if r.Header.Get("If-None-Match") == strconv.Itoa(len(data)) {
+		etag := fmt.Sprintf("\"%x\"", sha256.Sum256(data))
+		w.Header().Set("ETag", etag)
+		if r.Header.Get("If-None-Match") == etag {
 			w.WriteHeader(http.StatusNotModified)
 			return
 		}

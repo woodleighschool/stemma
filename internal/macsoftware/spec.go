@@ -13,7 +13,7 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-const Version = "stemma.macsoftware/7"
+const Version = "stemma.macsoftware/8"
 
 type Spec struct {
 	Source      *plugin.Input `json:"source,omitempty" yaml:"source,omitempty" jsonschema_description:"Installer input from a built-in or loaded resolver, or a named resource output. Omit for source-free destination policies."`
@@ -24,8 +24,9 @@ type Spec struct {
 	// complete Developer ID signature from the expected team.
 	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require a complete Developer ID signature from the expected team before publication."`
 	// Icon names the catalog asset icons/<name>.png that destinations publish.
-	Icon         string                    `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Create it with stemma icon or commit a square PNG."`
-	Destinations map[string]map[string]any `json:"destinations,omitempty" yaml:"destinations,omitempty" jsonschema_description:"Native publication metadata keyed by a Project destination name. Explicit values override derived values."`
+	Icon         string                            `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Create it with stemma icon or commit a square PNG."`
+	Destinations map[string]map[string]any         `json:"destinations,omitempty" yaml:"destinations,omitempty" jsonschema_description:"Native publication metadata keyed by a Project destination name. Explicit values override derived values."`
+	Subjects     map[string]plugin.SubjectSelector `json:"subjects,omitempty" yaml:"subjects,omitempty" jsonschema_description:"Named selectors exposed as facts in destination expressions. Unaliased subjects remain addressable by their observed ID."`
 }
 
 type Application struct {
@@ -39,6 +40,7 @@ type Application struct {
 // and the icon asset change without invalidating prepared outputs.
 func (s Spec) Preparation() Spec {
 	s.Source, s.Destinations, s.Icon = nil, nil, ""
+	s.Subjects = nil
 	return s
 }
 

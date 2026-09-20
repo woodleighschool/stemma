@@ -53,7 +53,7 @@ spec:
     deployment:
       operation: intune
       config:
-        tenant_id: '${STEMMA_MISSING_SCHEMA_TENANT}'
+        tenant_id: '{{ env.STEMMA_MISSING_SCHEMA_TENANT }}'
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}

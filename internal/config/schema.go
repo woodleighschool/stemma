@@ -26,12 +26,19 @@ func baseSchema() ([]byte, error) {
 	schema["description"] = "A Project imports family files containing resource documents separated by ---. Each kind owns preparation; destination operations own native publication fields."
 	delete(schema, "$ref")
 	definitions := schema["$defs"].(map[string]any)
+	definitions["Metadata"].(map[string]any)["properties"].(map[string]any)["name"].(map[string]any)["pattern"] = namePattern.String()
+	expressionSchema(definitions["Plugin"], false)
+	imports := definitions["ProjectSpec"].(map[string]any)["properties"].(map[string]any)["imports"].(map[string]any)
+	literalStringSchema(imports["items"].(map[string]any))
+	for _, name := range []string{"Destination", "SourceControl"} {
+		properties := definitions[name].(map[string]any)["properties"].(map[string]any)
+		properties["config"] = expressionSchema(properties["config"], true)
+	}
 	definitions["Plugin"].(map[string]any)["oneOf"] = []any{
 		map[string]any{"required": []string{"image"}, "not": map[string]any{"anyOf": []any{map[string]any{"required": []string{"path"}}, map[string]any{"required": []string{"entrypoint"}}}}},
 		map[string]any{"required": []string{"path"}, "not": map[string]any{"required": []string{"image"}}},
 	}
 	variants := []any{map[string]any{"$ref": "#/$defs/ProjectDocument"}}
-	definitions["FactReference"] = map[string]any{"type": "object", "required": []string{"$fact"}, "additionalProperties": false, "properties": map[string]any{"$fact": map[string]any{"type": "string"}}}
 	schema["oneOf"] = variants
 	data, err := json.MarshalIndent(schema, "", "  ")
 	return append(data, '\n'), err

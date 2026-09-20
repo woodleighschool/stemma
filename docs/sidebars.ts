@@ -9,6 +9,7 @@ const sidebars: SidebarsConfig = {
       label: "Using Stemma",
       items: [
         "catalogs",
+        "expressions",
         "sources",
         "mac-software",
         "building-packages",

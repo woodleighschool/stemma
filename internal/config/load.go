@@ -79,8 +79,8 @@ func Load(filename string) (Project, error) {
 	return p, p.Validate()
 }
 
-// LoadDocument reads the Project document with its environment placeholders
-// expanded, without loading the resource documents it imports.
+// LoadDocument evaluates Project connection expressions without loading imported
+// resources. Components retain their authored expressions until preparation.
 func LoadDocument(filename string) (ProjectDocument, error) {
 	document, _, err := loadDocument(filename)
 	return document, err
@@ -141,9 +141,11 @@ func FindRoot(startDir string) (string, error) {
 					APIVersion string         `yaml:"apiVersion"`
 					Kind       string         `yaml:"kind"`
 					Metadata   Metadata       `yaml:"metadata"`
+					Suspend    bool           `yaml:"suspend"`
 					Spec       map[string]any `yaml:"spec"`
 				}
-				if _, err := parseDocument(data, &header); err != nil {
+				raw, err := parseDocument(data, &header)
+				if err != nil {
 					return "", fmt.Errorf("%s document %d: %w", filename, i+1, err)
 				}
 				if header.Spec == nil {
@@ -155,7 +157,12 @@ func FindRoot(startDir string) (string, error) {
 					if len(documents) != 1 {
 						return "", fmt.Errorf("%s: Project requires one YAML document", filename)
 					}
-					document = &ProjectDocument{}
+					if err := checkExpressions(raw); err != nil {
+						return "", fmt.Errorf("%s document %d: %w", filename, i+1, err)
+					}
+					if err := validateProjectDocument(raw); err != nil {
+						return "", fmt.Errorf("%s document %d: %w", filename, i+1, err)
+					}
 				default:
 					if seen[header.APIVersion+"/"+header.Kind+"/"+header.Metadata.Name] {
 						return "", fmt.Errorf("%s: conflicting software ID %q", filename, header.Metadata.Name)

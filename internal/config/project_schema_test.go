@@ -48,16 +48,16 @@ func TestProjectSchemaUsesExternalContractsAndReferenceScopes(t *testing.T) {
 		metadata string
 		valid    bool
 	}{
-		"literal refs":          {"\"external\":{\"title\":null,\"details\":{\"version\":\"1\"},\"counts\":[1]}", true},
-		"typed facts":           {`"external":{"enabled":{"$fact":"app.package.has_payload"},"details":{"version":{"$fact":"app.app.version"}},"counts":[{"$fact":"app.size"}]}`, true},
-		"core refs":             {`"external":{"installer":"installer","inputs":{"payload":"payload"}}`, true},
-		"unknown field":         {`"external":{"typo":true}`, false},
-		"unknown nested field":  {`"external":{"details":{"typo":true}}`, false},
-		"invalid literal type":  {`"external":{"enabled":"yes"}`, false},
-		"invalid core fact":     {`"external":{"installer":{"$fact":"app.path"}}`, false},
-		"other operation":       {`"second":{"label":2}`, true},
-		"cross operation field": {`"second":{"title":"Wrong contract"}`, false},
-		"unknown connection":    {`"missing":{"title":"Wrong connection"}`, false},
+		"literal refs":            {"\"external\":{\"title\":null,\"details\":{\"version\":\"1\"},\"counts\":[1]}", true},
+		"typed expressions":       {`"external":{"enabled":"{{ facts.package.has_payload }}","details":{"version":"{{ facts.app.version }}"},"counts":["{{ facts.size }}"]}`, true},
+		"core refs":               {`"external":{"installer":"installer","inputs":{"payload":"payload"}}`, true},
+		"unknown field":           {`"external":{"typo":true}`, false},
+		"unknown nested field":    {`"external":{"details":{"typo":true}}`, false},
+		"invalid literal type":    {`"external":{"enabled":"yes"}`, false},
+		"invalid core expression": {`"external":{"installer":"{{ facts.path }}"}`, false},
+		"other operation":         {`"second":{"label":2}`, true},
+		"cross operation field":   {`"second":{"title":"Wrong contract"}`, false},
+		"unknown connection":      {`"missing":{"title":"Wrong connection"}`, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			document := json.RawMessage(`{"apiVersion":"stemma/v1alpha1","kind":"MacSoftware","metadata":{"name":"fixture"},"spec":{"destinations":{` + test.metadata + `}}}`)
@@ -71,7 +71,7 @@ func TestProjectSchemaUsesExternalContractsAndReferenceScopes(t *testing.T) {
 		config string
 		valid  bool
 	}{
-		"native config":    {`{"url":"https://fixture.invalid","token":"${FIXTURE_TOKEN}"}`, true},
+		"native config":    {`{"url":"https://fixture.invalid","token":"{{ env.FIXTURE_TOKEN }}"}`, true},
 		"missing required": {`{}`, false},
 		"unknown config":   {`{"url":"https://fixture.invalid","typo":true}`, false},
 	} {
@@ -99,17 +99,17 @@ spec:
     external:
       operation: fixture.publish
       config:
-        token: '${STEMMA_MISSING_SCHEMA_TEST_TOKEN}'
+        token: '{{ env.STEMMA_MISSING_SCHEMA_TEST_TOKEN }}'
   plugins:
     fixture:
       trusted: true
-      image: '${STEMMA_SCHEMA_TEST_IMAGE}'
+      image: '{{ env.STEMMA_SCHEMA_TEST_IMAGE }}'
 `)
 	project, err := LoadSchemaProject(filepath.Join(root, "stemma.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project.Destinations["external"].Config["token"] != "${STEMMA_MISSING_SCHEMA_TEST_TOKEN}" {
+	if project.Destinations["external"].Config["token"] != "{{ env.STEMMA_MISSING_SCHEMA_TEST_TOKEN }}" {
 		t.Fatal("schema loading expanded credentials")
 	}
 	if project.Plugins["fixture"].Image != "ghcr.io/example/fixture:v1" {
@@ -165,7 +165,7 @@ func TestProjectSchemaComposesTypedResolvers(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := plugin.Register(registry, plugin.Operation{Name: "fixture.resource", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "fixture/v1", Kind: "Application"}, SideEffects: "none", Methods: []string{"validate", "run"}}, func(context.Context, plugin.ResourceRequest[struct {
+	if err := plugin.Register(registry, plugin.Operation{Name: "fixture.resource", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "fixture/v1", Kind: "Application"}, SideEffects: "none", Methods: []string{"discover", "run"}}, func(context.Context, plugin.ResourceRequest[struct {
 		Sources []plugin.Input `json:"sources" jsonschema_description:"Inputs to acquire."`
 	}]) (plugin.ResourceResult, error) {
 		return plugin.ResourceResult{}, nil
@@ -182,7 +182,7 @@ func TestProjectSchemaComposesTypedResolvers(t *testing.T) {
 	}{
 		{`{"resolver":"fixture.release","major":4}`, true},
 		{`{"resolver":"fixture.release","major":4,"channel":"preview"}`, true},
-		{`{"resolver":"fixture.release","major":4,"channel":"${RELEASE_CHANNEL}"}`, true},
+		{`{"resolver":"fixture.release","major":4,"channel":"{{ env.RELEASE_CHANNEL }}"}`, true},
 		{`{"resolver":"fixture.release"}`, false},
 		{`{"resolver":"fixture.release","major":0}`, false},
 		{`{"resolver":"fixture.release","major":4,"channel":"stable"}`, false},

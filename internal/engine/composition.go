@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/expression"
+	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -45,7 +47,7 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 				if !exists {
 					return nil, fmt.Errorf("%s/%s: resource %s does not publish to destination %s", key, destination, reference.Key(), destination)
 				}
-				plan.peers[reference.Key()], err = json.Marshal(staticMetadata(destinationMetadata(metadata)))
+				plan.peers[reference.Key()], err = json.Marshal(destinationMetadata(metadata))
 				if err != nil {
 					return nil, err
 				}
@@ -91,9 +93,69 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 			plan := dests[node]
 			plan.requires = slices.DeleteFunc(plan.requires, func(ref destinationRef) bool { return !slices.Contains(selected, ref.Resource) })
 			connection := project.Destinations[destination]
-			metadata, _ := json.Marshal(staticMetadata(destinationMetadata(software.Destinations[destination])))
-			settings, _ := json.Marshal(connection.Config)
-			request := plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: project.Project, Resource: software.Resource.Reference(), Destination: destination}, Root: root, Config: settings, Metadata: metadata, Subjects: software.Subjects, Peers: plan.peers}
+			native := destinationMetadata(software.Destinations[destination])
+			metadata, err := json.Marshal(native)
+			if err != nil {
+				return nil, err
+			}
+			op, err := ops.operation(connection.Operation)
+			if err != nil {
+				return nil, err
+			}
+			authoredSchema, err := config.ExpressionSchema(op.MetadataSchema)
+			if err != nil {
+				return nil, err
+			}
+			if len(authoredSchema) > 0 {
+				if err := plugin.ValidateSchema(authoredSchema, metadata); err != nil {
+					return nil, fmt.Errorf("%s/%s metadata: %w", key, destination, err)
+				}
+			}
+			roots, err := expression.Roots(native)
+			if err != nil {
+				return nil, fmt.Errorf("%s/%s metadata: %w", key, destination, err)
+			}
+			deferred := slices.Contains(roots, "facts") || slices.Contains(roots, "evidence")
+			for _, peer := range sortedKeys(plan.peers) {
+				if len(authoredSchema) > 0 {
+					if err := plugin.ValidateSchema(authoredSchema, plan.peers[peer]); err != nil {
+						return nil, fmt.Errorf("%s/%s peer %s metadata: %w", key, destination, peer, err)
+					}
+				}
+				roots, err := expression.Roots(destinationMetadata(plans[peer].Destinations[destination]))
+				if err != nil {
+					return nil, fmt.Errorf("%s/%s peer %s metadata: %w", key, destination, peer, err)
+				}
+				if slices.Contains(roots, "facts") || slices.Contains(roots, "evidence") {
+					if !slices.Contains(selected, peer) {
+						return nil, fmt.Errorf("%s/%s: peer %s metadata requires preparation", key, destination, peer)
+					}
+					deferred = true
+				}
+			}
+			if deferred {
+				result[node] = plan
+				continue
+			}
+			// Provider validation only receives evaluated metadata. Preparation
+			// supplies contexts for declarations that depend on artifact evidence.
+			resolved, _, err := resolveMetadata(software.ResourceResult, native, plugin.Facts{}, nil)
+			if err != nil {
+				return nil, fmt.Errorf("%s/%s metadata: %w", key, destination, err)
+			}
+			metadata, err = json.Marshal(resolved)
+			if err != nil {
+				return nil, err
+			}
+			peers, err := resolvePeerMetadata(ctx, plans, destination, plan.peers, nil, op.MetadataSchema)
+			if err != nil {
+				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
+			}
+			settings, err := json.Marshal(connection.Config)
+			if err != nil {
+				return nil, err
+			}
+			request := plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: project.Project, Resource: software.Resource.Reference(), Destination: destination}, Root: root, Config: settings, Metadata: metadata, Subjects: software.Subjects, Peers: peers}
 			if err := ops.call(ctx, connection.Operation, "validate", request, nil); err != nil {
 				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
 			}
@@ -103,7 +165,53 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 	return result, nil
 }
 
-// resource is reserved Stemma syntax within destination metadata, like $fact.
+func resolvePeerMetadata(ctx context.Context, plans map[string]resourcePlan, destination string, peers map[string]json.RawMessage, prepared map[string]preparedResource, schema json.RawMessage) (map[string]json.RawMessage, error) {
+	result := make(map[string]json.RawMessage, len(peers))
+	for _, key := range sortedKeys(peers) {
+		plan := plans[key]
+		native := destinationMetadata(plan.Destinations[destination])
+		roots, err := expression.Roots(native)
+		if err != nil {
+			return nil, fmt.Errorf("peer %s metadata: %w", key, err)
+		}
+		resource, available := prepared[key]
+		if (!available || !resource.ready) && (slices.Contains(roots, "facts") || slices.Contains(roots, "evidence")) {
+			return nil, fmt.Errorf("peer %s metadata requires preparation", key)
+		}
+		output := "installer"
+		reference, explicitOutput := plan.Destinations[destination]["installer"].(string)
+		if explicitOutput {
+			output = reference
+		}
+		artifact, present := resource.outputs[output]
+		if available && resource.ready && !present && explicitOutput {
+			return nil, fmt.Errorf("peer %s references missing output %s", key, output)
+		}
+		if present && !artifact.SuppliedFacts && slices.Contains(roots, "facts") {
+			artifact.Facts, err = inspection.Read(ctx, artifact.Path)
+			if err != nil {
+				return nil, fmt.Errorf("peer %s required inspection: %w", key, err)
+			}
+		}
+		metadata, _, err := resolveMetadata(plan.ResourceResult, native, artifact.Facts, artifact.Evidence)
+		if err != nil {
+			return nil, fmt.Errorf("peer %s metadata: %w", key, err)
+		}
+		data, err := json.Marshal(metadata)
+		if err != nil {
+			return nil, err
+		}
+		if len(schema) > 0 {
+			if err := plugin.ValidateSchema(schema, data); err != nil {
+				return nil, fmt.Errorf("peer %s metadata: %w", key, err)
+			}
+		}
+		result[key] = data
+	}
+	return result, nil
+}
+
+// resource is reserved Stemma syntax within destination metadata.
 // Only the reference is decoded here; surrounding native properties stay opaque.
 func publicationReferences(value any) ([]plugin.ResourceReference, error) {
 	var references []plugin.ResourceReference
@@ -111,6 +219,9 @@ func publicationReferences(value any) ([]plugin.ResourceReference, error) {
 	case map[string]any:
 		for _, key := range sortedKeys(value) {
 			if key == "resource" {
+				if expression.Has(value[key]) {
+					return nil, fmt.Errorf("resource references must be literal")
+				}
 				data, err := json.Marshal(value[key])
 				if err != nil {
 					return nil, err
@@ -145,30 +256,10 @@ func publicationReferences(value any) ([]plugin.ResourceReference, error) {
 	return references, nil
 }
 
-func staticMetadata(value map[string]any) map[string]any {
-	result := map[string]any{}
-	for key, child := range value {
-		switch child := child.(type) {
-		case map[string]any:
-			if _, fact := child["$fact"]; !fact {
-				result[key] = staticMetadata(child)
-			}
-		case []any:
-			// Native list entries may require fields whose facts do not exist yet.
-			if !hasFactReference(child) {
-				result[key] = child
-			}
-		default:
-			result[key] = child
-		}
-	}
-	return result
-}
-
 func mergeOrigins(explicit, derived map[string]string) map[string]string {
 	result := make(map[string]string)
-	maps.Copy(result, explicit)
 	maps.Copy(result, derived)
+	maps.Copy(result, explicit)
 	return result
 }
 

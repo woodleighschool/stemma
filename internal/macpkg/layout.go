@@ -13,9 +13,9 @@ import (
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/archive"
+	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
-	"github.com/woodleighschool/stemma/plugin"
 )
 
 type layout struct {
@@ -47,12 +47,19 @@ func (stage *layout) parents(name string) error {
 		}
 	}
 	if _, exists := stage.metadata[name]; exists {
+		info, err := os.Lstat(filepath.Join(stage.root, filepath.FromSlash(name)))
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("destination parent %q is a symlink or nondirectory", name)
+		}
 		return nil
 	}
 	if len(stage.metadata) >= pkgbuild.MaxEntries {
 		return errors.New("package exceeds payload entry limit")
 	}
-	if err := os.Mkdir(filepath.Join(stage.root, "Payload", filepath.FromSlash(name)), 0o755); err != nil {
+	if err := os.Mkdir(filepath.Join(stage.root, filepath.FromSlash(name)), 0o755); err != nil {
 		return err
 	}
 	mode := uint32(0o755)
@@ -76,7 +83,7 @@ func (stage *layout) content(ctx context.Context, name string, source io.Reader,
 	if len(stage.metadata) >= pkgbuild.MaxEntries {
 		return errors.New("package exceeds payload entry limit")
 	}
-	file, err := os.OpenFile(filepath.Join(stage.root, "Payload", filepath.FromSlash(name)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	file, err := os.OpenFile(filepath.Join(stage.root, filepath.FromSlash(name)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
@@ -97,11 +104,67 @@ func (stage *layout) content(ctx context.Context, name string, source io.Reader,
 	return nil
 }
 
-func (stage *layout) copy(ctx context.Context, root *os.Root, source, destination string, attrs pkgbuild.EntryMetadata) error {
+func (stage *layout) copy(ctx context.Context, node contents.Node, destination string, attrs pkgbuild.EntryMetadata) error {
+	info, err := node.Stat()
+	if err != nil {
+		return err
+	}
+	boundary := node.Path
+	if !info.IsDir() {
+		boundary = path.Dir(boundary)
+	}
+	return stage.copyNode(ctx, node, destination, attrs, boundary)
+}
+
+func (stage *layout) copyNode(ctx context.Context, node contents.Node, destination string, attrs pkgbuild.EntryMetadata, boundary string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	file, info, err := checkedInput(root, source)
+	info, err := node.Stat()
+	if err != nil {
+		return err
+	}
+	if err := archive.CheckMode(info); err != nil {
+		return err
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		link, err := node.FS.ReadLink(node.Path)
+		if err != nil {
+			return err
+		}
+		resolved := path.Join(path.Dir(node.Path), link)
+		if boundary != "." && resolved != boundary && !strings.HasPrefix(resolved, boundary+"/") {
+			return errors.New("symlink escapes selected content")
+		}
+		if path.IsAbs(link) || strings.ContainsAny(link, "\\\x00") || !validPath(path.Join(path.Dir(node.Path), link)) || !validPath(path.Join(path.Dir(destination), link)) {
+			return errors.New("escaping content symlink")
+		}
+		if stage.claimed[destination] {
+			return fmt.Errorf("overlapping destination %q", destination)
+		}
+		if _, exists := stage.metadata[destination]; exists {
+			return fmt.Errorf("symlink %q overlaps a directory", destination)
+		}
+		if err := stage.parents(path.Dir(destination)); err != nil {
+			return err
+		}
+		if len(stage.metadata) >= pkgbuild.MaxEntries {
+			return errors.New("package exceeds entry limit")
+		}
+		if err := os.Symlink(filepath.FromSlash(link), filepath.Join(stage.root, filepath.FromSlash(destination))); err != nil {
+			return err
+		}
+		if attrs.Mode == nil {
+			mode := uint32(info.Mode().Perm())
+			attrs.Mode = &mode
+		}
+		stage.metadata[destination], stage.claimed[destination] = attrs, true
+		return nil
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return errors.New("input contains an unsupported file type")
+	}
+	file, err := node.FS.Open(node.Path)
 	if err != nil {
 		return err
 	}
@@ -116,102 +179,24 @@ func (stage *layout) copy(ctx context.Context, root *os.Root, source, destinatio
 	if err := stage.directory(destination, attrs); err != nil {
 		return err
 	}
-	children, err := file.ReadDir(pkgbuild.MaxEntries + 1)
+	dir, ok := file.(fs.ReadDirFile)
+	if !ok {
+		return errors.New("input directory cannot be read")
+	}
+	children, err := dir.ReadDir(pkgbuild.MaxEntries + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
 	if len(children) > pkgbuild.MaxEntries-len(stage.metadata) {
-		return errors.New("package exceeds payload entry limit")
+		return errors.New("package exceeds entry limit")
 	}
 	slices.SortFunc(children, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	attrs.Mode = nil
 	for _, child := range children {
-		if err := stage.copy(ctx, root, path.Join(source, child.Name()), path.Join(destination, child.Name()), attrs); err != nil {
+		childNode := contents.Node{FS: node.FS, Path: path.Join(node.Path, child.Name())}
+		if err := stage.copyNode(ctx, childNode, path.Join(destination, child.Name()), attrs, boundary); err != nil {
 			return err
 		}
 	}
 	return nil
-}
-
-func (stage *layout) script(ctx context.Context, destination string, ref InputFileRef, inputs map[string]plugin.Artifact) error {
-	root, selected, err := openInput(ref, inputs)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	file, info, err := checkedInput(root, selected)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = file.Close() }()
-	if !info.Mode().IsRegular() || info.Size() > pkgbuild.MaxScriptSize {
-		return errors.New("script must be a regular file within the script size limit")
-	}
-	if err := os.MkdirAll(filepath.Join(stage.root, "Scripts"), 0o755); err != nil {
-		return err
-	}
-	out, err := os.OpenFile(filepath.Join(stage.root, filepath.FromSlash(destination)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	n, copyErr := io.Copy(out, io.LimitReader(fileio.Reader{Context: ctx, Reader: file}, info.Size()+1))
-	closeErr := out.Close()
-	if n != info.Size() {
-		return errors.New("script changed size while reading")
-	}
-	return errors.Join(copyErr, closeErr)
-}
-
-func openInput(ref InputFileRef, inputs map[string]plugin.Artifact) (*os.Root, string, error) {
-	artifact, exists := inputs[ref.Input]
-	if !exists || !filepath.IsAbs(artifact.Path) {
-		return nil, "", fmt.Errorf("input %q requires an absolute leased path", ref.Input)
-	}
-	info, err := os.Lstat(artifact.Path)
-	if err != nil {
-		return nil, "", err
-	}
-	if info.IsDir() != artifact.Tree || !info.IsDir() && !info.Mode().IsRegular() {
-		return nil, "", errors.New("leased input file type changed or is unsupported")
-	}
-	if !artifact.Tree {
-		if ref.Path != "" && ref.Path != "." {
-			return nil, "", errors.New("path selection requires a tree input")
-		}
-		root, err := os.OpenRoot(filepath.Dir(artifact.Path))
-		return root, filepath.Base(artifact.Path), err
-	}
-	selected := ref.Path
-	if selected == "" {
-		selected = "."
-	}
-	root, err := os.OpenRoot(artifact.Path)
-	return root, selected, err
-}
-
-func checkedInput(root *os.Root, name string) (*os.File, os.FileInfo, error) {
-	for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
-		info, err := root.Lstat(parent)
-		if err != nil {
-			return nil, nil, err
-		}
-		if !info.IsDir() {
-			return nil, nil, errors.New("input path traverses a symlink or nondirectory")
-		}
-	}
-	info, err := root.Lstat(name)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !info.IsDir() && !info.Mode().IsRegular() {
-		return nil, nil, errors.New("input contains an unsupported file type")
-	}
-	if err := archive.CheckMode(info); err != nil {
-		return nil, nil, err
-	}
-	file, err := root.Open(name)
-	if err != nil {
-		return nil, nil, err
-	}
-	return file, info, nil
 }

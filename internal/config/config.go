@@ -109,8 +109,10 @@ func parseDocument(data []byte, value any) (map[string]any, error) {
 	if err := checkNode(&node); err != nil {
 		return nil, err
 	}
-	if err := decodeStrict(data, value); err != nil {
-		return nil, err
+	if value != nil {
+		if err := decodeStrict(data, value); err != nil {
+			return nil, err
+		}
 	}
 	var document map[string]any
 	if err := node.Decode(&document); err != nil {

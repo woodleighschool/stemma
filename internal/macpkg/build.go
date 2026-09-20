@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/plugin"
@@ -21,6 +22,8 @@ import (
 // Build assembles a private layout from leased inputs and writes one unsigned
 // component package. Input files and packaged endpoint scripts are never run.
 func Build(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string, timestamp time.Time) (plugin.Artifact, error) {
+	sources := map[string]*contents.Source{}
+	defer closeSources(sources)
 	spec.Inputs = make(map[string]plugin.Input, len(inputs))
 	for name := range inputs {
 		spec.Inputs[name] = plugin.Input{}
@@ -39,37 +42,43 @@ func Build(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, wo
 		return plugin.Artifact{}, err
 	}
 	defer func() { _ = os.RemoveAll(root) }()
-	stage := layout{root: root, metadata: map[string]pkgbuild.EntryMetadata{}, claimed: map[string]bool{}}
-	opts := pkgbuild.Options{Identifier: spec.Package.Identifier, Version: spec.Package.Version, Scripts: map[string]string{}, Timestamp: timestamp}
-	if len(spec.Payload) > 0 {
-		opts.Payload = "Payload"
-		opts.Metadata = stage.metadata
+	opts := pkgbuild.Options{Identifier: spec.Package.Identifier, Version: spec.Package.Version, Timestamp: timestamp}
+	for _, area := range []string{"Payload", "Scripts"} {
+		names := make([]string, 0)
+		if area == "Payload" {
+			for name := range spec.Payload {
+				names = append(names, name)
+			}
+		} else {
+			for name := range spec.Scripts {
+				names = append(names, name)
+			}
+		}
+		if len(names) == 0 {
+			continue
+		}
+		stage := layout{root: filepath.Join(root, area), metadata: map[string]pkgbuild.EntryMetadata{}, claimed: map[string]bool{}}
 		if err := stage.parents("."); err != nil {
 			return plugin.Artifact{}, err
 		}
-	}
-	endpoints := make([]string, 0, len(spec.Payload))
-	for endpoint := range spec.Payload {
-		endpoints = append(endpoints, endpoint)
-	}
-	slices.Sort(endpoints)
-	for _, endpoint := range endpoints {
-		entry := spec.Payload[endpoint]
-		name, _ := payloadPath(endpoint)
-		if err := stage.entry(ctx, name, entry, inputs); err != nil {
-			return plugin.Artifact{}, fmt.Errorf("payload %q: %w", endpoint, err)
+		slices.Sort(names)
+		for _, name := range names {
+			var err error
+			if area == "Payload" {
+				destination, _ := payloadPath(name)
+				err = stage.entry(ctx, destination, spec.Payload[name], inputs, sources, root)
+			} else {
+				err = stage.script(ctx, name, spec.Scripts[name], inputs, sources, root)
+			}
+			if err != nil {
+				return plugin.Artifact{}, fmt.Errorf("%s %q: %w", strings.ToLower(area), name, err)
+			}
 		}
-	}
-	for _, role := range []string{"preinstall", "postinstall"} {
-		ref, exists := spec.Scripts[role]
-		if !exists {
-			continue
+		if area == "Payload" {
+			opts.Payload, opts.Metadata = area, stage.metadata
+		} else {
+			opts.Scripts, opts.ScriptMetadata = area, stage.metadata
 		}
-		name := "Scripts/" + role
-		if err := stage.script(ctx, name, ref, inputs); err != nil {
-			return plugin.Artifact{}, fmt.Errorf("scripts.%s: %w", role, err)
-		}
-		opts.Scripts[role] = name
 	}
 	output := filepath.Join(workspace, spec.Filename())
 	if err := pkgbuild.Build(ctx, root, output, opts); err != nil {
@@ -97,7 +106,7 @@ func describe(ctx context.Context, output string, spec Spec) (plugin.Artifact, e
 	return plugin.Artifact{Path: output, SHA256: hex.EncodeToString(hash.Sum(nil)), Size: size, Filename: spec.Filename(), Version: spec.Package.Version, Format: "pkg", Facts: plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: "package", Kind: "package", Package: &plugin.PackageFacts{Identifier: spec.Package.Identifier, Version: spec.Package.Version, InstallLocation: "/", HasPayload: len(spec.Payload) > 0}}}}}, nil
 }
 
-func (stage *layout) entry(ctx context.Context, name string, entry Entry, inputs map[string]plugin.Artifact) error {
+func (stage *layout) entry(ctx context.Context, name string, entry Entry, inputs map[string]plugin.Artifact, sources map[string]*contents.Source, workspace string) error {
 	mode, _ := entry.mode()
 	attrs := pkgbuild.EntryMetadata{Mode: mode, UID: entry.UID, GID: entry.GID}
 	if entry.Content != nil {
@@ -106,10 +115,42 @@ func (stage *layout) entry(ctx context.Context, name string, entry Entry, inputs
 	if entry.Input == "" {
 		return stage.directory(name, attrs)
 	}
-	root, selected, err := openInput(InputFileRef{Input: entry.Input, Path: entry.Path}, inputs)
-	if err != nil {
-		return err
+	return stage.input(ctx, name, entry.Input, entry.Path, inputs, sources, workspace, attrs)
+}
+
+func (stage *layout) script(ctx context.Context, name string, script Script, inputs map[string]plugin.Artifact, sources map[string]*contents.Source, workspace string) error {
+	if script.Content != nil {
+		return stage.content(ctx, name, strings.NewReader(*script.Content), int64(len(*script.Content)), pkgbuild.EntryMetadata{}, 0o644)
 	}
-	defer func() { _ = root.Close() }()
-	return stage.copy(ctx, root, selected, name, attrs)
+	return stage.input(ctx, name, script.Input, script.Path, inputs, sources, workspace, pkgbuild.EntryMetadata{})
+}
+
+func (stage *layout) input(ctx context.Context, name, inputName, selection string, inputs map[string]plugin.Artifact, sources map[string]*contents.Source, workspace string, attrs pkgbuild.EntryMetadata) error {
+	source := sources[inputName]
+	if source == nil {
+		input, ok := inputs[inputName]
+		if !ok {
+			return fmt.Errorf("unknown input %q", inputName)
+		}
+		var err error
+		source, err = contents.Open(input, workspace)
+		if err != nil {
+			return fmt.Errorf("input %q: %w", inputName, err)
+		}
+		sources[inputName] = source
+	}
+	node, err := source.At(ctx, selection)
+	if err != nil {
+		return fmt.Errorf("input %q path %q: %w", inputName, selection, err)
+	}
+	if err := stage.copy(ctx, node, name, attrs); err != nil {
+		return fmt.Errorf("input %q path %q: %w", inputName, selection, err)
+	}
+	return nil
+}
+
+func closeSources(sources map[string]*contents.Source) {
+	for _, source := range sources {
+		_ = source.Close()
+	}
 }
