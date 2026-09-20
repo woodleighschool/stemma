@@ -141,4 +141,4 @@ replace charm.land/bubbletea/v2 => github.com/drawmeanelephant/bubbletea/v2 v2.0
 
 replace github.com/deploymenttheory/go-macos-pkg => github.com/hydazz/go-macos-pkg v0.5.1-0.20260914115450-fe9df7f284f9
 
-replace github.com/deploymenttheory/go-apfs-v2 => github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920035900-7b5756da9415
+replace github.com/deploymenttheory/go-apfs-v2 => github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0
