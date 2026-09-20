@@ -31,8 +31,9 @@ type Spec struct {
 	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require a complete Authenticode signature from the configured publisher on the setup file."`
 	// Icon names the catalog asset icons/<name>.png that destinations publish;
 	// documents that name the same asset share it.
-	Icon         string                    `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Create it with stemma icon or commit a square PNG."`
-	Destinations map[string]map[string]any `json:"destinations" yaml:"destinations" jsonschema_description:"Native publication metadata keyed by a Project destination name."`
+	Icon         string                            `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Create it with stemma icon or commit a square PNG."`
+	Destinations map[string]map[string]any         `json:"destinations" yaml:"destinations" jsonschema_description:"Native publication metadata keyed by a Project destination name."`
+	Subjects     map[string]plugin.SubjectSelector `json:"subjects,omitempty" yaml:"subjects,omitempty" jsonschema_description:"Named inspection subjects exposed in destination expressions as facts.<name>."`
 }
 
 type Content struct {

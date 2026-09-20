@@ -14,6 +14,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/expression"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/plugin"
@@ -66,6 +67,13 @@ type DestinationReport struct {
 	Changes []plugin.Change   `json:"changes"`
 	Applied bool              `json:"applied"`
 	Error   string            `json:"error,omitempty"`
+}
+
+type preparedResource struct {
+	work    string
+	outputs map[string]Prepared
+	report  int
+	ready   bool
 }
 
 // Run resolves locked resources in dependency order and reconciles destinations independently.
@@ -169,12 +177,6 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			report.LockChanged = &result.Changed
 		}
 		return report, err
-	}
-	type preparedResource struct {
-		work    string
-		outputs map[string]Prepared
-		report  int
-		ready   bool
 	}
 	preparedItems := map[string]preparedResource{}
 	pending := map[string]int{}
@@ -299,12 +301,10 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		if reconciled[destination] {
 			return nil
 		}
-		if !preparing {
-			for _, dependency := range destinations[destination].requires {
-				if _, selected := declarations[dependency.Resource]; selected {
-					if err := reconcile(dependency); err != nil {
-						return err
-					}
+		for _, dependency := range destinations[destination].requires {
+			if _, selected := declarations[dependency.Resource]; selected {
+				if err := reconcile(dependency); err != nil {
+					return err
 				}
 			}
 		}
@@ -329,7 +329,15 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		}
 		before := len(item.Destinations)
 		if destinationErr == nil {
-			destinationErr = reconcileDestination(ctx, opts, p, plans, ops, store, root, prepared.work, destination.Resource, destination.Destination, prepared.outputs, destinations[destination].peers, item)
+			operation, err := ops.operation(p.Destinations[destination.Destination].Operation)
+			if err != nil {
+				return err
+			}
+			peers, err := resolvePeerMetadata(ctx, plans, destination.Destination, destinations[destination].peers, preparedItems, operation.MetadataSchema)
+			destinationErr = err
+			if destinationErr == nil {
+				destinationErr = reconcileDestination(ctx, opts, p, plans, ops, store, root, prepared.work, destination.Resource, destination.Destination, prepared.outputs, peers, item)
+			}
 		}
 		if destinationErr != nil {
 			failed[destination] = true
@@ -463,7 +471,11 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 			return fmt.Errorf("destination %s: %w", destination, err)
 		}
 	}
-	if present && !prepared.SuppliedFacts && (operation.RequiresInspection || hasFactReference(metadata)) {
+	roots, err := expression.Roots(metadata)
+	if err != nil {
+		return err
+	}
+	if present && !prepared.SuppliedFacts && (operation.RequiresInspection || slices.Contains(roots, "facts")) {
 		prepared.Facts, err = inspection.Read(ctx, prepared.Path)
 		if err != nil {
 			return fmt.Errorf("destination %s required inspection: %w", destination, err)
@@ -602,23 +614,6 @@ func Validate(ctx context.Context, p config.Project) error {
 		return err
 	}
 	return p.Validate()
-}
-
-func hasFactReference(value any) bool {
-	switch value := value.(type) {
-	case map[string]any:
-		if _, ok := value["$fact"]; ok {
-			return true
-		}
-		for _, child := range value {
-			if hasFactReference(child) {
-				return true
-			}
-		}
-	case []any:
-		return slices.ContainsFunc(value, hasFactReference)
-	}
-	return false
 }
 
 func destinationReferences(metadata map[string]any) map[string]string {

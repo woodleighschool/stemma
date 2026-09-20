@@ -21,7 +21,7 @@ source:
   filename: VendorSetup.exe
   headers:
     User-Agent: VendorDeploymentClient
-  token: ${VENDOR_DOWNLOAD_TOKEN}
+  token: "{{ env.VENDOR_DOWNLOAD_TOKEN }}"
 ```
 
 `token` supplies a bearer token. It cannot be combined with an `Authorization`

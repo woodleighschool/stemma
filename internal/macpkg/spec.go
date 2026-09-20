@@ -5,23 +5,34 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
 // Version changes when the layout or package derivation changes.
-const Version = "stemma.macpkg/3"
+const Version = "stemma.macpkg/4"
 
 type Spec struct {
 	Inputs  map[string]plugin.Input `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema_description:"Named source artifacts leased into the build. Refer to them with $input in payload and scripts."`
 	Payload map[string]Entry        `json:"payload,omitempty" yaml:"payload,omitempty" jsonschema_description:"Installed absolute paths mapped to files, trees, literal text or directory declarations."`
 	Package Package                 `json:"package" yaml:"package" jsonschema_description:"Component package identity and version recorded in macOS receipts."`
 	Scripts map[string]Entry        `json:"scripts,omitempty" yaml:"scripts,omitempty" jsonschema_description:"Paths in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma."`
+	Inspect map[string]Inspection   `json:"inspect,omitempty" yaml:"inspect,omitempty" jsonschema_description:"Named input selections inspected before evaluating package and layout expressions. Selected subjects are available under facts; optional signatures authenticate vendor content."`
+}
+
+type Inspection struct {
+	Input     string                 `json:"$input" yaml:"$input" jsonschema_description:"Declared input to inspect."`
+	Path      string                 `json:"path,omitempty" yaml:"path,omitempty" jsonschema_description:"Exact path within the input contents. Omit to inspect the original artifact."`
+	Subject   plugin.SubjectSelector `json:"subject,omitzero" yaml:"subject,omitempty" jsonschema_description:"Select one observed subject. Omit when the selection contains exactly one subject."`
+	Signature *signature.Policy      `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require the selected app or PKG to be signed by this Developer ID team before building."`
 }
 
 type Package struct {
@@ -49,6 +60,9 @@ func (s Spec) Filename() string {
 }
 
 func (s Spec) Validate() error {
+	if err := s.validateInspections(); err != nil {
+		return err
+	}
 	filename := s.Filename()
 	if !validPath(filename) || path.Base(filename) != filename || !strings.HasSuffix(filename, ".pkg") {
 		return errors.New("package filename must be a base filename ending in .pkg")
@@ -93,6 +107,28 @@ func (s Spec) Validate() error {
 		}
 	}
 	return pkgbuild.Validate(opts)
+}
+
+func (s Spec) validateInspections() error {
+	for _, name := range slices.Sorted(maps.Keys(s.Inspect)) {
+		inspection := s.Inspect[name]
+		if !validPath(name) || path.Base(name) != name || name == "." {
+			return fmt.Errorf("invalid inspection name %q", name)
+		}
+		if err := s.validateRef(Entry{Input: inspection.Input, Path: inspection.Path}); err != nil {
+			return fmt.Errorf("inspect %s: %w", name, err)
+		}
+		if inspection.Signature != nil {
+			signer, err := signature.Parse(inspection.Signature.Signer)
+			if err != nil {
+				return fmt.Errorf("inspect %s signature: %w", name, err)
+			}
+			if signer.Scheme != signature.AppleDeveloperID {
+				return fmt.Errorf("inspect %s requires an Apple Developer ID signer", name)
+			}
+		}
+	}
+	return nil
 }
 
 func (s Spec) validateRef(ref Entry) error {

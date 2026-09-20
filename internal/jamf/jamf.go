@@ -43,8 +43,8 @@ var markerPattern = regexp.MustCompile(`(?m)^\[stemma:v1 id=([0-9a-f]{64})\]$`)
 
 type Config struct {
 	URL          string `json:"url" jsonschema:"minLength=1" jsonschema_description:"Jamf Pro server origin, such as https://school.jamfcloud.com. HTTPS is required except loopback test servers. Paths, embedded credentials, queries and fragments are rejected."`
-	ClientID     string `json:"client_id" jsonschema:"minLength=1" jsonschema_description:"Jamf API client ID. Use ${VAR} to supply it from the environment."`
-	ClientSecret string `json:"client_secret" jsonschema:"minLength=1,writeOnly=true" jsonschema_description:"Jamf API client secret. Use ${VAR} to supply it from the environment."`
+	ClientID     string `json:"client_id" jsonschema:"minLength=1" jsonschema_description:"Jamf API client ID. Use an env expression to supply it from the environment."`
+	ClientSecret string `json:"client_secret" jsonschema:"minLength=1,writeOnly=true" jsonschema_description:"Jamf API client secret. Use an env expression to supply it from the environment."`
 }
 
 type client struct {

@@ -199,11 +199,11 @@ func TestOpenReleasesAPartialSessionOnFailure(t *testing.T) {
 }
 
 func TestOpenEvidencePreservesNativeTypes(t *testing.T) {
-	effective, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"count": map[string]any{"$fact": "vendor.probe.count"}, "enabled": map[string]any{"$fact": "vendor.probe.enabled"}}, plugin.Facts{}, map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"count":4,"enabled":false}`)})
+	effective, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"count": "{{ evidence['vendor.probe'].count }}", "enabled": "{{ evidence['vendor.probe'].enabled }}"}, plugin.Facts{}, map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"count":4,"enabled":false}`)})
 	if err != nil || effective["count"] != float64(4) || effective["enabled"] != false {
 		t.Fatalf("evidence handoff: %+v %v", effective, err)
 	}
-	if _, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"value": map[string]any{"$fact": "vendor.missing.value"}}, plugin.Facts{}, nil); err == nil {
+	if _, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"value": "{{ evidence['vendor.missing'].value }}"}, plugin.Facts{}, nil); err == nil {
 		t.Fatal("missing evidence accepted")
 	}
 }

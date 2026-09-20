@@ -25,7 +25,7 @@ type Descriptor struct {
 
 // Operation advertises a capability. Empty Platforms means portable; otherwise
 // entries are GOOS/GOARCH pairs. SideEffects is none, workspace, or remote.
-// Methods contains validate, run, plan, or apply; describe is implicit.
+// Methods contains discover, validate, run, plan, or apply; describe is implicit.
 // ConfigSchema constrains declared configuration independently of runtime inputs;
 // providers must supply it when configuration is constrained.
 // RequiresInspection requests facts for the primary reconciliation artifact.
@@ -152,7 +152,7 @@ func (registry *Registry) Handle(ctx context.Context, request Request) (Response
 	if !operation.descriptor.SupportsPlatform(runtime.GOOS, runtime.GOARCH) {
 		return Response{}, fmt.Errorf("operation %q does not support runner %s/%s", request.Operation, runtime.GOOS, runtime.GOARCH)
 	}
-	if operation.config != nil && (operation.descriptor.Resource == nil || request.Method == "validate") {
+	if operation.config != nil && (operation.descriptor.Resource == nil || request.Method == "discover") {
 		var input map[string]json.RawMessage
 		if err := json.Unmarshal(request.Input, &input); err != nil || input == nil {
 			return Response{}, fmt.Errorf("operation %q configuration requires an object input", request.Operation)
@@ -161,15 +161,19 @@ func (registry *Registry) Handle(ctx context.Context, request Request) (Response
 		if len(config) == 0 {
 			config = json.RawMessage(`{}`)
 		}
-		if err := validateData(operation.config, config); err != nil {
-			return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
+		if request.Method != "discover" {
+			if err := validateData(operation.config, config); err != nil {
+				return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
+			}
 		}
 		config, err := defaultData(operation.defaults, config)
 		if err != nil {
 			return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
 		}
-		if err := validateData(operation.config, config); err != nil {
-			return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
+		if request.Method != "discover" {
+			if err := validateData(operation.config, config); err != nil {
+				return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
+			}
 		}
 		input["config"] = config
 		request.Input, err = json.Marshal(input)
@@ -261,8 +265,8 @@ func compileOperation(operation Operation) (registeredOperation, error) {
 	if operation.Resolver != nil && (operation.Kind != "resolve" || operation.Resolver.Version == "" || operation.SideEffects == "remote" || !operation.SupportsMethod("run") || !operation.SupportsMethod("validate")) {
 		return registeredOperation{}, errors.New("resolver registration requires version and workspace-only validate/run methods")
 	}
-	if operation.Resource != nil && (operation.Kind != "resource" || operation.Resource.APIVersion == "" || operation.Resource.Kind == "" || !operation.SupportsMethod("validate") || !operation.SupportsMethod("run") || operation.SideEffects == "remote") {
-		return registeredOperation{}, errors.New("resource registration requires apiVersion, kind and workspace-only validate/run methods")
+	if operation.Resource != nil && (operation.Kind != "resource" || operation.Resource.APIVersion == "" || operation.Resource.Kind == "" || !operation.SupportsMethod("discover") || !operation.SupportsMethod("run") || operation.SideEffects == "remote") {
+		return registeredOperation{}, errors.New("resource registration requires apiVersion, kind and workspace-only discover/run methods")
 	}
 	if !ValidOperationName(operation.Name) || !ValidOperationName(operation.Kind) {
 		return registeredOperation{}, fmt.Errorf("operation %q requires a valid name and kind", operation.Name)
@@ -350,7 +354,7 @@ func cloneOperation(operation Operation) Operation {
 
 func validMethod(method string) bool {
 	switch method {
-	case "describe", "validate", "run", "plan", "apply":
+	case "describe", "discover", "validate", "run", "plan", "apply":
 		return true
 	default:
 		return false

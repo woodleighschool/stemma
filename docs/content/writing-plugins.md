@@ -13,9 +13,10 @@ version your catalog uses. The interface is still under development.
 
 A resource has two methods:
 
-- `validate` reads the declared spec and returns named inputs, preparation-only
+- `discover` reads the declared spec and returns named inputs, preparation-only
   configuration and destination settings.
-- `run` receives locked inputs in a leased workspace and returns named artifacts.
+- `run` receives concrete preparation configuration and locked inputs in a leased
+  workspace, and returns named artifacts.
 
 Separating destination settings from preparation configuration lets a metadata
 edit reuse the existing artifact. Resolve downloads through inputs; do not hide
@@ -62,7 +63,7 @@ func serve(ctx context.Context) error {
 		Kind:        "resource",
 		Resource:    &plugin.ResourceKind{APIVersion: "example.org/v1", Kind: "VendorPackage"},
 		SideEffects: "workspace",
-		Methods:     []string{"validate", "run"},
+		Methods:     []string{"discover", "run"},
 	}, prepare)
 	if err != nil {
 		return err
@@ -73,7 +74,7 @@ func serve(ctx context.Context) error {
 func prepare(ctx context.Context, request plugin.ResourceRequest[spec]) (plugin.ResourceResult, error) {
 	var result plugin.ResourceResult
 	switch request.Method {
-	case "validate":
+	case "discover":
 		result.Inputs = map[string]plugin.Input{"source": request.Config.Source}
 		result.Config = json.RawMessage(`{}`)
 		result.Destinations = request.Config.Destinations
@@ -131,9 +132,12 @@ Import `github.com/invopop/jsonschema` for the enum hook. Registration rejects
 unknown fields, checks required fields and enum values, applies schema defaults,
 then decodes the effective config. An optional `Validate() error` method handles
 semantic rules before a resolver or destination handler runs, including locked
-requests. Resource config validation runs on declarations; prepared config
-returned for `run` has already passed that boundary. Resolver `validate` requests stop after these checks and perform no
-acquisition. Direct calls to typed resolvers supply effective config values.
+requests. Resource discovery validates the authored declaration; runtime values
+must satisfy the concrete preparation contract before use. Expression-bearing
+fields are checked again after evaluation. `run` receives preparation config,
+without source declarations or destination metadata. Resolver `validate` requests
+stop after configuration checks and perform no acquisition. Direct calls to typed
+resolvers supply effective config values.
 
 Defaults live in tags once; omitted values receive them while explicit zero,
 false and empty values remain explicit. Required fields must be supplied even
@@ -228,7 +232,8 @@ credential configuration fields with `writeOnly: true`.
 Return consumer metadata in namespaced `artifact.evidence`, for example
 `{"vendor.release":{"version":"1.2"}}`. Evidence is reviewed in the source lock
 and passed to resource inputs; destination metadata can reference it with
-`{$fact: vendor.release.version}`. Changing evidence invalidates preparation even
+`{{ evidence['vendor.release'].version }}`. A builder reads the same evidence
+through `inputs.<name>.evidence`. Changing evidence invalidates preparation even
 when the bytes are unchanged. The byte timestamp stays the same.
 
 Observation remains private to the resolver. A locked fetch verifies bytes and

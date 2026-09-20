@@ -52,9 +52,9 @@ spec:
     source_control:
       type: github
       config:
-        client_id: ${GITHUB_APP_CLIENT_ID}
-        installation_id: ${GITHUB_APP_INSTALLATION_ID}
-        private_key: ${GITHUB_APP_PRIVATE_KEY}
+        client_id: "{{ env.GITHUB_APP_CLIENT_ID }}"
+        installation_id: "{{ env.GITHUB_APP_INSTALLATION_ID }}"
+        private_key: "{{ env.GITHUB_APP_PRIVATE_KEY }}"
   imports:
     - '*.software.yaml'
   destinations:

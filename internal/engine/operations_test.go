@@ -78,7 +78,7 @@ spec:
   destinations:
     repo:
       pkginfo:
-        version: {$fact: vendor.release.version}
+        version: "{{ evidence['vendor.release'].version }}"
 `, server.URL))
 	wantVersion := "1.2"
 	validated := false

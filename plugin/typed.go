@@ -32,9 +32,11 @@ func Register[I, O any](registry *Registry, operation Operation, handle func(con
 	var err error
 	if input.Properties != nil {
 		if config, ok := input.Properties.Get("config"); ok {
-			operation.ConfigSchema, err = json.Marshal(config)
-			if err != nil {
-				return err
+			if len(operation.ConfigSchema) == 0 {
+				operation.ConfigSchema, err = json.Marshal(config)
+				if err != nil {
+					return err
+				}
 			}
 			// Resource run requests contain prepared config rather than the declaration.
 			// ConfigSchema is checked separately at the appropriate lifecycle boundary.

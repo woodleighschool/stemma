@@ -15,6 +15,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/expression"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -22,8 +23,9 @@ import (
 type resourcePlan struct {
 	plugin.ResourceResult
 
-	Resource  config.Resource
-	Operation string
+	Resource    config.Resource
+	Operation   string
+	Environment map[string]string
 }
 
 func discover(ctx context.Context, p config.Project, ops *operations) (map[string]resourcePlan, error) {
@@ -43,12 +45,28 @@ func discover(ctx context.Context, p config.Project, ops *operations) (map[strin
 		if err := ops.check(op.Name, true); err != nil {
 			return nil, err
 		}
-		encoded, err := json.Marshal(r.Spec)
+		declaration, bindings, err := resourceDeclaration(r)
+		if err != nil {
+			return nil, fmt.Errorf("resource %s: %w", key, err)
+		}
+		encoded, err := json.Marshal(declaration)
 		if err != nil {
 			return nil, err
 		}
 		var result plugin.ResourceResult
-		if err := ops.call(ctx, op.Name, "validate", plugin.ResourceRequest[json.RawMessage]{Config: encoded, Identity: r.Reference()}, &result); err != nil {
+		schema := op.ConfigSchema
+		if deferredPreparation(r) {
+			schema, err = config.ExpressionSchema(schema)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if len(schema) > 0 {
+			if err := plugin.ValidateSchema(schema, encoded); err != nil {
+				return nil, fmt.Errorf("resource %s config: %w", key, err)
+			}
+		}
+		if err := ops.call(ctx, op.Name, "discover", plugin.ResourceRequest[json.RawMessage]{Config: encoded, Identity: r.Reference()}, &result); err != nil {
 			return nil, fmt.Errorf("resource %s: %w", key, err)
 		}
 		if len(result.Config) == 0 {
@@ -103,10 +121,12 @@ func discover(ctx context.Context, p config.Project, ops *operations) (map[strin
 				return nil, err
 			}
 		}
-		if err := validateReferences(result); err != nil {
-			return nil, err
+		for destination, metadata := range result.Destinations {
+			if err := expression.Check(destinationMetadata(metadata), "env", "facts", "evidence"); err != nil {
+				return nil, fmt.Errorf("resource %s destination %s: %w", key, destination, err)
+			}
 		}
-		plans[key] = resourcePlan{Resource: r, Operation: op.Name, ResourceResult: result}
+		plans[key] = resourcePlan{Resource: r, Operation: op.Name, ResourceResult: result, Environment: bindings}
 	}
 	return plans, nil
 }
@@ -232,7 +252,8 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		Inputs                   map[string]plugin.Artifact
 		Modes                    map[string]uint32
 		Timestamp                time.Time
-	}{"resource/1", ops.identity[plan.Operation], plan.Resource.Reference(), plan.Config, identityInputs, modes, timestamp})
+		Environment              map[string]string
+	}{"resource/2", ops.identity[plan.Operation], plan.Resource.Reference(), plan.Config, identityInputs, modes, timestamp, plan.Environment})
 	cached, complete, err := recallOutputs(ctx, store, key)
 	if err != nil {
 		return nil, false, err
@@ -263,7 +284,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	if err != nil {
 		return nil, false, err
 	}
-	request := plugin.ResourceRequest[json.RawMessage]{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp, Derive: derive}
+	request := plugin.ResourceRequest[json.RawMessage]{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp, Derive: derive, Environment: plan.Environment}
 	// Windows stores only the read-only bit, so compare modes against the lease.
 	leasedModes := map[string]os.FileMode{}
 	for name, input := range inputs {

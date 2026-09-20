@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -14,10 +15,15 @@ import (
 func TestBuildPackageFilenameOverride(t *testing.T) {
 	for _, override := range []string{"", "Deployment.pkg"} {
 		t.Run(override, func(t *testing.T) {
-			request := plugin.ResourceRequest[macpkg.Spec]{Method: "run", Config: macpkg.Spec{
+			spec := macpkg.Spec{
 				Package: macpkg.Package{Identifier: "org.example.payload", Version: "4.2", Filename: override},
 				Payload: map[string]macpkg.Entry{"/Library/Example/message.txt": {Content: new("synthetic payload")}},
-			}, Identity: plugin.ResourceReference{Kind: "BuildMacPkg", Name: "payload"}, Workspace: t.TempDir()}
+			}
+			data, err := json.Marshal(spec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := plugin.ResourceRequest[json.RawMessage]{Method: "run", Config: data, Identity: plugin.ResourceReference{Kind: "BuildMacPkg", Name: "payload"}, Workspace: t.TempDir()}
 			result, err := buildMacPkg(t.Context(), request)
 			if err != nil {
 				t.Fatal(err)

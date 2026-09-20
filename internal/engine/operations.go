@@ -114,9 +114,6 @@ func (o *operations) configuration(name string, settings map[string]any) error {
 	if err != nil {
 		return err
 	}
-	if hasFactReference(settings) {
-		return nil
-	}
 	if len(op.ConfigSchema) == 0 {
 		return nil
 	}

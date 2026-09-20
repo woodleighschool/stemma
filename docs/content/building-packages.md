@@ -108,6 +108,40 @@ build workspace. DMG members are read through the disk-image reader without
 mounting the image or expanding unrelated files. Temporary build files disappear
 when preparation finishes.
 
+## Inspect input metadata
+
+Use `inspect` to select application or package metadata before evaluating the
+build's [expressions](expressions.md). Each entry names one subject under `facts`:
+
+```yaml
+inputs:
+  vendor:
+    path: Assets/Vendor.zip
+inspect:
+  app:
+    $input: vendor
+    path: Vendor Installer.app
+    subject:
+      kind: app
+    signature:
+      signer: apple:developer-id:TEAMID1234
+package:
+  identifier: org.example.vendor-wrapper
+  version: "{{ facts.app.app.version }}-1"
+```
+
+`path` selects contents within the input using the same traversal as payload and
+script entries. `subject` selects one observed subject by `kind`, `path`,
+`bundle_id` or `installed_path`; omit it when inspection finds exactly one subject.
+The outer `path` selects input contents, while `subject.path` matches a path within
+those inspected contents. Missing or ambiguous selections fail.
+
+An optional `signature` requires the selected application or PKG to carry a valid
+Developer ID signature from that team before building. Inspection and copying
+share the opened input. No installer code runs to obtain metadata. Resolver
+evidence is available as `inputs.vendor.evidence['vendor.release'].version`;
+inspection does not interpret arbitrary vendor XML or configuration files.
+
 ## Include installer scripts and resources
 
 `scripts` describes the package's temporary Scripts area using the same entries
@@ -179,8 +213,9 @@ Keep destination behaviour out of the builder. For example, a GarageBand content
 package can carry a downloader and its installer hook, while Munki's detection and
 configuration scripts belong in the publishing document's `pkginfo`.
 
-The builder produces unsigned component PKGs. It does not sign packages, derive a
-vendor's version from arbitrary files, build distribution installers or execute
-an AutoPkg-style processor chain. `package.version` is explicit; vendor-specific
-discovery and metadata belong in a resolver or resource plugin. Set
+The builder produces unsigned component PKGs. It does not sign packages, build
+distribution installers or execute an AutoPkg-style processor chain.
+`package.version` is declared directly or through an expression using inspected
+metadata. Vendor-specific discovery and other metadata extraction belong in a
+resolver or resource plugin. Set
 `package.filename` only when the default output name needs to be overridden.

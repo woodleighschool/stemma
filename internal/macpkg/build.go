@@ -20,8 +20,24 @@ import (
 )
 
 // Build assembles a private layout from leased inputs and writes one unsigned
-// component package. Input files and packaged endpoint scripts are never run.
+// component package. Inspections require Prepare. Input files and packaged
+// endpoint scripts are never run.
 func Build(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string, timestamp time.Time) (plugin.Artifact, error) {
+	if len(spec.Inspect) != 0 {
+		return plugin.Artifact{}, errors.New("inspections require package preparation")
+	}
+	sources := map[string]*contents.Source{}
+	defer closeSources(sources)
+	return build(ctx, spec, inputs, workspace, timestamp, sources)
+}
+
+func closeSources(sources map[string]*contents.Source) {
+	for _, source := range sources {
+		_ = source.Close()
+	}
+}
+
+func build(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string, timestamp time.Time, sources map[string]*contents.Source) (plugin.Artifact, error) {
 	spec.Inputs = make(map[string]plugin.Input, len(inputs))
 	for name := range inputs {
 		spec.Inputs[name] = plugin.Input{}
@@ -40,12 +56,6 @@ func Build(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, wo
 		return plugin.Artifact{}, err
 	}
 	defer func() { _ = os.RemoveAll(root) }()
-	sources := map[string]*contents.Source{}
-	defer func() {
-		for _, source := range sources {
-			_ = source.Close()
-		}
-	}()
 	opts := pkgbuild.Options{Identifier: spec.Package.Identifier, Version: spec.Package.Version, Timestamp: timestamp}
 	for _, area := range []struct {
 		name    string

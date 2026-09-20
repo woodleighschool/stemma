@@ -42,7 +42,7 @@ func main() {
 		requirements = []plugin.Requirement{{Command: tool, Purpose: "fixture build", Setup: "install the fixture helper"}}
 	}
 	if err := plugin.Register(registry, plugin.Operation{
-		Name: "echo.build", Requirements: requirements, Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "example.test/v1", Kind: "ExternalInstaller"}, SideEffects: "workspace", Methods: []string{"validate", "run"},
+		Name: "echo.build", Requirements: requirements, Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "example.test/v1", Kind: "ExternalInstaller"}, SideEffects: "workspace", Methods: []string{"discover", "run"},
 	}, build); err != nil {
 		panic(err)
 	}
@@ -111,7 +111,7 @@ type buildConfig struct {
 }
 
 func build(_ context.Context, request plugin.ResourceRequest[buildConfig]) (plugin.ResourceResult, error) {
-	if request.Method == "validate" {
+	if request.Method == "discover" {
 		return plugin.ResourceResult{Inputs: map[string]plugin.Input{"vendor": request.Config.Source}, Config: json.RawMessage(`{}`)}, nil
 	}
 	artifact := request.Inputs["vendor"]

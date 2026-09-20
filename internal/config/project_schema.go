@@ -21,8 +21,22 @@ func LoadSchemaProject(filename string) (Project, error) {
 	if err != nil {
 		return Project{}, err
 	}
+	raw, err := parseDocument(data, nil)
+	if err != nil {
+		return Project{}, err
+	}
+	if err := checkExpressions(raw); err != nil {
+		return Project{}, err
+	}
+	if err := validateProjectDocument(raw); err != nil {
+		return Project{}, err
+	}
+	spec, _ := raw["spec"].(map[string]any)
+	if err := evaluateEnvironment(spec, "plugins"); err != nil {
+		return Project{}, fmt.Errorf("plugins: %w", err)
+	}
 	var document ProjectDocument
-	if _, err := parseDocument(data, &document); err != nil {
+	if err := decodeDocument(raw, &document); err != nil {
 		return Project{}, err
 	}
 	if err := validateHeader(document.APIVersion, document.Kind, "Project", document.Metadata); err != nil {
@@ -40,13 +54,6 @@ func LoadSchemaProject(filename string) (Project, error) {
 	for name, provider := range p.Plugins {
 		if !namePattern.MatchString(name) || !provider.Trusted {
 			return p, fmt.Errorf("plugin %s: requires a valid name and trusted: true", name)
-		}
-		for _, field := range []*string{&provider.Image, &provider.Path, &provider.Entrypoint} {
-			expanded, err := expandEnvironment(*field)
-			if err != nil {
-				return p, fmt.Errorf("plugin %s: %w", name, err)
-			}
-			*field = expanded.(string)
 		}
 		if err := provider.Validate(); err != nil {
 			return p, fmt.Errorf("plugin %s: %w", name, err)
@@ -122,15 +129,14 @@ func catalogSchema(project *Project, descriptor plugin.Descriptor) ([]byte, erro
 			if err != nil {
 				return nil, fmt.Errorf("operation %s metadata schema: %w", operation.Name, err)
 			}
-			walkEditorSchema(native, editorEnvironment)
-			walkEditorSchema(native, func(node map[string]any) { editorFacts(node, rootID+"#/$defs/FactReference") })
+			expressionSchema(native, false)
 			addEditorInputs(native, resources, installer, inputs, map[string]bool{})
 			definitions[metadataKey] = native
 			settings, _, err := editorResource(operation.ConfigSchema, settingsID)
 			if err != nil {
 				return nil, fmt.Errorf("operation %s config schema: %w", operation.Name, err)
 			}
-			walkEditorSchema(settings, editorEnvironment)
+			expressionSchema(settings, false)
 			definitions[settingsKey] = settings
 		}
 		required := []string{"operation"}
@@ -166,6 +172,7 @@ func catalogSchema(project *Project, descriptor plugin.Descriptor) ([]byte, erro
 		if err != nil {
 			return nil, err
 		}
+		expressionSchema(native, false)
 		walkEditorSchema(native, func(node map[string]any) {
 			if node["x-stemma-input"] == true {
 				description := node["description"]
@@ -181,7 +188,6 @@ func catalogSchema(project *Project, descriptor plugin.Descriptor) ([]byte, erro
 				fields["destinations"] = destinations
 			}
 		})
-		walkEditorSchema(native, editorEnvironment)
 		definition := operation.Resource.Kind
 		if operation.Resource.APIVersion != "stemma/v1alpha1" {
 			definition = "Resource_" + operation.Name
@@ -202,25 +208,6 @@ func catalogSchema(project *Project, descriptor plugin.Descriptor) ([]byte, erro
 		return nil, err
 	}
 	return append(data, '\n'), nil
-}
-
-// Environment expansion precedes typed decoding. Keep literal constraints in the
-// protocol while accepting whole-value string placeholders in the editor.
-func editorEnvironment(node map[string]any) {
-	if node["type"] != "string" {
-		return
-	}
-	if node["enum"] == nil && node["pattern"] == nil && node["minLength"] == nil && node["maxLength"] == nil && node["format"] == nil {
-		return
-	}
-	literal := maps.Clone(node)
-	clear(node)
-	for _, key := range []string{"description", "default", "title", "writeOnly"} {
-		if value, ok := literal[key]; ok {
-			node[key] = value
-		}
-	}
-	node["anyOf"] = []any{literal, map[string]any{"type": "string", "pattern": environmentPlaceholder.String()}}
 }
 
 // Walk only schema positions: examples, defaults and enum values are user data.
@@ -260,35 +247,6 @@ func editorChildren(node map[string]any, preserve ...string) []map[string]any {
 		}
 	}
 	return result
-}
-
-func editorFacts(node map[string]any, reference string) {
-	wrap := func(value any) any {
-		wrapped := map[string]any{"anyOf": []any{value, map[string]any{"$ref": reference}}}
-		if property, ok := value.(map[string]any); ok && property["description"] != nil {
-			wrapped["description"] = property["description"]
-		}
-		return wrapped
-	}
-	for _, key := range []string{"properties", "patternProperties"} {
-		properties, _ := node[key].(map[string]any)
-		for name, property := range properties {
-			properties[name] = wrap(property)
-		}
-	}
-	for _, key := range []string{"items", "additionalProperties"} {
-		if child, ok := node[key].(map[string]any); ok {
-			node[key] = wrap(child)
-		}
-	}
-	if variants, ok := node["oneOf"].([]any); ok {
-		if previous, exists := node["anyOf"]; exists {
-			all, _ := node["allOf"].([]any)
-			node["allOf"] = append(all, map[string]any{"anyOf": previous})
-		}
-		node["anyOf"] = variants
-		delete(node, "oneOf")
-	}
 }
 
 func editorResource(data json.RawMessage, identity string) (map[string]any, map[string]map[string]any, error) {
@@ -426,7 +384,19 @@ func catalogInputSchema(descriptor plugin.Descriptor) (map[string]any, error) {
 	if err := json.Unmarshal(data, &schema); err != nil {
 		return nil, err
 	}
-	walkEditorSchema(schema, editorEnvironment)
+	variants, _ := schema["oneOf"].([]any)
+	walkEditorSchema(variants[0], literalStringSchema)
+	for _, variant := range variants[1:] {
+		if node, ok := variant.(map[string]any); ok {
+			properties, _ := node["properties"].(map[string]any)
+			resolver := properties["resolver"]
+			delete(properties, "resolver")
+			expressionSchema(node, false)
+			if resolver != nil {
+				properties["resolver"] = resolver
+			}
+		}
+	}
 	for _, operation := range descriptor.Operations {
 		if operation.Resolver == nil {
 			continue
@@ -436,7 +406,7 @@ func catalogInputSchema(descriptor plugin.Descriptor) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
-		walkEditorSchema(config, editorEnvironment)
+		expressionSchema(config, false)
 		editEditorObject(config, resources, map[string]bool{}, func(node map[string]any) {
 			properties, _ := node["properties"].(map[string]any)
 			if properties == nil {

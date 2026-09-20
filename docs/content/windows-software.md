@@ -20,9 +20,9 @@ spec:
     intune:
       operation: intune
       config:
-        tenant_id: ${INTUNE_TENANT_ID}
-        client_id: ${INTUNE_CLIENT_ID}
-        client_secret: ${INTUNE_CLIENT_SECRET}
+        tenant_id: "{{ env.INTUNE_TENANT_ID }}"
+        client_id: "{{ env.INTUNE_CLIENT_ID }}"
+        client_secret: "{{ env.INTUNE_CLIENT_SECRET }}"
   components:
     windows-win32:
       destinations:
