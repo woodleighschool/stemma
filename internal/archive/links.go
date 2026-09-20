@@ -3,7 +3,9 @@ package archive
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -20,9 +22,13 @@ func Readlink(root *os.Root, name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	target = filepath.ToSlash(target)
-	resolved := filepath.Clean(filepath.Join(filepath.Dir(name), target))
-	if filepath.IsAbs(target) || !filepath.IsLocal(resolved) || strings.Contains(target, "\\") {
+	// A POSIX target may hold any byte but NUL, including a backslash; only
+	// Windows spells its own separator that way.
+	if runtime.GOOS == "windows" {
+		target = filepath.ToSlash(target)
+	}
+	resolved := path.Join(path.Dir(filepath.ToSlash(name)), target)
+	if target == "" || strings.ContainsRune(target, 0) || path.IsAbs(target) || filepath.IsAbs(target) || resolved == ".." || strings.HasPrefix(resolved, "../") {
 		return "", fmt.Errorf("escaping symlink %s", name)
 	}
 	return target, nil

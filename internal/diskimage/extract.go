@@ -172,16 +172,24 @@ func validateVolume(r io.ReaderAt, size int64) error {
 	return nil
 }
 
+// safeName accepts any relative POSIX path, because a macOS bundle carries
+// names with colons, backslashes and trailing spaces. Names this host cannot
+// hold are rejected by hostName, where the payload is written to disk.
 func safeName(name string) error {
-	if name == "." || !fs.ValidPath(name) || strings.ContainsAny(name, "\\:\x00") || !filepath.IsLocal(filepath.FromSlash(name)) {
+	if name == "." || !fs.ValidPath(name) || strings.ContainsRune(name, 0) {
 		return fmt.Errorf("unsafe disk image path %q", name)
 	}
-	for part := range strings.SplitSeq(name, "/") {
-		if strings.TrimRight(part, " .") != part {
-			return fmt.Errorf("unportable disk image path %q", name)
-		}
-	}
 	return nil
+}
+
+// hostName reports the local path for a safe payload name, and refuses names
+// this filesystem cannot hold rather than writing something else.
+func hostName(name string) (string, error) {
+	local := filepath.FromSlash(name)
+	if !filepath.IsLocal(local) {
+		return "", fmt.Errorf("disk image path %q cannot be created on this host", name)
+	}
+	return local, nil
 }
 
 func selectPayload(ctx context.Context, volume filesystem, selection string) (string, error) {
@@ -289,6 +297,9 @@ func extract(ctx context.Context, volume filesystem, root *os.Root, selection st
 			return err
 		}
 		if err := safeName(name); err != nil {
+			return err
+		}
+		if _, err := hostName(name); err != nil {
 			return err
 		}
 		count++

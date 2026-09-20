@@ -68,7 +68,7 @@ func TestImageReadsSelectedChunks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			metadata, err := disk.NewDMGReader(bytes.NewReader(data), int64(len(data)), nil)
+			metadata, err := disk.NewDMGReader(bytes.NewReader(data), int64(len(data)), disk.DMGLimits{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -142,7 +142,7 @@ func TestImageLZFSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := disk.NewDMGReader(bytes.NewReader(data), int64(len(data)), nil)
+	source, err := disk.NewDMGReader(bytes.NewReader(data), int64(len(data)), disk.DMGLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}

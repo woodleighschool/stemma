@@ -52,7 +52,7 @@ func openImage(ctx context.Context, source io.ReaderAt, size int64) (*Image, err
 	if size < 512 || size > maxBytes {
 		return nil, errors.New("invalid disk image size")
 	}
-	dmg, err := disk.NewDMGReader(&imageReader{ctx: ctx, reader: source, remaining: maxBytes * 4}, size, &disk.DMGReaderOptions{MaxPlistSize: 16 << 20, MaxChunkSize: 64 << 20})
+	dmg, err := disk.NewDMGReader(&imageReader{ctx: ctx, reader: source, remaining: maxBytes * 4}, size, disk.DMGLimits{MetadataBytes: 16 << 20, ChunkBytes: 64 << 20, ImageBytes: uint64(maxBytes)})
 	if err != nil {
 		return nil, err
 	}

@@ -111,20 +111,28 @@ func appleDouble(name string) bool {
 	return false
 }
 
+// safeName accepts any relative POSIX path, because a macOS bundle carries
+// names with colons, backslashes and trailing spaces. Names a host cannot
+// represent are rejected by hostName, where content is written to disk.
 func safeName(name string) (string, error) {
 	name = strings.TrimSuffix(name, "/")
 	if name == "." {
 		return name, nil
 	}
-	if name == "" || strings.ContainsAny(name, "\\:\x00") || strings.HasPrefix(name, "/") || path.Clean(name) != name || !filepath.IsLocal(filepath.FromSlash(name)) {
+	if !fs.ValidPath(name) || strings.ContainsRune(name, 0) {
 		return "", fmt.Errorf("unsafe archive path %q", name)
 	}
-	for part := range strings.SplitSeq(name, "/") {
-		if strings.TrimRight(part, " .") != part {
-			return "", fmt.Errorf("unportable archive path %q", name)
-		}
-	}
 	return name, nil
+}
+
+// hostName reports the local path for a safe archive name, and refuses names
+// this filesystem cannot hold rather than writing something else.
+func hostName(name string) (string, error) {
+	local := filepath.FromSlash(name)
+	if !filepath.IsLocal(local) {
+		return "", fmt.Errorf("archive path %q cannot be created on this host", name)
+	}
+	return local, nil
 }
 
 func (x *extractor) write(name string, mode fs.FileMode, size int64, target string, data io.Reader) error {
@@ -137,6 +145,9 @@ func (x *extractor) write(name string, mode fs.FileMode, size int64, target stri
 	}
 	if name == "." && mode.IsDir() {
 		return nil
+	}
+	if _, err := hostName(name); err != nil {
+		return err
 	}
 	if len(x.seen) >= maxEntries {
 		return errors.New("archive exceeds entry limit")
@@ -179,7 +190,7 @@ func (x *extractor) write(name string, mode fs.FileMode, size int64, target stri
 			target = string(raw)
 		}
 		resolved := path.Join(path.Dir(name), target)
-		if target == "" || strings.ContainsAny(target, "\\:\x00") || path.IsAbs(target) || resolved == ".." || strings.HasPrefix(resolved, "../") {
+		if target == "" || strings.ContainsRune(target, 0) || path.IsAbs(target) || resolved == ".." || strings.HasPrefix(resolved, "../") {
 			return fmt.Errorf("escaping symlink %q", name)
 		}
 		x.links = append(x.links, link{name, target})

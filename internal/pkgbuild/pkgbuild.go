@@ -232,8 +232,12 @@ func Validate(opts Options) error {
 	}
 	return nil
 }
+
+// validPath accepts any relative POSIX path a payload can install, including
+// the backslashes real macOS bundles carry. Control characters stay out of the
+// bill of materials and the XAR table of contents.
 func validPath(name string) bool {
-	return fs.ValidPath(name) && !strings.ContainsAny(name, "\\\x00\r\n\t") && utf8.ValidString(name) && len(name) <= 4096
+	return fs.ValidPath(name) && !strings.ContainsAny(name, "\x00\r\n\t") && utf8.ValidString(name) && len(name) <= 4096
 }
 
 func checkedFile(source *os.Root, name string) (*os.File, os.FileInfo, error) {
