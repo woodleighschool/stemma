@@ -17,7 +17,7 @@ require (
 	github.com/deploymenttheory/go-macos-pkg v0.7.1
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
 	github.com/dustin/go-humanize v1.1.0
-	github.com/ebitengine/purego v0.11.0
+	github.com/ebitengine/purego v0.11.1
 	github.com/fatih/color v1.19.0
 	github.com/go-git/go-billy/v6 v6.0.0-alpha.2
 	github.com/go-git/go-git/v6 v6.0.0-alpha.5
