@@ -456,9 +456,9 @@ func insertPayloadMember(files *[]*xar.File, parts []string, data *xar.Data) {
 }
 
 func TestLargePackageInventory(t *testing.T) {
-	entries := make([]payloadEntry, 110000)
-	for i := range entries {
-		entries[i].header = cpio.Header{Name: fmt.Sprintf("./files/%06d", i), Mode: cpio.ModeRegular | 0o644, NLink: 1}
+	entries := make([]payloadEntry, 0, 110001)
+	for i := range 110000 {
+		entries = append(entries, payloadEntry{header: cpio.Header{Name: fmt.Sprintf("./files/%06d", i), Mode: cpio.ModeRegular | 0o644, NLink: 1}})
 	}
 	entries = append(entries, plistEntry(t, "./Example.app/Contents/Info.plist", "Example"))
 	payload := cpioPayload(t, entries)

@@ -347,7 +347,6 @@ func writeTree(ctx context.Context, source *os.Root, prefix, destination string,
 			}
 			total += size
 		}
-		id := uint32(len(paths) + 1)
 		attrs := metadata[relative]
 		used[relative] = true
 		permissions := uint32(info.Mode().Perm())
@@ -374,14 +373,14 @@ func writeTree(ctx context.Context, source *os.Root, prefix, destination string,
 		if err != nil {
 			return fmt.Errorf("package input %s: %w", name, err)
 		}
-		cfile := &cpio.Header{Inode: uint64(id), Mode: mode, UID: attrs.UID, GID: attrs.GID, NLink: 1, Name: "./" + relative, Size: size, ModTime: modified}
+		cfile := &cpio.Header{Inode: uint64(len(paths)) + 1, Mode: mode, UID: attrs.UID, GID: attrs.GID, NLink: 1, Name: "./" + relative, Size: size, ModTime: modified}
 		if relative == "." {
 			cfile.Name = "."
 		}
 		if err := writer.WriteHeader(cfile); err != nil {
 			return err
 		}
-		item := bom.Entry{Path: cfile.Name, Type: typ, Architecture: 15, Mode: uint16(mode), UID: attrs.UID, GID: attrs.GID, Size: size, ModTime: modified, LinkTarget: link}
+		item := bom.Entry{Path: cfile.Name, Type: typ, Architecture: 15, Mode: uint16(mode), UID: attrs.UID, GID: attrs.GID, Size: size, ModTime: modified, LinkTarget: link} //nolint:gosec // Type bits and 0o777 permissions fit st_mode.
 		if info.Mode().IsRegular() || link != "" {
 			digest := bom.NewCksum()
 			if link != "" {

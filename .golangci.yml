@@ -68,33 +68,17 @@ linters:
     - whitespace
 
   exclusions:
+    warn-unused: true
     rules:
-      # Fixtures intentionally create public payloads and invoke native format verifiers.
+      # Tests run native tools and write fixtures; the gosec CLI skips them by default.
       - path: _test\.go$
         linters: [gosec]
-        text: "G(115|122|204|703|705):"
-      # Binary fixtures intentionally append to initialized prefixes and inventories.
-      - path: _test\.go$
-        linters: [makezero]
-      # Apple formats require SHA-1 for existing checksums and CodeDirectories.
-      - path: internal/apple/
-        linters: [gosec]
-        text: "G(401|505):"
-      # Direct macOS bindings require unsafe pointers.
-      - path: internal/(archive/metadata|icon/imageio)_darwin\.go$
-        linters: [gosec]
-        text: "G103:"
-      # Format bounds and entry/mode limits are validated before these conversions.
-      - path: internal/(apple/macho|diskimage/extract|pkgbuild/pkgbuild)\.go$
-        linters: [gosec]
-        text: "G115:"
 
   settings:
     # Temporary for now
     gomoddirectives:
       replace-allow-list:
         - charm.land/bubbletea/v2
-        - github.com/deploymenttheory/go-macos-pkg
         - github.com/deploymenttheory/go-apfs-v2
 
     gosec:

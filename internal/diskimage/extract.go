@@ -96,7 +96,7 @@ func openVolume(reader io.ReaderAt, size int64) (filesystem, func(), error) {
 	}
 	blockSize := binary.LittleEndian.Uint32(header[36:40])
 	blocks := binary.LittleEndian.Uint64(header[40:48])
-	if blockSize < 4096 || blockSize > 65536 || blockSize&(blockSize-1) != 0 || blocks == 0 || blocks > uint64(size)/uint64(blockSize) {
+	if blockSize < 4096 || blockSize > 65536 || blockSize&(blockSize-1) != 0 || blocks == 0 || blocks > uint64(size)/uint64(blockSize) { //nolint:gosec // Image sizes are non-negative.
 		return nil, nil, errors.New("invalid APFS container size")
 	}
 	handle, err := apfs.NewIOHandle()
@@ -158,7 +158,7 @@ func validateVolume(r io.ReaderAt, size int64) error {
 	if header.Signature != hfsplus.HFSPlusSigWord && header.Signature != hfsplus.HFSXSigWord {
 		return errors.New("only HFS+ and HFSX disk image filesystems are supported")
 	}
-	if header.BlockSize < 512 || header.BlockSize > 65536 || header.BlockSize&(header.BlockSize-1) != 0 || uint64(header.TotalBlocks)*uint64(header.BlockSize) > uint64(size) {
+	if header.BlockSize < 512 || header.BlockSize > 65536 || header.BlockSize&(header.BlockSize-1) != 0 || int64(header.TotalBlocks)*int64(header.BlockSize) > size {
 		return errors.New("invalid HFS+ volume size")
 	}
 	if uint64(header.FileCount)+uint64(header.FolderCount) > maxEntries {

@@ -69,5 +69,5 @@ func (api *imageIOAPI) png(image uintptr) ([]byte, error) {
 	if pointer == nil {
 		return nil, errors.New("quick look returned no PNG data")
 	}
-	return append([]byte(nil), unsafe.Slice((*byte)(pointer), int(length))...), nil
+	return append([]byte(nil), unsafe.Slice((*byte)(pointer), int(length))...), nil //nolint:gosec // Copies the NSData bytes checked above.
 }

@@ -3,7 +3,7 @@ package apple
 import (
 	"bytes"
 	"context"
-	"crypto/sha1"
+	"crypto/sha1" //nolint:gosec // CodeDirectory hash type 1 is SHA-1.
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
@@ -192,15 +192,15 @@ func machoSlices(r io.ReaderAt, size int64) ([]machoSlice, error) {
 	if count == 0 || count > 32 {
 		return nil, fmt.Errorf("invalid Mach-O architecture count")
 	}
-	entrySize := int64(20)
+	entrySize := uint64(20)
 	if magic == 0xcafebabf {
 		entrySize = 32
 	}
-	tableEnd := 8 + entrySize*int64(count)
-	if tableEnd > size {
+	tableEnd := 8 + entrySize*uint64(count)
+	if tableEnd > uint64(size) {
 		return nil, fmt.Errorf("truncated universal Mach-O table")
 	}
-	table := make([]byte, entrySize*int64(count))
+	table := make([]byte, entrySize*uint64(count))
 	if _, err := r.ReadAt(table, 8); err != nil {
 		return nil, err
 	}
@@ -208,17 +208,17 @@ func machoSlices(r io.ReaderAt, size int64) ([]machoSlice, error) {
 	type span struct{ start, end uint64 }
 	var spans []span
 	for i := range count {
-		entry := table[int64(i)*entrySize : int64(i+1)*entrySize]
+		entry := table[uint64(i)*entrySize : uint64(i+1)*entrySize]
 		cpu := binary.BigEndian.Uint32(entry[:4])
 		offset, length := uint64(binary.BigEndian.Uint32(entry[8:12])), uint64(binary.BigEndian.Uint32(entry[12:16]))
 		align := binary.BigEndian.Uint32(entry[16:20])
 		if entrySize == 32 {
 			offset, length, align = binary.BigEndian.Uint64(entry[8:16]), binary.BigEndian.Uint64(entry[16:24]), binary.BigEndian.Uint32(entry[24:28])
 		}
-		if offset < uint64(tableEnd) || length < 28 || offset > uint64(size) || length > uint64(size)-offset || align > 31 || offset%(uint64(1)<<align) != 0 {
+		if offset < tableEnd || length < 28 || offset > uint64(size) || length > uint64(size)-offset || align > 31 || offset%(uint64(1)<<align) != 0 {
 			return nil, fmt.Errorf("invalid universal Mach-O slice range")
 		}
-		section := io.NewSectionReader(r, int64(offset), int64(length))
+		section := io.NewSectionReader(r, int64(offset), int64(length)) //nolint:gosec // The range check above bounds both by size.
 		if _, err := section.ReadAt(header[:], 0); err != nil {
 			return nil, err
 		}
@@ -229,7 +229,7 @@ func machoSlices(r io.ReaderAt, size int64) ([]machoSlice, error) {
 		if order.Uint32(header[4:8]) != cpu {
 			return nil, fmt.Errorf("universal Mach-O CPU disagrees with slice")
 		}
-		slices = append(slices, machoSlice{r: section, size: int64(length), cpu: cpu})
+		slices = append(slices, machoSlice{r: section, size: section.Size(), cpu: cpu})
 		spans = append(spans, span{offset, offset + length})
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
@@ -324,7 +324,7 @@ func (m machoSlice) embeddedInfoPlist() ([]byte, error) {
 			} else {
 				size, offset = uint64(order.Uint32(section[36:40])), uint64(order.Uint32(section[40:44]))
 			}
-			if size == 0 || size > maxMetadata || offset > uint64(m.size) || size > uint64(m.size)-offset {
+			if size == 0 || size > maxMetadata || offset > uint64(m.size) || size > uint64(m.size)-offset { //nolint:gosec // Slice sizes are non-negative.
 				return fmt.Errorf("invalid __info_plist section")
 			}
 		}
@@ -487,21 +487,22 @@ func (m machoSlice) verifyCodeDirectory(cd []byte, sig *codeSignature, external 
 	if binary.BigEndian.Uint32(cd[8:12]) >= 0x20300 && limit == 0 {
 		limit = binary.BigEndian.Uint64(cd[56:64])
 	}
-	if limit != uint64(sig.codeOffset) {
+	if limit != uint64(sig.codeOffset) { //nolint:gosec // codeOffset holds the uint32 LC_CODE_SIGNATURE offset.
 		return fmt.Errorf("%w: CodeDirectory does not seal all bytes before signature", ErrUnsupported)
 	}
-	pageSize := limit
+	code := io.NewSectionReader(m.r, 0, sig.codeOffset)
+	pageSize := code.Size()
 	if cd[39] != 0 {
 		if cd[39] > 30 {
 			return fmt.Errorf("%w: CodeDirectory page size", ErrUnsupported)
 		}
-		pageSize = uint64(1) << cd[39]
+		pageSize = 1 << cd[39]
 	}
 	if pageSize == 0 {
 		return fmt.Errorf("empty CodeDirectory code region")
 	}
-	codeSlots := uint64(binary.BigEndian.Uint32(cd[28:32]))
-	if codeSlots != (limit+pageSize-1)/pageSize {
+	codeSlots := int64(binary.BigEndian.Uint32(cd[28:32]))
+	if codeSlots != (code.Size()+pageSize-1)/pageSize {
 		return fmt.Errorf("CodeDirectory page count disagrees with code limit")
 	}
 	hashOffset := int64(binary.BigEndian.Uint32(cd[16:20]))
@@ -509,11 +510,10 @@ func (m machoSlice) verifyCodeDirectory(cd []byte, sig *codeSignature, external 
 	digest := make([]byte, 0, h.Size())
 	for slot := range codeSlots {
 		h.Reset()
-		offset := slot * pageSize
-		if _, err := io.CopyBuffer(h, io.NewSectionReader(m.r, int64(offset), int64(min(pageSize, limit-offset))), buffer); err != nil {
+		if _, err := io.CopyBuffer(h, io.LimitReader(code, pageSize), buffer); err != nil {
 			return err
 		}
-		start := hashOffset + int64(slot)*int64(size)
+		start := hashOffset + slot*int64(size)
 		if !bytes.Equal(h.Sum(digest[:0])[:size], cd[start:start+int64(size)]) {
 			return fmt.Errorf("code page %d hash mismatch", slot)
 		}
@@ -551,7 +551,7 @@ func (m machoSlice) verifyCodeDirectory(cd []byte, sig *codeSignature, external 
 func codeHash(kind byte) (hash.Hash, int, error) {
 	switch kind {
 	case 1:
-		return sha1.New(), 20, nil
+		return sha1.New(), 20, nil //nolint:gosec // CodeDirectory hash type 1 is SHA-1.
 	case 2:
 		return sha256.New(), 32, nil
 	case 3:
