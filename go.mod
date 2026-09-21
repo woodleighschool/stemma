@@ -14,7 +14,7 @@ require (
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/deploymenttheory/go-apfs-v2 v0.3.0
-	github.com/deploymenttheory/go-macos-pkg v0.5.0
+	github.com/deploymenttheory/go-macos-pkg v0.7.1
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
 	github.com/dustin/go-humanize v1.1.0
 	github.com/ebitengine/purego v0.11.0
@@ -138,7 +138,5 @@ require (
 
 // Temporary: https://github.com/charmbracelet/bubbletea/pull/1801
 replace charm.land/bubbletea/v2 => github.com/drawmeanelephant/bubbletea/v2 v2.0.10-0.20260911173320-21176428f2e1
-
-replace github.com/deploymenttheory/go-macos-pkg => github.com/hydazz/go-macos-pkg v0.5.1-0.20260914115450-fe9df7f284f9
 
 replace github.com/deploymenttheory/go-apfs-v2 => github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0
