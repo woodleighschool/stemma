@@ -14,7 +14,7 @@ require (
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/deploymenttheory/go-apfs-v2 v0.3.0
-	github.com/deploymenttheory/go-macos-pkg v0.5.0
+	github.com/deploymenttheory/go-macos-pkg v0.7.1
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
 	github.com/dustin/go-humanize v1.1.0
 	github.com/ebitengine/purego v0.11.0
