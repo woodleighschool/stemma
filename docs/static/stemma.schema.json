@@ -1306,6 +1306,19 @@
                   ],
                   "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Create it with stemma icon or commit a square PNG."
                 },
+                "minimum_os": {
+                  "anyOf": [
+                    {
+                      "pattern": "^[0-9]+([.][0-9]+)?([.][0-9]+)?$",
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Minimum macOS release, such as 14.0. Destinations receive the latest of this, the installer's requirement and the selected application's, so it raises their requirements but never lowers them."
+                },
                 "package_path": {
                   "anyOf": [
                     {
@@ -1565,6 +1578,19 @@
                         }
                       ],
                       "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Create it with stemma icon or commit a square PNG."
+                    },
+                    "minimum_os": {
+                      "anyOf": [
+                        {
+                          "pattern": "^[0-9]+([.][0-9]+)?([.][0-9]+)?$",
+                          "type": "string"
+                        },
+                        {
+                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                          "type": "string"
+                        }
+                      ],
+                      "description": "Minimum macOS release, such as 14.0. Destinations receive the latest of this, the installer's requirement and the selected application's, so it raises their requirements but never lowers them."
                     },
                     "package_path": {
                       "anyOf": [
@@ -1996,29 +2022,6 @@
               "required": [
                 "type"
               ]
-            },
-            {
-              "properties": {
-                "inputs": {
-                  "additionalProperties": {
-                    "description": "Named output from this resource. Defaults to installer.",
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                    "type": "string"
-                  },
-                  "propertyNames": {
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-                  },
-                  "type": "object"
-                },
-                "installer": {
-                  "description": "Named output from this resource. Defaults to installer.",
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "derive"
-              ]
             }
           ],
           "properties": {
@@ -2431,41 +2434,6 @@
                 }
               ],
               "description": "Own this outgoing relationship category; [] clears it. Use resource for a publication on the same connection, or app_id for an external app."
-            },
-            "derive": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "msi": {
-                      "anyOf": [
-                        {
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        {
-                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Named subject for explicit MSI descriptive and identity selection. Selected setup MSI content supplies standard commands and detection defaults; declared native fields override them."
-                    }
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "required": [
-                    "msi"
-                  ],
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ]
             },
             "description": {
               "anyOf": [
@@ -4334,41 +4302,6 @@
               ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
-            "derive": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "app": {
-                      "anyOf": [
-                        {
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        {
-                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Named application subject supplying bundle identity, short version, display name and exact minimum OS."
-                    }
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "required": [
-                    "app"
-                  ],
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ]
-            },
             "description": {
               "anyOf": [
                 {
@@ -4451,7 +4384,7 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Application CFBundleIdentifier."
+                            "description": "Application CFBundleIdentifier or package receipt identifier."
                           },
                           "bundleVersion": {
                             "anyOf": [
@@ -4465,7 +4398,7 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Application CFBundleShortVersionString."
+                            "description": "Application CFBundleShortVersionString or package receipt version."
                           }
                         },
                         "propertyNames": {
@@ -4494,7 +4427,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Complete collection of included bundle IDs and versions. Required for creation; bundle IDs must be unique."
+              "description": "Complete collection of identifiers and versions that detect the installation. Derived from the applications a DMG holds, or those a PKG installs under /Applications, otherwise its package receipts, with the selected application first. Required for creation; identifiers must be unique."
             },
             "informationUrl": {
               "anyOf": [
@@ -4537,217 +4470,6 @@
               ],
               "description": "Show the app as featured. Explicit false is managed."
             },
-            "minimumSupportedOperatingSystem": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "@odata.type": {
-                      "anyOf": [
-                        {
-                          "const": "#microsoft.graph.macOSMinimumOperatingSystem"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ]
-                    },
-                    "v10_10": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_11": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_12": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_13": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_14": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_15": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_7": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_8": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_9": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v11_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v12_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v13_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v14_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v15_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v26_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    }
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "One minimum OS selection encoded as native Graph booleans. Exactly one version must be true. Required for creation."
-            },
             "notes": {
               "anyOf": [
                 {
@@ -4785,7 +4507,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Primary application CFBundleIdentifier. Required for creation; read from the vendor artifact, not the filename."
+              "description": "Identifier of the first included app. Derived from the artifact; required for creation."
             },
             "primaryBundleVersion": {
               "anyOf": [
@@ -4798,7 +4520,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Primary application CFBundleShortVersionString. Required for creation."
+              "description": "Version of the first included app. Derived from the artifact; required for creation."
             },
             "privacyInformationUrl": {
               "anyOf": [
@@ -5161,41 +4883,6 @@
               ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
-            "derive": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "app": {
-                      "anyOf": [
-                        {
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        {
-                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Named application subject supplying bundle identity, short version, display name and exact minimum OS."
-                    }
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "required": [
-                    "app"
-                  ],
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ]
-            },
             "description": {
               "anyOf": [
                 {
@@ -5278,7 +4965,7 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Application CFBundleIdentifier."
+                            "description": "Application CFBundleIdentifier or package receipt identifier."
                           },
                           "bundleVersion": {
                             "anyOf": [
@@ -5292,7 +4979,7 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Application CFBundleShortVersionString."
+                            "description": "Application CFBundleShortVersionString or package receipt version."
                           }
                         },
                         "propertyNames": {
@@ -5321,7 +5008,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Complete collection of included bundle IDs and versions. Required for creation; bundle IDs must be unique."
+              "description": "Complete collection of identifiers and versions that detect the installation. Derived from the applications a DMG holds, or those a PKG installs under /Applications, otherwise its package receipts, with the selected application first. Required for creation; identifiers must be unique."
             },
             "informationUrl": {
               "anyOf": [
@@ -5364,217 +5051,6 @@
               ],
               "description": "Show the app as featured. Explicit false is managed."
             },
-            "minimumSupportedOperatingSystem": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "@odata.type": {
-                      "anyOf": [
-                        {
-                          "const": "#microsoft.graph.macOSMinimumOperatingSystem"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ]
-                    },
-                    "v10_10": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_11": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_12": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_13": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_14": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_15": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_7": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_8": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v10_9": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v11_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v12_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v13_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v14_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v15_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    },
-                    "v26_0": {
-                      "anyOf": [
-                        {
-                          "type": "boolean"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."
-                    }
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "One minimum OS selection encoded as native Graph booleans. Exactly one version must be true. Required for creation."
-            },
             "notes": {
               "anyOf": [
                 {
@@ -5612,7 +5088,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Primary application CFBundleIdentifier. Required for creation; read from the vendor artifact, not the filename."
+              "description": "Identifier of the first included app. Derived from the artifact; required for creation."
             },
             "primaryBundleVersion": {
               "anyOf": [
@@ -5625,7 +5101,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Primary application CFBundleShortVersionString. Required for creation."
+              "description": "Version of the first included app. Derived from the artifact; required for creation."
             },
             "privacyInformationUrl": {
               "anyOf": [
@@ -6933,87 +6409,6 @@
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
       "properties": {
-        "derive": {
-          "anyOf": [
-            {
-              "additionalProperties": false,
-              "properties": {
-                "app": {
-                  "anyOf": [
-                    {
-                      "additionalProperties": false,
-                      "properties": {
-                        "installed_path": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                              "type": "string"
-                            }
-                          ],
-                          "description": "Absolute application path on managed devices. Omit to use the selected application installation path."
-                        },
-                        "subject": {
-                          "anyOf": [
-                            {
-                              "minLength": 1,
-                              "type": "string"
-                            },
-                            {
-                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                              "type": "string"
-                            }
-                          ],
-                          "description": "Name of the application subject exposed by the preparing resource."
-                        },
-                        "version_key": {
-                          "anyOf": [
-                            {
-                              "enum": [
-                                "CFBundleShortVersionString",
-                                "CFBundleVersion"
-                              ],
-                              "type": "string"
-                            },
-                            {
-                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                              "type": "string"
-                            }
-                          ],
-                          "description": "Info.plist key for the managed application version. Omit to use the resource selection."
-                        }
-                      },
-                      "propertyNames": {
-                        "not": {
-                          "pattern": "\\{\\{"
-                        }
-                      },
-                      "type": "object"
-                    },
-                    {
-                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                      "type": "string"
-                    }
-                  ],
-                  "description": "Application evidence used for install detection, version and minimum macOS derivation."
-                }
-              },
-              "propertyNames": {
-                "not": {
-                  "pattern": "\\{\\{"
-                }
-              },
-              "type": "object"
-            },
-            {
-              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-              "type": "string"
-            }
-          ],
-          "description": "Select observed evidence used to fill omitted pkginfo fields. Explicit pkginfo values take precedence."
-        },
         "inputs": {
           "additionalProperties": {
             "description": "Named output from this resource. Defaults to installer.",
@@ -7563,18 +6958,6 @@
                     }
                   ],
                   "description": "Lowest Munki client version eligible for this package."
-                },
-                "minimum_os_version": {
-                  "anyOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                      "type": "string"
-                    }
-                  ],
-                  "description": "Lowest macOS version eligible for this package."
                 },
                 "name": {
                   "anyOf": [

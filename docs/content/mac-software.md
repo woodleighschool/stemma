@@ -127,6 +127,21 @@ Some packages install a staging helper which later downloads the real applicatio
 Their contents cannot prove the eventual installed application. Leave
 `application` unset and set the destination's detection fields explicitly.
 
+## Minimum macOS
+
+Destinations receive one minimum macOS: the latest of the installer's requirement,
+the selected application's `LSMinimumSystemVersion` and `minimum_os`:
+
+```yaml
+spec:
+  minimum_os: "14.0"
+```
+
+`minimum_os` raises the requirement but never lowers it, so a release that needs a
+newer macOS keeps its own requirement. Changing it reuses prepared installers. An
+item without an installer takes `minimum_os` alone. Each destination maps the
+value to its own field, as described in [publishing](publishing.md).
+
 ## Publish without an installer
 
 Munki `nopkg` items need no fake source or package:

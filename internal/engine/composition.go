@@ -155,7 +155,11 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 			if err != nil {
 				return nil, err
 			}
-			request := plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: project.Project, Resource: software.Resource.Reference(), Destination: destination}, Root: root, Config: settings, Metadata: metadata, Subjects: software.Subjects, Peers: peers}
+			minimum, err := minimumOS(plugin.Artifact{}, software.MinimumOS)
+			if err != nil {
+				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
+			}
+			request := plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: project.Project, Resource: software.Resource.Reference(), Destination: destination}, Root: root, Config: settings, Metadata: metadata, MinimumOS: minimum, Peers: peers}
 			if err := ops.call(ctx, connection.Operation, "validate", request, nil); err != nil {
 				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
 			}

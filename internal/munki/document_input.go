@@ -83,6 +83,6 @@ func DocumentInput[C any](ctx context.Context, request plugin.ReconcileRequest[C
 	maps.Copy(document, native)
 	explicit["pkginfo"] = document
 	request.Metadata, err = json.Marshal(explicit)
-	request.Artifact, request.Facts = installer, installer.Facts
+	request.Artifact = installer
 	return request, err
 }

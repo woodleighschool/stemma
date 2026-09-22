@@ -8,36 +8,34 @@ import (
 )
 
 func TestDerivedFieldWithoutArtifactValueIsClearedOrMustBeSet(t *testing.T) {
-	// An MSI need not declare an UpgradeCode or a manufacturer, and an application
-	// need not name itself. Graph clears the first with null and requires the rest.
-	msi := plugin.Subject{Kind: "msi", MSI: &plugin.MSIFacts{ProductName: "Example", ProductCode: "{11111111-1111-4111-8111-111111111111}", ProductVersion: "2.0"}}
-	app := plugin.Subject{Kind: "app", App: &plugin.AppFacts{BundleID: "org.example.app", Version: "2.0", MinimumOS: "14.0"}}
-	installer := plugin.Artifact{Filename: "Example.msi", Facts: plugin.Facts{Subjects: []plugin.Subject{msi}}}
+	// An MSI need not declare an UpgradeCode or a manufacturer. Graph clears the
+	// first with null and requires the second.
+	msi := &plugin.MSIFacts{ProductName: "Example", ProductCode: "{11111111-1111-4111-8111-111111111111}", ProductVersion: "2.0"}
+	installer := plugin.Artifact{Filename: "Example.msi", Facts: plugin.Facts{Subjects: []plugin.Subject{{Kind: "msi", MSI: msi}}}, Evidence: selectedMSI(msi)}
+	app := plugin.Subject{ID: "Payload/Example.app", Kind: "app", InstalledPath: "/Applications/Example.app", App: &plugin.AppFacts{BundleID: "org.example.app", Version: "2.0", MinimumOS: "14.0"}}
+	selected := macRequest(nil, &app, app).Artifact
 	for _, test := range []struct {
 		name     string
 		metadata object
-		subject  plugin.Subject
 		artifact plugin.Artifact
 		missing  string
 		check    func(object) bool
 	}{
-		{name: "selected MSI", metadata: object{"derive": object{"msi": "main"}}, subject: msi, missing: "publisher"},
-		{name: "selected MSI declared", metadata: object{"derive": object{"msi": "main"}, "publisher": "Vendor", "msiInformation": object{"publisher": "Vendor"}}, subject: msi, check: func(m object) bool {
+		{name: "setup MSI", metadata: object{"type": "win32"}, artifact: installer, missing: "msiInformation.publisher"},
+		{name: "setup MSI declared", metadata: object{"type": "win32", "msiInformation": object{"publisher": "Vendor"}}, artifact: installer, check: func(m object) bool {
 			info := m["msiInformation"].(object)
 			cleared, owned := info["upgradeCode"]
 			return owned && cleared == nil && info["publisher"] == "Vendor" && info["productVersion"] == "2.0"
 		}},
-		{name: "setup MSI", metadata: object{"type": "win32"}, artifact: installer, missing: "msiInformation.publisher"},
-		{name: "application", metadata: object{"type": "pkg", "derive": object{"app": "main"}}, subject: app, missing: "displayName"},
-		{name: "application declared", metadata: object{"type": "pkg", "derive": object{"app": "main"}, "displayName": "Example"}, subject: app, check: func(m object) bool {
-			return m["displayName"] == "Example" && m["primaryBundleId"] == "org.example.app"
+		{name: "application", metadata: object{"type": "pkg"}, artifact: selected, check: func(m object) bool {
+			_, named := m["displayName"]
+			return !named && m["primaryBundleId"] == "org.example.app"
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req := plugin.ReconcileRequest[Config]{
 				Prepared: true, Config: Config{GraphURL: "https://graph.microsoft.com/v1.0", Token: "synthetic"}, Metadata: raw(test.metadata), Artifact: test.artifact,
-				Subjects: map[string]plugin.SubjectSelector{"main": {Kind: test.subject.Kind}},
-				Facts:    plugin.Facts{Subjects: []plugin.Subject{test.subject}},
+				MinimumOS: &plugin.MinimumOS{Version: "14.0", Origin: "app.minimum_os"},
 			}
 			// The rule reads only this declaration and artifact, so it holds for every
 			// method, before the tenant is consulted and whether or not the app exists.
@@ -77,13 +75,8 @@ func TestClearedDerivedFieldReplacesAnEarlierInstallersValue(t *testing.T) {
 }
 
 func TestMacDerivationAllowsExplicitReplacement(t *testing.T) {
-	// Intune has no setting for macOS 14.1, so the document settles the requirement.
-	req := plugin.ReconcileRequest[Config]{
-		Method: "validate", Prepared: true,
-		Subjects: map[string]plugin.SubjectSelector{"main": {Kind: "app"}},
-		Facts:    plugin.Facts{Subjects: []plugin.Subject{{Kind: "app", App: &plugin.AppFacts{BundleID: "org.example.app", Name: "Example", MinimumOS: "14.1"}}}},
-		Metadata: raw(object{"type": "pkg", "derive": object{"app": "main"}, "primaryBundleVersion": "explicit-version", "minimumSupportedOperatingSystem": object{"v14_0": true}}),
-	}
+	app := plugin.Subject{ID: "Payload/Example.app", Kind: "app", InstalledPath: "/Applications/Example.app", App: &plugin.AppFacts{BundleID: "org.example.app", Name: "Example", MinimumOS: "14.1"}}
+	req := macRequest(object{"type": "pkg", "primaryBundleVersion": "explicit-version"}, &app, app)
 	derived, origins, err := Derive(req)
 	if err != nil {
 		t.Fatal(err)
@@ -92,8 +85,11 @@ func TestMacDerivationAllowsExplicitReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	minimum, _ := m["minimumSupportedOperatingSystem"].(object)
-	if m["primaryBundleVersion"] != "explicit-version" || origins["primaryBundleVersion"] != "" || minimum["v14_0"] != true || origins["minimumSupportedOperatingSystem"] != "" {
-		t.Fatalf("missing or unrepresentable facts defeated explicit fields: %+v / %+v", m, origins)
+	if m["primaryBundleVersion"] != "explicit-version" || origins["primaryBundleVersion"] != "" {
+		t.Fatalf("missing facts defeated explicit fields: %+v / %+v", m, origins)
+	}
+	req.Metadata = raw(object{"type": "pkg"})
+	if _, _, err := Derive(req); err == nil || !strings.Contains(err.Error(), "primaryBundleVersion") {
+		t.Fatalf("versionless application became detection: %v", err)
 	}
 }

@@ -63,15 +63,20 @@ The provider writes pkginfo, installers, declared icons and catalog indexes as
 `pkgsinfo/<name>-<version>.plist` and `pkgs/<installer filename>`, numbered when
 another item holds the name, and catalog entries omit `notes` and private keys. An
 item already in the repository keeps its paths. You do not need an intermediate
-pkginfo-rendering document. Application
-evidence supplies detection and DMG copy details where applicable. A PKG's static
-PackageInfo and Distribution declarations supply receipts, installed size, minimum
-macOS version and restart requirement; installer scripts are never evaluated.
-Receipts or copied items also supply the removal method, and an item with a
-method is uninstallable unless `uninstallable` is set. Without a selected
-application, a PKG's version is its Distribution product version or the version
-shared by its components. Explicit `installs`, `receipts`, `installcheck_script`
-and other supported native fields allow more specific behaviour.
+pkginfo-rendering document. `version` is the prepared installer's managed version:
+the selected application's, otherwise the Distribution product version or the
+version shared by its components. Application evidence supplies detection and DMG
+copy details where applicable. A PKG's static PackageInfo and Distribution
+declarations supply receipts, installed size and restart requirement; installer
+scripts are never evaluated. Receipts or copied items also supply the removal
+method, and an item with a method is uninstallable unless `uninstallable` is set.
+Explicit `installs`, `receipts`, `installcheck_script` and other supported native
+fields allow more specific behaviour.
+
+`minimum_os_version` is the software's effective minimum macOS: the latest of the
+installer's requirement, the selected application's and the software's
+[`minimum_os`](mac-software.md#minimum-macos). Set `minimum_os` to raise it; pkginfo
+cannot declare it.
 
 Munki's `supported_architectures` is an optional pkginfo restriction. There is no
 core `spec.arch`: download selection, installation eligibility and runner
@@ -137,9 +142,21 @@ The provider supports these native app types:
 | `pkg`   | A Mac PKG, uploaded as a `macOSPkgApp`                      |
 
 Mac app metadata uses the current beta API. Native `macOSLobApp`, macOS scripts and
-fields outside the generated schema are unsupported. The selected application can
-supply bundle identity and versions; review the native `includedApps`,
-`minimumSupportedOperatingSystem` and detection choices before publication.
+fields outside the generated schema are unsupported.
+
+Detection derives from the artifact. `includedApps` lists the applications a DMG
+holds, or those a PKG installs under `/Applications`, with the selected application
+first. A PKG that installs no such application is detected by the receipts of its
+components with a payload. `primaryBundleId` and `primaryBundleVersion` describe
+the first entry. Set a field to replace its derived value; a component that
+installs only on some Macs needs `includedApps` set, because Stemma does not
+evaluate installer conditions. `displayName`, `description` and `publisher` are
+always set; the artifact never supplies them.
+
+`minimumSupportedOperatingSystem` selects the setting for the release of the
+software's effective [minimum macOS](mac-software.md#minimum-macos): its major
+version, or major and minor for 10.x, so 14.2 selects `v14_0` and the plan shows
+that mapping. A release Intune has no setting for fails publication.
 
 ### Intune relationships
 

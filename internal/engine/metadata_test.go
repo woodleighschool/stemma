@@ -167,7 +167,7 @@ func TestResolvedExpressionMustSatisfyProviderSchema(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := plugin.ReconcileRequest[json.RawMessage]{Identity: plugin.Identity{Project: "fixture", Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "fixture"}, Destination: "repo"}, Config: json.RawMessage(`{"path":"repo"}`), Metadata: data, Facts: facts, Prepared: true}
+	request := plugin.ReconcileRequest[json.RawMessage]{Identity: plugin.Identity{Project: "fixture", Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "fixture"}, Destination: "repo"}, Config: json.RawMessage(`{"path":"repo"}`), Metadata: data, Artifact: plugin.Artifact{Facts: facts}, Prepared: true}
 	err = ops.call(t.Context(), "munki", "validate", request, nil)
 	if err == nil || called || !strings.Contains(err.Error(), "boolean") {
 		t.Fatalf("resolved string reached boolean provider field: called=%v err=%v", called, err)

@@ -170,7 +170,11 @@ type ResourceResult struct {
 	Destinations map[string]map[string]any `json:"destinations,omitempty"`
 	// Icon names the catalog asset icons/<name>.png that destinations receive
 	// as the icon input. Its bytes never take part in preparation.
-	Icon         string                     `json:"icon,omitempty"`
+	Icon string `json:"icon,omitempty"`
+	// MinimumOS is the declared macOS floor. Destinations receive the later of
+	// it and the prepared software's own requirements, so it never takes part
+	// in preparation.
+	MinimumOS    string                     `json:"minimum_os,omitempty"`
 	Artifacts    map[string]Artifact        `json:"artifacts,omitempty"`
 	Subjects     map[string]SubjectSelector `json:"subjects,omitempty"`
 	Requirements []Requirement              `json:"requirements,omitempty"`

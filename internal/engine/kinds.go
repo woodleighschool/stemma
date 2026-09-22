@@ -67,7 +67,7 @@ func macSoftware(ctx context.Context, request plugin.ResourceRequest[macsoftware
 			declarations["source"] = *spec.Source
 		}
 		config, err := json.Marshal(spec.Preparation())
-		return plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: spec.Destinations, Icon: spec.Icon, Subjects: spec.Subjects}, err
+		return plugin.ResourceResult{Inputs: declarations, Config: config, Destinations: spec.Destinations, Icon: spec.Icon, MinimumOS: spec.MinimumOS, Subjects: spec.Subjects}, err
 	}
 	artifacts, err := macsoftware.Prepare(ctx, spec, macsoftware.Request{Input: input.Inputs["source"], Workspace: input.Workspace, Timestamp: input.Timestamp, DeriveSignature: input.Derive == "signature"})
 	if installer, ok := artifacts["installer"]; err == nil && ok {

@@ -8,7 +8,7 @@ import (
 )
 
 // ProtocolVersion is the executable protocol understood by this SDK.
-const ProtocolVersion = 6
+const ProtocolVersion = 7
 
 // Request invokes one advertised operation. Describe requests omit Operation and Input.
 type Request struct {
@@ -59,18 +59,26 @@ type Artifact struct {
 // A destination keeps no state between runs: it identifies what it manages from
 // Identity and the destination itself. Peers holds declared metadata for each
 // resource referenced on this connection, keyed by ResourceReference.Key().
+// MinimumOS is the effective macOS requirement of the software, when known.
 type ReconcileRequest[C any] struct {
-	Method   string                     `json:"-"`
-	Identity Identity                   `json:"identity"`
-	Config   C                          `json:"config,omitempty"`
-	Metadata json.RawMessage            `json:"metadata,omitempty"`
-	Artifact Artifact                   `json:"artifact"`
-	Inputs   map[string]Artifact        `json:"inputs,omitempty"`
-	Facts    Facts                      `json:"facts,omitzero"`
-	Subjects map[string]SubjectSelector `json:"subjects,omitempty"`
-	Peers    map[string]json.RawMessage `json:"peers,omitempty"`
-	Prepared bool                       `json:"prepared,omitempty"`
-	Root     string                     `json:"root,omitempty"`
+	Method    string                     `json:"-"`
+	Identity  Identity                   `json:"identity"`
+	Config    C                          `json:"config,omitempty"`
+	Metadata  json.RawMessage            `json:"metadata,omitempty"`
+	Artifact  Artifact                   `json:"artifact"`
+	Inputs    map[string]Artifact        `json:"inputs,omitempty"`
+	MinimumOS *MinimumOS                 `json:"minimum_os,omitempty"`
+	Peers     map[string]json.RawMessage `json:"peers,omitempty"`
+	Prepared  bool                       `json:"prepared,omitempty"`
+	Root      string                     `json:"root,omitempty"`
+}
+
+// MinimumOS is the latest of the installer's requirement, the primary
+// application's and the software's declared floor. Origin names the one that
+// set Version: installer.minimum_os, app.minimum_os or software.minimum_os.
+type MinimumOS struct {
+	Version string `json:"version"`
+	Origin  string `json:"origin"`
 }
 
 // ReconcileResponse carries the changes a run planned or made.

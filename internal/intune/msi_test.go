@@ -1,6 +1,7 @@
 package intune
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/woodleighschool/stemma/plugin"
@@ -11,6 +12,7 @@ func TestSelectedMSIDefaultsAndNativeOverrides(t *testing.T) {
 	req := plugin.ReconcileRequest[Config]{Prepared: true, Metadata: raw(object{"type": "win32"}), Artifact: plugin.Artifact{Filename: "Example.msi", Facts: plugin.Facts{Subjects: []plugin.Subject{{Kind: "msi", MSI: msi}}}}}
 	for _, code := range []string{msi.ProductCode, "{22222222-2222-4222-8222-222222222222}"} {
 		msi.ProductCode = code
+		req.Artifact.Evidence = selectedMSI(msi)
 		derived, origins, err := Derive(req)
 		if err != nil {
 			t.Fatal(err)
@@ -26,7 +28,15 @@ func TestSelectedMSIDefaultsAndNativeOverrides(t *testing.T) {
 		if metadata["installExperience"] != nil || metadata["returnCodes"] != nil || metadata["allowedArchitectures"] != nil {
 			t.Fatal("MSI facts guessed device deployment policy")
 		}
+		if _, named := metadata["displayName"]; named || metadata["publisher"] != nil {
+			t.Fatalf("MSI facts supplied descriptive fields: %+v", metadata)
+		}
 	}
+	req.Artifact.Evidence = nil
+	if derived, origins, err := Derive(req); err != nil || len(origins) != 0 {
+		t.Fatalf("destination selected an MSI itself: %s, %v", derived.Metadata, err)
+	}
+	req.Artifact.Evidence = selectedMSI(msi)
 	req.Metadata = raw(object{"type": "win32", "displayName": "Declared", "installCommandLine": "custom install", "uninstallCommandLine": "custom remove", "rules": []any{}})
 	derived, origins, err := Derive(req)
 	if err != nil {
@@ -42,4 +52,10 @@ func TestSelectedMSIDefaultsAndNativeOverrides(t *testing.T) {
 	if err != nil || len(origins) != 0 {
 		t.Fatalf("EXE acquired guessed policy: %s, %v", derived.Metadata, err)
 	}
+}
+
+// selectedMSI records the setup MSI a WindowsSoftware preparation selected.
+func selectedMSI(msi *plugin.MSIFacts) map[string]json.RawMessage {
+	evidence, _ := json.Marshal(plugin.Subject{Kind: "msi", MSI: msi})
+	return map[string]json.RawMessage{"windows.installer": evidence}
 }

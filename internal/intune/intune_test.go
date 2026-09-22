@@ -796,6 +796,7 @@ func TestMacValidationAndAdoption(t *testing.T) {
 		t.Fatal("adoption planning wrote to or listed the tenant")
 	}
 	req.Method = "validate"
+	req.MinimumOS = &plugin.MinimumOS{Version: "12.0", Origin: "software.minimum_os"}
 	if _, err := Handle(t.Context(), req); err != nil {
 		t.Fatal(err)
 	}

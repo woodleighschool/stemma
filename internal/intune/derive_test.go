@@ -2,59 +2,65 @@ package intune
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func TestMSIDerivationRequiresSelectedFactsAndLeavesExecutionExplicit(t *testing.T) {
-	req := plugin.ReconcileRequest[Config]{
-		Method: "validate", Prepared: true,
-		Metadata: raw(object{"derive": object{"msi": "installer"}, "displayName": "Declared name", "msiInformation": object{"publisher": "Declared publisher"}}),
-		Subjects: map[string]plugin.SubjectSelector{"installer": {Kind: "msi", Path: "setup.msi"}},
-		Facts: plugin.Facts{Version: 1, Subjects: []plugin.Subject{
-			{Kind: "msi", Path: "setup.msi", MSI: &plugin.MSIFacts{ProductName: "Observed name", Manufacturer: "Observed publisher", ProductVersion: "2.0", ProductCode: "{11111111-1111-4111-8111-111111111111}", UpgradeCode: "{33333333-3333-4333-8333-333333333333}"}},
-			{Kind: "msi", Path: "helper.msi", MSI: &plugin.MSIFacts{ProductName: "Wrong MSI", ProductVersion: "9.0"}},
-		}},
+// macRequest describes a prepared macOS artifact, its selected application and
+// the effective minimum OS the engine sends with it.
+func macRequest(metadata object, selected *plugin.Subject, subjects ...plugin.Subject) plugin.ReconcileRequest[Config] {
+	artifact := plugin.Artifact{Facts: plugin.Facts{Version: plugin.FactsVersion, Subjects: subjects}}
+	if selected != nil {
+		evidence, _ := json.Marshal(selected)
+		artifact.Evidence = map[string]json.RawMessage{"macos.application": evidence}
 	}
-	derived, origins, err := Derive(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := validateMetadata(derived.Metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m["@odata.type"] != win32Type || m["displayName"] != "Declared name" || m["publisher"] != "Observed publisher" {
-		t.Fatalf("wrong selected or declared metadata: %+v", m)
-	}
-	info := m["msiInformation"].(object)
-	if info["productVersion"] != "2.0" || info["publisher"] != "Declared publisher" || origins["msiInformation.productVersion"] == "" {
-		t.Fatalf("lost native MSI overrides or provenance: %+v / %+v", info, origins)
-	}
-	for _, key := range []string{"installCommandLine", "uninstallCommandLine", "installExperience", "rules", "allowedArchitectures"} {
-		if _, exists := m[key]; exists {
-			t.Fatalf("derive guessed execution policy %s", key)
-		}
-	}
-	req.Subjects["installer"] = plugin.SubjectSelector{Kind: "msi"}
-	if _, _, err := Derive(req); err == nil {
-		t.Fatal("ambiguous MSI selection was accepted")
-	}
+	return plugin.ReconcileRequest[Config]{Method: "validate", Prepared: true, Metadata: raw(metadata), Artifact: artifact, MinimumOS: &plugin.MinimumOS{Version: "13.0", Origin: "software.minimum_os"}}
 }
 
-func TestMacDerivationKeepsExactOSAndExplicitDetection(t *testing.T) {
-	req := plugin.ReconcileRequest[Config]{
-		Method: "validate", Prepared: true,
-		Metadata: raw(object{"type": "pkg", "derive": object{"app": "main"}}),
-		Subjects: map[string]plugin.SubjectSelector{"main": {BundleID: "org.example.app"}},
-		Facts:    plugin.Facts{Subjects: []plugin.Subject{{Kind: "app", App: &plugin.AppFacts{BundleID: "org.example.app", Version: "2.0", Name: "Example", MinimumOS: "14.1"}}}},
+func TestMacMinimumOSMapsToItsRelease(t *testing.T) {
+	app := plugin.Subject{ID: "Payload/Example.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Applications/Example.app", App: &plugin.AppFacts{BundleID: "org.example.app", Version: "2.0", Name: "Example"}}
+	req := macRequest(object{"type": "pkg"}, &app, plugin.Subject{ID: ".", Path: ".", Kind: "container"}, app)
+	for _, test := range []struct{ version, field, origin string }{
+		{"14", "v14_0", "app.minimum_os"},
+		{"14.0.0", "v14_0", "app.minimum_os"},
+		{"14.2", "v14_0", "app.minimum_os 14.2 -> v14_0"},
+		{"10.13", "v10_13", "app.minimum_os"},
+		{"10.13.6", "v10_13", "app.minimum_os 10.13.6 -> v10_13"},
+		{"26.1", "v26_0", "app.minimum_os 26.1 -> v26_0"},
+	} {
+		req.MinimumOS = &plugin.MinimumOS{Version: test.version, Origin: "app.minimum_os"}
+		derived, origins, err := Derive(req)
+		if err != nil {
+			t.Fatalf("%s: %v", test.version, err)
+		}
+		m, err := validateMetadata(derived.Metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selectedOS(m["minimumSupportedOperatingSystem"]) != test.field || origins["minimumSupportedOperatingSystem"] != test.origin {
+			t.Fatalf("%s: %v from %q, want %s from %q", test.version, m["minimumSupportedOperatingSystem"], origins["minimumSupportedOperatingSystem"], test.field, test.origin)
+		}
 	}
+	// A release without its own setting fails rather than moving to another release.
+	for _, version := range []string{"10.6", "16.0", "27.0"} {
+		req.MinimumOS = &plugin.MinimumOS{Version: version, Origin: "software.minimum_os"}
+		if _, _, err := Derive(req); err == nil {
+			t.Fatalf("macOS %s was mapped to another release", version)
+		}
+	}
+	req.MinimumOS = nil
+	if _, _, err := Derive(req); err == nil || !strings.Contains(err.Error(), "minimum_os") {
+		t.Fatalf("created an app without a minimum OS: %v", err)
+	}
+	req.MinimumOS = &plugin.MinimumOS{Version: "14.0", Origin: "app.minimum_os"}
+	req.Metadata = raw(object{"type": "pkg", "minimumSupportedOperatingSystem": object{"v12_0": true}})
 	if _, _, err := Derive(req); err == nil {
-		t.Fatal("rounded down an unsupported minimum OS")
+		t.Fatal("declared minimum OS replaced the software's requirement")
 	}
-	req.Metadata = raw(object{"type": "pkg", "derive": object{"app": "main"}, "minimumSupportedOperatingSystem": object{"v15_0": true}, "primaryBundleVersion": "3.0"})
+	req.Metadata = raw(object{"type": "pkg", "primaryBundleVersion": "3.0"})
 	derived, _, err := Derive(req)
 	if err != nil {
 		t.Fatal(err)
@@ -63,25 +69,16 @@ func TestMacDerivationKeepsExactOSAndExplicitDetection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m["includedApps"].([]any)[0].(object)["bundleVersion"] != "3.0" || selectedOS(m["minimumSupportedOperatingSystem"]) != "v15_0" {
-		t.Fatalf("declared version or OS was replaced: %+v", m)
-	}
-	for _, version := range []string{"14", "14.0", "14.0.0", "26.0"} {
-		if _, err := minimumOS(version); err != nil {
-			t.Fatalf("supported exact OS %s: %v", version, err)
-		}
+	if m["includedApps"].([]any)[0].(object)["bundleVersion"] != "3.0" {
+		t.Fatalf("declared version was replaced: %+v", m)
 	}
 }
 
 func TestApplicationDiskImageDerivesADmgApp(t *testing.T) {
 	app := plugin.Subject{ID: "WoodSweep.app", Path: "WoodSweep.app", Parent: ".", Kind: "app", InstalledPath: "/Applications/WoodSweep.app", App: &plugin.AppFacts{BundleID: "org.example.woodsweep", Version: "1.2.3", Name: "WoodSweep", MinimumOS: "14.0"}}
-	req := plugin.ReconcileRequest[Config]{
-		Method: "validate", Prepared: true,
-		Metadata: raw(object{"type": "dmg", "derive": object{"app": "main"}}),
-		Subjects: map[string]plugin.SubjectSelector{"main": {Kind: "app"}},
-		Artifact: plugin.Artifact{Path: "leased.dmg", Filename: "woodsweep-1.2.3.dmg", Format: "dmg", SHA256: strings.Repeat("a", 64)},
-		Facts:    plugin.Facts{Subjects: []plugin.Subject{{ID: ".", Path: ".", Kind: "container"}, app}},
-	}
+	req := macRequest(object{"type": "dmg"}, &app, plugin.Subject{ID: ".", Path: ".", Kind: "container"}, app)
+	req.Artifact.Path, req.Artifact.Filename, req.Artifact.Format, req.Artifact.SHA256 = "leased.dmg", "woodsweep-1.2.3.dmg", "dmg", strings.Repeat("a", 64)
+	req.MinimumOS = &plugin.MinimumOS{Version: "14.0", Origin: "app.minimum_os"}
 	derived, _, err := Derive(req)
 	if err != nil {
 		t.Fatal(err)
@@ -94,16 +91,56 @@ func TestApplicationDiskImageDerivesADmgApp(t *testing.T) {
 	if m["@odata.type"] != dmgType || included["bundleId"] != "org.example.woodsweep" || included["bundleVersion"] != "1.2.3" || selectedOS(m["minimumSupportedOperatingSystem"]) != "v14_0" {
 		t.Fatalf("derived app: %+v", m)
 	}
+	if _, named := m["displayName"]; named {
+		t.Fatalf("display name was derived from the application: %+v", m)
+	}
 	if identity, err := identifyArtifact(t.Context(), req.Artifact, dmgType, ""); err != nil || !identity.raw {
 		t.Fatalf("disk image was not published as it is: %+v: %v", identity, err)
 	}
 }
 
+func TestDiskImageIncludesEveryApplicationSelectedFirst(t *testing.T) {
+	layout := plugin.Subject{ID: "SketchUp 2026/LayOut.app", Parent: ".", Kind: "app", App: &plugin.AppFacts{BundleID: "com.trimble.layout", Version: "26.0", MinimumOS: "13.0"}}
+	sketchup := plugin.Subject{ID: "SketchUp 2026/SketchUp.app", Parent: ".", Kind: "app", InstalledPath: "/Applications/SketchUp 2026/SketchUp.app", App: &plugin.AppFacts{BundleID: "com.trimble.sketchup", Version: "26.1", Name: "SketchUp", MinimumOS: "13.0"}}
+	derived, origins, err := Derive(macRequest(object{"type": "dmg"}, &sketchup, plugin.Subject{ID: ".", Path: ".", Kind: "container"}, layout, sketchup))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := validateMetadata(derived.Metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps := m["includedApps"].([]any)
+	if len(apps) != 2 || apps[0].(object)["bundleId"] != "com.trimble.sketchup" || apps[1].(object)["bundleId"] != "com.trimble.layout" || m["primaryBundleId"] != "com.trimble.sketchup" || m["primaryBundleVersion"] != "26.1" || origins["includedApps"] != "installer.apps" {
+		t.Fatalf("included apps: %+v / %+v", m, origins)
+	}
+}
+
+func TestPackageWithoutApplicationsIsDetectedByReceipts(t *testing.T) {
+	root := plugin.Subject{ID: ".", Path: ".", Kind: "container", Installer: &plugin.InstallerFacts{MinimumOS: "11.0"}}
+	receipt := plugin.Subject{ID: "PackageInfo", Parent: ".", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.exporter", Version: "1.4.0", HasPayload: true}}
+	scripts := plugin.Subject{ID: "scripts.pkg/PackageInfo", Parent: ".", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.exporter.scripts", Version: "1.4.0"}}
+	helper := plugin.Subject{ID: "Payload/Helper.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Library/Application Support/Example/Helper.app", App: &plugin.AppFacts{BundleID: "org.example.helper", Version: "1.4.0"}}
+	req := macRequest(object{"type": "pkg", "displayName": "Exporter"}, nil, root, receipt, scripts, helper)
+	req.MinimumOS = &plugin.MinimumOS{Version: "11.0", Origin: "installer.minimum_os"}
+	derived, origins, err := Derive(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := validateMetadata(derived.Metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps := m["includedApps"].([]any)
+	if len(apps) != 1 || apps[0].(object)["bundleId"] != "org.example.exporter" || m["primaryBundleVersion"] != "1.4.0" || selectedOS(m["minimumSupportedOperatingSystem"]) != "v11_0" || origins["includedApps"] != "installer.receipts" || m["displayName"] != "Exporter" {
+		t.Fatalf("receipt detection: %+v / %+v", m, origins)
+	}
+}
+
 func TestStaticValidationAcceptsReferencesWithoutContent(t *testing.T) {
 	req := plugin.ReconcileRequest[Config]{Method: "validate", Config: Config{GraphURL: "https://graph.microsoft.com/v1.0", Token: "synthetic"},
-		Subjects: map[string]plugin.SubjectSelector{"installer": {Kind: "msi"}},
 		Metadata: raw(object{
-			"derive":       object{"msi": "installer"},
+			"type":         "win32",
 			"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": true}},
 			"supersedes":   []any{object{"resource": object{"kind": "WindowsSoftware", "name": "previous"}, "uninstall_previous": false}},
 			"retention":    object{"keep": 2},
@@ -112,10 +149,6 @@ func TestStaticValidationAcceptsReferencesWithoutContent(t *testing.T) {
 	response, err := Handle(t.Context(), req)
 	if err != nil {
 		t.Fatalf("static relationship validation: %+v, %v", response, err)
-	}
-	req.Prepared = true
-	if _, err := Handle(t.Context(), req); err == nil {
-		t.Fatal("runtime validation accepted missing selected MSI facts")
 	}
 }
 
@@ -140,6 +173,8 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 		{"missing reference kind", object{"type": "win32", "dependencies": []any{object{"resource": object{"name": "runtime"}, "auto_install": true}}}, false},
 		{"publication output", object{"type": "win32", "dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime", "output": "installer"}, "auto_install": true}}}, false},
 		{"missing type", object{"displayName": "Example"}, false},
+		{"named subject derivation", object{"type": "win32", "derive": object{"msi": "installer"}}, false},
+		{"declared minimum OS", object{"type": "pkg", "minimumSupportedOperatingSystem": object{"v14_0": true}}, false},
 		{"bad retention", object{"type": "win32", "retention": object{"keep": 0}}, false},
 		{"mac dependency", object{"type": "pkg", "dependencies": []any{}}, false},
 		{"missing relationship policy", object{"type": "win32", "dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}}}}, false},

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/icon"
@@ -15,6 +16,8 @@ import (
 
 const Version = "stemma.macsoftware/9"
 
+// Spec declares a macOS installer, how preparation selects from it and how
+// destinations publish it.
 type Spec struct {
 	Source      *plugin.Input `json:"source,omitempty" yaml:"source,omitempty" jsonschema_description:"Installer input from a built-in or loaded resolver, or a named resource output. Omit for source-free destination policies."`
 	Application *Application  `json:"application,omitempty" yaml:"application,omitempty" jsonschema_description:"Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image."`
@@ -24,6 +27,9 @@ type Spec struct {
 	// published disk image outside another application, to carry a complete
 	// Developer ID signature from the expected team.
 	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require a complete Developer ID signature from the expected team on the published PKG, or on every application in the published disk image, before publication."`
+	// MinimumOS raises the macOS requirement destinations receive above the
+	// installer's and the selected application's; it never lowers them.
+	MinimumOS string `json:"minimum_os,omitempty" yaml:"minimum_os,omitempty" jsonschema:"pattern=^[0-9]+([.][0-9]+)?([.][0-9]+)?$" jsonschema_description:"Minimum macOS release, such as 14.0. Destinations receive the latest of this, the installer's requirement and the selected application's, so it raises their requirements but never lowers them."`
 	// Icon names the catalog asset icons/<name>.png that destinations publish.
 	Icon         string                            `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Create it with stemma icon or commit a square PNG."`
 	Destinations map[string]map[string]any         `json:"destinations,omitempty" yaml:"destinations,omitempty" jsonschema_description:"Native publication metadata keyed by a Project destination name. Explicit values override derived values."`
@@ -41,13 +47,16 @@ type Application struct {
 // and the icon asset change without invalidating prepared outputs.
 func (s Spec) Preparation() Spec {
 	s.Source, s.Destinations, s.Icon = nil, nil, ""
-	s.Subjects = nil
+	s.Subjects, s.MinimumOS = nil, ""
 	return s
 }
 
 func (s Spec) Validate() error {
 	if s.PackagePath != "" && !relativePath(s.PackagePath) {
 		return errors.New("package_path must be a confined archive path")
+	}
+	if s.MinimumOS != "" && !macOSVersion.MatchString(s.MinimumOS) {
+		return errors.New("minimum_os must be a macOS version such as 14.0")
 	}
 	if app := s.Application; app != nil {
 		if app.Path != "" && !relativePath(app.Path) {
@@ -74,6 +83,8 @@ func (s Spec) Validate() error {
 	}
 	return nil
 }
+
+var macOSVersion = regexp.MustCompile(`^[0-9]+(\.[0-9]+){0,2}$`)
 
 func relativePath(name string) bool {
 	return fs.ValidPath(name) && !strings.ContainsAny(name, "\\\x00\r\n\t")

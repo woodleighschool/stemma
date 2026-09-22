@@ -562,7 +562,11 @@ func makeDestinationInput(p config.Project, plans map[string]resourcePlan, root,
 	if err != nil {
 		return input, err
 	}
-	input.request = plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: p.Project, Resource: plans[software].Resource.Reference(), Destination: name}, Config: configData, Metadata: metadataData, Artifact: prepared.artifact(), Facts: prepared.Facts, Prepared: true, Root: root, Subjects: plans[software].Subjects, Peers: peers}
+	minimum, err := minimumOS(prepared.artifact(), plans[software].MinimumOS)
+	if err != nil {
+		return input, err
+	}
+	input.request = plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: p.Project, Resource: plans[software].Resource.Reference(), Destination: name}, Config: configData, Metadata: metadataData, Artifact: prepared.artifact(), MinimumOS: minimum, Prepared: true, Root: root, Peers: peers}
 	return input, nil
 }
 

@@ -66,7 +66,9 @@ spec:
     url: https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi
   destinations:
     intune:
+      displayName: Google Chrome
       description: Google Chrome.
+      publisher: Google LLC
 ```
 
 ```sh
@@ -75,9 +77,10 @@ stemma prepare WindowsSoftware/chrome
 stemma plan WindowsSoftware/chrome
 ```
 
-The selected MSI supplies descriptive metadata, standard silent `msiexec` install
+The selected MSI supplies its MSI information, standard silent `msiexec` install
 and uninstall commands, and ProductCode/version detection. Explicit destination
-values override these defaults. `apply` publishes when you are ready.
+values override these defaults. The display name, description and publisher are
+always set. `apply` publishes when you are ready.
 
 ## Publish an EXE
 

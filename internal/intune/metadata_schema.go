@@ -33,7 +33,6 @@ func MetadataSchema() *jsonschema.Schema {
 		}
 		if appType == win32Type {
 			p["content"] = objectSchema(map[string]*jsonschema.Schema{"setup_file": {Type: "string", MinLength: new(uint64(1)), Description: "Relative entrypoint inside the immutable setup tree. Defaults to the artifact entrypoint, or the filename for a single file; conflicting entries are rejected. All tree members are included in the provider-prepared Intune envelope."}}, "setup_file")
-			p["derive"] = objectSchema(map[string]*jsonschema.Schema{"msi": {Type: "string", MinLength: new(uint64(1)), Description: "Named subject for explicit MSI descriptive and identity selection. Selected setup MSI content supplies standard commands and detection defaults; declared native fields override them."}}, "msi")
 			p["msiInformation"] = msiSchema()
 			p["dependencies"] = referencesSchema("auto_install", 99)
 			p["supersedes"] = referencesSchema("uninstall_previous", 9)
@@ -56,27 +55,17 @@ func MetadataSchema() *jsonschema.Schema {
 				"type":        enumSchema("Native result classification.", "success", "softReboot", "hardReboot", "retry", "failed"),
 			}, "returnCode", "type")}
 		} else {
-			p["derive"] = objectSchema(map[string]*jsonschema.Schema{"app": {Type: "string", MinLength: new(uint64(1)), Description: "Named application subject supplying bundle identity, short version, display name and exact minimum OS."}}, "app")
-			p["primaryBundleId"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Primary application CFBundleIdentifier. Required for creation; read from the vendor artifact, not the filename."}
-			p["primaryBundleVersion"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Primary application CFBundleShortVersionString. Required for creation."}
+			p["primaryBundleId"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Identifier of the first included app. Derived from the artifact; required for creation."}
+			p["primaryBundleVersion"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Version of the first included app. Derived from the artifact; required for creation."}
 			p["ignoreVersionDetection"] = &jsonschema.Schema{Type: "boolean", Description: "Ignore installed app versions during detection. Explicit false is managed."}
-			p["includedApps"] = &jsonschema.Schema{Type: "array", MinItems: new(uint64(1)), MaxItems: new(uint64(500)), Description: "Complete collection of included bundle IDs and versions. Required for creation; bundle IDs must be unique.", Items: objectSchema(map[string]*jsonschema.Schema{
+			p["includedApps"] = &jsonschema.Schema{Type: "array", MinItems: new(uint64(1)), MaxItems: new(uint64(500)), Description: "Complete collection of identifiers and versions that detect the installation. Derived from the applications a DMG holds, or those a PKG installs under /Applications, otherwise its package receipts, with the selected application first. Required for creation; identifiers must be unique.", Items: objectSchema(map[string]*jsonschema.Schema{
 				"@odata.type":   {Const: "#microsoft.graph.macOSIncludedApp"},
-				"bundleId":      {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleIdentifier."},
-				"bundleVersion": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleShortVersionString."},
+				"bundleId":      {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleIdentifier or package receipt identifier."},
+				"bundleVersion": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleShortVersionString or package receipt version."},
 			}, "bundleId", "bundleVersion")}
-			operatingSystem := map[string]*jsonschema.Schema{"@odata.type": {Const: "#microsoft.graph.macOSMinimumOperatingSystem"}}
-			for _, key := range minimumOSFields() {
-				operatingSystem[key] = &jsonschema.Schema{Type: "boolean", Description: "Select exactly one version with true. Selecting a version clears the previous minimum OS selection."}
-			}
-			p["minimumSupportedOperatingSystem"] = objectSchema(operatingSystem)
-			p["minimumSupportedOperatingSystem"].Description = "One minimum OS selection encoded as native Graph booleans. Exactly one version must be true. Required for creation."
 		}
 		variant := objectSchema(p)
 		variant.AnyOf = []*jsonschema.Schema{{Required: []string{"@odata.type"}}, {Required: []string{"type"}}}
-		if appType == win32Type {
-			variant.AnyOf = append(variant.AnyOf, &jsonschema.Schema{Required: []string{"derive"}})
-		}
 		variant.Title = appType
 		variants = append(variants, variant)
 	}

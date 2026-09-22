@@ -246,8 +246,11 @@ URLs out of evidence as well as observations.
 
 Register `kind: reconcile` with methods `validate`, `plan` and `apply`. Use
 `ConfigSchema` for connection settings and `MetadataSchema` for native
-settings. `ReconcileRequest[Config]` includes logical identity, primary artifact, named
-artifact inputs, facts, subject selectors and peers.
+settings. `ReconcileRequest[Config]` includes logical identity, the primary
+artifact with its facts and managed `Version`, named artifact inputs, peers and,
+for macOS software, `MinimumOS`: the latest of the installer's requirement, the
+selected application's and the software's `minimum_os`, with the origin of the
+value that won.
 
 `plan` reads the destination and returns semantic `Change` records without
 mutations. `apply` re-observes and performs the necessary changes. Preserve absent,
@@ -289,7 +292,7 @@ JSON object on stdin, ending at EOF:
 
 ```json
 {
-  "protocol": 6,
+  "protocol": 7,
   "method": "describe"
 }
 ```
@@ -299,7 +302,7 @@ The final stdout response has `protocol`, optional `output` and optional `error`
 Other requests add `operation`, `input` and optionally `log_level`.
 
 Before the final response, a plugin may emit newline-delimited envelopes containing
-`protocol: 6` and `log`, a structured record with time, level and message. Messages
+`protocol: 7` and `log`, a structured record with time, level and message. Messages
 are bounded to 4 MiB. No messages may follow the final response. The SDK's `Serve`
 and `Run` handle framing and validation.
 

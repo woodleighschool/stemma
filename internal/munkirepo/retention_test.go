@@ -150,9 +150,17 @@ func TestRetentionPreservesBareReferencesWithDifferentAvailability(t *testing.T)
 
 func TestDisappearingDerivedMetadataIsCleared(t *testing.T) {
 	root, request := repositoryRequest(t, "App.pkg", `{}`)
-	request.Facts = plugin.Facts{Subjects: []plugin.Subject{{Kind: "app", InstalledPath: "/Applications/App.app", App: &plugin.AppFacts{BundleID: "example.app", Version: "1", MinimumOS: "13.0"}}}}
+	app := plugin.Subject{ID: "Payload/App.app", Kind: "app", InstalledPath: "/Applications/App.app", App: &plugin.AppFacts{BundleID: "example.app", Version: "1", MinimumOS: "13.0"}}
+	request.Artifact.Facts = plugin.Facts{Subjects: []plugin.Subject{app}}
+	request.MinimumOS = &plugin.MinimumOS{Version: "13.0", Origin: "app.minimum_os"}
+	selectApplication(&request, app)
 	file := apply(t, root, &request)
-	request.Facts.Subjects[0].App.MinimumOS = ""
+	if readNative[map[string]any](t, file)["minimum_os_version"] != "13.0" {
+		t.Fatal("application minimum OS was not derived")
+	}
+	app.App.MinimumOS = ""
+	request.MinimumOS = nil
+	selectApplication(&request, app)
 	apply(t, root, &request)
 	if value, exists := readNative[map[string]any](t, file)["minimum_os_version"]; exists {
 		t.Fatalf("retained stale derived field: %#v", value)
@@ -165,10 +173,12 @@ func TestInstallerFormatChangeClearsInapplicableDerivedFields(t *testing.T) {
 		{Kind: "package", Package: &plugin.PackageFacts{Identifier: "example.app", Version: "1", HasPayload: true, InstalledSize: 20}},
 		{Kind: "installer", Installer: &plugin.InstallerFacts{RestartAction: "RequireRestart"}},
 	}}
-	request.Facts = pkg
+	request.Artifact.Facts = pkg
 	file := apply(t, root, &request)
 	request.Artifact.Filename, request.Artifact.Format = "App.dmg", "dmg"
-	request.Facts = plugin.Facts{Subjects: []plugin.Subject{{Kind: "app", Path: "App.app", App: &plugin.AppFacts{BundleID: "example.app", Version: "1"}}}}
+	app := plugin.Subject{ID: "App.app", Kind: "app", Path: "App.app", InstalledPath: "/Applications/App.app", App: &plugin.AppFacts{BundleID: "example.app", Version: "1"}}
+	request.Artifact.Facts = plugin.Facts{Subjects: []plugin.Subject{app}}
+	selectApplication(&request, app)
 	apply(t, root, &request)
 	document := readNative[map[string]any](t, file)
 	for _, field := range []string{"receipts", "installed_size", "RestartAction"} {
@@ -179,7 +189,7 @@ func TestInstallerFormatChangeClearsInapplicableDerivedFields(t *testing.T) {
 	if document["items_to_copy"] == nil || document["uninstall_method"] != "remove_copied_items" {
 		t.Fatalf("DMG copy and removal metadata: %#v", document)
 	}
-	request.Artifact.Filename, request.Artifact.Format, request.Facts = "App.pkg", "pkg", pkg
+	request.Artifact.Filename, request.Artifact.Format, request.Artifact.Facts, request.Artifact.Evidence = "App.pkg", "pkg", pkg, nil
 	apply(t, root, &request)
 	document = readNative[map[string]any](t, file)
 	for _, field := range []string{"items_to_copy", "items_to_remove", "installs"} {
@@ -191,6 +201,12 @@ func TestInstallerFormatChangeClearsInapplicableDerivedFields(t *testing.T) {
 		t.Fatalf("PKG receipt and removal metadata: %#v", document)
 	}
 	assertConverged(t, request)
+}
+
+// selectApplication records the application a MacSoftware preparation selected.
+func selectApplication(request *plugin.ReconcileRequest[munkirepo.Config], app plugin.Subject) {
+	data, _ := json.Marshal(app)
+	request.Artifact.Evidence = map[string]json.RawMessage{"macos.application": data}
 }
 
 func TestRetentionRejectsUnreadableReferenceDocuments(t *testing.T) {
