@@ -94,6 +94,8 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 		return response, err
 	}
 	delete(metadata, "patch")
+	category, categorized := metadata["category"]
+	delete(metadata, "category")
 	if request.Method == "validate" {
 		if request.Artifact.Path != "" {
 			_, err = inspectPayload(ctx, request.Identity, request.Artifact)
@@ -112,6 +114,20 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	c, err := newClient(ctx, config)
 	if err != nil {
 		return response, err
+	}
+	// Names resolve before anything is written, so a missing or ambiguous one
+	// changes nothing.
+	if categorized {
+		id, err := c.categoryID(ctx, category)
+		if err != nil {
+			return response, err
+		}
+		metadata["categoryId"] = raw(id)
+	}
+	if patch != nil {
+		if err := c.resolvePatch(ctx, patch, request.Artifact.Version); err != nil {
+			return response, err
+		}
 	}
 	identity := identityDigest(request.Identity)
 	family, err := c.family(ctx, identity)
@@ -179,42 +195,53 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	return response, c.prune(ctx, retiring, patch, true, &response)
 }
 
+// validate checks the declaration and returns the package fields under their
+// Jamf names, beside the patch, retention and category declarations.
 func validate(request plugin.ReconcileRequest[Config]) (Config, map[string]json.RawMessage, string, error) {
 	config := request.Config
 	if err := config.Validate(); err != nil {
 		return config, nil, "", err
 	}
 	config.URL = strings.TrimRight(config.URL, "/")
-	metadata, err := decodeObject(request.Metadata)
+	declared, err := decodeObject(request.Metadata)
 	if err != nil {
 		return config, nil, "", fmt.Errorf("jamf metadata: %w", err)
 	}
 	adopt := ""
-	if value, exists := metadata["package_id"]; exists {
-		if err := json.Unmarshal(value, &adopt); err != nil || !validID(adopt) {
-			return config, nil, "", errors.New("package_id must be a positive numeric string")
-		}
-		delete(metadata, "package_id")
-	}
-	for key, value := range metadata {
-		if key == "retention" {
-			if _, err := decodeRetention(metadata); err != nil {
+	metadata := map[string]json.RawMessage{}
+	for key, value := range declared {
+		switch key {
+		case "package_id":
+			var id uint64
+			if err := json.Unmarshal(value, &id); err != nil || id == 0 {
+				return config, nil, "", errors.New("package_id must be a positive integer")
+			}
+			adopt = strconv.FormatUint(id, 10)
+		case "retention":
+			if _, err := decodeRetention(declared); err != nil {
 				return config, nil, "", err
 			}
-			continue
-		}
-		if key == "patch" {
-			if _, err := decodePatch(metadata); err != nil {
+			metadata[key] = value
+		case "patch":
+			if _, err := decodePatch(declared); err != nil {
 				return config, nil, "", err
 			}
-			continue
-		}
-		rule, ok := managedFields[key]
-		if !ok {
-			return config, nil, "", fmt.Errorf("unsupported Jamf package metadata %q", key)
-		}
-		if err := rule.validate(value); err != nil {
-			return config, nil, "", fmt.Errorf("jamf %s: %w", key, err)
+			metadata[key] = value
+		case "category":
+			var name *string
+			if err := json.Unmarshal(value, &name); err != nil || name != nil && strings.TrimSpace(*name) == "" {
+				return config, nil, "", errors.New("jamf category must be a category name or null")
+			}
+			metadata[key] = value
+		default:
+			rule, ok := packageFields[key]
+			if !ok {
+				return config, nil, "", fmt.Errorf("unsupported Jamf package metadata %q", key)
+			}
+			if err := rule.validate(value); err != nil {
+				return config, nil, "", fmt.Errorf("jamf %s: %w", key, err)
+			}
+			metadata[rule.native] = value
 		}
 	}
 	if strings.Contains(stringField(metadata, "notes"), "[stemma:v1 ") {
@@ -223,7 +250,9 @@ func validate(request plugin.ReconcileRequest[Config]) (Config, map[string]json.
 	return config, metadata, adopt, nil
 }
 
+// A fieldRule is one declared package setting and the Jamf property it sets.
 type fieldRule struct {
+	native      string
 	kind        string
 	nullable    bool
 	description string
@@ -251,21 +280,31 @@ func (r fieldRule) validate(value json.RawMessage) error {
 	return nil
 }
 
-var managedFields = map[string]fieldRule{
-	"packageName":          {"string", false, "Native package display name. Defaults to the artifact filename when creating a package. Identity comes from the notes marker, never this name."},
-	"categoryId":           {"string", false, "Native category ID as a string. Use -1 for no category."},
-	"info":                 {"string", true, "Native package information. Null clears the field."},
-	"notes":                {"string", true, "Administrator notes. Null clears the text. Stemma keeps its identity marker on the final line and preserves the remote text when this is omitted."},
-	"priority":             {"int", false, "Native package installation priority. Defaults to 10 when creating a package."},
-	"osRequirements":       {"string", true, "Native operating system requirement expression, such as 10.6.8, 10.7.x. Null clears the field."},
-	"fillUserTemplate":     {"bool", false, "Native option to fill the user template. Explicit false is managed."},
-	"fillExistingUsers":    {"bool", false, "Native option to fill existing user directories. Explicit false is managed."},
-	"rebootRequired":       {"bool", false, "Native package restart requirement. Explicit false is managed."},
-	"osInstall":            {"bool", false, "Native operating system installer flag. Explicit false is managed."},
-	"suppressUpdates":      {"bool", false, "Native suppressUpdates package option. Explicit false is managed."},
-	"suppressFromDock":     {"bool", false, "Native suppressFromDock package option. Explicit false is managed."},
-	"suppressEula":         {"bool", false, "Native suppressEula package option. Explicit false is managed."},
-	"suppressRegistration": {"bool", false, "Native suppressRegistration package option. Explicit false is managed."},
+var packageFields = map[string]fieldRule{
+	"display_name":          {"packageName", "string", false, "Package display name. Defaults to the artifact filename when creating a package. Identity comes from the notes marker, never this name."},
+	"info":                  {"info", "string", true, "Package information. Null clears the field."},
+	"notes":                 {"notes", "string", true, "Administrator notes. Null clears the text. Stemma keeps its identity marker on the final line and preserves the remote text when this is omitted."},
+	"priority":              {"priority", "int", false, "Installation priority. Defaults to 10 when creating a package."},
+	"os_requirements":       {"osRequirements", "string", true, "Operating system requirement expression, such as 10.6.8, 10.7.x. Null clears the field."},
+	"fill_user_template":    {"fillUserTemplate", "bool", false, "Fill the user template. Explicit false is managed."},
+	"fill_existing_users":   {"fillExistingUsers", "bool", false, "Fill existing user home directories. Explicit false is managed."},
+	"reboot_required":       {"rebootRequired", "bool", false, "Require a restart after installation. Explicit false is managed."},
+	"os_install":            {"osInstall", "bool", false, "Mark the package as an operating system installer. Explicit false is managed."},
+	"suppress_updates":      {"suppressUpdates", "bool", false, "Jamf's suppress updates package option. Explicit false is managed."},
+	"suppress_from_dock":    {"suppressFromDock", "bool", false, "Jamf's suppress from Dock package option. Explicit false is managed."},
+	"suppress_eula":         {"suppressEula", "bool", false, "Jamf's suppress EULA package option. Explicit false is managed."},
+	"suppress_registration": {"suppressRegistration", "bool", false, "Jamf's suppress registration package option. Explicit false is managed."},
+}
+
+// fieldName names a Jamf package property the way declarations do, so plans
+// read in the catalog's terms.
+func fieldName(native string) string {
+	for name, rule := range packageFields {
+		if rule.native == native {
+			return name
+		}
+	}
+	return map[string]string{"categoryId": "category", "fileName": "filename"}[native]
 }
 
 var readOnlyFields = []string{"id", "indexed", "cloudTransferStatus", "size"}
@@ -287,7 +326,7 @@ func plan(current *observed, desired map[string]json.RawMessage, content payload
 	}
 	for _, key := range slices.Sorted(maps.Keys(desired)) {
 		if !equalJSON(current.Fields[key], desired[key]) {
-			changes = append(changes, plugin.Change{Kind: "metadata", Field: key, Action: "set", Before: current.Fields[key], After: desired[key]})
+			changes = append(changes, plugin.Change{Kind: "metadata", Field: fieldName(key), Action: "set", Before: current.Fields[key], After: desired[key]})
 		}
 	}
 	return changes

@@ -28,7 +28,7 @@ const fixtureMarker = "[stemma:v1 id=9e24b0af0c9659ee7c0bad65847e693691a7e9f6634
 
 func TestPublicationCreatesMarkedPackageAndConvergesWithoutState(t *testing.T) {
 	server, request := newFixture(t)
-	request.Metadata = raw(map[string]any{"packageName": "Managed package", "info": "Initial info", "rebootRequired": true})
+	request.Metadata = raw(map[string]any{"display_name": "Managed package", "info": "Initial info", "reboot_required": true})
 	request.Method = "plan"
 	plan, err := Handle(t.Context(), request)
 	if err != nil || len(plan.Changes) != 4 {
@@ -65,7 +65,7 @@ func TestPublicationCreatesMarkedPackageAndConvergesWithoutState(t *testing.T) {
 	if len(server.writes()) != writes {
 		t.Fatalf("unchanged run wrote to Jamf: %v", server.writes()[writes:])
 	}
-	request.Metadata = raw(map[string]any{"packageName": "Renamed", "info": nil, "rebootRequired": false})
+	request.Metadata = raw(map[string]any{"display_name": "Renamed", "info": nil, "reboot_required": false})
 	if _, err := Handle(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestPublicationCreatesMarkedPackageAndConvergesWithoutState(t *testing.T) {
 		t.Fatalf("presence ownership failed: %s", raw(current))
 	}
 	server.set("info", raw("now owned remotely"))
-	request.Metadata = raw(map[string]any{"packageName": "Renamed"})
+	request.Metadata = raw(map[string]any{"display_name": "Renamed"})
 	response, err := Handle(t.Context(), request)
 	if err != nil || len(response.Changes) != 0 {
 		t.Fatalf("omitted fields should be left unchanged: %+v: %v", response, err)
@@ -251,7 +251,7 @@ func TestPackageIDAdoptsMarksAndConverges(t *testing.T) {
 	remote := map[string]any{"label": "must not be erased", "enabled": false, "nested": map[string]any{"notes": nil}, "values": []any{"one", "two"}}
 	fields["newServerField"] = remote
 	server.seed(fields)
-	request.Metadata = raw(map[string]any{"package_id": "1", "packageName": "Adopted", "priority": 0})
+	request.Metadata = raw(map[string]any{"package_id": 1, "display_name": "Adopted", "priority": 0})
 	if _, err := Handle(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +269,7 @@ func TestPackageIDAdoptsMarksAndConverges(t *testing.T) {
 	if stringField(current, "packageName") != "Adopted" || string(current["priority"]) != "0" || !equalJSON(current["newServerField"], raw(remote)) {
 		t.Fatalf("native values or unknown remote fields changed: %s", raw(current))
 	}
-	request.Metadata = raw(map[string]any{"packageName": "Adopted"})
+	request.Metadata = raw(map[string]any{"display_name": "Adopted"})
 	writes := len(server.writes())
 	if response, err := Handle(t.Context(), request); err != nil || len(response.Changes) != 0 {
 		t.Fatalf("adopted package left the family: %+v: %v", response, err)
@@ -284,7 +284,7 @@ func TestPackageIDAdoptionWithMatchingBytesDoesNotUpload(t *testing.T) {
 	fields := contentFields("immutable package bytes")
 	fields["fileName"], fields["packageName"] = "vendor-original.pkg", "Vendor"
 	server.seed(fields)
-	request.Metadata = raw(map[string]any{"package_id": "1"})
+	request.Metadata = raw(map[string]any{"package_id": 1})
 	if _, err := Handle(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestPackageIDRefusals(t *testing.T) {
 			for _, fields := range test.seed {
 				server.seed(fields)
 			}
-			request.Metadata = raw(map[string]any{"package_id": "1"})
+			request.Metadata = raw(map[string]any{"package_id": 1})
 			if _, err := Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("adoption error = %v, want %q", err, test.want)
 			}
@@ -333,7 +333,7 @@ func TestDuplicateFamilyRecordsAreAmbiguous(t *testing.T) {
 	if writes := server.writes(); len(writes) != 0 {
 		t.Fatalf("ambiguous publication wrote to Jamf: %v", writes)
 	}
-	request.Metadata = raw(map[string]any{"package_id": "2"})
+	request.Metadata = raw(map[string]any{"package_id": 2})
 	if _, err := Handle(t.Context(), request); err != nil {
 		t.Fatalf("package_id did not select a duplicate: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestLostResponsesConvergeFromJamfAlone(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			server, request := newFixture(t)
 			server.failAfter = phase
-			request.Metadata = raw(map[string]any{"packageName": "Managed"})
+			request.Metadata = raw(map[string]any{"display_name": "Managed"})
 			if _, err := Handle(t.Context(), request); (err != nil) != interrupted {
 				t.Fatalf("committed %s: %v", phase, err)
 			}
@@ -512,13 +512,13 @@ func TestAuthenticationRejectsCrossOriginRedirect(t *testing.T) {
 func TestStrictValidationPreservesNullFalseAndZero(t *testing.T) {
 	_, request := newFixture(t)
 	request.Method = "validate"
-	for _, metadata := range []string{`{"priority":0,"rebootRequired":false,"notes":null}`, `{}`} {
+	for _, metadata := range []string{`{"priority":0,"reboot_required":false,"notes":null,"category":null}`, `{}`} {
 		request.Metadata = json.RawMessage(metadata)
 		if _, err := Handle(t.Context(), request); err != nil {
 			t.Fatalf("valid ownership rejected: %s: %v", metadata, err)
 		}
 	}
-	for _, metadata := range []string{`{"priority":null}`, `{"packageName":null}`, `{"policies":[]}`, `{"fileName":"overridden.pkg"}`, `{"sha256":"untrusted"}`, `{"priority":"10"}`, `{"notes":1}`, `{"package_id":"../1"}`, `{"notes":"a","notes":"b"}`, `{"notes":"[stemma:v1 id=forged]"}`} {
+	for _, metadata := range []string{`{"priority":null}`, `{"display_name":null}`, `{"packageName":"Vendor"}`, `{"categoryId":"-1"}`, `{"category":""}`, `{"package_id":"1"}`, `{"policies":[]}`, `{"fileName":"overridden.pkg"}`, `{"sha256":"untrusted"}`, `{"priority":"10"}`, `{"notes":1}`, `{"package_id":"../1"}`, `{"notes":"a","notes":"b"}`, `{"notes":"[stemma:v1 id=forged]"}`} {
 		request.Metadata = json.RawMessage(metadata)
 		if _, err := Handle(t.Context(), request); err == nil {
 			t.Fatalf("invalid metadata accepted: %s", metadata)
@@ -527,6 +527,35 @@ func TestStrictValidationPreservesNullFalseAndZero(t *testing.T) {
 	request.Metadata = raw(map[string]any{})
 	if err := plugin.ValidateSchema(raw(plugin.SchemaFor[Config]()), raw(map[string]any{"url": "https://example.com", "client_id": "ID", "client_secret": "SECRET", "package_id": "1"})); err == nil {
 		t.Fatal("accepted software adoption in shared destination config")
+	}
+}
+
+func TestCategoryResolvesByExactName(t *testing.T) {
+	server, request := newFixture(t)
+	server.categories = map[string]string{"7": "Productivity", "8": "productivity", "9": "Utilities", "10": "Utilities"}
+	request.Metadata = raw(map[string]any{"category": "Productivity"})
+	if _, err := Handle(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if got := stringField(server.record("1"), "categoryId"); got != "7" {
+		t.Fatalf("categoryId = %q, want 7", got)
+	}
+	request.Metadata = raw(map[string]any{"category": nil})
+	if _, err := Handle(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if got := stringField(server.record("1"), "categoryId"); got != "-1" {
+		t.Fatalf("null category left categoryId %q", got)
+	}
+	for _, name := range []string{"Missing", "Utilities"} {
+		writes := len(server.writes())
+		request.Metadata = raw(map[string]any{"category": name})
+		if _, err := Handle(t.Context(), request); err == nil {
+			t.Fatalf("category %q resolved without exactly one match", name)
+		}
+		if len(server.writes()) != writes {
+			t.Fatalf("unresolved category %q wrote to Jamf", name)
+		}
 	}
 }
 
@@ -578,6 +607,8 @@ type fakeServer struct {
 	tokens           int
 	failReads        int
 	notesAfterUpload string
+	// categories maps category IDs to names.
+	categories map[string]string
 }
 
 func newFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest[Config]) {
@@ -634,6 +665,19 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.native != nil && s.native.handle(s, w, r) {
+		return
+	}
+	if r.URL.Path == "/api/v1/categories" && r.Method == http.MethodGet {
+		// Jamf's RSQL comparison ignores case, so exact matching is the provider's.
+		name, _ := strings.CutPrefix(r.URL.Query().Get("filter"), `name==`)
+		name, _ = strconv.Unquote(name)
+		results := []map[string]string{}
+		for id, category := range s.categories {
+			if strings.EqualFold(category, name) {
+				results = append(results, map[string]string{"id": id, "name": category})
+			}
+		}
+		writeJSON(s.t, w, map[string]any{"totalCount": len(results), "results": results})
 		return
 	}
 	if r.URL.Path == packagePath {

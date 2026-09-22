@@ -125,7 +125,7 @@ func TestPatchPublicationAdvancesAssociationAndPolicy(t *testing.T) {
 		t.Fatalf("unchanged patch publication wrote to Jamf: %v", server.writes()[writes:])
 	}
 	request.Artifact = fixtureArtifactNamed(t, "vendor-2.0.pkg", "new payload")
-	request.Metadata = patchMetadata("2.0", 0)
+	request.Artifact.Version = "2.0"
 	if _, err := Handle(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -168,9 +168,6 @@ func TestPatchPolicyIdentity(t *testing.T) {
 		"software name updates in place":        {existing: []*xmlNode{testPolicy("3", "vendor", "5", "0.9")}, policy: map[string]any{}, wantID: "3", wantName: "vendor"},
 		"another title's name is free":          {existing: []*xmlNode{testPolicy("3", "Managed rollout", "6", "0.9")}, looseFilter: true, policy: map[string]any{"name": "Managed rollout"}, wantID: "10", wantName: "Managed rollout"},
 		"duplicate names are ambiguous":         {existing: []*xmlNode{testPolicy("3", "Managed rollout", "5", "0.9"), testPolicy("4", "Managed rollout", "5", "0.9")}, policy: map[string]any{"name": "Managed rollout"}, wantErr: "multiple Jamf patch policies"},
-		"declared id selects and renames":       {existing: []*xmlNode{testPolicy("3", "Legacy rollout", "5", "0.9")}, policy: map[string]any{"id": "3", "name": "Managed rollout"}, wantID: "3", wantName: "Managed rollout"},
-		"declared id must exist":                {policy: map[string]any{"id": "3"}, wantErr: "does not exist"},
-		"declared id must belong to the title":  {existing: []*xmlNode{testPolicy("3", "Elsewhere", "6", "0.9")}, policy: map[string]any{"id": "3"}, wantErr: "different title Config"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			server, request := newPatchFixture(t)
@@ -179,7 +176,7 @@ func TestPatchPolicyIdentity(t *testing.T) {
 				server.native.patchPolicies[policy.value("general", "id")] = policy
 			}
 			test.policy["enabled"] = true
-			request.Metadata = raw(map[string]any{"patch": map[string]any{"title_configuration_id": "5", "version": "1.0", "policy": test.policy}})
+			request.Metadata = raw(map[string]any{"patch": map[string]any{"title": "Test title", "policy": test.policy}})
 			_, err := Handle(t.Context(), request)
 			if test.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
@@ -253,12 +250,26 @@ func TestOmittedPatchLeavesDeploymentAlone(t *testing.T) {
 
 func TestPatchVersionIsCheckedBeforePublishing(t *testing.T) {
 	server, request := newPatchFixture(t)
-	request.Metadata = patchMetadata("unpublished", 0)
-	if _, err := Handle(t.Context(), request); err == nil {
-		t.Fatal("undefined patch version accepted")
+	request.Artifact.Version = "unpublished"
+	if _, err := Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), `"Test title" has no definition for unpublished; recent definitions: 1.0, 2.0`) {
+		t.Fatalf("undefined patch version: %v", err)
+	}
+	request.Artifact.Version = ""
+	if _, err := Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), "managed version") {
+		t.Fatalf("versionless patch deployment: %v", err)
+	}
+	request.Artifact.Version = "1.0"
+	for _, metadata := range []json.RawMessage{
+		raw(map[string]any{"patch": map[string]any{"title": "Missing title"}}),
+		raw(map[string]any{"patch": map[string]any{"title": "Test title", "policy": map[string]any{"scope": map[string]any{"computer_groups": []string{"Missing group"}}}}}),
+	} {
+		request.Metadata = metadata
+		if _, err := Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), "jamf has no") {
+			t.Fatalf("unresolved name in %s: %v", metadata, err)
+		}
 	}
 	if writes := server.writes(); len(writes) != 0 {
-		t.Fatalf("published before validating the patch version: %v", writes)
+		t.Fatalf("published before validating the patch deployment: %v", writes)
 	}
 }
 
@@ -268,7 +279,8 @@ func TestRepublishedVersionRetiresItsSupersededPackage(t *testing.T) {
 		t.Fatal(err)
 	}
 	request.Artifact = fixtureArtifactNamed(t, "vendor-rebuilt.pkg", "rebuilt payload")
-	request.Metadata = patchMetadata("1.0", 1)
+	request.Artifact.Version = "1.0"
+	request.Metadata = patchMetadata(1)
 	for _, method := range []string{"plan", "apply"} {
 		request.Method = method
 		response, err := Handle(t.Context(), request)
@@ -285,10 +297,11 @@ func TestNativePatchPresenceAndScopeCollections(t *testing.T) {
 	current := testPolicy("10", "Existing", "5", "1.0")
 	current.child("general").set(xmlNode{XMLName: xml.Name{Local: "unowned_field"}, Text: "preserve"})
 	current.child("scope").set(*jsonXML("computer_groups", raw([]map[string]int{{"id": 3}})))
-	patch, err := decodePatch(map[string]json.RawMessage{"patch": raw(map[string]any{"title_configuration_id": "5", "version": "2.0", "policy": map[string]any{"enabled": false, "scope": map[string]any{"computer_groups": []any{}}}})})
+	patch, err := decodePatch(map[string]json.RawMessage{"patch": raw(map[string]any{"title": "Test title", "policy": map[string]any{"enabled": false, "scope": map[string]any{"computer_groups": []string{}}}})})
 	if err != nil {
 		t.Fatal(err)
 	}
+	patch.titleID, patch.version, patch.scope = "5", "2.0", map[string][]string{"computer_groups": {}}
 	desired := desiredPolicy(patch, "Existing", false)
 	mergeXML(current, desired)
 	if current.value("general", "unowned_field") != "preserve" || current.value("general", "enabled") != "false" || len(current.child("scope").child("computer_groups").Children) != 0 {
@@ -297,15 +310,69 @@ func TestNativePatchPresenceAndScopeCollections(t *testing.T) {
 	if !containsXML(current, desired) {
 		t.Fatal("merged XML does not satisfy desired fields")
 	}
-	for _, data := range []string{`{"title_configuration_id":"5","version":"1.0","policy":{"scope":null}}`, `{"title_configuration_id":"5","version":"1.0","policy":{"enabled":false,"enabled":true}}`, `{"title_configuration_id":"5","version":"1.0","policy":{"target_version":"2.0"}}`} {
+	// Jamf returns each scope object with its name, and may count the list.
+	patch.scope["computer_groups"] = []string{"3"}
+	desired = desiredPolicy(patch, "Existing", false)
+	current.child("scope").set(xmlNode{XMLName: xml.Name{Local: "computer_groups"}, Children: []xmlNode{
+		{XMLName: xml.Name{Local: "size"}, Text: "1"},
+		{XMLName: xml.Name{Local: "computer_group"}, Children: []xmlNode{{XMLName: xml.Name{Local: "id"}, Text: "3"}, {XMLName: xml.Name{Local: "name"}, Text: "Managed Macs"}}},
+	}})
+	if !containsXML(current, desired) {
+		t.Fatal("Jamf's readback of the declared scope did not settle")
+	}
+	for _, data := range []string{
+		`{"title":"Test title","policy":{"scope":null}}`,
+		`{"title":"Test title","policy":{"enabled":false,"enabled":true}}`,
+		`{"title":"Test title","policy":{"target_version":"2.0"}}`,
+		`{"title":"Test title","policy":{"id":"3"}}`,
+		`{"title":"Test title","policy":{"scope":{"computer_groups":[{"id":3}]}}}`,
+		`{"title":"Test title","policy":{"scope":{"computer_groups":[" "]}}}`,
+		`{"title":"Test title","policy":{"distribution":"automatically"}}`,
+		`{"title":"Test title","version":"1.0"}`,
+		`{"title_configuration_id":"5"}`,
+		`{"title":""}`,
+	} {
 		if _, err := decodePatch(map[string]json.RawMessage{"patch": json.RawMessage(data)}); err == nil {
 			t.Fatalf("invalid patch metadata accepted: %s", data)
 		}
 	}
 }
 
-func patchMetadata(version string, keep int) json.RawMessage {
-	metadata := map[string]any{"patch": map[string]any{"title_configuration_id": "5", "version": version, "policy": map[string]any{"name": "Managed rollout", "enabled": true, "scope": map[string]any{"all_computers": false, "computer_groups": []map[string]int{{"id": 3}}}}}}
+func TestScopeObjectsResolveByExactName(t *testing.T) {
+	server, request := newPatchFixture(t)
+	scope := map[string]any{
+		"computers": []string{"LAB-02"}, "computer_groups": []string{"Staff Macs", "Staff Macs"}, "buildings": []string{"Senior Campus"}, "departments": []string{"Science"},
+		"limitations": map[string]any{"network_segments": []string{"Library"}},
+		"exclusions":  map[string]any{"computers": []string{"LAB-01"}, "computer_groups": []string{"Managed Macs"}},
+	}
+	request.Metadata = raw(map[string]any{"patch": map[string]any{"title": "Test title", "policy": map[string]any{"name": "Managed rollout", "enabled": true, "scope": scope}}})
+	if _, err := Handle(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	policy := server.native.patchPolicies["10"]
+	if groups := policy.child("scope").child("computer_groups"); len(groups.Children) != 1 {
+		t.Fatalf("repeated scope names produced %d entries", len(groups.Children))
+	}
+	for _, test := range []struct {
+		path []string
+		want string
+	}{
+		{[]string{"scope", "computers", "computer", "id"}, "42"},
+		{[]string{"scope", "computer_groups", "computer_group", "id"}, "4"},
+		{[]string{"scope", "buildings", "building", "id"}, "21"},
+		{[]string{"scope", "departments", "department", "id"}, "31"},
+		{[]string{"scope", "limitations", "network_segments", "network_segment", "id"}, "51"},
+		{[]string{"scope", "exclusions", "computers", "computer", "id"}, "41"},
+		{[]string{"scope", "exclusions", "computer_groups", "computer_group", "id"}, "3"},
+	} {
+		if got := policy.value(test.path...); got != test.want {
+			t.Errorf("%s = %q, want %q", strings.Join(test.path, "/"), got, test.want)
+		}
+	}
+}
+
+func patchMetadata(keep int) json.RawMessage {
+	metadata := map[string]any{"patch": map[string]any{"title": "Test title", "policy": map[string]any{"name": "Managed rollout", "enabled": true, "scope": map[string]any{"all_computers": false, "computer_groups": []string{"Managed Macs"}}}}}
 	if keep > 0 {
 		metadata["retention"] = map[string]int{"keep": keep}
 	}
@@ -323,7 +390,8 @@ func newNativeFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest[Config
 func newPatchFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest[Config]) {
 	t.Helper()
 	server, request := newNativeFixture(t)
-	request.Metadata = patchMetadata("1.0", 0)
+	request.Metadata = patchMetadata(0)
+	request.Artifact.Version = "1.0"
 	return server, request
 }
 
@@ -387,6 +455,36 @@ func (n *nativeServer) handle(s *fakeServer, w http.ResponseWriter, r *http.Requ
 			titleData["packages"] = []any{}
 		}
 		writeJSON(s.t, w, titleData)
+	case r.URL.Path == "/api/v1/buildings" || r.URL.Path == "/api/v1/departments" || r.URL.Path == "/api/v1/computers-inventory":
+		objects := map[string]map[string]string{
+			"/api/v1/buildings":           {"21": "Senior Campus", "22": "Junior Campus"},
+			"/api/v1/departments":         {"31": "Science"},
+			"/api/v1/computers-inventory": {"41": "LAB-01", "42": "LAB-02"},
+		}[r.URL.Path]
+		field := "name"
+		if r.URL.Path == "/api/v1/computers-inventory" {
+			field = "general.name"
+			if r.URL.Query().Get("section") != "GENERAL" {
+				s.t.Error("computer lookup omitted its name section")
+			}
+		}
+		name, _ := strings.CutPrefix(r.URL.Query().Get("filter"), field+"==")
+		name, _ = strconv.Unquote(name)
+		results := []map[string]any{}
+		for id, object := range objects {
+			if object == name {
+				row := map[string]any{"id": id, "name": object}
+				if field == "general.name" {
+					row = map[string]any{"id": id, "general": map[string]string{"name": object}}
+				}
+				results = append(results, row)
+			}
+		}
+		writeJSON(s.t, w, map[string]any{"totalCount": len(results), "results": results})
+	case r.URL.Path == "/JSSResource/networksegments":
+		writeXML(s.t, w, jsonXML("network_segments", raw(map[string]any{"size": 1, "network_segment": map[string]any{"id": 51, "name": "Library"}})))
+	case r.URL.Path == "/api/v1/computer-groups":
+		writeJSON(s.t, w, []map[string]any{{"id": "3", "name": "Managed Macs", "smartGroup": true}, {"id": "4", "name": "Staff Macs", "smartGroup": false}})
 	case r.URL.Path == "/api/v2/patch-policies":
 		results := []map[string]any{}
 		for id, p := range n.patchPolicies {

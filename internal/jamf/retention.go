@@ -11,7 +11,6 @@ import (
 	"strconv"
 
 	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/constants"
-	titles "github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/jamf_pro_api/patch_software_title_configurations"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -133,20 +132,11 @@ func (c *client) references(ctx context.Context, patch *patchConfig) (map[string
 			referenced[id] = true
 		}
 	}
-	result, data, err := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationJSON).GetBytes(titlePath)
-	if err := requestError(ctx, result, err); err != nil {
+	configurations, err := c.listTitles(ctx)
+	if err != nil {
 		return nil, err
 	}
-	var configurations *[]titles.ResourcePatchSoftwareTitleConfiguration
-	if err := json.Unmarshal(data, &configurations); err != nil || configurations == nil {
-		return nil, errors.New("jamf title enumeration returned an incomplete result")
-	}
-	clear(seen)
-	for _, listed := range *configurations {
-		if !validID(listed.ID) || seen[listed.ID] {
-			return nil, errors.New("invalid or duplicated Jamf title ID")
-		}
-		seen[listed.ID] = true
+	for _, listed := range configurations {
 		title, err := c.getTitle(ctx, listed.ID)
 		if err != nil {
 			return nil, err
@@ -157,7 +147,7 @@ func (c *client) references(ctx context.Context, patch *patchConfig) (map[string
 			}
 			// The declared association ends at the current record, whichever
 			// package holds it while planning.
-			if patch != nil && title.ID == patch.TitleConfigurationID && pkg.Version == patch.Version {
+			if patch != nil && title.ID == patch.titleID && pkg.Version == patch.version {
 				continue
 			}
 			referenced[pkg.PackageID] = true

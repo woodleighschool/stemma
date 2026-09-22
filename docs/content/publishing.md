@@ -237,39 +237,43 @@ Jamf publishes PKG artifacts: a vendor package, one selected with `package_path`
 or a [BuildMacPkg](building-packages.md) output. Jamf installs a DMG by copying its
 contents onto the startup disk, so an application DMG is not a Jamf package.
 
-Each installer filename is one Jamf package record, keeping its native file and
-display names; the display name defaults to the filename. Changed bytes under the
-same filename upload into the same record. Upload requires a Jamf distribution
-configuration supporting the package upload API.
+Each installer filename is one Jamf package record, keeping its native filename;
+`display_name` defaults to the filename. Changed bytes under the same filename
+upload into the same record. Upload requires a Jamf distribution configuration
+supporting the package upload API. `package_id` pins an existing package by its
+ID instead.
 
 To associate a package with an existing patch title and maintain a policy:
 
 ```yaml
 destinations:
   jamf:
+    category: Productivity
     retention:
       keep: 1
     patch:
-      title_configuration_id: "42"
-      version: "{{ evidence['macos.application'].app.version }}"
+      title: Example
       policy:
         name: Example updates
         enabled: false
         scope:
           all_computers: false
-          computers: []
-          computer_groups: []
+          computer_groups:
+            - Staff Macs
 ```
 
-Use an existing title ID and an exact version known to that title. This example
-uses the selected Mac application's version. The title's definition must already
-contain that version; Stemma does not create the definition from the package.
+Categories, patch titles, policies and scope objects are named exactly as in
+Jamf. Each name must match exactly one object, or publication fails before
+anything is written. The version the title deploys is the software's managed
+version: the selected application's under `version_key`, otherwise the
+installer's. The title must already define that version; a missing one fails and
+lists the title's recent definitions. Stemma does not create definitions from the
+package.
 
-The policy is found by `policy.id`, or else by its name under the title, which
-defaults to the resource's name, and keeps its ID as its target version changes. A
-title's link to a package protects it during cleanup, so retention reaches a
-patch-managed package only once no version links to it. Stemma manages
-no other Jamf policies.
+The policy is found by its name under the title, which defaults to the resource's
+name, and keeps its ID as its target version changes. A title's link to a package
+protects it during cleanup, so retention reaches a patch-managed package only
+once no version links to it. Stemma manages no other Jamf policies.
 
 ## Identity and retention
 

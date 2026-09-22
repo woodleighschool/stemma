@@ -4453,9 +4453,29 @@
     "OperationMetadata_jamf": {
       "$id": "https://stemma.invalid/editor/jamf/metadata",
       "additionalProperties": false,
-      "description": "Native Jamf Pro v1 package metadata. Omitted fields are left unchanged; explicit false, zero and empty strings are managed. Only the documented nullable strings accept null. Each artifact filename has its own package, named natively and identified by Stemma's marker in its notes; changed bytes under the same filename are uploaded into that package. Patch deployment and retention are opt-in.",
+      "description": "Jamf Pro package metadata. Omitted fields are left unchanged; explicit false, zero and empty strings are managed. Only the documented nullable strings accept null. Each artifact filename has its own package, identified by Stemma's marker in its notes; changed bytes under the same filename are uploaded into that package. Patch deployment and retention are opt-in.",
       "properties": {
-        "categoryId": {
+        "category": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            {
+              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+              "type": "string"
+            }
+          ],
+          "description": "Category name, which must match exactly one Jamf category. Null removes the category."
+        },
+        "display_name": {
           "anyOf": [
             {
               "type": "string"
@@ -4465,9 +4485,9 @@
               "type": "string"
             }
           ],
-          "description": "Native category ID as a string. Use -1 for no category."
+          "description": "Package display name. Defaults to the artifact filename when creating a package. Identity comes from the notes marker, never this name."
         },
-        "fillExistingUsers": {
+        "fill_existing_users": {
           "anyOf": [
             {
               "type": "boolean"
@@ -4477,9 +4497,9 @@
               "type": "string"
             }
           ],
-          "description": "Native option to fill existing user directories. Explicit false is managed."
+          "description": "Fill existing user home directories. Explicit false is managed."
         },
-        "fillUserTemplate": {
+        "fill_user_template": {
           "anyOf": [
             {
               "type": "boolean"
@@ -4489,7 +4509,7 @@
               "type": "string"
             }
           ],
-          "description": "Native option to fill the user template. Explicit false is managed."
+          "description": "Fill the user template. Explicit false is managed."
         },
         "info": {
           "anyOf": [
@@ -4508,7 +4528,7 @@
               "type": "string"
             }
           ],
-          "description": "Native package information. Null clears the field."
+          "description": "Package information. Null clears the field."
         },
         "inputs": {
           "additionalProperties": {
@@ -4545,7 +4565,7 @@
           ],
           "description": "Administrator notes. Null clears the text. Stemma keeps its identity marker on the final line and preserves the remote text when this is omitted."
         },
-        "osInstall": {
+        "os_install": {
           "anyOf": [
             {
               "type": "boolean"
@@ -4555,9 +4575,9 @@
               "type": "string"
             }
           ],
-          "description": "Native operating system installer flag. Explicit false is managed."
+          "description": "Mark the package as an operating system installer. Explicit false is managed."
         },
-        "osRequirements": {
+        "os_requirements": {
           "anyOf": [
             {
               "anyOf": [
@@ -4574,33 +4594,20 @@
               "type": "string"
             }
           ],
-          "description": "Native operating system requirement expression, such as 10.6.8, 10.7.x. Null clears the field."
-        },
-        "packageName": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-              "type": "string"
-            }
-          ],
-          "description": "Native package display name. Defaults to the artifact filename when creating a package. Identity comes from the notes marker, never this name."
+          "description": "Operating system requirement expression, such as 10.6.8, 10.7.x. Null clears the field."
         },
         "package_id": {
           "anyOf": [
             {
-              "maxLength": 20,
-              "pattern": "^[1-9][0-9]*$",
-              "type": "string"
+              "minimum": 1,
+              "type": "integer"
             },
             {
-              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
               "type": "string"
             }
           ],
-          "description": "Publish into this existing Jamf package ID instead of discovering one. The package takes Stemma's identity marker, the artifact filename, the artifact's content when it differs, and the declared metadata; a package marked for other software is refused. Omit to find the package by its marker and artifact filename, or create it."
+          "description": "Publish into this existing Jamf package instead of discovering one. The package takes Stemma's identity marker, the artifact filename, the artifact's content when it differs, and the declared metadata; a package marked for other software is refused. Omit to find the package by its marker and artifact filename, or create it."
         },
         "patch": {
           "anyOf": [
@@ -4623,12 +4630,12 @@
                             }
                           ]
                         },
-                        "distribution_method": {
+                        "distribution": {
                           "anyOf": [
                             {
                               "enum": [
-                                "automatically",
-                                "selfservice"
+                                "automatic",
+                                "self_service"
                               ],
                               "type": "string"
                             },
@@ -4636,7 +4643,8 @@
                               "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                               "type": "string"
                             }
-                          ]
+                          ],
+                          "description": "Install automatically, or offer the update in Self Service."
                         },
                         "enabled": {
                           "anyOf": [
@@ -4649,28 +4657,18 @@
                             }
                           ]
                         },
-                        "id": {
-                          "anyOf": [
-                            {
-                              "pattern": "^[1-9][0-9]*$",
-                              "type": "string"
-                            },
-                            {
-                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                              "type": "string"
-                            }
-                          ]
-                        },
                         "name": {
                           "anyOf": [
                             {
+                              "minLength": 1,
                               "type": "string"
                             },
                             {
                               "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                               "type": "string"
                             }
-                          ]
+                          ],
+                          "description": "Policy name within the title. Defaults to the software name."
                         },
                         "patch_unknown": {
                           "anyOf": [
@@ -4681,7 +4679,8 @@
                               "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                               "type": "string"
                             }
-                          ]
+                          ],
+                          "description": "Also patch computers with an unknown installed version."
                         },
                         "scope": {
                           "anyOf": [
@@ -4705,33 +4704,10 @@
                                       "items": {
                                         "anyOf": [
                                           {
-                                            "additionalProperties": false,
-                                            "properties": {
-                                              "id": {
-                                                "anyOf": [
-                                                  {
-                                                    "minimum": 1,
-                                                    "type": "integer"
-                                                  },
-                                                  {
-                                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                    "type": "string"
-                                                  }
-                                                ]
-                                              }
-                                            },
-                                            "propertyNames": {
-                                              "not": {
-                                                "pattern": "\\{\\{"
-                                              }
-                                            },
-                                            "required": [
-                                              "id"
-                                            ],
-                                            "type": "object"
+                                            "type": "string"
                                           },
                                           {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                                             "type": "string"
                                           }
                                         ]
@@ -4750,33 +4726,10 @@
                                       "items": {
                                         "anyOf": [
                                           {
-                                            "additionalProperties": false,
-                                            "properties": {
-                                              "id": {
-                                                "anyOf": [
-                                                  {
-                                                    "minimum": 1,
-                                                    "type": "integer"
-                                                  },
-                                                  {
-                                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                    "type": "string"
-                                                  }
-                                                ]
-                                              }
-                                            },
-                                            "propertyNames": {
-                                              "not": {
-                                                "pattern": "\\{\\{"
-                                              }
-                                            },
-                                            "required": [
-                                              "id"
-                                            ],
-                                            "type": "object"
+                                            "type": "string"
                                           },
                                           {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                                             "type": "string"
                                           }
                                         ]
@@ -4795,33 +4748,10 @@
                                       "items": {
                                         "anyOf": [
                                           {
-                                            "additionalProperties": false,
-                                            "properties": {
-                                              "id": {
-                                                "anyOf": [
-                                                  {
-                                                    "minimum": 1,
-                                                    "type": "integer"
-                                                  },
-                                                  {
-                                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                    "type": "string"
-                                                  }
-                                                ]
-                                              }
-                                            },
-                                            "propertyNames": {
-                                              "not": {
-                                                "pattern": "\\{\\{"
-                                              }
-                                            },
-                                            "required": [
-                                              "id"
-                                            ],
-                                            "type": "object"
+                                            "type": "string"
                                           },
                                           {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                                             "type": "string"
                                           }
                                         ]
@@ -4840,33 +4770,10 @@
                                       "items": {
                                         "anyOf": [
                                           {
-                                            "additionalProperties": false,
-                                            "properties": {
-                                              "id": {
-                                                "anyOf": [
-                                                  {
-                                                    "minimum": 1,
-                                                    "type": "integer"
-                                                  },
-                                                  {
-                                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                    "type": "string"
-                                                  }
-                                                ]
-                                              }
-                                            },
-                                            "propertyNames": {
-                                              "not": {
-                                                "pattern": "\\{\\{"
-                                              }
-                                            },
-                                            "required": [
-                                              "id"
-                                            ],
-                                            "type": "object"
+                                            "type": "string"
                                           },
                                           {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                                             "type": "string"
                                           }
                                         ]
@@ -4890,33 +4797,10 @@
                                               "items": {
                                                 "anyOf": [
                                                   {
-                                                    "additionalProperties": false,
-                                                    "properties": {
-                                                      "id": {
-                                                        "anyOf": [
-                                                          {
-                                                            "minimum": 1,
-                                                            "type": "integer"
-                                                          },
-                                                          {
-                                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                            "type": "string"
-                                                          }
-                                                        ]
-                                                      }
-                                                    },
-                                                    "propertyNames": {
-                                                      "not": {
-                                                        "pattern": "\\{\\{"
-                                                      }
-                                                    },
-                                                    "required": [
-                                                      "id"
-                                                    ],
-                                                    "type": "object"
+                                                    "type": "string"
                                                   },
                                                   {
-                                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                                                     "type": "string"
                                                   }
                                                 ]
@@ -4935,33 +4819,10 @@
                                               "items": {
                                                 "anyOf": [
                                                   {
-                                                    "additionalProperties": false,
-                                                    "properties": {
-                                                      "id": {
-                                                        "anyOf": [
-                                                          {
-                                                            "minimum": 1,
-                                                            "type": "integer"
-                                                          },
-                                                          {
-                                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                            "type": "string"
-                                                          }
-                                                        ]
-                                                      }
-                                                    },
-                                                    "propertyNames": {
-                                                      "not": {
-                                                        "pattern": "\\{\\{"
-                                                      }
-                                                    },
-                                                    "required": [
-                                                      "id"
-                                                    ],
-                                                    "type": "object"
+                                                    "type": "string"
                                                   },
                                                   {
-                                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                                                     "type": "string"
                                                   }
                                                 ]
@@ -4980,33 +4841,10 @@
                                               "items": {
                                                 "anyOf": [
                                                   {
-                                                    "additionalProperties": false,
-                                                    "properties": {
-                                                      "id": {
-                                                        "anyOf": [
-                                                          {
-                                                            "minimum": 1,
-                                                            "type": "integer"
-                                                          },
-                                                          {
-                                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                            "type": "string"
-                                                          }
-                                                        ]
-                                                      }
-                                                    },
-                                                    "propertyNames": {
-                                                      "not": {
-                                                        "pattern": "\\{\\{"
-                                                      }
-                                                    },
-                                                    "required": [
-                                                      "id"
-                                                    ],
-                                                    "type": "object"
+                                                    "type": "string"
                                                   },
                                                   {
-                                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                                                     "type": "string"
                                                   }
                                                 ]
@@ -5025,33 +4863,10 @@
                                               "items": {
                                                 "anyOf": [
                                                   {
-                                                    "additionalProperties": false,
-                                                    "properties": {
-                                                      "id": {
-                                                        "anyOf": [
-                                                          {
-                                                            "minimum": 1,
-                                                            "type": "integer"
-                                                          },
-                                                          {
-                                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                            "type": "string"
-                                                          }
-                                                        ]
-                                                      }
-                                                    },
-                                                    "propertyNames": {
-                                                      "not": {
-                                                        "pattern": "\\{\\{"
-                                                      }
-                                                    },
-                                                    "required": [
-                                                      "id"
-                                                    ],
-                                                    "type": "object"
+                                                    "type": "string"
                                                   },
                                                   {
-                                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                                                     "type": "string"
                                                   }
                                                 ]
@@ -5070,33 +4885,10 @@
                                               "items": {
                                                 "anyOf": [
                                                   {
-                                                    "additionalProperties": false,
-                                                    "properties": {
-                                                      "id": {
-                                                        "anyOf": [
-                                                          {
-                                                            "minimum": 1,
-                                                            "type": "integer"
-                                                          },
-                                                          {
-                                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                            "type": "string"
-                                                          }
-                                                        ]
-                                                      }
-                                                    },
-                                                    "propertyNames": {
-                                                      "not": {
-                                                        "pattern": "\\{\\{"
-                                                      }
-                                                    },
-                                                    "required": [
-                                                      "id"
-                                                    ],
-                                                    "type": "object"
+                                                    "type": "string"
                                                   },
                                                   {
-                                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                                                     "type": "string"
                                                   }
                                                 ]
@@ -5134,33 +4926,10 @@
                                               "items": {
                                                 "anyOf": [
                                                   {
-                                                    "additionalProperties": false,
-                                                    "properties": {
-                                                      "id": {
-                                                        "anyOf": [
-                                                          {
-                                                            "minimum": 1,
-                                                            "type": "integer"
-                                                          },
-                                                          {
-                                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                            "type": "string"
-                                                          }
-                                                        ]
-                                                      }
-                                                    },
-                                                    "propertyNames": {
-                                                      "not": {
-                                                        "pattern": "\\{\\{"
-                                                      }
-                                                    },
-                                                    "required": [
-                                                      "id"
-                                                    ],
-                                                    "type": "object"
+                                                    "type": "string"
                                                   },
                                                   {
-                                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                                                     "type": "string"
                                                   }
                                                 ]
@@ -5199,7 +4968,8 @@
                               "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                               "type": "string"
                             }
-                          ]
+                          ],
+                          "description": "Scope objects named exactly as in Jamf. Each name must match exactly one object, and supplied lists replace their collections."
                         },
                         "user_interaction": {
                           "anyOf": [
@@ -5211,7 +4981,7 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
-                                        "deadline_enabled": {
+                                        "enabled": {
                                           "anyOf": [
                                             {
                                               "type": "boolean"
@@ -5222,7 +4992,7 @@
                                             }
                                           ]
                                         },
-                                        "deadline_period": {
+                                        "period": {
                                           "anyOf": [
                                             {
                                               "minimum": 0,
@@ -5232,7 +5002,8 @@
                                               "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                                               "type": "string"
                                             }
-                                          ]
+                                          ],
+                                          "description": "Days until the deadline."
                                         }
                                       },
                                       "propertyNames": {
@@ -5253,7 +5024,7 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
-                                        "grace_period_duration": {
+                                        "duration": {
                                           "anyOf": [
                                             {
                                               "minimum": 0,
@@ -5263,7 +5034,8 @@
                                               "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                                               "type": "string"
                                             }
-                                          ]
+                                          ],
+                                          "description": "Minutes before a forced restart."
                                         },
                                         "message": {
                                           "anyOf": [
@@ -5276,7 +5048,7 @@
                                             }
                                           ]
                                         },
-                                        "notification_center_subject": {
+                                        "subject": {
                                           "anyOf": [
                                             {
                                               "type": "string"
@@ -5317,7 +5089,7 @@
                                     {
                                       "additionalProperties": false,
                                       "properties": {
-                                        "notification_enabled": {
+                                        "enabled": {
                                           "anyOf": [
                                             {
                                               "type": "boolean"
@@ -5328,29 +5100,7 @@
                                             }
                                           ]
                                         },
-                                        "notification_message": {
-                                          "anyOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                              "type": "string"
-                                            }
-                                          ]
-                                        },
-                                        "notification_subject": {
-                                          "anyOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                              "type": "string"
-                                            }
-                                          ]
-                                        },
-                                        "notification_type": {
+                                        "message": {
                                           "anyOf": [
                                             {
                                               "type": "string"
@@ -5366,19 +5116,7 @@
                                             {
                                               "additionalProperties": false,
                                               "properties": {
-                                                "notification_reminder_frequency": {
-                                                  "anyOf": [
-                                                    {
-                                                      "minimum": 0,
-                                                      "type": "integer"
-                                                    },
-                                                    {
-                                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                      "type": "string"
-                                                    }
-                                                  ]
-                                                },
-                                                "notification_reminders_enabled": {
+                                                "enabled": {
                                                   "anyOf": [
                                                     {
                                                       "type": "boolean"
@@ -5388,6 +5126,19 @@
                                                       "type": "string"
                                                     }
                                                   ]
+                                                },
+                                                "frequency": {
+                                                  "anyOf": [
+                                                    {
+                                                      "minimum": 0,
+                                                      "type": "integer"
+                                                    },
+                                                    {
+                                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                                      "type": "string"
+                                                    }
+                                                  ],
+                                                  "description": "Days between reminders."
                                                 }
                                               },
                                               "propertyNames": {
@@ -5399,6 +5150,28 @@
                                             },
                                             {
                                               "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                              "type": "string"
+                                            }
+                                          ]
+                                        },
+                                        "subject": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                              "type": "string"
+                                            }
+                                          ]
+                                        },
+                                        "type": {
+                                          "anyOf": [
+                                            {
+                                              "type": "string"
+                                            },
+                                            {
+                                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                                               "type": "string"
                                             }
                                           ]
@@ -5428,39 +5201,18 @@
                                     }
                                   ]
                                 },
-                                "self_service_icon": {
+                                "self_service_icon_id": {
                                   "anyOf": [
                                     {
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "id": {
-                                          "anyOf": [
-                                            {
-                                              "minimum": 1,
-                                              "type": "integer"
-                                            },
-                                            {
-                                              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                              "type": "string"
-                                            }
-                                          ]
-                                        }
-                                      },
-                                      "propertyNames": {
-                                        "not": {
-                                          "pattern": "\\{\\{"
-                                        }
-                                      },
-                                      "required": [
-                                        "id"
-                                      ],
-                                      "type": "object"
+                                      "minimum": 1,
+                                      "type": "integer"
                                     },
                                     {
                                       "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                                       "type": "string"
                                     }
-                                  ]
+                                  ],
+                                  "description": "ID of an icon uploaded to Jamf; icons have no unique name."
                                 }
                               },
                               "propertyNames": {
@@ -5488,21 +5240,10 @@
                       "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                       "type": "string"
                     }
-                  ]
+                  ],
+                  "description": "Patch policy found by name within the title, where the name defaults to the software name. It is updated in place, or created disabled and unscoped before the declared settings are applied."
                 },
-                "title_configuration_id": {
-                  "anyOf": [
-                    {
-                      "pattern": "^[1-9][0-9]*$",
-                      "type": "string"
-                    },
-                    {
-                      "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                      "type": "string"
-                    }
-                  ]
-                },
-                "version": {
+                "title": {
                   "anyOf": [
                     {
                       "minLength": 1,
@@ -5512,7 +5253,8 @@
                       "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                       "type": "string"
                     }
-                  ]
+                  ],
+                  "description": "Display name of an existing patch software title. It must match exactly one title, and the title must define the software's managed version."
                 }
               },
               "propertyNames": {
@@ -5521,8 +5263,7 @@
                 }
               },
               "required": [
-                "title_configuration_id",
-                "version"
+                "title"
               ],
               "type": "object"
             },
@@ -5531,7 +5272,7 @@
               "type": "string"
             }
           ],
-          "description": "Associate the package with an exact version in an existing patch title, replacing that version's package and keeping other versions. An optional native patch policy is found by id, or by name within the title, where the name defaults to the software name; it is updated in place, or created disabled and unscoped before supplied settings are applied. Omitted fields are left unchanged and supplied scope lists replace their collections. Without patch, title associations and policies are left as they are."
+          "description": "Associate the package with the software's managed version in an existing patch title, replacing that version's package and keeping other versions, and optionally maintain a patch policy. Titles, policies and scope objects are named exactly as in Jamf, and each name must match exactly one object. Omitted fields are left unchanged and supplied scope lists replace their collections. Without patch, title associations and policies are left as they are."
         },
         "priority": {
           "anyOf": [
@@ -5543,9 +5284,9 @@
               "type": "string"
             }
           ],
-          "description": "Native package installation priority. Defaults to 10 when creating a package."
+          "description": "Installation priority. Defaults to 10 when creating a package."
         },
-        "rebootRequired": {
+        "reboot_required": {
           "anyOf": [
             {
               "type": "boolean"
@@ -5555,7 +5296,7 @@
               "type": "string"
             }
           ],
-          "description": "Native package restart requirement. Explicit false is managed."
+          "description": "Require a restart after installation. Explicit false is managed."
         },
         "retention": {
           "anyOf": [
@@ -5593,7 +5334,7 @@
           ],
           "description": "Keep the current package and the N-1 newest others carrying this software's identity marker, ordered by numeric package ID, and delete the rest. A package that a policy, PreStage or patch title still references is kept, and nothing is deleted while those references cannot be read."
         },
-        "suppressEula": {
+        "suppress_eula": {
           "anyOf": [
             {
               "type": "boolean"
@@ -5603,9 +5344,9 @@
               "type": "string"
             }
           ],
-          "description": "Native suppressEula package option. Explicit false is managed."
+          "description": "Jamf's suppress EULA package option. Explicit false is managed."
         },
-        "suppressFromDock": {
+        "suppress_from_dock": {
           "anyOf": [
             {
               "type": "boolean"
@@ -5615,9 +5356,9 @@
               "type": "string"
             }
           ],
-          "description": "Native suppressFromDock package option. Explicit false is managed."
+          "description": "Jamf's suppress from Dock package option. Explicit false is managed."
         },
-        "suppressRegistration": {
+        "suppress_registration": {
           "anyOf": [
             {
               "type": "boolean"
@@ -5627,9 +5368,9 @@
               "type": "string"
             }
           ],
-          "description": "Native suppressRegistration package option. Explicit false is managed."
+          "description": "Jamf's suppress registration package option. Explicit false is managed."
         },
-        "suppressUpdates": {
+        "suppress_updates": {
           "anyOf": [
             {
               "type": "boolean"
@@ -5639,7 +5380,7 @@
               "type": "string"
             }
           ],
-          "description": "Native suppressUpdates package option. Explicit false is managed."
+          "description": "Jamf's suppress updates package option. Explicit false is managed."
         }
       },
       "propertyNames": {

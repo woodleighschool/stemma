@@ -19,72 +19,108 @@ import (
 const titlePath = "/api/v3/patch-software-title-configurations"
 const policyPath = "/JSSResource/patchpolicies"
 
+// patchConfig declares patch deployment: an existing title, found by its
+// display name, and an optional patch policy. The version it deploys is the
+// software's managed version, which the title's definitions must contain.
 type patchConfig struct {
-	TitleConfigurationID string       `json:"title_configuration_id" jsonschema:"pattern=^[1-9][0-9]*$"`
-	Version              string       `json:"version" jsonschema:"minLength=1"`
-	Policy               *patchPolicy `json:"policy,omitempty"`
+	Title  string       `json:"title" jsonschema:"minLength=1" jsonschema_description:"Display name of an existing patch software title. It must match exactly one title, and the title must define the software's managed version."`
+	Policy *patchPolicy `json:"policy,omitempty" jsonschema_description:"Patch policy found by name within the title, where the name defaults to the software name. It is updated in place, or created disabled and unscoped before the declared settings are applied."`
+
+	// titleID, version and scope are the title, the prepared version and the
+	// scope object IDs, resolved against Jamf before planning.
+	titleID string
+	version string
+	scope   map[string][]string
 }
 
 type patchPolicy struct {
-	ID                 string             `json:"id,omitempty" jsonschema:"pattern=^[1-9][0-9]*$"`
-	Name               *string            `json:"name,omitempty"`
-	Enabled            *bool              `json:"enabled,omitempty"`
-	DistributionMethod *string            `json:"distribution_method,omitempty" jsonschema:"enum=automatically,enum=selfservice"`
-	AllowDowngrade     *bool              `json:"allow_downgrade,omitempty"`
-	PatchUnknown       *bool              `json:"patch_unknown,omitempty"`
-	Scope              *policyScope       `json:"scope,omitempty"`
-	UserInteraction    *policyInteraction `json:"user_interaction,omitempty"`
+	Name            *string            `json:"name,omitempty" jsonschema:"minLength=1" jsonschema_description:"Policy name within the title. Defaults to the software name."`
+	Enabled         *bool              `json:"enabled,omitempty"`
+	Distribution    *string            `json:"distribution,omitempty" jsonschema:"enum=automatic,enum=self_service" jsonschema_description:"Install automatically, or offer the update in Self Service."`
+	AllowDowngrade  *bool              `json:"allow_downgrade,omitempty"`
+	PatchUnknown    *bool              `json:"patch_unknown,omitempty" jsonschema_description:"Also patch computers with an unknown installed version."`
+	Scope           *policyScope       `json:"scope,omitempty" jsonschema_description:"Scope objects named exactly as in Jamf. Each name must match exactly one object, and supplied lists replace their collections."`
+	UserInteraction *policyInteraction `json:"user_interaction,omitempty"`
 }
 
-type policyObject struct {
-	ID int `json:"id" jsonschema:"minimum=1"`
-}
 type policyScope struct {
 	AllComputers   *bool              `json:"all_computers,omitempty"`
-	Computers      *[]policyObject    `json:"computers,omitempty"`
-	ComputerGroups *[]policyObject    `json:"computer_groups,omitempty"`
-	Buildings      *[]policyObject    `json:"buildings,omitempty"`
-	Departments    *[]policyObject    `json:"departments,omitempty"`
+	Computers      *[]string          `json:"computers,omitempty"`
+	ComputerGroups *[]string          `json:"computer_groups,omitempty"`
+	Buildings      *[]string          `json:"buildings,omitempty"`
+	Departments    *[]string          `json:"departments,omitempty"`
 	Limitations    *policyLimitations `json:"limitations,omitempty"`
 	Exclusions     *policyExclusions  `json:"exclusions,omitempty"`
 }
 type policyLimitations struct {
-	NetworkSegments *[]policyObject `json:"network_segments,omitempty"`
+	NetworkSegments *[]string `json:"network_segments,omitempty"`
 }
 type policyExclusions struct {
-	Computers       *[]policyObject `json:"computers,omitempty"`
-	ComputerGroups  *[]policyObject `json:"computer_groups,omitempty"`
-	Buildings       *[]policyObject `json:"buildings,omitempty"`
-	Departments     *[]policyObject `json:"departments,omitempty"`
-	NetworkSegments *[]policyObject `json:"network_segments,omitempty"`
+	Computers       *[]string `json:"computers,omitempty"`
+	ComputerGroups  *[]string `json:"computer_groups,omitempty"`
+	Buildings       *[]string `json:"buildings,omitempty"`
+	Departments     *[]string `json:"departments,omitempty"`
+	NetworkSegments *[]string `json:"network_segments,omitempty"`
 }
 type policyInteraction struct {
 	InstallButtonText      *string              `json:"install_button_text,omitempty"`
 	SelfServiceDescription *string              `json:"self_service_description,omitempty"`
-	SelfServiceIcon        *policyObject        `json:"self_service_icon,omitempty"`
+	SelfServiceIconID      *int                 `json:"self_service_icon_id,omitempty" jsonschema:"minimum=1" jsonschema_description:"ID of an icon uploaded to Jamf; icons have no unique name."`
 	Notifications          *policyNotifications `json:"notifications,omitempty"`
 	Deadlines              *policyDeadlines     `json:"deadlines,omitempty"`
 	GracePeriod            *policyGrace         `json:"grace_period,omitempty"`
 }
 type policyNotifications struct {
-	Enabled   *bool            `json:"notification_enabled,omitempty"`
-	Type      *string          `json:"notification_type,omitempty"`
-	Subject   *string          `json:"notification_subject,omitempty"`
-	Message   *string          `json:"notification_message,omitempty"`
+	Enabled   *bool            `json:"enabled,omitempty"`
+	Type      *string          `json:"type,omitempty"`
+	Subject   *string          `json:"subject,omitempty"`
+	Message   *string          `json:"message,omitempty"`
 	Reminders *policyReminders `json:"reminders,omitempty"`
 }
 type policyReminders struct {
-	Enabled   *bool `json:"notification_reminders_enabled,omitempty"`
-	Frequency *int  `json:"notification_reminder_frequency,omitempty" jsonschema:"minimum=0"`
+	Enabled   *bool `json:"enabled,omitempty"`
+	Frequency *int  `json:"frequency,omitempty" jsonschema:"minimum=0" jsonschema_description:"Days between reminders."`
 }
 type policyDeadlines struct {
-	Enabled *bool `json:"deadline_enabled,omitempty"`
-	Period  *int  `json:"deadline_period,omitempty" jsonschema:"minimum=0"`
+	Enabled *bool `json:"enabled,omitempty"`
+	Period  *int  `json:"period,omitempty" jsonschema:"minimum=0" jsonschema_description:"Days until the deadline."`
 }
 type policyGrace struct {
-	Duration *int    `json:"grace_period_duration,omitempty" jsonschema:"minimum=0"`
-	Subject  *string `json:"notification_center_subject,omitempty"`
+	Duration *int    `json:"duration,omitempty" jsonschema:"minimum=0" jsonschema_description:"Minutes before a forced restart."`
+	Subject  *string `json:"subject,omitempty"`
 	Message  *string `json:"message,omitempty"`
+}
+
+var distributions = map[string]string{"automatic": "automatically", "self_service": "selfservice"}
+
+// A scopeList is one scope collection and the kind of object its names select.
+type scopeList struct {
+	kind  string
+	names *[]string
+}
+
+// scopeLists returns the declared scope collections by their Classic API path.
+func (p *patchPolicy) scopeLists() map[string]scopeList {
+	lists := map[string]scopeList{}
+	s := p.Scope
+	if s == nil {
+		return lists
+	}
+	lists["computers"] = scopeList{"computer", s.Computers}
+	lists["computer_groups"] = scopeList{"computer group", s.ComputerGroups}
+	lists["buildings"] = scopeList{"building", s.Buildings}
+	lists["departments"] = scopeList{"department", s.Departments}
+	if l := s.Limitations; l != nil {
+		lists["limitations/network_segments"] = scopeList{"network segment", l.NetworkSegments}
+	}
+	if e := s.Exclusions; e != nil {
+		lists["exclusions/computers"] = scopeList{"computer", e.Computers}
+		lists["exclusions/computer_groups"] = scopeList{"computer group", e.ComputerGroups}
+		lists["exclusions/buildings"] = scopeList{"building", e.Buildings}
+		lists["exclusions/departments"] = scopeList{"department", e.Departments}
+		lists["exclusions/network_segments"] = scopeList{"network segment", e.NetworkSegments}
+	}
+	return lists
 }
 
 func decodePatch(metadata map[string]json.RawMessage) (*patchConfig, error) {
@@ -99,21 +135,54 @@ func decodePatch(metadata map[string]json.RawMessage) (*patchConfig, error) {
 	if err := strictDecode(data, &patch); err != nil {
 		return nil, fmt.Errorf("jamf patch: %w", err)
 	}
-	if !validID(patch.TitleConfigurationID) || strings.TrimSpace(patch.Version) == "" {
-		return nil, errors.New("jamf patch requires title_configuration_id and an exact version")
+	if strings.TrimSpace(patch.Title) == "" {
+		return nil, errors.New("jamf patch requires the title's display name")
 	}
 	if p := patch.Policy; p != nil {
-		if p.ID != "" && !validID(p.ID) {
-			return nil, errors.New("jamf patch policy id must be a positive numeric string")
-		}
 		if p.Name != nil && strings.TrimSpace(*p.Name) == "" {
 			return nil, errors.New("jamf patch policy name cannot be empty")
 		}
-		if p.DistributionMethod != nil && *p.DistributionMethod != "automatically" && *p.DistributionMethod != "selfservice" {
-			return nil, errors.New("jamf patch distribution_method must be automatically or selfservice")
+		if p.Distribution != nil && distributions[*p.Distribution] == "" {
+			return nil, errors.New("jamf patch distribution must be automatic or self_service")
+		}
+		for path, list := range p.scopeLists() {
+			if list.names != nil && slices.ContainsFunc(*list.names, func(name string) bool { return strings.TrimSpace(name) == "" }) {
+				return nil, fmt.Errorf("jamf patch scope %s names cannot be empty", path)
+			}
 		}
 	}
 	return &patch, nil
+}
+
+// resolvePatch finds the title and scope objects the declaration names and
+// takes the version the prepared installer supplies.
+func (c *client) resolvePatch(ctx context.Context, patch *patchConfig, version string) error {
+	if version == "" {
+		return errors.New("jamf patch needs the prepared installer's managed version; select an application")
+	}
+	id, err := c.titleID(ctx, patch.Title)
+	if err != nil {
+		return err
+	}
+	patch.titleID, patch.version, patch.scope = id, version, map[string][]string{}
+	if patch.Policy == nil {
+		return nil
+	}
+	for path, list := range patch.Policy.scopeLists() {
+		if list.names == nil {
+			continue
+		}
+		ids := make([]string, 0, len(*list.names))
+		for _, name := range slices.Compact(slices.Sorted(slices.Values(*list.names))) {
+			id, err := c.objectID(ctx, list.kind, name)
+			if err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		patch.scope[path] = ids
+	}
+	return nil
 }
 
 func validatePatchJSON(data json.RawMessage) error {
@@ -154,7 +223,7 @@ func (c *client) getTitle(ctx context.Context, id string) (*titles.ResourcePatch
 		return nil, err
 	}
 	if result == nil || result.ID != id {
-		return nil, errors.New("jamf title response does not match requested Config")
+		return nil, errors.New("jamf title response does not match requested ID")
 	}
 	fields, err := decodeObject(response.Bytes())
 	if err != nil {
@@ -180,7 +249,7 @@ func titlePackage(title *titles.ResourcePatchSoftwareTitleConfiguration, version
 	return found, nil
 }
 
-// policyName identifies the patch policy within its title Config.
+// policyName identifies the patch policy within its title.
 func policyName(patch *patchConfig, software string) string {
 	if patch.Policy.Name != nil {
 		return *patch.Policy.Name
@@ -191,18 +260,22 @@ func policyName(patch *patchConfig, software string) string {
 // planPatch validates the declared version and reports the association and
 // policy changes. packageID is empty while the package has yet to be created.
 func (c *client) planPatch(ctx context.Context, patch *patchConfig, packageID, software string, response *plugin.ReconcileResponse) error {
-	title, err := c.getTitle(ctx, patch.TitleConfigurationID)
+	title, err := c.getTitle(ctx, patch.titleID)
 	if err != nil {
 		return fmt.Errorf("jamf patch title: %w", err)
 	}
-	definitions, result, err := titles.NewPatchSoftwareTitleConfigurations(c.transport).GetDefinitionsByIDV3(ctx, patch.TitleConfigurationID, nil)
+	definitions, result, err := titles.NewPatchSoftwareTitleConfigurations(c.transport).GetDefinitionsByIDV3(ctx, patch.titleID, nil)
 	if err := requestError(ctx, result, err); err != nil {
 		return err
 	}
-	if definitions == nil || !slices.ContainsFunc(definitions.Results, func(d titles.ResourceDefinition) bool { return d.Version == patch.Version }) {
-		return errors.New("jamf patch title does not define the requested exact version")
+	if definitions == nil || !slices.ContainsFunc(definitions.Results, func(d titles.ResourceDefinition) bool { return d.Version == patch.version }) {
+		var available []titles.ResourceDefinition
+		if definitions != nil {
+			available = definitions.Results
+		}
+		return fmt.Errorf("jamf patch title %q has no definition for %s%s", patch.Title, patch.version, recentDefinitions(available))
 	}
-	linked, err := titlePackage(title, patch.Version)
+	linked, err := titlePackage(title, patch.version)
 	if err != nil {
 		return err
 	}
@@ -227,23 +300,23 @@ func (c *client) planPatch(ctx context.Context, patch *patchConfig, packageID, s
 	if policy == nil {
 		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "patch.policy", Action: "create", After: raw(name)})
 	} else if !containsXML(policy, desiredPolicy(patch, name, false)) {
-		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "patch.policy", Action: "update", After: raw(patch.Version)})
+		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "patch.policy", Action: "update", After: raw(patch.version)})
 	}
 	return nil
 }
 
 func (c *client) applyPatch(ctx context.Context, patch *patchConfig, packageID, software string) error {
-	title, err := c.getTitle(ctx, patch.TitleConfigurationID)
+	title, err := c.getTitle(ctx, patch.titleID)
 	if err != nil {
 		return err
 	}
-	linked, err := titlePackage(title, patch.Version)
+	linked, err := titlePackage(title, patch.version)
 	if err != nil {
 		return err
 	}
 	if linked != packageID {
-		links := slices.DeleteFunc(slices.Clone(title.Packages), func(p titles.SubsetPackage) bool { return p.Version == patch.Version })
-		links = append(links, titles.SubsetPackage{PackageID: packageID, Version: patch.Version})
+		links := slices.DeleteFunc(slices.Clone(title.Packages), func(p titles.SubsetPackage) bool { return p.Version == patch.version })
+		links = append(links, titles.SubsetPackage{PackageID: packageID, Version: patch.version})
 		if err := c.setTitlePackages(ctx, title.ID, links); err != nil {
 			return err
 		}
@@ -292,7 +365,7 @@ func (c *client) createPolicy(ctx context.Context, patch *patchConfig, name stri
 	if err != nil {
 		return "", nil, err
 	}
-	result, err := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationXML).SetHeader("Content-Type", constants.ApplicationXML).SetBody(body).DisableRetry().Post(policyPath + "/softwaretitleconfig/id/" + patch.TitleConfigurationID)
+	result, err := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationXML).SetHeader("Content-Type", constants.ApplicationXML).SetBody(body).DisableRetry().Post(policyPath + "/softwaretitleconfig/id/" + patch.titleID)
 	if createErr := requestError(ctx, result, err); createErr != nil {
 		// A lost response can hide a policy Jamf did create; its name finds it.
 		id, policy, err := c.observePolicy(ctx, patch, name)
@@ -370,27 +443,25 @@ func (c *client) listPatchPolicies(ctx context.Context, filter string) ([]patch_
 	return policies, nil
 }
 
-// observePolicy finds the policy by its declared ID, or by name within the
-// title Config. It returns a nil policy when that name is free.
+// observePolicy finds the policy by name within the title. It returns a nil
+// policy when that name is free.
 func (c *client) observePolicy(ctx context.Context, patch *patchConfig, name string) (string, *xmlNode, error) {
-	id := patch.Policy.ID
+	policies, err := c.listPatchPolicies(ctx, "softwareTitleConfigurationId=="+patch.titleID)
+	if err != nil {
+		return "", nil, err
+	}
+	id := ""
+	for _, p := range policies {
+		if p.SoftwareTitleConfigurationID != patch.titleID || p.PolicyName != name {
+			continue
+		}
+		if id != "" {
+			return "", nil, fmt.Errorf("multiple Jamf patch policies are named %q in patch title %q; policy names must be unique", name, patch.Title)
+		}
+		id = p.ID
+	}
 	if id == "" {
-		policies, err := c.listPatchPolicies(ctx, "softwareTitleConfigurationId=="+patch.TitleConfigurationID)
-		if err != nil {
-			return "", nil, err
-		}
-		for _, p := range policies {
-			if p.SoftwareTitleConfigurationID != patch.TitleConfigurationID || p.PolicyName != name {
-				continue
-			}
-			if id != "" {
-				return "", nil, fmt.Errorf("multiple Jamf patch policies are named %q in title Config %s; set patch.policy.id to select one", name, patch.TitleConfigurationID)
-			}
-			id = p.ID
-		}
-		if id == "" {
-			return "", nil, nil
-		}
+		return "", nil, nil
 	}
 	policy, err := c.getPolicy(ctx, id)
 	if err != nil {
@@ -399,8 +470,8 @@ func (c *client) observePolicy(ctx context.Context, patch *patchConfig, name str
 	if policy == nil {
 		return "", nil, fmt.Errorf("jamf patch policy %s does not exist", id)
 	}
-	if policy.value("software_title_configuration_id") != patch.TitleConfigurationID {
-		return "", nil, errors.New("jamf patch policy belongs to a different title Config")
+	if policy.value("software_title_configuration_id") != patch.titleID {
+		return "", nil, errors.New("jamf patch policy belongs to a different patch title")
 	}
 	return id, policy, nil
 }
@@ -481,7 +552,7 @@ func containsXML(actual, desired *xmlNode) bool {
 		return false
 	}
 	if desired.Replace {
-		return equalXML(actual, desired)
+		return sameItems(actual, desired)
 	}
 	if len(desired.Children) == 0 {
 		return actual.Text == desired.Text
@@ -494,23 +565,37 @@ func containsXML(actual, desired *xmlNode) bool {
 	}
 	return true
 }
-func equalXML(a, b *xmlNode) bool {
-	if a == nil || b == nil {
-		return a == b
+
+// sameItems reports whether a replaced collection holds exactly the desired
+// items in any order. Jamf returns more of each object than a declaration
+// sets, such as its name beside its ID, and can add a size element.
+func sameItems(actual, desired *xmlNode) bool {
+	item := strings.TrimSuffix(desired.XMLName.Local, "s")
+	var items []*xmlNode
+	for i := range actual.Children {
+		if actual.Children[i].XMLName.Local == item {
+			items = append(items, &actual.Children[i])
+		}
 	}
-	if a.XMLName.Local != b.XMLName.Local || len(a.Children) != len(b.Children) {
+	if len(items) != len(desired.Children) {
 		return false
 	}
-	if len(a.Children) == 0 {
-		return strings.TrimSpace(a.Text) == strings.TrimSpace(b.Text)
-	}
-	for i := range a.Children {
-		if !equalXML(&a.Children[i], &b.Children[i]) {
+	used := make([]bool, len(items))
+	for i := range desired.Children {
+		found := false
+		for j, candidate := range items {
+			if !used[j] && containsXML(candidate, &desired.Children[i]) {
+				used[j], found = true, true
+				break
+			}
+		}
+		if !found {
 			return false
 		}
 	}
 	return true
 }
+
 func mergeXML(current, desired *xmlNode) {
 	for _, wanted := range desired.Children {
 		old := current.child(wanted.XMLName.Local)
@@ -521,35 +606,118 @@ func mergeXML(current, desired *xmlNode) {
 		}
 	}
 }
+
+// desiredPolicy is the Classic API patch policy the declaration describes,
+// with scope objects as their resolved IDs. Creation fills the fields a new
+// policy needs: disabled, unscoped and distributed automatically.
 func desiredPolicy(patch *patchConfig, name string, create bool) *xmlNode {
-	fields, _ := decodeObject(raw(patch.Policy))
-	delete(fields, "id")
-	general := make(map[string]json.RawMessage)
-	for name, value := range fields {
-		if name != "scope" && name != "user_interaction" {
-			general[name] = value
-			delete(fields, name)
-		}
+	p := patch.Policy
+	general := map[string]any{"target_version": patch.version}
+	put(general, "name", p.Name)
+	put(general, "enabled", p.Enabled)
+	if p.Distribution != nil {
+		general["distribution_method"] = distributions[*p.Distribution]
 	}
-	general["target_version"] = raw(patch.Version)
+	put(general, "allow_downgrade", p.AllowDowngrade)
+	put(general, "patch_unknown", p.PatchUnknown)
+	policy := map[string]any{"general": general, "software_title_configuration_id": patch.titleID}
+	if p.Scope != nil {
+		scope := map[string]any{}
+		put(scope, "all_computers", p.Scope.AllComputers)
+		for path, list := range p.scopeLists() {
+			if list.names == nil {
+				continue
+			}
+			objects := make([]map[string]string, 0, len(patch.scope[path]))
+			for _, id := range patch.scope[path] {
+				objects = append(objects, map[string]string{"id": id})
+			}
+			target := scope
+			if group, key, nested := strings.Cut(path, "/"); nested {
+				if _, exists := scope[group]; !exists {
+					scope[group] = map[string]any{}
+				}
+				target, path = scope[group].(map[string]any), key
+			}
+			target[path] = objects
+		}
+		policy["scope"] = scope
+	}
+	if i := p.UserInteraction; i != nil {
+		interaction := map[string]any{}
+		put(interaction, "install_button_text", i.InstallButtonText)
+		put(interaction, "self_service_description", i.SelfServiceDescription)
+		if i.SelfServiceIconID != nil {
+			interaction["self_service_icon"] = map[string]int{"id": *i.SelfServiceIconID}
+		}
+		if n := i.Notifications; n != nil {
+			notifications := map[string]any{}
+			put(notifications, "notification_enabled", n.Enabled)
+			put(notifications, "notification_type", n.Type)
+			put(notifications, "notification_subject", n.Subject)
+			put(notifications, "notification_message", n.Message)
+			if r := n.Reminders; r != nil {
+				reminders := map[string]any{}
+				put(reminders, "notification_reminders_enabled", r.Enabled)
+				put(reminders, "notification_reminder_frequency", r.Frequency)
+				notifications["reminders"] = reminders
+			}
+			interaction["notifications"] = notifications
+		}
+		if d := i.Deadlines; d != nil {
+			deadlines := map[string]any{}
+			put(deadlines, "deadline_enabled", d.Enabled)
+			put(deadlines, "deadline_period", d.Period)
+			interaction["deadlines"] = deadlines
+		}
+		if g := i.GracePeriod; g != nil {
+			grace := map[string]any{}
+			put(grace, "grace_period_duration", g.Duration)
+			put(grace, "notification_center_subject", g.Subject)
+			put(grace, "message", g.Message)
+			interaction["grace_period"] = grace
+		}
+		policy["user_interaction"] = interaction
+	}
 	if create {
-		if _, ok := general["name"]; !ok {
-			general["name"] = raw(name)
+		if _, named := general["name"]; !named {
+			general["name"] = name
 		}
-		if _, ok := general["enabled"]; !ok {
-			general["enabled"] = raw(false)
+		if _, set := general["enabled"]; !set {
+			general["enabled"] = false
 		}
-		if _, ok := general["distribution_method"]; !ok {
-			general["distribution_method"] = raw("automatically")
+		if _, set := general["distribution_method"]; !set {
+			general["distribution_method"] = "automatically"
 		}
-		if _, ok := fields["scope"]; !ok {
-			fields["scope"] = raw(map[string]bool{"all_computers": false})
+		if _, scoped := policy["scope"]; !scoped {
+			policy["scope"] = map[string]bool{"all_computers": false}
 		}
 	}
-	fields["general"] = raw(general)
-	fields["software_title_configuration_id"] = raw(patch.TitleConfigurationID)
-	return jsonXML("patch_policy", raw(fields))
+	return jsonXML("patch_policy", raw(policy))
 }
+
+// put sets a declared value; an omitted one stays unmanaged.
+func put[T any](fields map[string]any, key string, value *T) {
+	if value != nil {
+		fields[key] = *value
+	}
+}
+
+// recentDefinitions names the newest definitions a title offers, for an error
+// about a version it lacks.
+func recentDefinitions(definitions []titles.ResourceDefinition) string {
+	if len(definitions) == 0 {
+		return ""
+	}
+	sorted := slices.Clone(definitions)
+	slices.SortStableFunc(sorted, func(a, b titles.ResourceDefinition) int { return strings.Compare(b.ReleaseDate, a.ReleaseDate) })
+	versions := make([]string, 0, 5)
+	for _, definition := range sorted[:min(5, len(sorted))] {
+		versions = append(versions, definition.Version)
+	}
+	return "; recent definitions: " + strings.Join(versions, ", ")
+}
+
 func jsonXML(name string, data json.RawMessage) *xmlNode {
 	n := &xmlNode{XMLName: xml.Name{Local: name}}
 	switch data[0] {
