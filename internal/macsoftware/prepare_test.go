@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/apple"
@@ -140,26 +141,43 @@ func TestDMGApplicationRetainsVendorBytes(t *testing.T) {
 	}
 }
 
-func TestDMGMetadataDoesNotExtract(t *testing.T) {
-	source := applicationFixture(t)
-	filename := filepath.Join(t.TempDir(), "Example.dmg")
+func TestPrepareRejectsUnrecognizedContainerFormat(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "download.bin")
+	testdiskimage.Write(t, filename, applicationFixture(t))
+	_, err := Prepare(t.Context(), Spec{}, Request{Input: plugin.Artifact{Path: filename, Filename: "download.bin"}, Workspace: t.TempDir()})
+	if err == nil {
+		t.Fatal("disk image was accepted as a scalar PKG")
+	}
+}
+
+func TestDMGFactsListEveryApplication(t *testing.T) {
+	fixture := filepath.Join(applicationFixture(t), "Example.app")
+	source := t.TempDir()
+	for _, name := range []string{"Suite/Example.app", "Suite/Other.app"} {
+		if err := os.CopyFS(filepath.Join(source, filepath.FromSlash(name)), os.DirFS(fixture)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	filename := filepath.Join(t.TempDir(), "Suite.dmg")
 	testdiskimage.Write(t, filename, source)
+	input := plugin.Artifact{Path: filename, Filename: "Suite.dmg", Format: "dmg"}
+	if _, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "Suite/Example.app, Suite/Other.app") {
+		t.Fatalf("ambiguous selection: %v", err)
+	}
 	workspace := t.TempDir()
-	selected, err := selectPayload(t.Context(), Spec{}, plugin.Artifact{Path: filename, Filename: "Example.dmg"}, workspace)
+	outputs, err := Prepare(t.Context(), Spec{Application: &Application{Path: "Suite/Example.app"}}, Request{Input: input, Workspace: workspace})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer selected.close()
-	facts, err := selected.inspect(t.Context())
-	if err != nil {
-		t.Fatal(err)
+	subjects := outputs["installer"].Facts.Subjects
+	if len(subjects) != 3 || subjects[0].SHA256 != outputs["installer"].SHA256 {
+		t.Fatalf("facts = %+v", subjects)
 	}
-	if len(facts.Subjects) != 1 || facts.Subjects[0].App.BundleID != "org.example.app" {
-		t.Fatalf("metadata: %+v", facts)
+	if subjects[1].ID != "Suite/Example.app" || subjects[1].InstalledPath != "/Applications/Example.app" || subjects[2].ID != "Suite/Other.app" || subjects[2].InstalledPath != "" || subjects[2].App == nil {
+		t.Fatalf("applications = %+v", subjects[1:])
 	}
-	entries, err := os.ReadDir(workspace)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("metadata inspection materialized payload: %v, %v", entries, err)
+	if entries, err := os.ReadDir(workspace); err != nil || len(entries) != 1 || entries[0].Name() != "Suite.dmg" {
+		t.Fatalf("inventory wrote to the workspace: %v, %v", entries, err)
 	}
 }
 
@@ -174,22 +192,31 @@ func TestDMGPackageIsPublishedAsALocalFile(t *testing.T) {
 	}
 	filename := filepath.Join(t.TempDir(), "Example.dmg")
 	testdiskimage.Write(t, filename, source)
-	workspace := t.TempDir()
-	outputs, err := Prepare(t.Context(), Spec{}, Request{Input: plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}, Workspace: workspace})
+	input := plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}
+	outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	installer := outputs["installer"]
 	hash := sha256.Sum256(data)
-	if installer.Format != "pkg" || installer.Filename != "Example.pkg" || installer.SHA256 != hex.EncodeToString(hash[:]) {
+	if installer.Format != "pkg" || installer.Filename != "Example.pkg" || installer.SHA256 != hex.EncodeToString(hash[:]) || installer.Facts.Subjects[0].SHA256 != installer.SHA256 {
 		t.Fatalf("installer = %+v", installer)
 	}
 	if published, err := os.ReadFile(installer.Path); err != nil || !bytes.Equal(published, data) {
 		t.Fatalf("published package differs from the image's: %v", err)
 	}
+	// The image holds no application, so the selector names one in the package.
+	outputs, err = Prepare(t.Context(), Spec{Application: &Application{Path: "Payload/SignedFixture.app"}}, Request{Input: input, Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var app plugin.Subject
+	if err := json.Unmarshal(outputs["installer"].Evidence["macos.application"], &app); err != nil || outputs["installer"].Format != "pkg" || app.InstalledPath != "/Applications/SignedFixture.app" {
+		t.Fatalf("application in package: %+v, %v", app, err)
+	}
 }
 
-func TestDMGSignatureVerifiesSelectedApplication(t *testing.T) {
+func TestDMGSignatureVerifiesInsideTheImage(t *testing.T) {
 	const signer = "apple:developer-id:SMLKBTR495"
 	for _, modified := range []bool{false, true} {
 		name := "valid"
@@ -255,6 +282,48 @@ func TestDMGSignatureVerifiesSelectedApplication(t *testing.T) {
 			}
 			if err := json.Unmarshal(derived["installer"].Evidence["signature"], &evidence); err != nil || evidence.Signer != signer {
 				t.Fatalf("derived evidence: %+v: %v", evidence, err)
+			}
+		})
+	}
+}
+
+func TestDMGSignatureVerifiesEveryApplication(t *testing.T) {
+	const signer = "apple:developer-id:SMLKBTR495"
+	root := t.TempDir()
+	for _, name := range []string{"Suite/Main.app", "Suite/Companion.app"} {
+		if err := os.CopyFS(filepath.Join(root, filepath.FromSlash(name)), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	signed := filepath.Join(t.TempDir(), "Signed.dmg")
+	testdiskimage.Write(t, signed, root)
+	spec := Spec{Application: &Application{Path: "Suite/Main.app"}, Signature: &signature.Policy{Signer: signer}}
+	outputs, err := Prepare(t.Context(), spec, Request{Input: plugin.Artifact{Path: signed, Filename: "Signed.dmg", Format: "dmg"}, Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var evidence signature.Result
+	if err := json.Unmarshal(outputs["installer"].Evidence["signature"], &evidence); err != nil || evidence.Signer != signer || evidence.Target != "Companion.app, Main.app" {
+		t.Fatalf("signature evidence: %+v, %v", evidence, err)
+	}
+	unsigned := filepath.Join(applicationFixture(t), "Example.app")
+	if err := os.CopyFS(filepath.Join(root, "Suite/Example.app"), os.DirFS(unsigned)); err != nil {
+		t.Fatal(err)
+	}
+	mixed := filepath.Join(t.TempDir(), "Mixed.dmg")
+	testdiskimage.Write(t, mixed, root)
+	input := plugin.Artifact{Path: mixed, Filename: "Mixed.dmg", Format: "dmg"}
+	for name, request := range map[string]Request{
+		"declared": {Input: input, Workspace: t.TempDir()},
+		"derived":  {Input: input, Workspace: t.TempDir(), DeriveSignature: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			spec := spec
+			if request.DeriveSignature {
+				spec.Signature = nil
+			}
+			if _, err := Prepare(t.Context(), spec, request); err == nil || !strings.Contains(err.Error(), "Suite/Example.app") {
+				t.Fatalf("unsigned companion accepted: %v", err)
 			}
 		})
 	}

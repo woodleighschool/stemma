@@ -59,8 +59,8 @@ func TestWriteApplicationPreservesTheBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = image.Close() }()
-	if selected, err := image.Select(t.Context(), ""); err != nil || selected != "Example.app" {
-		t.Fatalf("selected %q: %v", selected, err)
+	if info, err := fs.Stat(image, "Example.app"); err != nil || !info.IsDir() {
+		t.Fatalf("bundle missing from the image: %v", err)
 	}
 	if entries, err := image.ReadDir("."); err != nil || len(entries) != 1 {
 		t.Fatalf("volume root holds more than the bundle: %v, %v", entries, err)

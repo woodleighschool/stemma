@@ -56,7 +56,7 @@ func TestExtractApp(t *testing.T) {
 		}},
 	)
 	destination := filepath.Join(t.TempDir(), "extracted")
-	selected, err := Extract(t.Context(), image, destination, "", nil)
+	selected, err := Extract(t.Context(), image, destination, "Fixture.app", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestExtractKeepsNamedLeaves(t *testing.T) {
 		}},
 	)
 	keep := archive.Leaves{"Contents/Info.plist", "Contents/MacOS/fixture", "Contents/Resources/*.icns"}
-	selected, err := Extract(t.Context(), image, filepath.Join(t.TempDir(), "extracted"), "", keep)
+	selected, err := Extract(t.Context(), image, filepath.Join(t.TempDir(), "extracted"), "Fixture.app", keep)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,7 +199,7 @@ func TestExtractRejectsUnsafePaths(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			image := fixture(t, &hfsplus.Entry{Name: "Fixture.app", Mode: fs.ModeDir | 0o755, Children: test.entries})
 			destination := filepath.Join(t.TempDir(), "extracted")
-			_, err := Extract(t.Context(), image, destination, "", nil)
+			_, err := Extract(t.Context(), image, destination, "Fixture.app", nil)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error %v, want %q", err, test.want)
 			}
@@ -212,7 +212,7 @@ func TestExtractRejectsUnsafePaths(t *testing.T) {
 
 func TestExtractSelection(t *testing.T) {
 	image := fixture(t, &hfsplus.Entry{Name: "One.pkg", Mode: 0o644, Data: []byte("xar!one")}, &hfsplus.Entry{Name: "Two.pkg", Mode: 0o644, Data: []byte("xar!two")}, &hfsplus.Entry{Name: "Alias.pkg", Mode: fs.ModeSymlink | 0o777, Data: []byte("One.pkg")})
-	for _, test := range []struct{ selection, want string }{{"", "2 plausible payloads"}, {"../One.pkg", "unsafe"}, {"Alias.pkg", "symlink"}, {"Missing.pkg", "matched 0 entries"}} {
+	for _, test := range []struct{ selection, want string }{{"", "unsafe"}, {"../One.pkg", "unsafe"}, {"One*.pkg", "not exist"}, {"Alias.pkg", "symlink"}, {"Missing.pkg", "not exist"}} {
 		t.Run(test.selection, func(t *testing.T) {
 			_, err := Extract(t.Context(), image, filepath.Join(t.TempDir(), "extracted"), test.selection, nil)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
@@ -232,7 +232,7 @@ func TestExtractPreservesExistingDestinationAndCancellation(t *testing.T) {
 	if err := os.WriteFile(sentinel, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Extract(t.Context(), image, destination, "", nil); err == nil {
+	if _, err := Extract(t.Context(), image, destination, "Fixture.pkg", nil); err == nil {
 		t.Fatal("accepted existing destination")
 	}
 	if data, err := os.ReadFile(sentinel); err != nil || string(data) != "keep" {
@@ -240,7 +240,7 @@ func TestExtractPreservesExistingDestinationAndCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := Extract(ctx, image, filepath.Join(t.TempDir(), "extracted"), "", nil); !errors.Is(err, context.Canceled) {
+	if _, err := Extract(ctx, image, filepath.Join(t.TempDir(), "extracted"), "Fixture.pkg", nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled extract: %v", err)
 	}
 }
@@ -357,7 +357,7 @@ func TestSparseUnsegmentedImage(t *testing.T) {
 		blocks[0].Data = updated
 		footer.SectorCount += extra
 	})
-	if _, err := Extract(t.Context(), image, filepath.Join(t.TempDir(), "out"), "*.pkg", nil); err != nil {
+	if _, err := Extract(t.Context(), image, filepath.Join(t.TempDir(), "out"), "Fixture.pkg", nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -390,7 +390,7 @@ func TestAPFSInspectionCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	selected, err := Extract(t.Context(), image, filepath.Join(dir, "out"), "", nil)
+	selected, err := Extract(t.Context(), image, filepath.Join(dir, "out"), "Fixture.app", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

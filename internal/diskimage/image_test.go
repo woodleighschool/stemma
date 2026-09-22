@@ -105,9 +105,8 @@ func TestImageReadsSelectedChunks(t *testing.T) {
 						t.Fatal(err)
 					}
 					defer func() { _ = image.Close() }()
-					selected, err := image.Select(t.Context(), "")
-					if err != nil || selected != "Foo.app" {
-						t.Fatalf("selection %q: %v", selected, err)
+					if info, err := fs.Stat(image, "Foo.app"); err != nil || !info.IsDir() {
+						t.Fatalf("application lookup: %v", err)
 					}
 					if operation == "plist" {
 						got, err := fs.ReadFile(image, "Foo.app/Contents/Info.plist")
@@ -117,7 +116,7 @@ func TestImageReadsSelectedChunks(t *testing.T) {
 					}
 					if operation == "extract" {
 						destination := filepath.Join(t.TempDir(), "payload")
-						selected, err := image.Extract(t.Context(), destination, "", nil)
+						selected, err := image.Extract(t.Context(), destination, "Foo.app", nil)
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -151,7 +150,7 @@ func TestImageLZFSE(t *testing.T) {
 	if err := disk.WrapRawImageDMGFrom(compressed, source, source.Size(), "Apple_HFSX", &disk.EncodeOptions{Compression: disk.CompressionLZFSE}); err != nil {
 		t.Fatal(err)
 	}
-	selected, err := Extract(t.Context(), compressed, filepath.Join(t.TempDir(), "payload"), "", nil)
+	selected, err := Extract(t.Context(), compressed, filepath.Join(t.TempDir(), "payload"), "Fixture.pkg", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +173,7 @@ func TestImageReadBudgetAndCancellation(t *testing.T) {
 	}
 	defer func() { _ = image.Close() }()
 	cancel()
-	if _, err := image.Select(ctx, ""); !errors.Is(err, context.Canceled) {
-		t.Fatalf("selection after cancellation: %v", err)
+	if _, err := fs.ReadFile(image, "Fixture.pkg"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("read after cancellation: %v", err)
 	}
 }

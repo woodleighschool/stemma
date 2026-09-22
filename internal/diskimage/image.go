@@ -91,11 +91,6 @@ func (image *Image) Lstat(name string) (fs.FileInfo, error) {
 	return image.Stat(name)
 }
 
-// Select resolves an exact path or pattern, or discovers one unambiguous app/PKG.
-func (image *Image) Select(ctx context.Context, selection string) (string, error) {
-	return selectPayload(ctx, image, selection)
-}
-
 // Close releases the volume and source file.
 func (image *Image) Close() error {
 	image.closeVolume()

@@ -7,14 +7,15 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"encoding/xml"
 	"errors"
-	"io/fs"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 	"github.com/woodleighschool/stemma/plugin"
@@ -141,77 +142,58 @@ func TestReadRejectsMalformedClaimsAndKeepsShallowDMGIdentity(t *testing.T) {
 	}
 }
 
-func TestReadDMGPreservesPayloadProvenance(t *testing.T) {
-	for _, selection := range []string{"Applications/Fixture.app", "Installers/Vendor.pkg"} {
-		t.Run(selection, func(t *testing.T) {
-			source := t.TempDir()
-			payload := filepath.Join(source, filepath.FromSlash(selection))
-			if err := os.MkdirAll(filepath.Dir(payload), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			appBundle := filepath.Ext(selection) == ".app"
-			if appBundle {
-				if err := os.CopyFS(payload, os.DirFS("../apple/testdata/Fixture.app")); err != nil {
-					t.Fatal(err)
-				}
-			} else {
-				writeFixture(t, payload, readFixture(t, "../apple/testdata/fixture.pkg"))
-			}
-			name := filepath.Join(t.TempDir(), "vendor.dmg")
-			testdiskimage.Write(t, name, source)
-			data := readFixture(t, name)
-			facts, err := Read(t.Context(), name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			count := 4
-			if appBundle {
-				count = 2
-			}
-			if len(facts.Subjects) != count {
-				t.Fatalf("wrong DMG subjects: %+v", facts)
-			}
-			root, selected := facts.Subjects[0], facts.Subjects[1]
-			digest := sha256.Sum256(data)
-			if root.ID != "." || root.Path != "." || root.Parent != "" || root.Kind != "container" || root.SHA256 != hex.EncodeToString(digest[:]) || root.App != nil || root.Package != nil {
-				t.Fatalf("lost DMG container identity: %+v", root)
-			}
-			if selected.ID != selection || selected.Path != selection || selected.Parent != "." || selected.InstalledPath != "" {
-				t.Fatalf("lost payload transport path: %+v", selected)
-			}
-			if appBundle {
-				if selected.Kind != "app" || selected.App == nil || selected.App.Version != "1.2.3" || selected.App.Build != "42" {
-					t.Fatalf("lost DMG application facts: %+v", selected)
-				}
-			} else {
-				packageDigest := sha256.Sum256(readFixture(t, payload))
-				if selected.Kind != "container" || selected.SHA256 != hex.EncodeToString(packageDigest[:]) || selected.Package != nil {
-					t.Fatalf("lost nested PKG identity: %+v", selected)
-				}
-				receipt, app := facts.Subjects[2], facts.Subjects[3]
-				if receipt.ID != selection+"/PackageInfo" || receipt.Path != receipt.ID || receipt.Parent != selected.ID || receipt.Package == nil || receipt.Package.Version != "1.2.3" {
-					t.Fatalf("lost nested receipt provenance: %+v", receipt)
-				}
-				if app.ID != selection+"/Payload/SignedFixture.app" || app.Path != app.ID || app.Parent != receipt.ID || app.InstalledPath != "/Applications/SignedFixture.app" || app.App == nil || app.App.Build != "42" {
-					t.Fatalf("lost nested application provenance: %+v", app)
-				}
-			}
-			shallow, err := ReadMetadata(t.Context(), name)
-			if err != nil || len(shallow.Subjects) != 1 || !reflect.DeepEqual(shallow.Subjects[0], root) {
-				t.Fatalf("shallow read changed DMG identity: %+v, %v", shallow, err)
-			}
-			if !bytes.Equal(data, readFixture(t, name)) {
-				t.Fatal("inspection altered disk image")
-			}
-			renamed := filepath.Join(filepath.Dir(name), "download.bin")
-			if err := os.Rename(name, renamed); err != nil {
-				t.Fatal(err)
-			}
-			again, err := Read(t.Context(), renamed)
-			if err != nil || !reflect.DeepEqual(facts, again) {
-				t.Fatalf("DMG facts depend on download filename: %+v, %v", again, err)
-			}
-		})
+func TestReadDMGInventoriesApplicationsAndPackages(t *testing.T) {
+	source := t.TempDir()
+	for _, app := range []string{"SketchUp 2026/SketchUp.app", "SketchUp 2026/LayOut.app"} {
+		if err := os.CopyFS(filepath.Join(source, filepath.FromSlash(app)), os.DirFS("../apple/testdata/Fixture.app")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(source, "Installers"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, filepath.Join(source, "Installers/Vendor.pkg"), readFixture(t, "../apple/testdata/fixture.pkg"))
+	writeFixture(t, filepath.Join(source, "Read Me.txt"), []byte("not software"))
+	name := filepath.Join(t.TempDir(), "vendor.dmg")
+	testdiskimage.Write(t, name, source)
+	data := readFixture(t, name)
+	facts, err := Read(t.Context(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	want := []plugin.Subject{
+		{ID: ".", Path: ".", Kind: "container", SHA256: hex.EncodeToString(digest[:])},
+		{ID: "Installers/Vendor.pkg", Path: "Installers/Vendor.pkg", Parent: ".", Kind: "container"},
+		{ID: "SketchUp 2026/LayOut.app", Path: "SketchUp 2026/LayOut.app", Parent: ".", Kind: "app"},
+		{ID: "SketchUp 2026/SketchUp.app", Path: "SketchUp 2026/SketchUp.app", Parent: ".", Kind: "app"},
+	}
+	if len(facts.Subjects) != len(want) {
+		t.Fatalf("wrong DMG inventory: %+v", facts.Subjects)
+	}
+	for i, subject := range facts.Subjects {
+		if subject.Kind == "app" && (subject.App == nil || subject.App.Build != "42" || subject.InstalledPath != "") {
+			t.Fatalf("lost application facts: %+v", subject)
+		}
+		subject.App = nil
+		if !reflect.DeepEqual(subject, want[i]) {
+			t.Fatalf("subject %d = %+v, want %+v", i, subject, want[i])
+		}
+	}
+	shallow, err := ReadMetadata(t.Context(), name)
+	if err != nil || len(shallow.Subjects) != 1 || !reflect.DeepEqual(shallow.Subjects[0], facts.Subjects[0]) {
+		t.Fatalf("shallow read changed DMG identity: %+v, %v", shallow, err)
+	}
+	if !bytes.Equal(data, readFixture(t, name)) {
+		t.Fatal("inspection altered disk image")
+	}
+	renamed := filepath.Join(filepath.Dir(name), "download.bin")
+	if err := os.Rename(name, renamed); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Read(t.Context(), renamed)
+	if err != nil || !reflect.DeepEqual(facts, again) {
+		t.Fatalf("DMG facts depend on download filename: %+v, %v", again, err)
 	}
 }
 
@@ -225,24 +207,37 @@ func TestReadLocalTreeAndVersionlessFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(facts.Subjects) != 4 {
+	if len(facts.Subjects) != 2 || facts.Subjects[0].Kind != "directory" {
 		t.Fatalf("wrong local subjects: %+v", facts)
 	}
-	app, script := facts.Subjects[2], facts.Subjects[3]
-	if app.App == nil || app.Parent != "Payload" || app.Path != "Payload/Fixture.app" || app.InstalledPath != "" {
+	app := facts.Subjects[1]
+	if app.App == nil || app.Parent != "." || app.Path != "Payload/Fixture.app" || app.InstalledPath != "" {
 		t.Fatalf("local path became installed path: %+v", app)
-	}
-	if script.Kind != "file" || script.App != nil || script.Package != nil || script.MSI != nil || len(script.SHA256) != 64 {
-		t.Fatalf("script facts invented metadata: %+v", script)
 	}
 	shallow, err := ReadMetadata(t.Context(), root)
 	if err != nil || len(shallow.Subjects) != 1 {
 		t.Fatalf("shallow read scanned tree: %+v, %v", shallow, err)
 	}
+	script := filepath.Join(root, "postinstall")
+	file, err := Read(t.Context(), script)
+	if err != nil || len(file.Subjects) != 1 || file.Subjects[0].Kind != "file" || len(file.Subjects[0].SHA256) != 64 {
+		t.Fatalf("script facts invented metadata: %+v, %v", file, err)
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if _, err := Read(ctx, root); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation lost: %v", err)
+	}
+}
+
+func TestContentsBoundsApplicationMetadata(t *testing.T) {
+	metadata := []byte(`<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.app</string><key>CFBundleExecutable</key><string>example</string><key>CFBundleName</key><string>` + strings.Repeat("x", 4<<20-512) + `</string></dict></plist>`)
+	files := fstest.MapFS{}
+	for i := range 9 {
+		files[fmt.Sprintf("App%d.app/Contents/Info.plist", i)] = &fstest.MapFile{Data: metadata}
+	}
+	if _, err := Contents(t.Context(), files); err == nil || !strings.Contains(err.Error(), "metadata") {
+		t.Fatalf("unbounded application metadata: %v", err)
 	}
 }
 
@@ -259,40 +254,5 @@ func writeFixture(t *testing.T, name string, data []byte) {
 	t.Helper()
 	if err := os.WriteFile(name, data, 0600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestReadFSMatchesLocalPayload(t *testing.T) {
-	for _, name := range []string{"../apple/testdata/Fixture.app", "../apple/testdata/fixture.pkg"} {
-		t.Run(filepath.Base(name), func(t *testing.T) {
-			local, err := Read(t.Context(), name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			root, err := os.OpenRoot(filepath.Dir(name))
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() { _ = root.Close() }()
-			fsys, ok := root.FS().(fs.ReadLinkFS)
-			if !ok {
-				t.Fatal("directory filesystem does not report symlinks")
-			}
-			image, err := ReadFS(t.Context(), fsys, filepath.Base(name))
-			if err != nil {
-				t.Fatal(err)
-			}
-			want, err := json.Marshal(local)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := json.Marshal(image)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(got, want) {
-				t.Fatalf("filesystem facts differ from local facts:\n%s\n%s", got, want)
-			}
-		})
 	}
 }

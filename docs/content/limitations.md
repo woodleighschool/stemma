@@ -29,7 +29,7 @@ bounds. Unsupported DMG layouts and codecs fail; not every image accepted by
 macOS is supported by the portable reader.
 
 DMG inspection reads the filesystem through compressed chunks, without creating a
-raw filesystem image. A selected application is verified inside the image, and
+raw filesystem image. Applications are verified inside the image, and
 icon rendering copies out only the files the renderer reads. Published vendor
 installers retain their original bytes. Leave enough working disk space for
 extracted content and destination preparation.

@@ -106,35 +106,8 @@ func (s *Source) At(ctx context.Context, name string) (Node, error) {
 	return node, nil
 }
 
-// Select finds one application or installer using the existing native selection
-// rules. Unlike At, an empty selection requests unambiguous payload discovery.
-func (s *Source) Select(ctx context.Context, selection string) (Node, error) {
-	if s.input.Tree && strings.EqualFold(filepath.Ext(s.input.Path), ".app") && (selection == "" || selection == ".") {
-		return s.whole(), nil
-	}
-	tree, local, err := s.contents(ctx)
-	if err != nil {
-		return Node{}, err
-	}
-	if tree == nil {
-		return s.whole(), nil
-	}
-	var name string
-	if s.image != nil {
-		name, err = s.image.Select(ctx, selection)
-	} else {
-		var selected string
-		selected, err = archive.Select(local, selection)
-		if err == nil {
-			name, err = filepath.Rel(local, selected)
-			name = filepath.ToSlash(name)
-		}
-	}
-	if err != nil {
-		return Node{}, err
-	}
-	return s.At(ctx, name)
-}
+// Artifact returns the leased input.
+func (s *Source) Artifact() plugin.Artifact { return s.input }
 
 func (s *Source) IsImage() bool     { return s.image != nil }
 func (s *Source) Traversable() bool { return s.input.Tree || s.isImage() || isArchive(s.input) }

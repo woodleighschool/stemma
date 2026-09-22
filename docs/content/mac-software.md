@@ -68,8 +68,9 @@ carries no signature of its own.
 
 ## Select an application once
 
-If inspection finds one application, it can be selected automatically. If it finds
-several, select by `application.path` or `application.bundle_id`:
+Inspection lists every application and package in the installer. If it finds one
+application, it can be selected automatically. If it finds several, select by
+`application.path` or `application.bundle_id`:
 
 ```yaml
 application:
@@ -78,7 +79,8 @@ application:
 
 The selection supplies coherent version, bundle and supported icon evidence to
 destinations. A helper application should not accidentally become the version or
-detection source for the main application.
+detection source for the main application. The other applications stay in the
+published facts.
 
 Archive paths and endpoint paths are different:
 
@@ -100,8 +102,9 @@ endpoint path. Keep that path consistent with the vendor installer.
 
 ## Select a nested installer
 
-A driver download such as Wacom can contain a PKG inside a DMG. When there are
-multiple plausible payloads, select the installer by its archive-relative path:
+A driver download such as Wacom can contain a PKG inside a DMG. When the image or
+archive holds more than one application or package, select the installer by its
+archive-relative path:
 
 ```yaml
 spec:
@@ -116,7 +119,9 @@ spec:
 
 Use the name present in your download. `package_path` also accepts a glob, but it
 must identify exactly one package. This selects and extracts the vendor installer;
-it does not reconstruct its payload or run its scripts.
+it does not reconstruct its payload or run its scripts. `application` then selects
+within the extracted package, as it does when an image holds a single package and
+no application matches.
 
 Some packages install a staging helper which later downloads the real application.
 Their contents cannot prove the eventual installed application. Leave
@@ -166,12 +171,13 @@ signature:
 `stemma signature MacSoftware/<name>` derives the value from the acquired source,
 verifying it first, and prints this fragment to paste. The comment is display
 information only. The vendor PKG is verified when that is what Stemma publishes
-(a PKG source or `package_path`); otherwise the selected application is, whether it
-sits in the vendor's DMG or goes into a new one:
+(a PKG source or `package_path`). A vendor DMG has every application verified,
+except those inside another application, which are covered by its signature; an
+application that goes into a new DMG is verified on its own. Verification covers
 every architecture's code, Info.plist, the resource envelope, symlinks and nested
 code by its exact recorded cdhash, chained to Apple's roots at the signature's
-trusted timestamp. A different team fails preparation until the document is
-updated. Notarisation and Gatekeeper policy are not assessed. See
+trusted timestamp. A different team on any of them fails preparation until the
+document is updated. Notarisation and Gatekeeper policy are not assessed. See
 [signature limits](limitations.md#signatures).
 
 ## Icons

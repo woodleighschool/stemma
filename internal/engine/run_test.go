@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -581,7 +582,7 @@ spec:
 		t.Fatal(err)
 	}
 	defer func() { _ = published.Close() }()
-	if selected, err := published.Select(t.Context(), ""); err != nil || selected != "WoodSweep.app" {
-		t.Fatalf("published image holds %q: %v", selected, err)
+	if info, err := fs.Stat(published, "WoodSweep.app"); err != nil || !info.IsDir() {
+		t.Fatalf("published image lacks the application: %v", err)
 	}
 }

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestRejectUnsafeAndAmbiguousArchives(t *testing.T) {
+func TestRejectUnsafeArchives(t *testing.T) {
 	for name, entries := range map[string][]string{
 		"traversal": {"../escape"}, "absolute": {"/escape"},
 		"duplicate": {"app.exe", "app.exe"}, "case": {"App.exe", "app.exe"},
@@ -31,16 +31,6 @@ func TestRejectUnsafeAndAmbiguousArchives(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(out, "__MACOSX")); !os.IsNotExist(err) {
 		t.Fatal("AppleDouble sidecar extracted")
-	}
-	if _, err := Select(out, ""); err == nil {
-		t.Fatal("silently chose ambiguous payload")
-	}
-	selected, err := Select(out, "two.exe")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if filepath.Base(selected) != "two.exe" {
-		t.Fatal(selected)
 	}
 }
 

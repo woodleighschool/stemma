@@ -41,7 +41,7 @@ substitutions inside script text remain shell syntax.
 | Context    | Contents                                                                                  | Available when                                |
 | ---------- | ----------------------------------------------------------------------------------------- | --------------------------------------------- |
 | `env`      | Referenced process environment values                                                     | Loading, preparation and destination metadata |
-| `facts`    | Selected inspection subjects, with their native `app`, `package` or other evidence fields | After software preparation                    |
+| `facts`    | Inspected subjects by path or selection name, with their `app`, `package` or other fields | After software preparation                    |
 | `evidence` | Namespaced metadata supplied with the prepared artifact                                   | Destination metadata                          |
 | `inputs`   | Named builder inputs: `version`, `filename`, `sha256`, `size`, `format` and `evidence`    | Builder preparation                           |
 

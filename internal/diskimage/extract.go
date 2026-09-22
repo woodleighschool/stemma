@@ -29,9 +29,8 @@ import (
 const maxBytes int64 = 16 << 30
 const maxEntries = 100000
 
-// Extract writes the selected app or flat PKG under a new destination directory,
-// returning its path. An empty selection requires one unambiguous payload.
-// keep names the files of a selected app to write, relative to it, and nil
+// Extract writes the app or flat PKG at an exact path in the image under a new
+// destination directory, returning its path. keep names the files of a selected app to write, relative to it, and nil
 // writes them all; only directories leading to a kept file are listed.
 // Partial output is removed on failure. Images are read without mounting them.
 //
@@ -47,13 +46,12 @@ func Extract(ctx context.Context, input, destination, selection string, keep arc
 	return image.Extract(ctx, destination, selection, keep)
 }
 
-// Extract copies a selected payload from the open image into a new directory.
+// Extract copies a payload from the open image into a new directory.
 func (image *Image) Extract(ctx context.Context, destination, selection string, keep archive.Leaves) (result string, err error) {
 	if err := keep.Validate(); err != nil {
 		return "", err
 	}
-	selection, err = image.Select(ctx, selection)
-	if err != nil {
+	if err := payloadPath(image, selection); err != nil {
 		return "", err
 	}
 	if err := os.Mkdir(destination, 0o700); err != nil {
@@ -192,77 +190,39 @@ func hostName(name string) (string, error) {
 	return local, nil
 }
 
-func selectPayload(ctx context.Context, volume filesystem, selection string) (string, error) {
-	if selection == "" {
-		var candidates []string
-		count := 0
-		err := fs.WalkDir(volume, ".", func(name string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			count++
-			if count > maxEntries {
-				return errors.New("filesystem exceeds entry limit")
-			}
-			if entry.Type()&fs.ModeSymlink != 0 {
-				return nil
-			}
-			ext := strings.ToLower(path.Ext(name))
-			if ext == ".app" && entry.IsDir() {
-				candidates = append(candidates, name)
-				return fs.SkipDir
-			}
-			if ext == ".pkg" && entry.Type().IsRegular() {
-				candidates = append(candidates, name)
-			}
-			return nil
-		})
-		if err != nil {
-			return "", err
-		}
-		if len(candidates) != 1 {
-			return "", fmt.Errorf("disk image has %d plausible payloads; set select to an exact relative path: %s", len(candidates), strings.Join(candidates, ", "))
-		}
-		selection = candidates[0]
-	}
-	var err error
-	selection, err = archive.MatchPath(volume, selection)
-	if err != nil {
-		return "", err
-	}
+// payloadPath requires selection to name an app bundle or flat PKG reached
+// without symlinks.
+func payloadPath(volume filesystem, selection string) error {
 	if err := safeName(selection); err != nil {
-		return "", err
+		return err
 	}
 	for prefix := selection; prefix != "."; prefix = path.Dir(prefix) {
 		info, err := volume.Stat(prefix)
 		if err != nil {
-			return "", err
+			return err
 		}
 		if info.Mode()&fs.ModeSymlink != 0 {
-			return "", errors.New("selected payload must not traverse a symlink")
+			return errors.New("selected payload must not traverse a symlink")
 		}
 		if prefix != selection && !info.IsDir() {
-			return "", errors.New("selected payload parent is not a directory")
+			return errors.New("selected payload parent is not a directory")
 		}
 	}
 	info, err := volume.Stat(selection)
 	if err != nil {
-		return "", err
+		return err
 	}
 	switch strings.ToLower(path.Ext(selection)) {
 	case ".app":
 		if info.IsDir() {
-			return selection, nil
+			return nil
 		}
 	case ".pkg":
 		if info.Mode().IsRegular() {
-			return selection, nil
+			return nil
 		}
 	}
-	return "", errors.New("disk image selection must name an app bundle or flat PKG")
+	return errors.New("disk image selection must name an app bundle or flat PKG")
 }
 
 type entry struct {

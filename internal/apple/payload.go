@@ -79,12 +79,6 @@ func inspectPackage(ctx context.Context, filePath string, contents bool) (Packag
 	return inspectPackageReader(ctx, f, info.Size(), contents)
 }
 
-// InspectPackageReader inspects receipts and applications in a sized flat package
-// without requiring the package to be materialized as a local file.
-func InspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64) (PackageFacts, error) {
-	return inspectPackageReader(ctx, reader, size, true)
-}
-
 func inspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64, contents bool) (PackageFacts, error) {
 	if size < 0 || size > maxEntrySize {
 		return PackageFacts{}, fmt.Errorf("PKG exceeds size limit")

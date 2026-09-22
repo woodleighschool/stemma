@@ -1269,7 +1269,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Select one application within the input to inspect, package and derive version or detection metadata."
+                  "description": "Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image."
                 },
                 "destinations": {
                   "additionalProperties": {
@@ -1351,7 +1351,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Require a complete Developer ID signature from the expected team before publication."
+                  "description": "Require a complete Developer ID signature from the expected team on the published PKG, or on every application in the published disk image, before publication."
                 },
                 "source": {
                   "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/Input",
@@ -1525,7 +1525,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Select one application within the input to inspect, package and derive version or detection metadata."
+                      "description": "Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image."
                     },
                     "destinations": {
                       "additionalProperties": {
@@ -1608,7 +1608,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Require a complete Developer ID signature from the expected team before publication."
+                      "description": "Require a complete Developer ID signature from the expected team on the published PKG, or on every application in the published disk image, before publication."
                     },
                     "source": {
                       "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/PartialInput",
