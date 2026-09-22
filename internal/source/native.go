@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"html"
 	"io"
 	"io/fs"
 	"mime"
@@ -24,6 +23,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
+	"golang.org/x/net/html"
 	"golang.org/x/net/http/httpguts"
 )
 
@@ -32,7 +32,7 @@ type nativeConfig struct {
 	Include            []string          `json:"include,omitempty" jsonschema_description:"Local tree globs using doublestar semantics. Each pattern must match at least one entry."`
 	Base               string            `json:"base,omitempty" jsonschema_description:"Local tree root, relative to the resource file. Defaults to its directory."`
 	URL                string            `json:"url,omitempty" jsonschema_description:"Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."`
-	Match              string            `json:"match,omitempty" jsonschema_description:"HTTP page regular expression whose full matches are URL references resolved against the final page URL. Must identify one distinct stable HTTP(S) download URL."`
+	Match              string            `json:"match,omitempty" jsonschema_description:"Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."`
 	Path               string            `json:"path,omitempty" jsonschema_description:"Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."`
 	Repository         string            `json:"repository,omitempty" jsonschema_description:"GitHub repository in owner/name form."`
 	Release            string            `json:"release,omitempty" jsonschema_description:"GitHub release tag, or latest. Omitted or empty values select latest."`
@@ -631,18 +631,26 @@ func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEnt
 	if res.Request != nil {
 		base = res.Request.URL
 	}
+	// HTML carries links in element attributes; comments, text and script
+	// content name URLs a browser never follows. Other pages are text.
+	searched := []string{string(data)}
+	if markup(res.Header.Get("Content-Type"), data) {
+		searched, base = attributes(string(data), base)
+	}
 	matches := map[string]bool{}
-	for _, address := range pattern.FindAllString(html.UnescapeString(string(data)), -1) {
-		reference, err := url.Parse(address)
-		if err != nil || address == "" {
-			return errors.New("download page match is not a valid URL reference")
+	for _, text := range searched {
+		for _, address := range pattern.FindAllString(text, -1) {
+			reference, err := url.Parse(address)
+			if err != nil || address == "" {
+				return errors.New("download page match is not a valid URL reference")
+			}
+			resolved := base.ResolveReference(reference)
+			address = resolved.String()
+			if err := validateHTTPURL(address); err != nil {
+				return fmt.Errorf("download page match must resolve to a stable HTTP(S) URL: %w", err)
+			}
+			matches[address] = true
 		}
-		resolved := base.ResolveReference(reference)
-		address = resolved.String()
-		if err := validateHTTPURL(address); err != nil {
-			return fmt.Errorf("download page match must resolve to a stable HTTP(S) URL: %w", err)
-		}
-		matches[address] = true
 	}
 	if len(matches) != 1 {
 		return fmt.Errorf("download page matched %d distinct artifact URLs; expected one", len(matches))
@@ -651,6 +659,50 @@ func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEnt
 		entry.URL = address
 	}
 	return nil
+}
+
+// markup reports whether a download page is HTML. Pages served without a
+// declared type are sniffed the way a browser sniffs them.
+func markup(declared string, page []byte) bool {
+	media, _, err := mime.ParseMediaType(declared)
+	if err != nil {
+		media, _, _ = mime.ParseMediaType(http.DetectContentType(page))
+	}
+	return media == "text/html" || media == "application/xhtml+xml"
+}
+
+// attributes reports the decoded attribute values of an HTML page's elements
+// and the base URL its references resolve against.
+func attributes(page string, base *url.URL) ([]string, *url.URL) {
+	var values []string
+	document, located := base, false
+	tokens := html.NewTokenizer(strings.NewReader(page))
+	for {
+		token := tokens.Next()
+		if token == html.ErrorToken {
+			return values, document
+		}
+		if token != html.StartTagToken && token != html.SelfClosingTagToken {
+			continue
+		}
+		name, more := tokens.TagName()
+		tag := string(name)
+		// Stemma runs no scripts, so noscript content is ordinary markup.
+		if tag == "noscript" {
+			tokens.NextIsNotRawText()
+		}
+		for more {
+			var key, value []byte
+			key, value, more = tokens.TagAttr()
+			values = append(values, string(value))
+			if located || tag != "base" || string(key) != "href" {
+				continue
+			}
+			if reference, err := url.Parse(strings.TrimSpace(string(value))); err == nil {
+				document, located = base.ResolveReference(reference), true
+			}
+		}
+	}
 }
 
 func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry) (err error) {

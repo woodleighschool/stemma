@@ -65,9 +65,11 @@ source:
 ```
 
 For an HTTP page containing a download link, use `resolver: http` with `url` and a
-`match` regular expression. The full match can be an absolute, protocol-relative, root-relative or path-relative
-URL. References resolve against the final discovery-page URL after redirects;
-equivalent references count as one URL. All matches must resolve to one distinct
+`match` regular expression. HTML pages match on element attribute values, so links
+in comments, page text and script content are ignored; a plain-text release feed
+matches on the response body. The full match can be an absolute, protocol-relative, root-relative or path-relative
+URL. References resolve against the page's base URL: the final URL after
+redirects, or the `base` element when the page declares one. Equivalent references count as one URL. All matches must resolve to one distinct
 stable HTTP(S) URL. The lock stores that absolute URL, so locked fetches do not
 repeat discovery or reapply the pattern. Credentials remain confined to the
 configured source origin. Discovery belongs to the resolver; the software kind still receives

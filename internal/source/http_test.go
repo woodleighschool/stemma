@@ -203,7 +203,10 @@ func TestHTTPDiscoveryResolvesURLReferences(t *testing.T) {
 					response.Header.Set("Location", "https://pages.example/releases/mac/index.html")
 				case "https://pages.example/releases/mac/index.html":
 					pages++
-					body = test.references
+					body = ""
+					for reference := range strings.SplitSeq(test.references, "\n") {
+						body += `<a href="` + reference + `">download</a>`
+					}
 				case test.want:
 					downloads++
 				default:

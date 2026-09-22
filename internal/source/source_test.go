@@ -88,6 +88,80 @@ func TestDownloadPagePinsUniqueURLAndColdRecovery(t *testing.T) {
 	}
 }
 
+func TestDownloadPageMatchesLinksNotSourceText(t *testing.T) {
+	for _, tc := range []struct{ name, contentType, body, pattern, want string }{
+		{
+			name:    "retired link in a comment",
+			body:    `<!-- <p>31-digit licences: <a href="https://cdn.example/files/App-5.4.0.dmg">Macintosh</a></p> --><a href="/files/App-6.3.0.dmg">Download</a>`,
+			pattern: `/files/App-[0-9.]+\.dmg`,
+			want:    "https://vendor.example/files/App-6.3.0.dmg",
+		},
+		{
+			name:    "download button attribute",
+			body:    `<a href="#" class="drivers__btn" data-download-link="https://cdn.example/drivers/mac/Driver_6.4.14-2.dmg" data-title="Driver">Download</a>`,
+			pattern: `https://cdn\.example/drivers/mac/Driver_[0-9]+(?:\.[0-9]+)*(?:-[0-9]+)?\.dmg`,
+			want:    "https://cdn.example/drivers/mac/Driver_6.4.14-2.dmg",
+		},
+		{
+			name:    "anchor without href",
+			body:    `<a class="dl-btn mode-disabled" data-url="https://cdn.example/files/20260805123505/Install_App_7_2_18.pkg_.zip" data-count="Free"><span>Download</span></a>`,
+			pattern: `https://cdn\.example/files/[^"\s<>]+/Install_App_7_[^"\s<>]+\.pkg_\.zip`,
+			want:    "https://cdn.example/files/20260805123505/Install_App_7_2_18.pkg_.zip",
+		},
+		{
+			name:    "script and page text",
+			body:    `<script>var mirror = "https://cdn.example/files/App-beta.pkg";</script><p>https://cdn.example/files/App-mirror.pkg</p><a href="https://cdn.example/files/App-1.0.pkg">Download</a>`,
+			pattern: `https://cdn\.example/files/App-[^"\s<>]+\.pkg`,
+			want:    "https://cdn.example/files/App-1.0.pkg",
+		},
+		{
+			name:    "base element",
+			body:    `<head><base href="https://cdn.example/files/"></head><body><a href="App-1.0.pkg">Download</a></body>`,
+			pattern: `App-[0-9.]+\.pkg`,
+			want:    "https://cdn.example/files/App-1.0.pkg",
+		},
+		{
+			name:    "scriptless fallback",
+			body:    `<noscript><a href="https://cdn.example/files/App-1.0.pkg">Download</a></noscript>`,
+			pattern: `https://cdn\.example/files/App-[0-9.]+\.pkg`,
+			want:    "https://cdn.example/files/App-1.0.pkg",
+		},
+		{
+			name:        "plain text release feed",
+			contentType: "text/plain",
+			body:        "Inspire\n3.4.16\nhttps://cdn.example/update/mac/App_Application_v3.4.16_MAC.dmg\n",
+			pattern:     `https://cdn\.example/update/mac/App_Application_v[0-9.]+_MAC\.dmg`,
+			want:        "https://cdn.example/update/mac/App_Application_v3.4.16_MAC.dmg",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store, err := cas.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := New(store, t.TempDir(), false)
+			m.Client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				body, header := "installer", http.Header{}
+				if request.URL.String() == "https://vendor.example/download" {
+					body = tc.body
+					if tc.contentType != "" {
+						header.Set("Content-Type", tc.contentType)
+					}
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: header}, nil
+			})
+			input := plugin.Input{Resolver: "http", Config: map[string]any{"url": "https://vendor.example/download", "match": tc.pattern, "filename": "App.pkg"}}
+			entry, err := m.Resolve(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := observation(t, entry).URL; got != tc.want {
+				t.Fatalf("discovered %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDownloadPageRejectsAmbiguousOrUnsafeMatches(t *testing.T) {
 	for _, tc := range []struct{ name, body, pattern, want string }{
 		{"missing", "no download", `https://cdn\.example/\S+`, "0 distinct"},
