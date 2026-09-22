@@ -22,10 +22,14 @@ import (
 // Build assembles a private layout from leased inputs and writes one unsigned
 // component package. Input files and packaged endpoint scripts are never run.
 func Build(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string, timestamp time.Time) (plugin.Artifact, error) {
-	sources := map[string]*contents.Source{}
-	defer closeSources(sources)
-	spec.Inputs = make(map[string]plugin.Input, len(inputs))
-	for name := range inputs {
+	sources := newSources(inputs, workspace)
+	defer sources.close()
+	return build(ctx, spec, sources, workspace, timestamp)
+}
+
+func build(ctx context.Context, spec Spec, sources *sources, workspace string, timestamp time.Time) (plugin.Artifact, error) {
+	spec.Inputs = make(map[string]plugin.Input, len(sources.inputs))
+	for name := range sources.inputs {
 		spec.Inputs[name] = plugin.Input{}
 	}
 	if err := spec.Validate(); err != nil {
@@ -66,9 +70,9 @@ func Build(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, wo
 			var err error
 			if area == "Payload" {
 				destination, _ := payloadPath(name)
-				err = stage.entry(ctx, destination, spec.Payload[name], inputs, sources, root)
+				err = stage.entry(ctx, destination, spec.Payload[name], sources)
 			} else {
-				err = stage.script(ctx, name, spec.Scripts[name], inputs, sources, root)
+				err = stage.script(ctx, name, spec.Scripts[name], sources)
 			}
 			if err != nil {
 				return plugin.Artifact{}, fmt.Errorf("%s %q: %w", strings.ToLower(area), name, err)
@@ -106,7 +110,7 @@ func describe(ctx context.Context, output string, spec Spec) (plugin.Artifact, e
 	return plugin.Artifact{Path: output, SHA256: hex.EncodeToString(hash.Sum(nil)), Size: size, Filename: spec.Filename(), Version: spec.Package.Version, Format: "pkg", Facts: plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: "package", Kind: "package", Package: &plugin.PackageFacts{Identifier: spec.Package.Identifier, Version: spec.Package.Version, InstallLocation: "/", HasPayload: len(spec.Payload) > 0}}}}}, nil
 }
 
-func (stage *layout) entry(ctx context.Context, name string, entry Entry, inputs map[string]plugin.Artifact, sources map[string]*contents.Source, workspace string) error {
+func (stage *layout) entry(ctx context.Context, name string, entry Entry, sources *sources) error {
 	mode, _ := entry.mode()
 	attrs := pkgbuild.EntryMetadata{Mode: mode, UID: entry.UID, GID: entry.GID}
 	if entry.Content != nil {
@@ -115,29 +119,20 @@ func (stage *layout) entry(ctx context.Context, name string, entry Entry, inputs
 	if entry.Input == "" {
 		return stage.directory(name, attrs)
 	}
-	return stage.input(ctx, name, entry.Input, entry.Path, inputs, sources, workspace, attrs)
+	return stage.input(ctx, name, entry.Input, entry.Path, sources, attrs)
 }
 
-func (stage *layout) script(ctx context.Context, name string, script Script, inputs map[string]plugin.Artifact, sources map[string]*contents.Source, workspace string) error {
+func (stage *layout) script(ctx context.Context, name string, script Script, sources *sources) error {
 	if script.Content != nil {
 		return stage.content(ctx, name, strings.NewReader(*script.Content), int64(len(*script.Content)), pkgbuild.EntryMetadata{}, 0o644)
 	}
-	return stage.input(ctx, name, script.Input, script.Path, inputs, sources, workspace, pkgbuild.EntryMetadata{})
+	return stage.input(ctx, name, script.Input, script.Path, sources, pkgbuild.EntryMetadata{})
 }
 
-func (stage *layout) input(ctx context.Context, name, inputName, selection string, inputs map[string]plugin.Artifact, sources map[string]*contents.Source, workspace string, attrs pkgbuild.EntryMetadata) error {
-	source := sources[inputName]
-	if source == nil {
-		input, ok := inputs[inputName]
-		if !ok {
-			return fmt.Errorf("unknown input %q", inputName)
-		}
-		var err error
-		source, err = contents.Open(input, workspace)
-		if err != nil {
-			return fmt.Errorf("input %q: %w", inputName, err)
-		}
-		sources[inputName] = source
+func (stage *layout) input(ctx context.Context, name, inputName, selection string, sources *sources, attrs pkgbuild.EntryMetadata) error {
+	source, err := sources.get(inputName)
+	if err != nil {
+		return err
 	}
 	node, err := source.At(ctx, selection)
 	if err != nil {
@@ -149,8 +144,35 @@ func (stage *layout) input(ctx context.Context, name, inputName, selection strin
 	return nil
 }
 
-func closeSources(sources map[string]*contents.Source) {
-	for _, source := range sources {
+// sources opens each leased input once, for inspection and composition.
+type sources struct {
+	inputs    map[string]plugin.Artifact
+	workspace string
+	open      map[string]*contents.Source
+}
+
+func newSources(inputs map[string]plugin.Artifact, workspace string) *sources {
+	return &sources{inputs: inputs, workspace: workspace, open: map[string]*contents.Source{}}
+}
+
+func (s *sources) get(name string) (*contents.Source, error) {
+	if source := s.open[name]; source != nil {
+		return source, nil
+	}
+	input, ok := s.inputs[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown input %q", name)
+	}
+	source, err := contents.Open(input, s.workspace)
+	if err != nil {
+		return nil, fmt.Errorf("input %q: %w", name, err)
+	}
+	s.open[name] = source
+	return source, nil
+}
+
+func (s *sources) close() {
+	for _, source := range s.open {
 		_ = source.Close()
 	}
 }

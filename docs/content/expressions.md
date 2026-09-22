@@ -38,12 +38,12 @@ substitutions inside script text remain shell syntax.
 
 ## Available data
 
-| Context    | Contents                                                                                  | Available when                                |
-| ---------- | ----------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `env`      | Referenced process environment values                                                     | Loading, preparation and destination metadata |
-| `facts`    | Inspected subjects by path or selection name, with their `app`, `package` or other fields | After software preparation                    |
-| `evidence` | Namespaced metadata supplied with the prepared artifact                                   | Destination metadata                          |
-| `inputs`   | Named builder inputs: `version`, `filename`, `sha256`, `size`, `format` and `evidence`    | Builder preparation                           |
+| Context    | Contents                                                                                     | Available when                                |
+| ---------- | -------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `env`      | Referenced process environment values                                                        | Loading, preparation and destination metadata |
+| `facts`    | Inspected subjects by path or selection name, with their `app`, `package` or other fields    | After software preparation                    |
+| `evidence` | Namespaced metadata supplied with the prepared artifact                                      | Destination metadata                          |
+| `inputs`   | Named builder inputs: `version`, `filename`, `sha256`, `size`, `format`, `evidence`, `facts` | Builder preparation                           |
 
 Names containing punctuation use brackets, such as
 `evidence['vendor.release'].version`. Builder inputs expose portable metadata,

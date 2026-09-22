@@ -224,3 +224,33 @@ func TestPrepareExpressionsCannotIntroduceInputReferences(t *testing.T) {
 		t.Fatal("native data map lost its content")
 	}
 }
+
+func TestPrepareReadsInputFactsOnlyWhenReferenced(t *testing.T) {
+	root, _ := prepareApplication(t, "Vendor Installer.app")
+	archive := filepath.Join(t.TempDir(), "vendor.zip")
+	testarchive.Zip(t, archive, root)
+	broken := filepath.Join(t.TempDir(), "notes.pkg")
+	if err := os.WriteFile(broken, []byte("not a package"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inputs := map[string]plugin.Artifact{
+		"vendor": {Path: archive, Filename: "vendor.zip", Format: "zip"},
+		"notes":  {Path: broken, Filename: "notes.pkg"},
+	}
+	config := map[string]any{
+		"package": map[string]any{"identifier": "org.example.wrapper", "version": "{{ inputs.vendor.facts['Vendor Installer.app'].app.version }}-1"},
+		"payload": map[string]any{"/Library/Notes/notes.pkg": map[string]any{"$input": "notes"}},
+		"scripts": map[string]any{"installer": map[string]any{"$input": "vendor", "path": "."}, "postinstall": "#!/bin/sh\nexit 0\n"},
+	}
+	artifact, err := Prepare(t.Context(), prepareRequest(t, config, inputs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifact.Version != "1.2.3-1" {
+		t.Fatalf("version = %q", artifact.Version)
+	}
+	config["package"].(map[string]any)["version"] = "{{ inputs.notes.facts['.'].sha256 }}"
+	if _, err := Prepare(t.Context(), prepareRequest(t, config, inputs)); err == nil || !strings.Contains(err.Error(), `input "notes"`) {
+		t.Fatalf("referenced facts of a malformed package were not read: %v", err)
+	}
+}

@@ -9,23 +9,37 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/artifactname"
 	"github.com/woodleighschool/stemma/internal/expression"
+	"github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// Prepare evaluates the authored layout with input metadata, then builds.
+// Prepare evaluates the package layout with input metadata, then builds.
 func Prepare(ctx context.Context, request plugin.ResourceRequest[json.RawMessage]) (plugin.Artifact, error) {
 	var raw map[string]any
 	if err := json.Unmarshal(request.Config, &raw); err != nil {
 		return plugin.Artifact{}, err
 	}
+	sources := newSources(request.Inputs, request.Workspace)
+	defer sources.close()
+	inspected, all, err := expression.Uses(raw, "inputs", "facts")
+	if err != nil {
+		return plugin.Artifact{}, err
+	}
 	// Only portable artifact data is visible; leased runner paths are not expressions.
 	inputs := map[string]any{}
-	for name, input := range request.Inputs {
+	for _, name := range slices.Sorted(maps.Keys(request.Inputs)) {
+		input := request.Inputs[name]
 		evidence := input.Evidence
 		if evidence == nil {
 			evidence = map[string]json.RawMessage{}
 		}
-		inputs[name] = map[string]any{"version": input.Version, "filename": input.Filename, "sha256": input.SHA256, "size": input.Size, "format": input.Format, "evidence": evidence}
+		fields := map[string]any{"version": input.Version, "filename": input.Filename, "sha256": input.SHA256, "size": input.Size, "format": input.Format, "evidence": evidence}
+		if all || slices.Contains(inspected, name) {
+			if fields["facts"], err = inputFacts(ctx, sources, name); err != nil {
+				return plugin.Artifact{}, fmt.Errorf("input %q: %w", name, err)
+			}
+		}
+		inputs[name] = fields
 	}
 	environment := request.Environment
 	if environment == nil {
@@ -65,16 +79,36 @@ func Prepare(ctx context.Context, request plugin.ResourceRequest[json.RawMessage
 	if spec.Package.Filename == "" {
 		spec.Package.Filename = artifactname.Filename(request.Identity.Name, spec.Package.Version, "", "pkg")
 	}
-	return Build(ctx, spec, request.Inputs, request.Workspace, request.Timestamp)
+	return build(ctx, spec, sources, request.Workspace, request.Timestamp)
+}
+
+// inputFacts inventories an input and keys its subjects by ID, as destination
+// facts are.
+func inputFacts(ctx context.Context, sources *sources, name string) (map[string]plugin.Subject, error) {
+	source, err := sources.get(name)
+	if err != nil {
+		return nil, err
+	}
+	done := plugin.Stage(ctx, "Inspecting input")
+	facts, err := inspect.Source(ctx, source)
+	done(err)
+	if err != nil {
+		return nil, err
+	}
+	subjects := make(map[string]plugin.Subject, len(facts.Subjects))
+	for _, subject := range facts.Subjects {
+		subjects[subject.ID] = subject
+	}
+	return subjects, nil
 }
 
 func validatePreparedReferences(raw, resolved map[string]any) error {
 	for _, area := range []string{"payload", "scripts"} {
-		authored, _ := raw[area].(map[string]any)
+		declared, _ := raw[area].(map[string]any)
 		entries, _ := resolved[area].(map[string]any)
 		for _, name := range slices.Sorted(maps.Keys(entries)) {
 			entry, _ := entries[name].(map[string]any)
-			original, _ := authored[name].(map[string]any)
+			original, _ := declared[name].(map[string]any)
 			if entry["$input"] != original["$input"] {
 				return fmt.Errorf("%s %q: $input references must be declared before preparation", area, name)
 			}

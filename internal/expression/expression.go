@@ -180,28 +180,7 @@ func Environment(value any) (map[string]string, error) {
 			if node.Kind() == ast.IdentKind && node.AsIdent() == "env" {
 				used[node.ID()] = true
 			}
-			var target ast.Expr
-			var key string
-			switch {
-			case node.Kind() == ast.SelectKind:
-				selection := node.AsSelect()
-				target, key = selection.Operand(), selection.FieldName()
-			case node.Kind() == ast.CallKind:
-				call := node.AsCall()
-				if !slices.Contains([]string{operators.Index, operators.OptIndex, operators.OptSelect}, call.FunctionName()) || len(call.Args()) != 2 {
-					return
-				}
-				args := call.Args()
-				if args[1].Kind() != ast.LiteralKind {
-					return
-				}
-				name, ok := args[1].AsLiteral().(types.String)
-				if !ok {
-					return
-				}
-				target, key = args[0], string(name)
-			}
-			if target != nil && target.Kind() == ast.IdentKind && target.AsIdent() == "env" {
+			if target, key, ok := selection(node); ok && target.Kind() == ast.IdentKind && target.AsIdent() == "env" {
 				bounded[target.ID()], keys[key] = true, true
 			}
 		}))
@@ -222,6 +201,68 @@ func Environment(value any) (map[string]string, error) {
 		}
 	}
 	return environment, nil
+}
+
+// Uses reports the keys of a context root whose field expressions read, such
+// as the inputs whose facts are used. Reading a key's whole value counts as
+// reading the field; a dynamic key or a use of the whole root reports all.
+func Uses(value any, root, field string) ([]string, bool, error) {
+	keys := map[string]bool{}
+	all := false
+	err := visitExpressions(value, func(part segment) {
+		used, bounded := map[int64]bool{}, map[int64]bool{}
+		selected, read := map[int64]string{}, map[int64]bool{}
+		ast.PostOrderVisit(part.tree.NativeRep().Expr(), ast.NewExprVisitor(func(node ast.Expr) {
+			if node.Kind() == ast.IdentKind && node.AsIdent() == root {
+				used[node.ID()] = true
+			}
+			target, key, ok := selection(node)
+			if !ok {
+				return
+			}
+			if target.Kind() == ast.IdentKind && target.AsIdent() == root {
+				bounded[target.ID()], selected[node.ID()] = true, key
+			} else if name, found := selected[target.ID()]; found {
+				read[target.ID()] = true
+				keys[name] = keys[name] || key == field
+			}
+		}))
+		for id := range used {
+			all = all || !bounded[id]
+		}
+		for id, name := range selected {
+			if !read[id] {
+				keys[name] = true
+			}
+		}
+	})
+	var names []string
+	for name, reads := range keys {
+		if reads {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names, all, err
+}
+
+// selection reports the operand and literal key of a field selection or
+// literal index.
+func selection(node ast.Expr) (ast.Expr, string, bool) {
+	if node.Kind() == ast.SelectKind {
+		selected := node.AsSelect()
+		return selected.Operand(), selected.FieldName(), true
+	}
+	if node.Kind() != ast.CallKind {
+		return nil, "", false
+	}
+	call := node.AsCall()
+	args := call.Args()
+	if !slices.Contains([]string{operators.Index, operators.OptIndex, operators.OptSelect}, call.FunctionName()) || len(args) != 2 || args[1].Kind() != ast.LiteralKind {
+		return nil, "", false
+	}
+	name, ok := args[1].AsLiteral().(types.String)
+	return args[0], string(name), ok
 }
 
 func visitExpressions(value any, visit func(segment)) error {

@@ -181,7 +181,16 @@ configuration scripts belong in the publishing document's `pkginfo`.
 
 The builder produces unsigned component PKGs. It does not sign packages, build
 distribution installers or execute an AutoPkg-style processor chain.
-`package.version` is declared directly or through an expression using environment values or input
-metadata. Vendor-specific discovery and other metadata extraction belong in a
-resolver or resource plugin. Set
-`package.filename` only when the default output name needs to be overridden.
+`package.version` is declared directly or through an expression using environment
+values or input metadata. An input's `facts` inventory the applications and
+packages it holds, keyed by path, as `MacSoftware` inspection does:
+
+```yaml
+package:
+  identifier: com.example.pkg.vendor
+  version: "{{ inputs.vendor.facts['Vendor Installer.app'].app.version }}-1"
+```
+
+An input is inspected only when an expression reads its facts. Vendor-specific
+discovery and other metadata extraction belong in a resolver or resource plugin.
+Set `package.filename` only when the default output name needs to be overridden.

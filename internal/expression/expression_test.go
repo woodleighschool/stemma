@@ -211,6 +211,24 @@ func TestReferencesTrackOnlyEnvironmentDependencies(t *testing.T) {
 	}
 }
 
+func TestUsesTracksSelectedFields(t *testing.T) {
+	value := map[string]any{
+		"version": "{{ inputs.vendor.facts['Vendor Installer.app'].app.version }}-1",
+		"name":    `{{ inputs["tools"].filename + inputs.assets.version }}`,
+		"escaped": `\{{ inputs.unused.facts }}`,
+		"whole":   "{{ inputs.?payload }}",
+	}
+	names, all, err := Uses(value, "inputs", "facts")
+	if err != nil || all || !reflect.DeepEqual(names, []string{"payload", "vendor"}) {
+		t.Fatalf("uses = %v, %v, %v", names, all, err)
+	}
+	for _, source := range []string{"{{ inputs }}", "{{ inputs[env.NAME].facts }}"} {
+		if _, all, err := Uses(source, "inputs", "facts"); err != nil || !all {
+			t.Fatalf("%s: dynamic use not reported: %v", source, err)
+		}
+	}
+}
+
 func TestExpressionLimits(t *testing.T) {
 	if err := Check("{{ '" + strings.Repeat("a", maxExpression) + "' }}"); err == nil {
 		t.Fatal("accepted oversized expression")
