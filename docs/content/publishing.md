@@ -1,7 +1,7 @@
 # Publishing software
 
 A destination connection belongs to the Project. Each software document supplies
-native settings under that connection's alias. An alias can be any useful name;
+destination settings under that connection's alias. An alias can be any useful name;
 its `operation` selects the implementation.
 
 Use `stemma plan` to read a destination and see proposed changes. `stemma apply`
@@ -133,30 +133,48 @@ examples. Authentication uses client credentials or an explicit access token.
 Graph application permission `DeviceManagementApps.ReadWrite.All` is needed to
 apply app changes; read-only planning needs app read access.
 
-The provider supports these native app types:
+Metadata names Intune concepts in Stemma's own fields, such as `display_name`,
+`install_experience.run_as` and `detection`; the schema lists them all. The
+software kind fixes the platform, so `type` follows the installer:
 
-| `type`  | Content                                                     |
-| ------- | ----------------------------------------------------------- |
-| `win32` | MSI, EXE or setup tree, prepared internally as `.intunewin` |
-| `dmg`   | A Mac DMG, uploaded as a `macOSDmgApp`                      |
-| `pkg`   | A Mac PKG, uploaded as a `macOSPkgApp`                      |
+| `type`  | Software        | Content                                                     |
+| ------- | --------------- | ----------------------------------------------------------- |
+| `win32` | WindowsSoftware | MSI, EXE or setup tree, prepared internally as `.intunewin` |
+| `dmg`   | MacSoftware     | A Mac DMG                                                   |
+| `pkg`   | MacSoftware     | A Mac PKG                                                   |
+| `lob`   | MacSoftware     | A signed flat PKG, as a line-of-business app                |
 
-Mac app metadata uses the current beta API. Native `macOSLobApp`, macOS scripts and
-fields outside the generated schema are unsupported.
+Assignments target an Entra group by object ID, an excluded group, all devices or
+all users:
 
-Detection derives from the artifact. `includedApps` lists the applications a DMG
-holds, or those a PKG installs under `/Applications`, with the selected application
-first. A PKG that installs no such application is detected by the receipts of its
-components with a payload. `primaryBundleId` and `primaryBundleVersion` describe
-the first entry. Set a field to replace its derived value; a component that
-installs only on some Macs needs `includedApps` set, because Stemma does not
-evaluate installer conditions. `displayName`, `description` and `publisher` are
-always set; the artifact never supplies them.
+```yaml
+assignments:
+  - intent: required
+    group: 11111111-2222-3333-4444-555555555555
+  - intent: available
+    all_users: true
+```
 
-`minimumSupportedOperatingSystem` selects the setting for the release of the
-software's effective [minimum macOS](mac-software.md#minimum-macos): its major
-version, or major and minor for 10.x, so 14.2 selects `v14_0` and the plan shows
-that mapping. A release Intune has no setting for fails publication.
+Detection uses application bundle identifiers and versions, with the selected
+application first. Unmanaged PKGs can detect applications outside `/Applications`
+and use package receipt identifiers and versions when no applications are present,
+including payloadless packages. Line-of-business apps require applications under
+`/Applications`. Set `included_apps` to replace the derived list when static
+inspection cannot determine the installed applications or an installer chooses
+them conditionally. `display_name`, `description` and `publisher` are always set;
+the artifact never supplies them.
+
+A PKG can also publish as a line-of-business app, so that is the one `type` to
+declare. Stemma checks what Intune requires before uploading it: a flat PKG with
+a payload, at most 2 GiB, with a verified Developer ID Installer signature, so
+the software needs `signature.signer`. `install_as_managed` also needs one
+component that installs one application under `/Applications`.
+
+The minimum OS is the setting for the release of the software's effective
+[minimum macOS](mac-software.md#minimum-macos): its major version, or major and
+minor for 10.x, so 14.2 selects macOS 14 and the plan shows that mapping. A
+release Intune has no setting for fails publication. macOS scripts are
+unsupported.
 
 ### Intune relationships
 
@@ -166,7 +184,6 @@ connection:
 ```yaml
 destinations:
   intune:
-    type: win32
     dependencies:
       - resource:
           kind: WindowsSoftware

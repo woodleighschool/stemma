@@ -8,68 +8,73 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// MetadataSchema describes the supported native Graph metadata and software adoption.
-// Creation requirements are checked after discovery, so existing apps can manage
-// only selected fields. Omission preserves a field; collections replace membership.
+// MetadataSchema describes Intune app metadata. The software kind fixes the
+// platform: Windows software is a Win32 app, and a Mac app follows its PKG or
+// DMG installer unless it declares a line-of-business app. Creation
+// requirements are checked after discovery, so an existing app can manage only
+// selected fields. Omission preserves a field; lists replace their collection.
 func MetadataSchema() *jsonschema.Schema {
-	variants := make([]*jsonschema.Schema, 0, 3)
-	for _, appType := range []string{win32Type, dmgType, pkgType} {
-		alias := map[string]string{win32Type: "win32", dmgType: "dmg", pkgType: "pkg"}[appType]
-		p := map[string]*jsonschema.Schema{
-			"type":                  {Const: alias, Description: "Short name for the native app subtype. Must agree with @odata.type if both are supplied."},
-			"@odata.type":           {Const: appType, Description: "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."},
-			"app_id":                {Type: "string", MinLength: new(uint64(1)), Description: "Pin this software to an existing Intune app, which must exist and must not carry another software's identity marker. Omit to find the app by the identity marker in its notes, or create one."},
-			"displayName":           {Type: "string", MaxLength: new(uint64(10000)), Description: "Company Portal display name. Required for creation."},
-			"description":           {Type: "string", MaxLength: new(uint64(10000)), Description: "Native app description. Required for creation."},
-			"publisher":             {Type: "string", MaxLength: new(uint64(10000)), Description: "Native publisher name. Required for creation."},
-			"privacyInformationUrl": {Type: "string", MaxLength: new(uint64(10000)), Description: "Publisher privacy information URL."},
-			"informationUrl":        {Type: "string", MaxLength: new(uint64(10000)), Description: "Publisher information URL."},
-			"owner":                 {Type: "string", MaxLength: new(uint64(10000)), Description: "App owner label."},
-			"developer":             {Type: "string", MaxLength: new(uint64(10000)), Description: "App developer label."},
-			"notes":                 {Type: "string", MaxLength: new(uint64(10000)), Description: "Administrator notes. A reserved marker line follows them: it identifies the app and records its published content, so it must stay intact."},
-			"isFeatured":            {Type: "boolean", Description: "Show the app as featured. Explicit false is managed."},
-			"assignments":           assignmentSchema(),
-			"retention":             objectSchema(map[string]*jsonschema.Schema{"keep": {Type: "integer", Minimum: "1", Description: "Keep the active content version and the N-1 newest other committed versions of this app, ordered by version number. Every other version is deleted, including uploads that never committed a file."}}, "keep"),
+	common := func() map[string]*jsonschema.Schema {
+		return map[string]*jsonschema.Schema{
+			"app_id":          {Type: "string", MinLength: new(uint64(1)), Description: "Pin this software to an existing Intune app, which must exist and must not carry another software's identity marker. Omit to find the app by the identity marker in its notes, or create one."},
+			"display_name":    textSchema("Company Portal name. Required for creation."),
+			"description":     textSchema("App description. Required for creation."),
+			"publisher":       textSchema("Publisher name. Required for creation."),
+			"developer":       textSchema("Developer name."),
+			"owner":           textSchema("Owner label."),
+			"notes":           textSchema("Administrator notes. A reserved marker line follows them: it identifies the app and records its published content, so it must stay intact."),
+			"information_url": textSchema("Publisher information URL."),
+			"privacy_url":     textSchema("Publisher privacy information URL."),
+			"featured":        {Type: "boolean", Description: "Show the app as featured. Explicit false is managed."},
+			"assignments":     assignmentSchema(),
+			"retention":       objectSchema(map[string]*jsonschema.Schema{"keep": {Type: "integer", Minimum: "1", Description: "Keep the active content version and the N-1 newest other committed versions of this app, ordered by version number. Every other version is deleted, including uploads that never committed a file."}}, "keep"),
 		}
-		if appType == win32Type {
-			p["content"] = objectSchema(map[string]*jsonschema.Schema{"setup_file": {Type: "string", MinLength: new(uint64(1)), Description: "Relative entrypoint inside the immutable setup tree. Defaults to the artifact entrypoint, or the filename for a single file; conflicting entries are rejected. All tree members are included in the provider-prepared Intune envelope."}}, "setup_file")
-			p["msiInformation"] = msiSchema()
-			p["dependencies"] = referencesSchema("auto_install", 99)
-			p["supersedes"] = referencesSchema("uninstall_previous", 9)
-			p["installCommandLine"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Silent Windows install command line. Selected MSI content defaults to msiexec /i with /qn /norestart; EXE switches and architecture-specific executable paths are explicit. Payloads and hooks are never executed during preparation."}
-			p["uninstallCommandLine"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Windows uninstall command line. Selected MSI content defaults to msiexec /x ProductCode /qn /norestart; EXE uninstall behavior is explicit."}
-			p["minimumSupportedWindowsRelease"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Native minimum Windows release, such as Windows11_23H2. Required for creation."}
-			p["allowedArchitectures"] = &jsonschema.Schema{Enum: []any{"x86", "x64", "arm64", nil}, Description: "Supported processor architecture; null clears it on an existing app. A non-null value is required for creation."}
-			for _, key := range []string{"minimumFreeDiskSpaceInMB", "minimumMemoryInMB", "minimumNumberOfProcessors", "minimumCpuSpeedInMHz"} {
-				p[key] = &jsonschema.Schema{Type: "integer", Minimum: "0", Maximum: "2147483647", Description: "Native minimum hardware requirement. Omit to leave unchanged."}
-			}
-			p["installExperience"] = objectSchema(map[string]*jsonschema.Schema{
-				"@odata.type":           {Const: "#microsoft.graph.win32LobAppInstallExperience"},
-				"runAsAccount":          enumSchema("Install as system or user. Required for creation.", "system", "user"),
-				"deviceRestartBehavior": enumSchema("Installer restart handling; omitted fields are preserved.", "basedOnReturnCode", "allow", "suppress", "force"),
-			})
-			p["rules"] = rulesSchema()
-			p["returnCodes"] = &jsonschema.Schema{Type: "array", Description: "Replace the return-code collection; an empty array clears it.", Items: objectSchema(map[string]*jsonschema.Schema{
-				"@odata.type": {Const: "#microsoft.graph.win32LobAppReturnCode"},
-				"returnCode":  {Type: "integer", Minimum: "-2147483648", Maximum: "2147483647"},
-				"type":        enumSchema("Native result classification.", "success", "softReboot", "hardReboot", "retry", "failed"),
-			}, "returnCode", "type")}
-		} else {
-			p["primaryBundleId"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Identifier of the first included app. Derived from the artifact; required for creation."}
-			p["primaryBundleVersion"] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: "Version of the first included app. Derived from the artifact; required for creation."}
-			p["ignoreVersionDetection"] = &jsonschema.Schema{Type: "boolean", Description: "Ignore installed app versions during detection. Explicit false is managed."}
-			p["includedApps"] = &jsonschema.Schema{Type: "array", MinItems: new(uint64(1)), MaxItems: new(uint64(500)), Description: "Complete collection of identifiers and versions that detect the installation. Derived from the applications a DMG holds, or those a PKG installs under /Applications, otherwise its package receipts, with the selected application first. Required for creation; identifiers must be unique.", Items: objectSchema(map[string]*jsonschema.Schema{
-				"@odata.type":   {Const: "#microsoft.graph.macOSIncludedApp"},
-				"bundleId":      {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleIdentifier or package receipt identifier."},
-				"bundleVersion": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleShortVersionString or package receipt version."},
-			}, "bundleId", "bundleVersion")}
-		}
-		variant := objectSchema(p)
-		variant.AnyOf = []*jsonschema.Schema{{Required: []string{"@odata.type"}}, {Required: []string{"type"}}}
-		variant.Title = appType
-		variants = append(variants, variant)
 	}
-	return &jsonschema.Schema{OneOf: variants, Description: "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG and PKG (beta). Sources are preserved; signing and installer building are separate software policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported."}
+	win32 := common()
+	win32["type"] = &jsonschema.Schema{Const: "win32", Description: "Windows software publishes a Win32 app, so this is the default."}
+	win32["content"] = objectSchema(map[string]*jsonschema.Schema{"setup_file": {Type: "string", MinLength: new(uint64(1)), Description: "Relative entrypoint inside the immutable setup tree. Defaults to the artifact entrypoint, or the filename for a single file; conflicting entries are rejected. All tree members are included in the provider-prepared Intune envelope."}}, "setup_file")
+	win32["msi"] = msiSchema()
+	win32["dependencies"] = referencesSchema("auto_install", 99)
+	win32["supersedes"] = referencesSchema("uninstall_previous", 9)
+	win32["install_command"] = textSchema("Silent Windows install command. Selected MSI content defaults to msiexec /i with /qn /norestart; EXE switches and architecture-specific executable paths are explicit. Payloads and hooks are never executed during preparation.")
+	win32["uninstall_command"] = textSchema("Windows uninstall command. Selected MSI content defaults to msiexec /x ProductCode /qn /norestart; EXE uninstall behavior is explicit.")
+	win32["minimum_windows_release"] = textSchema("Minimum Windows release, such as Windows11_23H2. Required for creation.")
+	win32["architecture"] = &jsonschema.Schema{Enum: []any{"x86", "x64", "arm64", nil}, Description: "Supported processor architecture; null clears it on an existing app. A non-null value is required for creation."}
+	for key, description := range map[string]string{
+		"minimum_disk_space_mb": "Minimum free disk space in MB.",
+		"minimum_memory_mb":     "Minimum memory in MB.",
+		"minimum_processors":    "Minimum number of processors.",
+		"minimum_cpu_speed_mhz": "Minimum CPU speed in MHz.",
+	} {
+		win32[key] = &jsonschema.Schema{Type: "integer", Minimum: "0", Maximum: "2147483647", Description: description + " Omit to leave unchanged."}
+	}
+	win32["install_experience"] = objectSchema(map[string]*jsonschema.Schema{
+		"run_as":  enumSchema("Install as system or user. Required for creation.", "system", "user"),
+		"restart": enumSchema("Installer restart handling; omitted fields are preserved.", "based_on_return_code", "allow", "suppress", "force"),
+	})
+	win32["detection"] = detectionSchema()
+	win32["return_codes"] = &jsonschema.Schema{Type: "array", Description: "Replace the return-code collection; an empty array clears it.", Items: objectSchema(map[string]*jsonschema.Schema{
+		"code": {Type: "integer", Minimum: "-2147483648", Maximum: "2147483647"},
+		"type": enumSchema("Result classification.", "success", "soft_reboot", "hard_reboot", "retry", "failed"),
+	}, "code", "type")}
+	mac := common()
+	mac["type"] = &jsonschema.Schema{Enum: []any{"pkg", "dmg"}, Description: "A Mac app follows its installer: pkg for a PKG and dmg for a disk image."}
+	mac["ignore_version_detection"] = &jsonschema.Schema{Type: "boolean", Description: "Ignore installed app versions during detection. Explicit false is managed."}
+	mac["included_apps"] = &jsonschema.Schema{Type: "array", MinItems: new(uint64(1)), MaxItems: new(uint64(500)), Description: "Identifiers and versions that detect the installation; the first identifies the app. Derived from applications, selected first, or receipts for an unmanaged PKG without applications, including payloadless packages. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique.", Items: objectSchema(map[string]*jsonschema.Schema{
+		"id":      {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application bundle identifier or unmanaged PKG receipt identifier."},
+		"version": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleShortVersionString or package receipt version."},
+	}, "id", "version")}
+	lob := common()
+	lob["type"] = &jsonschema.Schema{Const: "lob", Description: "Publish the signed PKG as a line-of-business app."}
+	lob["ignore_version_detection"], lob["included_apps"] = mac["ignore_version_detection"], mac["included_apps"]
+	lob["install_as_managed"] = &jsonschema.Schema{Type: "boolean", Description: "Install the app as managed on macOS 11 or later. The PKG must have one component that installs one application under /Applications."}
+	windows, macOS, lineOfBusiness := objectSchema(win32), objectSchema(mac), objectSchema(lob, "type")
+	windows.Title, macOS.Title, lineOfBusiness.Title = "Win32 app", "Mac app", "Mac line-of-business app"
+	return &jsonschema.Schema{AnyOf: []*jsonschema.Schema{windows, macOS, lineOfBusiness}, Description: "Intune app metadata. Windows software publishes a Win32 envelope; Mac software publishes its PKG or DMG, or a signed PKG as a line-of-business app. The minimum macOS derives from the software's minimum_os and its installer."}
+}
+
+func textSchema(description string) *jsonschema.Schema {
+	return &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000)), Description: description}
 }
 
 func referencesSchema(flag string, limit uint64) *jsonschema.Schema {
@@ -87,14 +92,16 @@ func referencesSchema(flag string, limit uint64) *jsonschema.Schema {
 
 func msiSchema() *jsonschema.Schema {
 	p := map[string]*jsonschema.Schema{
-		"@odata.type":    {Const: "#microsoft.graph.win32LobAppMsiInformation"},
-		"requiresReboot": {Type: "boolean"},
-		"packageType":    enumSchema("MSI installation scope.", "perMachine", "perUser", "dualPurpose"),
+		"requires_reboot": {Type: "boolean"},
+		"package_type":    enumSchema("MSI installation scope.", "per_machine", "per_user", "dual_purpose"),
+		"upgrade_code":    {AnyOf: []*jsonschema.Schema{textSchema(""), {Type: "null"}}},
 	}
-	for _, key := range []string{"productCode", "productVersion", "upgradeCode", "productName", "publisher"} {
-		p[key] = &jsonschema.Schema{Type: "string", MaxLength: new(uint64(10000))}
+	for _, key := range []string{"product_code", "product_version", "product_name", "publisher"} {
+		p[key] = textSchema("")
 	}
-	return objectSchema(p)
+	schema := objectSchema(p)
+	schema.Description = "MSI information. The selected setup MSI supplies it; declared fields override it."
+	return schema
 }
 
 func objectSchema(properties map[string]*jsonschema.Schema, required ...string) *jsonschema.Schema {
@@ -118,60 +125,63 @@ func enumSchema(description string, values ...string) *jsonschema.Schema {
 	}
 	return &jsonschema.Schema{Type: "string", Enum: valuesAny, Description: description}
 }
+
 func assignmentSchema() *jsonschema.Schema {
-	var targets []*jsonschema.Schema
-	for _, kind := range []string{"groupAssignmentTarget", "exclusionGroupAssignmentTarget", "allDevicesAssignmentTarget", "allLicensedUsersAssignmentTarget"} {
-		p := map[string]*jsonschema.Schema{"@odata.type": {Const: "#microsoft.graph." + kind}}
-		required := []string{"@odata.type"}
-		if kind == "groupAssignmentTarget" || kind == "exclusionGroupAssignmentTarget" {
-			p["groupId"] = &jsonschema.Schema{Type: "string", MinLength: new(uint64(1))}
-			required = append(required, "groupId")
-		}
-		targets = append(targets, objectSchema(p, required...))
-	}
-	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(1000)), Description: "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured.", Items: objectSchema(map[string]*jsonschema.Schema{
-		"@odata.type": {Const: "#microsoft.graph.mobileAppAssignment"},
-		"intent":      enumSchema("Native deployment intent.", "available", "required", "uninstall", "availableWithoutEnrollment"),
-		"target":      {OneOf: targets},
-	}, "intent", "target")}
+	item := objectSchema(map[string]*jsonschema.Schema{
+		"intent":        enumSchema("Deployment intent.", "required", "available", "uninstall", "available_without_enrollment"),
+		"group":         {Type: "string", MinLength: new(uint64(1)), Description: "Entra group object ID to target."},
+		"exclude_group": {Type: "string", MinLength: new(uint64(1)), Description: "Entra group object ID to exclude."},
+		"all_devices":   {Const: true, Description: "Target all devices."},
+		"all_users":     {Const: true, Description: "Target all licensed users."},
+	}, "intent")
+	item.OneOf = []*jsonschema.Schema{{Required: []string{"group"}}, {Required: []string{"exclude_group"}}, {Required: []string{"all_devices"}}, {Required: []string{"all_users"}}}
+	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(1000)), Description: "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured.", Items: item}
 }
-func rulesSchema() *jsonschema.Schema {
+
+func detectionSchema() *jsonschema.Schema {
 	operator := func() *jsonschema.Schema {
-		return enumSchema("Native comparison operator.", "notConfigured", "equal", "notEqual", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual")
+		return enumSchema("Comparison operator.", "equal", "not_equal", "greater_than", "greater_than_or_equal", "less_than", "less_than_or_equal")
 	}
-	product := objectSchema(map[string]*jsonschema.Schema{
-		"@odata.type": {Const: "#microsoft.graph.win32LobAppProductCodeRule"}, "ruleType": {Const: "detection"},
-		"productCode":            {Type: "string", MinLength: new(uint64(1)), Description: "Exact MSI ProductCode GUID. Major MSI upgrades can change it; a version comparison only detects installations with this code. Declared detection overrides selected MSI defaults."},
-		"productVersionOperator": operator(), "productVersion": {Type: "string", MaxLength: new(uint64(10000)), Description: "Version used when comparison is configured."},
-	}, "@odata.type", "ruleType", "productCode", "productVersionOperator")
-	product.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"productVersionOperator": {Not: &jsonschema.Schema{Const: "notConfigured"}}}).Properties, Required: []string{"productVersionOperator"}}
-	product.Then = &jsonschema.Schema{Required: []string{"productVersion"}}
+	absent := &jsonschema.Schema{Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Required: []string{"operator"}}, {Required: []string{"value"}}}}}
+	msi := objectSchema(map[string]*jsonschema.Schema{
+		"type":            {Const: "msi"},
+		"product_code":    {Type: "string", MinLength: new(uint64(1)), Description: "Exact MSI ProductCode GUID. Major MSI upgrades can change it; a version comparison only detects installations with this code. Declared detection overrides selected MSI defaults."},
+		"product_version": textSchema("Version compared with the operator."),
+		"operator":        operator(),
+	}, "type", "product_code")
+	msi.If = &jsonschema.Schema{Required: []string{"operator"}}
+	msi.Then = &jsonschema.Schema{Required: []string{"product_version"}}
 	file := objectSchema(map[string]*jsonschema.Schema{
-		"@odata.type": {Const: "#microsoft.graph.win32LobAppFileSystemRule"}, "ruleType": {Const: "detection"},
-		"path": {Type: "string", MinLength: new(uint64(1))}, "fileOrFolderName": {Type: "string", MinLength: new(uint64(1))},
-		"check32BitOn64System": {Type: "boolean"}, "operationType": enumSchema("Detected file property.", "exists", "version", "sizeInMB", "modifiedDate", "createdDate"),
-		"operator": operator(), "comparisonValue": {Type: "string", MaxLength: new(uint64(10000)), Description: "Value used when comparison is configured. A stable file path with version greaterThanOrEqual detects already-newer installations; equal intentionally does not."},
-	}, "@odata.type", "ruleType", "path", "fileOrFolderName", "operationType", "operator")
-	file.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"operationType": {Const: "exists"}}).Properties}
-	file.Then = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"operator": {Const: "notConfigured"}}).Properties}
-	file.Else = &jsonschema.Schema{Required: []string{"comparisonValue"}, Properties: objectSchema(map[string]*jsonschema.Schema{"operator": {Not: &jsonschema.Schema{Const: "notConfigured"}}, "comparisonValue": {MinLength: new(uint64(1))}}).Properties}
+		"type":        {Const: "file"},
+		"path":        {Type: "string", MinLength: new(uint64(1))},
+		"name":        {Type: "string", MinLength: new(uint64(1)), Description: "File or folder name."},
+		"check_32bit": {Type: "boolean", Description: "Check the 32-bit location on 64-bit Windows."},
+		"property":    enumSchema("Detected file property.", "exists", "version", "size_mb", "modified", "created"),
+		"operator":    operator(),
+		"value":       {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(10000)), Description: "Compared value. A stable file path with version greater_than_or_equal detects already-newer installations; equal intentionally does not."},
+	}, "type", "path", "name", "property")
+	file.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"property": {Const: "exists"}}).Properties}
+	file.Then = absent
+	file.Else = &jsonschema.Schema{Required: []string{"operator", "value"}}
 	registry := objectSchema(map[string]*jsonschema.Schema{
-		"@odata.type": {Const: "#microsoft.graph.win32LobAppRegistryRule"}, "ruleType": {Const: "detection"},
-		"keyPath": {Type: "string", MinLength: new(uint64(1))}, "valueName": {Type: "string"},
-		"check32BitOn64System": {Type: "boolean"}, "operationType": enumSchema("Registry comparison.", "exists", "doesNotExist", "string", "integer", "version"),
-		"operator": operator(), "comparisonValue": {Type: "string", Description: "Version greaterThanOrEqual can detect already-newer installations at a stable vendor registry value. The key, value and comparison are explicit."},
-	}, "@odata.type", "ruleType", "keyPath", "operationType", "operator")
-	registry.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"operationType": {Enum: []any{"exists", "doesNotExist"}}}).Properties}
-	registry.Then = file.Then
-	registry.Else = &jsonschema.Schema{Required: []string{"comparisonValue"}, Properties: objectSchema(map[string]*jsonschema.Schema{"operator": {Not: &jsonschema.Schema{Const: "notConfigured"}}}).Properties,
-		If: &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"operationType": {Not: &jsonschema.Schema{Const: "string"}}}).Properties}, Then: &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"comparisonValue": {MinLength: new(uint64(1))}}).Properties}}
+		"type":        {Const: "registry"},
+		"key":         {Type: "string", MinLength: new(uint64(1)), Description: "Registry key path."},
+		"value_name":  {Type: "string"},
+		"check_32bit": {Type: "boolean", Description: "Check the 32-bit view on 64-bit Windows."},
+		"property":    enumSchema("Registry comparison.", "exists", "does_not_exist", "string", "integer", "version"),
+		"operator":    operator(),
+		"value":       {Type: "string", Description: "Compared value. Version greater_than_or_equal can detect already-newer installations at a stable vendor registry value."},
+	}, "type", "key", "property")
+	registry.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"property": {Enum: []any{"exists", "does_not_exist"}}}).Properties}
+	registry.Then = absent
+	registry.Else = &jsonschema.Schema{Required: []string{"operator", "value"}}
 	script := objectSchema(map[string]*jsonschema.Schema{
-		"@odata.type": {Const: "#microsoft.graph.win32LobAppPowerShellScriptRule"}, "ruleType": {Const: "detection"},
-		"enforceSignatureCheck": {Type: "boolean"}, "runAs32Bit": {Type: "boolean"},
-		"scriptContent": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(266668)), ContentEncoding: "base64", Description: "Base64 PowerShell detection script, at most 200000 decoded bytes. Detection requires exit code 0, nonempty STDOUT and empty STDERR. Runs in the app install context. This is an alternative to manual rules; preparation never executes it."},
-		"operationType": {Const: "notConfigured"}, "operator": {Const: "notConfigured"},
-	}, "@odata.type", "ruleType", "scriptContent")
-	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(100)), Description: "Complete detection-rule collection. Selected MSI content defaults to its ProductCode and productVersion greaterThanOrEqual; a newer major version with another ProductCode needs declared file, registry or script detection. Manual rules are ANDed, with at most one MSI rule. A PowerShell rule must be the only rule. Requirement rules are unsupported.", Items: &jsonschema.Schema{OneOf: []*jsonschema.Schema{product, file, registry, script}}, Contains: product, MinContains: new(uint64(0)), MaxContains: new(uint64(1)), If: &jsonschema.Schema{Contains: script}, Then: &jsonschema.Schema{MaxItems: new(uint64(1))}}
+		"type":                    {Const: "script"},
+		"script":                  {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(200000)), Description: "PowerShell detection script. Detection requires exit code 0, nonempty STDOUT and empty STDERR. Runs in the app install context. This is an alternative to other rules; preparation never executes it."},
+		"enforce_signature_check": {Type: "boolean"},
+		"run_as_32bit":            {Type: "boolean"},
+	}, "type", "script")
+	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(100)), Description: "Complete detection-rule collection. Selected MSI content defaults to its ProductCode with product_version greater_than_or_equal; a newer major version with another ProductCode needs file, registry or script detection. Rules are ANDed, with at most one msi rule. A script rule must be the only rule. Requirement rules are unsupported.", Items: &jsonschema.Schema{OneOf: []*jsonschema.Schema{msi, file, registry, script}}, Contains: msi, MinContains: new(uint64(0)), MaxContains: new(uint64(1)), If: &jsonschema.Schema{Contains: script}, Then: &jsonschema.Schema{MaxItems: new(uint64(1))}}
 }
 
 // JSONSchemaExtend advertises the two complete authentication shapes.

@@ -71,6 +71,12 @@ func (m *MobileAppsMobileAppItemRequestBuilder) GraphMacOSDmgApp() *MobileAppsIt
 	return NewMobileAppsItemGraphMacOSDmgAppRequestBuilderInternal(m.BaseRequestBuilder.PathParameters, m.BaseRequestBuilder.RequestAdapter)
 }
 
+// GraphMacOSLobApp the graphMacOSLobApp property
+// returns a *MobileAppsItemGraphMacOSLobAppRequestBuilder when successful
+func (m *MobileAppsMobileAppItemRequestBuilder) GraphMacOSLobApp() *MobileAppsItemGraphMacOSLobAppRequestBuilder {
+	return NewMobileAppsItemGraphMacOSLobAppRequestBuilderInternal(m.BaseRequestBuilder.PathParameters, m.BaseRequestBuilder.RequestAdapter)
+}
+
 // GraphMacOSPkgApp the graphMacOSPkgApp property
 // returns a *MobileAppsItemGraphMacOSPkgAppRequestBuilder when successful
 func (m *MobileAppsMobileAppItemRequestBuilder) GraphMacOSPkgApp() *MobileAppsItemGraphMacOSPkgAppRequestBuilder {

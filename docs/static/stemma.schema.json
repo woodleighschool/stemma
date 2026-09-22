@@ -1972,72 +1972,24 @@
     },
     "OperationMetadata_intune": {
       "$id": "https://stemma.invalid/editor/intune/metadata",
-      "description": "Native Intune metadata. Supports Win32 envelopes, raw macOS DMG and PKG (beta). Sources are preserved; signing and installer building are separate software policies. Fields not described here, including macOS scripts and managed macOSLobApp, are unsupported.",
-      "oneOf": [
+      "anyOf": [
         {
           "additionalProperties": false,
-          "anyOf": [
-            {
-              "properties": {
-                "inputs": {
-                  "additionalProperties": {
-                    "description": "Named output from this resource. Defaults to installer.",
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                    "type": "string"
-                  },
-                  "propertyNames": {
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-                  },
-                  "type": "object"
-                },
-                "installer": {
-                  "description": "Named output from this resource. Defaults to installer.",
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "@odata.type"
-              ]
-            },
-            {
-              "properties": {
-                "inputs": {
-                  "additionalProperties": {
-                    "description": "Named output from this resource. Defaults to installer.",
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                    "type": "string"
-                  },
-                  "propertyNames": {
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-                  },
-                  "type": "object"
-                },
-                "installer": {
-                  "description": "Named output from this resource. Defaults to installer.",
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type"
-              ]
-            }
-          ],
           "properties": {
-            "@odata.type": {
+            "app_id": {
               "anyOf": [
                 {
-                  "const": "#microsoft.graph.win32LobApp"
+                  "minLength": 1,
+                  "type": "string"
                 },
                 {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
                   "type": "string"
                 }
               ],
-              "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
+              "description": "Pin this software to an existing Intune app, which must exist and must not carry another software's identity marker. Omit to find the app by the identity marker in its notes, or create one."
             },
-            "allowedArchitectures": {
+            "architecture": {
               "anyOf": [
                 {
                   "enum": [
@@ -2054,19 +2006,6 @@
               ],
               "description": "Supported processor architecture; null clears it on an existing app. A non-null value is required for creation."
             },
-            "app_id": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Pin this software to an existing Intune app, which must exist and must not carry another software's identity marker. Omit to find the app by the identity marker in its notes, or create one."
-            },
             "assignments": {
               "anyOf": [
                 {
@@ -2074,26 +2013,87 @@
                     "anyOf": [
                       {
                         "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "required": [
+                              "group"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "exclude_group"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "all_devices"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "all_users"
+                            ]
+                          }
+                        ],
                         "properties": {
-                          "@odata.type": {
+                          "all_devices": {
                             "anyOf": [
                               {
-                                "const": "#microsoft.graph.mobileAppAssignment"
+                                "const": true
                               },
                               {
                                 "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                                 "type": "string"
                               }
-                            ]
+                            ],
+                            "description": "Target all devices."
+                          },
+                          "all_users": {
+                            "anyOf": [
+                              {
+                                "const": true
+                              },
+                              {
+                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Target all licensed users."
+                          },
+                          "exclude_group": {
+                            "anyOf": [
+                              {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Entra group object ID to exclude."
+                          },
+                          "group": {
+                            "anyOf": [
+                              {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Entra group object ID to target."
                           },
                           "intent": {
                             "anyOf": [
                               {
                                 "enum": [
-                                  "available",
                                   "required",
+                                  "available",
                                   "uninstall",
-                                  "availableWithoutEnrollment"
+                                  "available_without_enrollment"
                                 ],
                                 "type": "string"
                               },
@@ -2102,145 +2102,7 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Native deployment intent."
-                          },
-                          "target": {
-                            "anyOf": [
-                              {
-                                "oneOf": [
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.groupAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      },
-                                      "groupId": {
-                                        "anyOf": [
-                                          {
-                                            "minLength": 1,
-                                            "type": "string"
-                                          },
-                                          {
-                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type",
-                                      "groupId"
-                                    ],
-                                    "type": "object"
-                                  },
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      },
-                                      "groupId": {
-                                        "anyOf": [
-                                          {
-                                            "minLength": 1,
-                                            "type": "string"
-                                          },
-                                          {
-                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type",
-                                      "groupId"
-                                    ],
-                                    "type": "object"
-                                  },
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type"
-                                    ],
-                                    "type": "object"
-                                  },
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type"
-                                    ],
-                                    "type": "object"
-                                  }
-                                ]
-                              },
-                              {
-                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                "type": "string"
-                              }
-                            ]
+                            "description": "Deployment intent."
                           }
                         },
                         "propertyNames": {
@@ -2249,8 +2111,7 @@
                           }
                         },
                         "required": [
-                          "intent",
-                          "target"
+                          "intent"
                         ],
                         "type": "object"
                       },
@@ -2268,7 +2129,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
+              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
             "content": {
               "anyOf": [
@@ -2446,7 +2307,662 @@
                   "type": "string"
                 }
               ],
-              "description": "Native app description. Required for creation."
+              "description": "App description. Required for creation."
+            },
+            "detection": {
+              "anyOf": [
+                {
+                  "contains": {
+                    "anyOf": [
+                      {
+                        "additionalProperties": false,
+                        "if": {
+                          "required": [
+                            "operator"
+                          ]
+                        },
+                        "properties": {
+                          "operator": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "equal",
+                                  "not_equal",
+                                  "greater_than",
+                                  "greater_than_or_equal",
+                                  "less_than",
+                                  "less_than_or_equal"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Comparison operator."
+                          },
+                          "product_code": {
+                            "anyOf": [
+                              {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Exact MSI ProductCode GUID. Major MSI upgrades can change it; a version comparison only detects installations with this code. Declared detection overrides selected MSI defaults."
+                          },
+                          "product_version": {
+                            "anyOf": [
+                              {
+                                "maxLength": 10000,
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Version compared with the operator."
+                          },
+                          "type": {
+                            "anyOf": [
+                              {
+                                "const": "msi"
+                              },
+                              {
+                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                "type": "string"
+                              }
+                            ]
+                          }
+                        },
+                        "propertyNames": {
+                          "not": {
+                            "pattern": "\\{\\{"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "product_code"
+                        ],
+                        "then": {
+                          "required": [
+                            "product_version"
+                          ]
+                        },
+                        "type": "object"
+                      },
+                      {
+                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "if": {
+                    "contains": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "enforce_signature_check": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "run_as_32bit": {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "script": {
+                              "anyOf": [
+                                {
+                                  "maxLength": 200000,
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                {
+                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                  "type": "string"
+                                }
+                              ],
+                              "description": "PowerShell detection script. Detection requires exit code 0, nonempty STDOUT and empty STDERR. Runs in the app install context. This is an alternative to other rules; preparation never executes it."
+                            },
+                            "type": {
+                              "anyOf": [
+                                {
+                                  "const": "script"
+                                },
+                                {
+                                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                  "type": "string"
+                                }
+                              ]
+                            }
+                          },
+                          "propertyNames": {
+                            "not": {
+                              "pattern": "\\{\\{"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "script"
+                          ],
+                          "type": "object"
+                        },
+                        {
+                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                          "type": "string"
+                        }
+                      ]
+                    }
+                  },
+                  "items": {
+                    "anyOf": [
+                      {
+                        "oneOf": [
+                          {
+                            "additionalProperties": false,
+                            "if": {
+                              "required": [
+                                "operator"
+                              ]
+                            },
+                            "properties": {
+                              "operator": {
+                                "anyOf": [
+                                  {
+                                    "enum": [
+                                      "equal",
+                                      "not_equal",
+                                      "greater_than",
+                                      "greater_than_or_equal",
+                                      "less_than",
+                                      "less_than_or_equal"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Comparison operator."
+                              },
+                              "product_code": {
+                                "anyOf": [
+                                  {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Exact MSI ProductCode GUID. Major MSI upgrades can change it; a version comparison only detects installations with this code. Declared detection overrides selected MSI defaults."
+                              },
+                              "product_version": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 10000,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Version compared with the operator."
+                              },
+                              "type": {
+                                "anyOf": [
+                                  {
+                                    "const": "msi"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              }
+                            },
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "product_code"
+                            ],
+                            "then": {
+                              "required": [
+                                "product_version"
+                              ]
+                            },
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "else": {
+                              "required": [
+                                "operator",
+                                "value"
+                              ]
+                            },
+                            "if": {
+                              "properties": {
+                                "property": {
+                                  "anyOf": [
+                                    {
+                                      "const": "exists"
+                                    },
+                                    {
+                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                      "type": "string"
+                                    }
+                                  ]
+                                }
+                              },
+                              "propertyNames": {
+                                "not": {
+                                  "pattern": "\\{\\{"
+                                }
+                              }
+                            },
+                            "properties": {
+                              "check_32bit": {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Check the 32-bit location on 64-bit Windows."
+                              },
+                              "name": {
+                                "anyOf": [
+                                  {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "File or folder name."
+                              },
+                              "operator": {
+                                "anyOf": [
+                                  {
+                                    "enum": [
+                                      "equal",
+                                      "not_equal",
+                                      "greater_than",
+                                      "greater_than_or_equal",
+                                      "less_than",
+                                      "less_than_or_equal"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Comparison operator."
+                              },
+                              "path": {
+                                "anyOf": [
+                                  {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "property": {
+                                "anyOf": [
+                                  {
+                                    "enum": [
+                                      "exists",
+                                      "version",
+                                      "size_mb",
+                                      "modified",
+                                      "created"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Detected file property."
+                              },
+                              "type": {
+                                "anyOf": [
+                                  {
+                                    "const": "file"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "value": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 10000,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Compared value. A stable file path with version greater_than_or_equal detects already-newer installations; equal intentionally does not."
+                              }
+                            },
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "path",
+                              "name",
+                              "property"
+                            ],
+                            "then": {
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "operator"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "value"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "else": {
+                              "required": [
+                                "operator",
+                                "value"
+                              ]
+                            },
+                            "if": {
+                              "properties": {
+                                "property": {
+                                  "anyOf": [
+                                    {
+                                      "enum": [
+                                        "exists",
+                                        "does_not_exist"
+                                      ]
+                                    },
+                                    {
+                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                      "type": "string"
+                                    }
+                                  ]
+                                }
+                              },
+                              "propertyNames": {
+                                "not": {
+                                  "pattern": "\\{\\{"
+                                }
+                              }
+                            },
+                            "properties": {
+                              "check_32bit": {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Check the 32-bit view on 64-bit Windows."
+                              },
+                              "key": {
+                                "anyOf": [
+                                  {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Registry key path."
+                              },
+                              "operator": {
+                                "anyOf": [
+                                  {
+                                    "enum": [
+                                      "equal",
+                                      "not_equal",
+                                      "greater_than",
+                                      "greater_than_or_equal",
+                                      "less_than",
+                                      "less_than_or_equal"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Comparison operator."
+                              },
+                              "property": {
+                                "anyOf": [
+                                  {
+                                    "enum": [
+                                      "exists",
+                                      "does_not_exist",
+                                      "string",
+                                      "integer",
+                                      "version"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Registry comparison."
+                              },
+                              "type": {
+                                "anyOf": [
+                                  {
+                                    "const": "registry"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "value": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Compared value. Version greater_than_or_equal can detect already-newer installations at a stable vendor registry value."
+                              },
+                              "value_name": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ]
+                              }
+                            },
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "key",
+                              "property"
+                            ],
+                            "then": {
+                              "not": {
+                                "anyOf": [
+                                  {
+                                    "required": [
+                                      "operator"
+                                    ]
+                                  },
+                                  {
+                                    "required": [
+                                      "value"
+                                    ]
+                                  }
+                                ]
+                              }
+                            },
+                            "type": "object"
+                          },
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "enforce_signature_check": {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "run_as_32bit": {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "script": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 200000,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "PowerShell detection script. Detection requires exit code 0, nonempty STDOUT and empty STDERR. Runs in the app install context. This is an alternative to other rules; preparation never executes it."
+                              },
+                              "type": {
+                                "anyOf": [
+                                  {
+                                    "const": "script"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              }
+                            },
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "script"
+                            ],
+                            "type": "object"
+                          }
+                        ]
+                      },
+                      {
+                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "maxContains": 1,
+                  "maxItems": 100,
+                  "minContains": 0,
+                  "then": {
+                    "maxItems": 1
+                  },
+                  "type": "array"
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Complete detection-rule collection. Selected MSI content defaults to its ProductCode with product_version greater_than_or_equal; a newer major version with another ProductCode needs file, registry or script detection. Rules are ANDed, with at most one msi rule. A script rule must be the only rule. Requirement rules are unsupported."
             },
             "developer": {
               "anyOf": [
@@ -2459,9 +2975,9 @@
                   "type": "string"
                 }
               ],
-              "description": "App developer label."
+              "description": "Developer name."
             },
-            "displayName": {
+            "display_name": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -2472,9 +2988,21 @@
                   "type": "string"
                 }
               ],
-              "description": "Company Portal display name. Required for creation."
+              "description": "Company Portal name. Required for creation."
             },
-            "informationUrl": {
+            "featured": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Show the app as featured. Explicit false is managed."
+            },
+            "information_url": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -2498,7 +3026,7 @@
               },
               "type": "object"
             },
-            "installCommandLine": {
+            "install_command": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -2509,29 +3037,18 @@
                   "type": "string"
                 }
               ],
-              "description": "Silent Windows install command line. Selected MSI content defaults to msiexec /i with /qn /norestart; EXE switches and architecture-specific executable paths are explicit. Payloads and hooks are never executed during preparation."
+              "description": "Silent Windows install command. Selected MSI content defaults to msiexec /i with /qn /norestart; EXE switches and architecture-specific executable paths are explicit. Payloads and hooks are never executed during preparation."
             },
-            "installExperience": {
+            "install_experience": {
               "anyOf": [
                 {
                   "additionalProperties": false,
                   "properties": {
-                    "@odata.type": {
-                      "anyOf": [
-                        {
-                          "const": "#microsoft.graph.win32LobAppInstallExperience"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ]
-                    },
-                    "deviceRestartBehavior": {
+                    "restart": {
                       "anyOf": [
                         {
                           "enum": [
-                            "basedOnReturnCode",
+                            "based_on_return_code",
                             "allow",
                             "suppress",
                             "force"
@@ -2545,7 +3062,7 @@
                       ],
                       "description": "Installer restart handling; omitted fields are preserved."
                     },
-                    "runAsAccount": {
+                    "run_as": {
                       "anyOf": [
                         {
                           "enum": [
@@ -2580,19 +3097,7 @@
               "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
               "type": "string"
             },
-            "isFeatured": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "Show the app as featured. Explicit false is managed."
-            },
-            "minimumCpuSpeedInMHz": {
+            "minimum_cpu_speed_mhz": {
               "anyOf": [
                 {
                   "maximum": 2147483647,
@@ -2604,9 +3109,9 @@
                   "type": "string"
                 }
               ],
-              "description": "Native minimum hardware requirement. Omit to leave unchanged."
+              "description": "Minimum CPU speed in MHz. Omit to leave unchanged."
             },
-            "minimumFreeDiskSpaceInMB": {
+            "minimum_disk_space_mb": {
               "anyOf": [
                 {
                   "maximum": 2147483647,
@@ -2618,9 +3123,9 @@
                   "type": "string"
                 }
               ],
-              "description": "Native minimum hardware requirement. Omit to leave unchanged."
+              "description": "Minimum free disk space in MB. Omit to leave unchanged."
             },
-            "minimumMemoryInMB": {
+            "minimum_memory_mb": {
               "anyOf": [
                 {
                   "maximum": 2147483647,
@@ -2632,9 +3137,9 @@
                   "type": "string"
                 }
               ],
-              "description": "Native minimum hardware requirement. Omit to leave unchanged."
+              "description": "Minimum memory in MB. Omit to leave unchanged."
             },
-            "minimumNumberOfProcessors": {
+            "minimum_processors": {
               "anyOf": [
                 {
                   "maximum": 2147483647,
@@ -2646,9 +3151,9 @@
                   "type": "string"
                 }
               ],
-              "description": "Native minimum hardware requirement. Omit to leave unchanged."
+              "description": "Minimum number of processors. Omit to leave unchanged."
             },
-            "minimumSupportedWindowsRelease": {
+            "minimum_windows_release": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -2659,31 +3164,20 @@
                   "type": "string"
                 }
               ],
-              "description": "Native minimum Windows release, such as Windows11_23H2. Required for creation."
+              "description": "Minimum Windows release, such as Windows11_23H2. Required for creation."
             },
-            "msiInformation": {
+            "msi": {
               "anyOf": [
                 {
                   "additionalProperties": false,
                   "properties": {
-                    "@odata.type": {
-                      "anyOf": [
-                        {
-                          "const": "#microsoft.graph.win32LobAppMsiInformation"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ]
-                    },
-                    "packageType": {
+                    "package_type": {
                       "anyOf": [
                         {
                           "enum": [
-                            "perMachine",
-                            "perUser",
-                            "dualPurpose"
+                            "per_machine",
+                            "per_user",
+                            "dual_purpose"
                           ],
                           "type": "string"
                         },
@@ -2694,7 +3188,7 @@
                       ],
                       "description": "MSI installation scope."
                     },
-                    "productCode": {
+                    "product_code": {
                       "anyOf": [
                         {
                           "maxLength": 10000,
@@ -2706,7 +3200,7 @@
                         }
                       ]
                     },
-                    "productName": {
+                    "product_name": {
                       "anyOf": [
                         {
                           "maxLength": 10000,
@@ -2718,7 +3212,7 @@
                         }
                       ]
                     },
-                    "productVersion": {
+                    "product_version": {
                       "anyOf": [
                         {
                           "maxLength": 10000,
@@ -2742,7 +3236,7 @@
                         }
                       ]
                     },
-                    "requiresReboot": {
+                    "requires_reboot": {
                       "anyOf": [
                         {
                           "type": "boolean"
@@ -2753,14 +3247,21 @@
                         }
                       ]
                     },
-                    "upgradeCode": {
+                    "upgrade_code": {
                       "anyOf": [
                         {
-                          "maxLength": 10000,
-                          "type": "string"
+                          "anyOf": [
+                            {
+                              "maxLength": 10000,
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         {
-                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                           "type": "string"
                         }
                       ]
@@ -2777,7 +3278,8 @@
                   "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                   "type": "string"
                 }
-              ]
+              ],
+              "description": "MSI information. The selected setup MSI supplies it; declared fields override it."
             },
             "notes": {
               "anyOf": [
@@ -2803,9 +3305,9 @@
                   "type": "string"
                 }
               ],
-              "description": "App owner label."
+              "description": "Owner label."
             },
-            "privacyInformationUrl": {
+            "privacy_url": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -2829,7 +3331,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Native publisher name. Required for creation."
+              "description": "Publisher name. Required for creation."
             },
             "retention": {
               "anyOf": [
@@ -2866,7 +3368,7 @@
                 }
               ]
             },
-            "returnCodes": {
+            "return_codes": {
               "anyOf": [
                 {
                   "items": {
@@ -2874,18 +3376,7 @@
                       {
                         "additionalProperties": false,
                         "properties": {
-                          "@odata.type": {
-                            "anyOf": [
-                              {
-                                "const": "#microsoft.graph.win32LobAppReturnCode"
-                              },
-                              {
-                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                "type": "string"
-                              }
-                            ]
-                          },
-                          "returnCode": {
+                          "code": {
                             "anyOf": [
                               {
                                 "maximum": 2147483647,
@@ -2903,8 +3394,8 @@
                               {
                                 "enum": [
                                   "success",
-                                  "softReboot",
-                                  "hardReboot",
+                                  "soft_reboot",
+                                  "hard_reboot",
                                   "retry",
                                   "failed"
                                 ],
@@ -2915,7 +3406,7 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Native result classification."
+                            "description": "Result classification."
                           }
                         },
                         "propertyNames": {
@@ -2924,7 +3415,7 @@
                           }
                         },
                         "required": [
-                          "returnCode",
+                          "code",
                           "type"
                         ],
                         "type": "object"
@@ -2943,921 +3434,6 @@
                 }
               ],
               "description": "Replace the return-code collection; an empty array clears it."
-            },
-            "rules": {
-              "anyOf": [
-                {
-                  "contains": {
-                    "anyOf": [
-                      {
-                        "additionalProperties": false,
-                        "if": {
-                          "properties": {
-                            "productVersionOperator": {
-                              "anyOf": [
-                                {
-                                  "not": {
-                                    "const": "notConfigured"
-                                  }
-                                },
-                                {
-                                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                  "type": "string"
-                                }
-                              ]
-                            }
-                          },
-                          "propertyNames": {
-                            "not": {
-                              "pattern": "\\{\\{"
-                            }
-                          },
-                          "required": [
-                            "productVersionOperator"
-                          ]
-                        },
-                        "properties": {
-                          "@odata.type": {
-                            "anyOf": [
-                              {
-                                "const": "#microsoft.graph.win32LobAppProductCodeRule"
-                              },
-                              {
-                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                "type": "string"
-                              }
-                            ]
-                          },
-                          "productCode": {
-                            "anyOf": [
-                              {
-                                "minLength": 1,
-                                "type": "string"
-                              },
-                              {
-                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                "type": "string"
-                              }
-                            ],
-                            "description": "Exact MSI ProductCode GUID. Major MSI upgrades can change it; a version comparison only detects installations with this code. Declared detection overrides selected MSI defaults."
-                          },
-                          "productVersion": {
-                            "anyOf": [
-                              {
-                                "maxLength": 10000,
-                                "type": "string"
-                              },
-                              {
-                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                "type": "string"
-                              }
-                            ],
-                            "description": "Version used when comparison is configured."
-                          },
-                          "productVersionOperator": {
-                            "anyOf": [
-                              {
-                                "enum": [
-                                  "notConfigured",
-                                  "equal",
-                                  "notEqual",
-                                  "greaterThan",
-                                  "greaterThanOrEqual",
-                                  "lessThan",
-                                  "lessThanOrEqual"
-                                ],
-                                "type": "string"
-                              },
-                              {
-                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                "type": "string"
-                              }
-                            ],
-                            "description": "Native comparison operator."
-                          },
-                          "ruleType": {
-                            "anyOf": [
-                              {
-                                "const": "detection"
-                              },
-                              {
-                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                "type": "string"
-                              }
-                            ]
-                          }
-                        },
-                        "propertyNames": {
-                          "not": {
-                            "pattern": "\\{\\{"
-                          }
-                        },
-                        "required": [
-                          "@odata.type",
-                          "ruleType",
-                          "productCode",
-                          "productVersionOperator"
-                        ],
-                        "then": {
-                          "required": [
-                            "productVersion"
-                          ]
-                        },
-                        "type": "object"
-                      },
-                      {
-                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                        "type": "string"
-                      }
-                    ]
-                  },
-                  "if": {
-                    "contains": {
-                      "anyOf": [
-                        {
-                          "additionalProperties": false,
-                          "properties": {
-                            "@odata.type": {
-                              "anyOf": [
-                                {
-                                  "const": "#microsoft.graph.win32LobAppPowerShellScriptRule"
-                                },
-                                {
-                                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                  "type": "string"
-                                }
-                              ]
-                            },
-                            "enforceSignatureCheck": {
-                              "anyOf": [
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                  "type": "string"
-                                }
-                              ]
-                            },
-                            "operationType": {
-                              "anyOf": [
-                                {
-                                  "const": "notConfigured"
-                                },
-                                {
-                                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                  "type": "string"
-                                }
-                              ]
-                            },
-                            "operator": {
-                              "anyOf": [
-                                {
-                                  "const": "notConfigured"
-                                },
-                                {
-                                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                  "type": "string"
-                                }
-                              ]
-                            },
-                            "ruleType": {
-                              "anyOf": [
-                                {
-                                  "const": "detection"
-                                },
-                                {
-                                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                  "type": "string"
-                                }
-                              ]
-                            },
-                            "runAs32Bit": {
-                              "anyOf": [
-                                {
-                                  "type": "boolean"
-                                },
-                                {
-                                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                  "type": "string"
-                                }
-                              ]
-                            },
-                            "scriptContent": {
-                              "anyOf": [
-                                {
-                                  "contentEncoding": "base64",
-                                  "maxLength": 266668,
-                                  "minLength": 1,
-                                  "type": "string"
-                                },
-                                {
-                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                  "type": "string"
-                                }
-                              ],
-                              "description": "Base64 PowerShell detection script, at most 200000 decoded bytes. Detection requires exit code 0, nonempty STDOUT and empty STDERR. Runs in the app install context. This is an alternative to manual rules; preparation never executes it."
-                            }
-                          },
-                          "propertyNames": {
-                            "not": {
-                              "pattern": "\\{\\{"
-                            }
-                          },
-                          "required": [
-                            "@odata.type",
-                            "ruleType",
-                            "scriptContent"
-                          ],
-                          "type": "object"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ]
-                    }
-                  },
-                  "items": {
-                    "anyOf": [
-                      {
-                        "oneOf": [
-                          {
-                            "additionalProperties": false,
-                            "if": {
-                              "properties": {
-                                "productVersionOperator": {
-                                  "anyOf": [
-                                    {
-                                      "not": {
-                                        "const": "notConfigured"
-                                      }
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ]
-                                }
-                              },
-                              "propertyNames": {
-                                "not": {
-                                  "pattern": "\\{\\{"
-                                }
-                              },
-                              "required": [
-                                "productVersionOperator"
-                              ]
-                            },
-                            "properties": {
-                              "@odata.type": {
-                                "anyOf": [
-                                  {
-                                    "const": "#microsoft.graph.win32LobAppProductCodeRule"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "productCode": {
-                                "anyOf": [
-                                  {
-                                    "minLength": 1,
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ],
-                                "description": "Exact MSI ProductCode GUID. Major MSI upgrades can change it; a version comparison only detects installations with this code. Declared detection overrides selected MSI defaults."
-                              },
-                              "productVersion": {
-                                "anyOf": [
-                                  {
-                                    "maxLength": 10000,
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ],
-                                "description": "Version used when comparison is configured."
-                              },
-                              "productVersionOperator": {
-                                "anyOf": [
-                                  {
-                                    "enum": [
-                                      "notConfigured",
-                                      "equal",
-                                      "notEqual",
-                                      "greaterThan",
-                                      "greaterThanOrEqual",
-                                      "lessThan",
-                                      "lessThanOrEqual"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ],
-                                "description": "Native comparison operator."
-                              },
-                              "ruleType": {
-                                "anyOf": [
-                                  {
-                                    "const": "detection"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              }
-                            },
-                            "propertyNames": {
-                              "not": {
-                                "pattern": "\\{\\{"
-                              }
-                            },
-                            "required": [
-                              "@odata.type",
-                              "ruleType",
-                              "productCode",
-                              "productVersionOperator"
-                            ],
-                            "then": {
-                              "required": [
-                                "productVersion"
-                              ]
-                            },
-                            "type": "object"
-                          },
-                          {
-                            "additionalProperties": false,
-                            "else": {
-                              "properties": {
-                                "comparisonValue": {
-                                  "anyOf": [
-                                    {
-                                      "minLength": 1
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ]
-                                },
-                                "operator": {
-                                  "anyOf": [
-                                    {
-                                      "not": {
-                                        "const": "notConfigured"
-                                      }
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ]
-                                }
-                              },
-                              "propertyNames": {
-                                "not": {
-                                  "pattern": "\\{\\{"
-                                }
-                              },
-                              "required": [
-                                "comparisonValue"
-                              ]
-                            },
-                            "if": {
-                              "properties": {
-                                "operationType": {
-                                  "anyOf": [
-                                    {
-                                      "const": "exists"
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ]
-                                }
-                              },
-                              "propertyNames": {
-                                "not": {
-                                  "pattern": "\\{\\{"
-                                }
-                              }
-                            },
-                            "properties": {
-                              "@odata.type": {
-                                "anyOf": [
-                                  {
-                                    "const": "#microsoft.graph.win32LobAppFileSystemRule"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "check32BitOn64System": {
-                                "anyOf": [
-                                  {
-                                    "type": "boolean"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "comparisonValue": {
-                                "anyOf": [
-                                  {
-                                    "maxLength": 10000,
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ],
-                                "description": "Value used when comparison is configured. A stable file path with version greaterThanOrEqual detects already-newer installations; equal intentionally does not."
-                              },
-                              "fileOrFolderName": {
-                                "anyOf": [
-                                  {
-                                    "minLength": 1,
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "operationType": {
-                                "anyOf": [
-                                  {
-                                    "enum": [
-                                      "exists",
-                                      "version",
-                                      "sizeInMB",
-                                      "modifiedDate",
-                                      "createdDate"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ],
-                                "description": "Detected file property."
-                              },
-                              "operator": {
-                                "anyOf": [
-                                  {
-                                    "enum": [
-                                      "notConfigured",
-                                      "equal",
-                                      "notEqual",
-                                      "greaterThan",
-                                      "greaterThanOrEqual",
-                                      "lessThan",
-                                      "lessThanOrEqual"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ],
-                                "description": "Native comparison operator."
-                              },
-                              "path": {
-                                "anyOf": [
-                                  {
-                                    "minLength": 1,
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "ruleType": {
-                                "anyOf": [
-                                  {
-                                    "const": "detection"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              }
-                            },
-                            "propertyNames": {
-                              "not": {
-                                "pattern": "\\{\\{"
-                              }
-                            },
-                            "required": [
-                              "@odata.type",
-                              "ruleType",
-                              "path",
-                              "fileOrFolderName",
-                              "operationType",
-                              "operator"
-                            ],
-                            "then": {
-                              "properties": {
-                                "operator": {
-                                  "anyOf": [
-                                    {
-                                      "const": "notConfigured"
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ]
-                                }
-                              },
-                              "propertyNames": {
-                                "not": {
-                                  "pattern": "\\{\\{"
-                                }
-                              }
-                            },
-                            "type": "object"
-                          },
-                          {
-                            "additionalProperties": false,
-                            "else": {
-                              "if": {
-                                "properties": {
-                                  "operationType": {
-                                    "anyOf": [
-                                      {
-                                        "not": {
-                                          "const": "string"
-                                        }
-                                      },
-                                      {
-                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                        "type": "string"
-                                      }
-                                    ]
-                                  }
-                                },
-                                "propertyNames": {
-                                  "not": {
-                                    "pattern": "\\{\\{"
-                                  }
-                                }
-                              },
-                              "properties": {
-                                "operator": {
-                                  "anyOf": [
-                                    {
-                                      "not": {
-                                        "const": "notConfigured"
-                                      }
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ]
-                                }
-                              },
-                              "propertyNames": {
-                                "not": {
-                                  "pattern": "\\{\\{"
-                                }
-                              },
-                              "required": [
-                                "comparisonValue"
-                              ],
-                              "then": {
-                                "properties": {
-                                  "comparisonValue": {
-                                    "anyOf": [
-                                      {
-                                        "minLength": 1
-                                      },
-                                      {
-                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                        "type": "string"
-                                      }
-                                    ]
-                                  }
-                                },
-                                "propertyNames": {
-                                  "not": {
-                                    "pattern": "\\{\\{"
-                                  }
-                                }
-                              }
-                            },
-                            "if": {
-                              "properties": {
-                                "operationType": {
-                                  "anyOf": [
-                                    {
-                                      "enum": [
-                                        "exists",
-                                        "doesNotExist"
-                                      ]
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ]
-                                }
-                              },
-                              "propertyNames": {
-                                "not": {
-                                  "pattern": "\\{\\{"
-                                }
-                              }
-                            },
-                            "properties": {
-                              "@odata.type": {
-                                "anyOf": [
-                                  {
-                                    "const": "#microsoft.graph.win32LobAppRegistryRule"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "check32BitOn64System": {
-                                "anyOf": [
-                                  {
-                                    "type": "boolean"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "comparisonValue": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ],
-                                "description": "Version greaterThanOrEqual can detect already-newer installations at a stable vendor registry value. The key, value and comparison are explicit."
-                              },
-                              "keyPath": {
-                                "anyOf": [
-                                  {
-                                    "minLength": 1,
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "operationType": {
-                                "anyOf": [
-                                  {
-                                    "enum": [
-                                      "exists",
-                                      "doesNotExist",
-                                      "string",
-                                      "integer",
-                                      "version"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ],
-                                "description": "Registry comparison."
-                              },
-                              "operator": {
-                                "anyOf": [
-                                  {
-                                    "enum": [
-                                      "notConfigured",
-                                      "equal",
-                                      "notEqual",
-                                      "greaterThan",
-                                      "greaterThanOrEqual",
-                                      "lessThan",
-                                      "lessThanOrEqual"
-                                    ],
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ],
-                                "description": "Native comparison operator."
-                              },
-                              "ruleType": {
-                                "anyOf": [
-                                  {
-                                    "const": "detection"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "valueName": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              }
-                            },
-                            "propertyNames": {
-                              "not": {
-                                "pattern": "\\{\\{"
-                              }
-                            },
-                            "required": [
-                              "@odata.type",
-                              "ruleType",
-                              "keyPath",
-                              "operationType",
-                              "operator"
-                            ],
-                            "then": {
-                              "properties": {
-                                "operator": {
-                                  "anyOf": [
-                                    {
-                                      "const": "notConfigured"
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ]
-                                }
-                              },
-                              "propertyNames": {
-                                "not": {
-                                  "pattern": "\\{\\{"
-                                }
-                              }
-                            },
-                            "type": "object"
-                          },
-                          {
-                            "additionalProperties": false,
-                            "properties": {
-                              "@odata.type": {
-                                "anyOf": [
-                                  {
-                                    "const": "#microsoft.graph.win32LobAppPowerShellScriptRule"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "enforceSignatureCheck": {
-                                "anyOf": [
-                                  {
-                                    "type": "boolean"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "operationType": {
-                                "anyOf": [
-                                  {
-                                    "const": "notConfigured"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "operator": {
-                                "anyOf": [
-                                  {
-                                    "const": "notConfigured"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "ruleType": {
-                                "anyOf": [
-                                  {
-                                    "const": "detection"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "runAs32Bit": {
-                                "anyOf": [
-                                  {
-                                    "type": "boolean"
-                                  },
-                                  {
-                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "scriptContent": {
-                                "anyOf": [
-                                  {
-                                    "contentEncoding": "base64",
-                                    "maxLength": 266668,
-                                    "minLength": 1,
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ],
-                                "description": "Base64 PowerShell detection script, at most 200000 decoded bytes. Detection requires exit code 0, nonempty STDOUT and empty STDERR. Runs in the app install context. This is an alternative to manual rules; preparation never executes it."
-                              }
-                            },
-                            "propertyNames": {
-                              "not": {
-                                "pattern": "\\{\\{"
-                              }
-                            },
-                            "required": [
-                              "@odata.type",
-                              "ruleType",
-                              "scriptContent"
-                            ],
-                            "type": "object"
-                          }
-                        ]
-                      },
-                      {
-                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                        "type": "string"
-                      }
-                    ]
-                  },
-                  "maxContains": 1,
-                  "maxItems": 100,
-                  "minContains": 0,
-                  "then": {
-                    "maxItems": 1
-                  },
-                  "type": "array"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "Complete detection-rule collection. Selected MSI content defaults to its ProductCode and productVersion greaterThanOrEqual; a newer major version with another ProductCode needs declared file, registry or script detection. Manual rules are ANDed, with at most one MSI rule. A PowerShell rule must be the only rule. Requirement rules are unsupported."
             },
             "supersedes": {
               "anyOf": [
@@ -3999,9 +3575,9 @@
                   "type": "string"
                 }
               ],
-              "description": "Short name for the native app subtype. Must agree with @odata.type if both are supplied."
+              "description": "Windows software publishes a Win32 app, so this is the default."
             },
-            "uninstallCommandLine": {
+            "uninstall_command": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -4012,7 +3588,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Windows uninstall command line. Selected MSI content defaults to msiexec /x ProductCode /qn /norestart; EXE uninstall behavior is explicit."
+              "description": "Windows uninstall command. Selected MSI content defaults to msiexec /x ProductCode /qn /norestart; EXE uninstall behavior is explicit."
             }
           },
           "propertyNames": {
@@ -4020,72 +3596,12 @@
               "pattern": "\\{\\{"
             }
           },
-          "title": "#microsoft.graph.win32LobApp",
+          "title": "Win32 app",
           "type": "object"
         },
         {
           "additionalProperties": false,
-          "anyOf": [
-            {
-              "properties": {
-                "inputs": {
-                  "additionalProperties": {
-                    "description": "Named output from this resource. Defaults to installer.",
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                    "type": "string"
-                  },
-                  "propertyNames": {
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-                  },
-                  "type": "object"
-                },
-                "installer": {
-                  "description": "Named output from this resource. Defaults to installer.",
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "@odata.type"
-              ]
-            },
-            {
-              "properties": {
-                "inputs": {
-                  "additionalProperties": {
-                    "description": "Named output from this resource. Defaults to installer.",
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                    "type": "string"
-                  },
-                  "propertyNames": {
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-                  },
-                  "type": "object"
-                },
-                "installer": {
-                  "description": "Named output from this resource. Defaults to installer.",
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type"
-              ]
-            }
-          ],
           "properties": {
-            "@odata.type": {
-              "anyOf": [
-                {
-                  "const": "#microsoft.graph.macOSDmgApp"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
-            },
             "app_id": {
               "anyOf": [
                 {
@@ -4106,26 +3622,87 @@
                     "anyOf": [
                       {
                         "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "required": [
+                              "group"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "exclude_group"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "all_devices"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "all_users"
+                            ]
+                          }
+                        ],
                         "properties": {
-                          "@odata.type": {
+                          "all_devices": {
                             "anyOf": [
                               {
-                                "const": "#microsoft.graph.mobileAppAssignment"
+                                "const": true
                               },
                               {
                                 "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                                 "type": "string"
                               }
-                            ]
+                            ],
+                            "description": "Target all devices."
+                          },
+                          "all_users": {
+                            "anyOf": [
+                              {
+                                "const": true
+                              },
+                              {
+                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Target all licensed users."
+                          },
+                          "exclude_group": {
+                            "anyOf": [
+                              {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Entra group object ID to exclude."
+                          },
+                          "group": {
+                            "anyOf": [
+                              {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Entra group object ID to target."
                           },
                           "intent": {
                             "anyOf": [
                               {
                                 "enum": [
-                                  "available",
                                   "required",
+                                  "available",
                                   "uninstall",
-                                  "availableWithoutEnrollment"
+                                  "available_without_enrollment"
                                 ],
                                 "type": "string"
                               },
@@ -4134,145 +3711,7 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Native deployment intent."
-                          },
-                          "target": {
-                            "anyOf": [
-                              {
-                                "oneOf": [
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.groupAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      },
-                                      "groupId": {
-                                        "anyOf": [
-                                          {
-                                            "minLength": 1,
-                                            "type": "string"
-                                          },
-                                          {
-                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type",
-                                      "groupId"
-                                    ],
-                                    "type": "object"
-                                  },
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      },
-                                      "groupId": {
-                                        "anyOf": [
-                                          {
-                                            "minLength": 1,
-                                            "type": "string"
-                                          },
-                                          {
-                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type",
-                                      "groupId"
-                                    ],
-                                    "type": "object"
-                                  },
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type"
-                                    ],
-                                    "type": "object"
-                                  },
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type"
-                                    ],
-                                    "type": "object"
-                                  }
-                                ]
-                              },
-                              {
-                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                "type": "string"
-                              }
-                            ]
+                            "description": "Deployment intent."
                           }
                         },
                         "propertyNames": {
@@ -4281,8 +3720,7 @@
                           }
                         },
                         "required": [
-                          "intent",
-                          "target"
+                          "intent"
                         ],
                         "type": "object"
                       },
@@ -4300,7 +3738,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
+              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
             "description": {
               "anyOf": [
@@ -4313,7 +3751,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Native app description. Required for creation."
+              "description": "App description. Required for creation."
             },
             "developer": {
               "anyOf": [
@@ -4326,9 +3764,9 @@
                   "type": "string"
                 }
               ],
-              "description": "App developer label."
+              "description": "Developer name."
             },
-            "displayName": {
+            "display_name": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -4339,9 +3777,21 @@
                   "type": "string"
                 }
               ],
-              "description": "Company Portal display name. Required for creation."
+              "description": "Company Portal name. Required for creation."
             },
-            "ignoreVersionDetection": {
+            "featured": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Show the app as featured. Explicit false is managed."
+            },
+            "ignore_version_detection": {
               "anyOf": [
                 {
                   "type": "boolean"
@@ -4353,7 +3803,7 @@
               ],
               "description": "Ignore installed app versions during detection. Explicit false is managed."
             },
-            "includedApps": {
+            "included_apps": {
               "anyOf": [
                 {
                   "items": {
@@ -4361,18 +3811,7 @@
                       {
                         "additionalProperties": false,
                         "properties": {
-                          "@odata.type": {
-                            "anyOf": [
-                              {
-                                "const": "#microsoft.graph.macOSIncludedApp"
-                              },
-                              {
-                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                "type": "string"
-                              }
-                            ]
-                          },
-                          "bundleId": {
+                          "id": {
                             "anyOf": [
                               {
                                 "maxLength": 1000,
@@ -4384,9 +3823,9 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Application CFBundleIdentifier or package receipt identifier."
+                            "description": "Application bundle identifier or unmanaged PKG receipt identifier."
                           },
-                          "bundleVersion": {
+                          "version": {
                             "anyOf": [
                               {
                                 "maxLength": 1000,
@@ -4407,8 +3846,8 @@
                           }
                         },
                         "required": [
-                          "bundleId",
-                          "bundleVersion"
+                          "id",
+                          "version"
                         ],
                         "type": "object"
                       },
@@ -4427,9 +3866,9 @@
                   "type": "string"
                 }
               ],
-              "description": "Complete collection of identifiers and versions that detect the installation. Derived from the applications a DMG holds, or those a PKG installs under /Applications, otherwise its package receipts, with the selected application first. Required for creation; identifiers must be unique."
+              "description": "Identifiers and versions that detect the installation; the first identifies the app. Derived from applications, selected first, or receipts for an unmanaged PKG without applications, including payloadless packages. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
             },
-            "informationUrl": {
+            "information_url": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -4458,18 +3897,6 @@
               "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
               "type": "string"
             },
-            "isFeatured": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "Show the app as featured. Explicit false is managed."
-            },
             "notes": {
               "anyOf": [
                 {
@@ -4494,35 +3921,9 @@
                   "type": "string"
                 }
               ],
-              "description": "App owner label."
+              "description": "Owner label."
             },
-            "primaryBundleId": {
-              "anyOf": [
-                {
-                  "maxLength": 10000,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Identifier of the first included app. Derived from the artifact; required for creation."
-            },
-            "primaryBundleVersion": {
-              "anyOf": [
-                {
-                  "maxLength": 10000,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Version of the first included app. Derived from the artifact; required for creation."
-            },
-            "privacyInformationUrl": {
+            "privacy_url": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -4546,7 +3947,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Native publisher name. Required for creation."
+              "description": "Publisher name. Required for creation."
             },
             "retention": {
               "anyOf": [
@@ -4586,14 +3987,17 @@
             "type": {
               "anyOf": [
                 {
-                  "const": "dmg"
+                  "enum": [
+                    "pkg",
+                    "dmg"
+                  ]
                 },
                 {
                   "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                   "type": "string"
                 }
               ],
-              "description": "Short name for the native app subtype. Must agree with @odata.type if both are supplied."
+              "description": "A Mac app follows its installer: pkg for a PKG and dmg for a disk image."
             }
           },
           "propertyNames": {
@@ -4601,72 +4005,12 @@
               "pattern": "\\{\\{"
             }
           },
-          "title": "#microsoft.graph.macOSDmgApp",
+          "title": "Mac app",
           "type": "object"
         },
         {
           "additionalProperties": false,
-          "anyOf": [
-            {
-              "properties": {
-                "inputs": {
-                  "additionalProperties": {
-                    "description": "Named output from this resource. Defaults to installer.",
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                    "type": "string"
-                  },
-                  "propertyNames": {
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-                  },
-                  "type": "object"
-                },
-                "installer": {
-                  "description": "Named output from this resource. Defaults to installer.",
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "@odata.type"
-              ]
-            },
-            {
-              "properties": {
-                "inputs": {
-                  "additionalProperties": {
-                    "description": "Named output from this resource. Defaults to installer.",
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                    "type": "string"
-                  },
-                  "propertyNames": {
-                    "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
-                  },
-                  "type": "object"
-                },
-                "installer": {
-                  "description": "Named output from this resource. Defaults to installer.",
-                  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-                  "type": "string"
-                }
-              },
-              "required": [
-                "type"
-              ]
-            }
-          ],
           "properties": {
-            "@odata.type": {
-              "anyOf": [
-                {
-                  "const": "#microsoft.graph.macOSPkgApp"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "Native Graph app subtype. macOS apps use beta for current OS requirements; Win32 uses v1.0."
-            },
             "app_id": {
               "anyOf": [
                 {
@@ -4687,26 +4031,87 @@
                     "anyOf": [
                       {
                         "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "required": [
+                              "group"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "exclude_group"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "all_devices"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "all_users"
+                            ]
+                          }
+                        ],
                         "properties": {
-                          "@odata.type": {
+                          "all_devices": {
                             "anyOf": [
                               {
-                                "const": "#microsoft.graph.mobileAppAssignment"
+                                "const": true
                               },
                               {
                                 "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                                 "type": "string"
                               }
-                            ]
+                            ],
+                            "description": "Target all devices."
+                          },
+                          "all_users": {
+                            "anyOf": [
+                              {
+                                "const": true
+                              },
+                              {
+                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Target all licensed users."
+                          },
+                          "exclude_group": {
+                            "anyOf": [
+                              {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Entra group object ID to exclude."
+                          },
+                          "group": {
+                            "anyOf": [
+                              {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Entra group object ID to target."
                           },
                           "intent": {
                             "anyOf": [
                               {
                                 "enum": [
-                                  "available",
                                   "required",
+                                  "available",
                                   "uninstall",
-                                  "availableWithoutEnrollment"
+                                  "available_without_enrollment"
                                 ],
                                 "type": "string"
                               },
@@ -4715,145 +4120,7 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Native deployment intent."
-                          },
-                          "target": {
-                            "anyOf": [
-                              {
-                                "oneOf": [
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.groupAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      },
-                                      "groupId": {
-                                        "anyOf": [
-                                          {
-                                            "minLength": 1,
-                                            "type": "string"
-                                          },
-                                          {
-                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type",
-                                      "groupId"
-                                    ],
-                                    "type": "object"
-                                  },
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.exclusionGroupAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      },
-                                      "groupId": {
-                                        "anyOf": [
-                                          {
-                                            "minLength": 1,
-                                            "type": "string"
-                                          },
-                                          {
-                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type",
-                                      "groupId"
-                                    ],
-                                    "type": "object"
-                                  },
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.allDevicesAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type"
-                                    ],
-                                    "type": "object"
-                                  },
-                                  {
-                                    "additionalProperties": false,
-                                    "properties": {
-                                      "@odata.type": {
-                                        "anyOf": [
-                                          {
-                                            "const": "#microsoft.graph.allLicensedUsersAssignmentTarget"
-                                          },
-                                          {
-                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                            "type": "string"
-                                          }
-                                        ]
-                                      }
-                                    },
-                                    "propertyNames": {
-                                      "not": {
-                                        "pattern": "\\{\\{"
-                                      }
-                                    },
-                                    "required": [
-                                      "@odata.type"
-                                    ],
-                                    "type": "object"
-                                  }
-                                ]
-                              },
-                              {
-                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                "type": "string"
-                              }
-                            ]
+                            "description": "Deployment intent."
                           }
                         },
                         "propertyNames": {
@@ -4862,8 +4129,7 @@
                           }
                         },
                         "required": [
-                          "intent",
-                          "target"
+                          "intent"
                         ],
                         "type": "object"
                       },
@@ -4881,7 +4147,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
+              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
             "description": {
               "anyOf": [
@@ -4894,7 +4160,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Native app description. Required for creation."
+              "description": "App description. Required for creation."
             },
             "developer": {
               "anyOf": [
@@ -4907,9 +4173,9 @@
                   "type": "string"
                 }
               ],
-              "description": "App developer label."
+              "description": "Developer name."
             },
-            "displayName": {
+            "display_name": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -4920,9 +4186,21 @@
                   "type": "string"
                 }
               ],
-              "description": "Company Portal display name. Required for creation."
+              "description": "Company Portal name. Required for creation."
             },
-            "ignoreVersionDetection": {
+            "featured": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Show the app as featured. Explicit false is managed."
+            },
+            "ignore_version_detection": {
               "anyOf": [
                 {
                   "type": "boolean"
@@ -4934,7 +4212,7 @@
               ],
               "description": "Ignore installed app versions during detection. Explicit false is managed."
             },
-            "includedApps": {
+            "included_apps": {
               "anyOf": [
                 {
                   "items": {
@@ -4942,18 +4220,7 @@
                       {
                         "additionalProperties": false,
                         "properties": {
-                          "@odata.type": {
-                            "anyOf": [
-                              {
-                                "const": "#microsoft.graph.macOSIncludedApp"
-                              },
-                              {
-                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                "type": "string"
-                              }
-                            ]
-                          },
-                          "bundleId": {
+                          "id": {
                             "anyOf": [
                               {
                                 "maxLength": 1000,
@@ -4965,9 +4232,9 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Application CFBundleIdentifier or package receipt identifier."
+                            "description": "Application bundle identifier or unmanaged PKG receipt identifier."
                           },
-                          "bundleVersion": {
+                          "version": {
                             "anyOf": [
                               {
                                 "maxLength": 1000,
@@ -4988,8 +4255,8 @@
                           }
                         },
                         "required": [
-                          "bundleId",
-                          "bundleVersion"
+                          "id",
+                          "version"
                         ],
                         "type": "object"
                       },
@@ -5008,9 +4275,9 @@
                   "type": "string"
                 }
               ],
-              "description": "Complete collection of identifiers and versions that detect the installation. Derived from the applications a DMG holds, or those a PKG installs under /Applications, otherwise its package receipts, with the selected application first. Required for creation; identifiers must be unique."
+              "description": "Identifiers and versions that detect the installation; the first identifies the app. Derived from applications, selected first, or receipts for an unmanaged PKG without applications, including payloadless packages. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
             },
-            "informationUrl": {
+            "information_url": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -5034,12 +4301,7 @@
               },
               "type": "object"
             },
-            "installer": {
-              "description": "Named output from this resource. Defaults to installer.",
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
-              "type": "string"
-            },
-            "isFeatured": {
+            "install_as_managed": {
               "anyOf": [
                 {
                   "type": "boolean"
@@ -5049,7 +4311,12 @@
                   "type": "string"
                 }
               ],
-              "description": "Show the app as featured. Explicit false is managed."
+              "description": "Install the app as managed on macOS 11 or later. The PKG must have one component that installs one application under /Applications."
+            },
+            "installer": {
+              "description": "Named output from this resource. Defaults to installer.",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+              "type": "string"
             },
             "notes": {
               "anyOf": [
@@ -5075,35 +4342,9 @@
                   "type": "string"
                 }
               ],
-              "description": "App owner label."
+              "description": "Owner label."
             },
-            "primaryBundleId": {
-              "anyOf": [
-                {
-                  "maxLength": 10000,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Identifier of the first included app. Derived from the artifact; required for creation."
-            },
-            "primaryBundleVersion": {
-              "anyOf": [
-                {
-                  "maxLength": 10000,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Version of the first included app. Derived from the artifact; required for creation."
-            },
-            "privacyInformationUrl": {
+            "privacy_url": {
               "anyOf": [
                 {
                   "maxLength": 10000,
@@ -5127,7 +4368,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Native publisher name. Required for creation."
+              "description": "Publisher name. Required for creation."
             },
             "retention": {
               "anyOf": [
@@ -5167,14 +4408,14 @@
             "type": {
               "anyOf": [
                 {
-                  "const": "pkg"
+                  "const": "lob"
                 },
                 {
                   "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                   "type": "string"
                 }
               ],
-              "description": "Short name for the native app subtype. Must agree with @odata.type if both are supplied."
+              "description": "Publish the signed PKG as a line-of-business app."
             }
           },
           "propertyNames": {
@@ -5182,10 +4423,14 @@
               "pattern": "\\{\\{"
             }
           },
-          "title": "#microsoft.graph.macOSPkgApp",
+          "required": [
+            "type"
+          ],
+          "title": "Mac line-of-business app",
           "type": "object"
         }
       ],
+      "description": "Intune app metadata. Windows software publishes a Win32 envelope; Mac software publishes its PKG or DMG, or a signed PKG as a line-of-business app. The minimum macOS derives from the software's minimum_os and its installer.",
       "properties": {
         "inputs": {
           "additionalProperties": {

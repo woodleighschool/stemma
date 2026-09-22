@@ -19,11 +19,7 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 	fake.expectedAPI = "beta"
 	req := fixtureRequest(t)
 	req.Artifact.Filename = "example.pkg"
-	req.Metadata = raw(object{"@odata.type": pkgType, "displayName": "Example", "description": "Synthetic application", "publisher": "Example", "primaryBundleId": "org.example.app", "primaryBundleVersion": "1.0", "includedApps": []any{object{"bundleId": "org.example.app", "bundleVersion": "1.0"}}, "minimumSupportedOperatingSystem": object{"v12_0": true}})
-	desired, err := validateMetadata(req.Metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
+	desired := object{"@odata.type": pkgType, "displayName": "Example", "description": "Synthetic application", "publisher": "Example", "primaryBundleId": "org.example.app", "primaryBundleVersion": "1.0", "includedApps": []any{object{"bundleId": "org.example.app", "bundleVersion": "1.0"}}, "minimumSupportedOperatingSystem": object{"v12_0": true}}
 	run := func() plugin.ReconcileResponse {
 		t.Helper()
 		result, err := c.handle(t.Context(), req, desired)
@@ -61,7 +57,7 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 	// Changed bytes are ordinary drift: planning reports them, applying replaces them.
 	req.Inputs["icon"] = second
 	req.Method = "plan"
-	if result := run(); len(result.Changes) != 1 || result.Changes[0].Field != "largeIcon" {
+	if result := run(); len(result.Changes) != 1 || result.Changes[0].Field != "icon" {
 		t.Fatalf("changed icon plan: %+v", result.Changes)
 	}
 	if text(fake.app["largeIcon"].(object)["value"]) != original {

@@ -1,10 +1,10 @@
 package intune
 
 import (
+	"cmp"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -12,44 +12,41 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// Derive resolves artifact facts into native app metadata. Declared fields win
-// over derived ones. A derivation manages every field it can supply: one the
-// artifact gives no value is cleared, or must be set where Graph requires a value.
+// Derive compiles the declaration into Graph metadata and fills what the
+// artifact supplies. Declared fields win over derived ones. A derivation
+// manages every field it can supply: one the artifact gives no value is
+// cleared, or must be set where Graph requires a value. Origins use the
+// declaration's field names.
 func Derive(req plugin.ReconcileRequest[Config]) (plugin.ReconcileRequest[Config], map[string]string, error) {
-	m, err := decodeObject(req.Metadata)
+	m, err := compile(req)
 	if err != nil {
 		return req, nil, err
 	}
 	origins := map[string]string{}
-	if value, exists := m["type"]; exists {
-		types := map[string]string{"win32": win32Type, "pkg": pkgType, "dmg": dmgType}
-		native, ok := types[text(value)]
-		if !ok {
-			return req, nil, errors.New("intune type must be win32, pkg or dmg")
-		}
-		if existing, ok := m["@odata.type"]; ok && existing != native {
-			return req, nil, errors.New("type conflicts with @odata.type")
-		}
-		m["@odata.type"] = native
-		delete(m, "type")
-	}
-	if enum(m["@odata.type"], pkgType, dmgType) {
-		m, err = deriveMac(req, m, origins)
-	} else {
+	if m["@odata.type"] == win32Type {
 		m, err = deriveInstaller(req, m, origins)
+	} else {
+		m, err = deriveMac(req, m, origins)
+	}
+	if err != nil {
+		return req, nil, err
 	}
 	req.Metadata = raw(m)
-	return req, origins, err
+	reported := make(map[string]string, len(origins))
+	for property, origin := range origins {
+		reported[reportName(property)] = origin
+	}
+	return req, reported, nil
 }
 
 // deriveMac supplies the minimum OS from the software's effective requirement
-// and detection from the artifact's inventory. Included apps are the
-// applications a DMG holds, or those a PKG installs under /Applications,
-// otherwise the receipts of its components with a payload. The selected
-// application comes first.
+// and detection from its applications or PKG receipts.
 func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string]string) (object, error) {
-	if _, declared := m["minimumSupportedOperatingSystem"]; declared {
-		return nil, errors.New("minimumSupportedOperatingSystem derives from the software; set minimum_os")
+	lob := m["@odata.type"] == lobType
+	if lob {
+		if err := validateLOB(req.Artifact, m["installAsManaged"] == true); err != nil {
+			return nil, err
+		}
 	}
 	if minimum := req.MinimumOS; minimum != nil {
 		field, lossy, err := minimumOS(minimum.Version)
@@ -64,8 +61,15 @@ func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string
 	} else if req.Prepared || req.Artifact.Path != "" {
 		return nil, errors.New("no minimum macOS is known for this software; set minimum_os")
 	}
-	facts := req.Artifact.Facts
-	if len(facts.Subjects) == 0 {
+	if declared, exists := m["includedApps"]; exists {
+		first := declared.([]any)[0].(object)
+		return mergeDerived(m, object{"primaryBundleId": first["bundleId"], "primaryBundleVersion": first["bundleVersion"]}, "included_apps", origins)
+	}
+	if declared, exists := m["childApps"]; exists {
+		first := declared.([]any)[0].(object)
+		return mergeDerived(m, object{"bundleId": first["bundleId"], "buildNumber": first["buildNumber"], "versionNumber": first["versionNumber"]}, "included_apps", origins)
+	}
+	if !req.Prepared && req.Artifact.Path == "" && len(req.Artifact.Facts.Subjects) == 0 {
 		return m, nil
 	}
 	var selected *plugin.Subject
@@ -74,55 +78,47 @@ func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string
 			return nil, errors.New("macos.application evidence requires an application subject")
 		}
 	}
-	included, origin := includedApps(facts, selected, m["@odata.type"] == pkgType)
-	declared, declaredApps := m["includedApps"]
-	if declaredApps {
-		if err := validateIncludedApps(declared); err != nil {
-			return nil, err
-		}
-		included, origin = nil, "includedApps"
-		for _, item := range declared.([]any) {
-			included = append(included, item.(object))
+	apps, origin := detectedApps(req.Artifact.Facts, selected, text(m["@odata.type"]))
+	if len(apps) == 0 {
+		return nil, errors.New("the artifact has no application or package receipt to detect it; set included_apps")
+	}
+	// The primary fields describe the first included app.
+	first := apps[0]
+	if first.version == "" {
+		return nil, errors.New("the selected application has no CFBundleShortVersionString; set included_apps")
+	}
+	list := make([]any, len(apps))
+	for i, app := range apps {
+		if lob {
+			list[i] = object{"bundleId": app.id, "buildNumber": app.version, "versionNumber": app.build}
+		} else {
+			list[i] = object{"bundleId": app.id, "bundleVersion": app.version}
 		}
 	}
-	detection := object{"includedApps": nil, "primaryBundleId": nil, "primaryBundleVersion": nil}
-	if len(included) > 0 {
-		// The primary fields describe the first included app; a declared one names it.
-		first := maps.Clone(included[0])
-		for primary, field := range map[string]string{"primaryBundleId": "bundleId", "primaryBundleVersion": "bundleVersion"} {
-			value, exists := m[primary]
-			switch {
-			case !exists:
-				detection[primary] = first[field]
-			case declaredApps && value != first[field]:
-				return nil, fmt.Errorf("%s must agree with the first includedApps entry", primary)
-			default:
-				first[field] = value
-			}
-		}
-		if text(first["bundleVersion"]) == "" {
-			return nil, errors.New("the selected application has no CFBundleShortVersionString; set primaryBundleVersion")
-		}
-		apps := []any{first}
-		for _, app := range included[1:] {
-			apps = append(apps, app)
-		}
-		detection["includedApps"] = apps
+	detection := object{"includedApps": list, "primaryBundleId": first.id, "primaryBundleVersion": first.version}
+	if lob {
+		detection = object{"childApps": list, "bundleId": first.id, "buildNumber": first.version, "versionNumber": first.build}
 	}
 	return mergeDerived(m, detection, origin, origins)
 }
 
-// includedApps lists the applications that identify an installation, the
-// selected one first, or a PKG's receipts when it installs none. Only the
-// selected application may leave its version to a declared primaryBundleVersion.
-func includedApps(facts plugin.Facts, selected *plugin.Subject, pkg bool) ([]object, string) {
+type detectedApp struct {
+	id, version, build string
+}
+
+// detectedApps lists the applications that identify an installation, the
+// selected one first, or the receipts of a PKG without applications.
+// Only the selected application may lack a version, which fails its detection.
+func detectedApps(facts plugin.Facts, selected *plugin.Subject, appType string) ([]detectedApp, string) {
 	apps := map[string]bool{}
 	for _, subject := range facts.Subjects {
 		if subject.App != nil {
 			apps[subject.ID] = true
 		}
 	}
-	eligible := func(app plugin.Subject) bool { return !pkg || strings.HasPrefix(app.InstalledPath, "/Applications/") }
+	eligible := func(app plugin.Subject) bool {
+		return appType != lobType || strings.HasPrefix(app.InstalledPath, "/Applications/")
+	}
 	var candidates []plugin.Subject
 	if selected != nil && eligible(*selected) {
 		candidates = append(candidates, *selected)
@@ -132,7 +128,7 @@ func includedApps(facts plugin.Facts, selected *plugin.Subject, pkg bool) ([]obj
 			candidates = append(candidates, subject)
 		}
 	}
-	var included []object
+	var detected []detectedApp
 	seen := map[string]bool{}
 	for _, app := range candidates {
 		id := app.App.BundleID
@@ -140,18 +136,66 @@ func includedApps(facts plugin.Facts, selected *plugin.Subject, pkg bool) ([]obj
 			continue
 		}
 		seen[id] = true
-		included = append(included, object{"bundleId": id, "bundleVersion": app.App.Version})
+		build := cmp.Or(app.App.Build, app.App.Version)
+		detected = append(detected, detectedApp{id: id, version: app.App.Version, build: build})
 	}
-	if len(included) > 0 || !pkg {
-		return included, "installer.apps"
+	if len(detected) > 0 || appType != pkgType {
+		return detected, "installer.apps"
 	}
 	for _, subject := range facts.Subjects {
-		if receipt := subject.Package; receipt != nil && receipt.HasPayload && receipt.Identifier != "" && receipt.Version != "" && !seen[receipt.Identifier] {
+		if receipt := subject.Package; receipt != nil && receipt.Identifier != "" && receipt.Version != "" && !seen[receipt.Identifier] {
 			seen[receipt.Identifier] = true
-			included = append(included, object{"bundleId": receipt.Identifier, "bundleVersion": receipt.Version})
+			detected = append(detected, detectedApp{id: receipt.Identifier, version: receipt.Version, build: receipt.Version})
 		}
 	}
-	return included, "installer.receipts"
+	return detected, "installer.receipts"
+}
+
+// lobLimit is Intune's size limit for a line-of-business PKG.
+const lobLimit = 2 << 30
+
+// validateLOB checks what Intune requires of a line-of-business upload that
+// the prepared artifact can show: a flat PKG with a payload, a verified
+// Developer ID Installer signature and a bounded size. Installing as managed
+// needs one component that installs one application under /Applications.
+// Validation without an artifact checks nothing here.
+func validateLOB(artifact plugin.Artifact, managed bool) error {
+	if artifact.Path == "" {
+		return nil
+	}
+	if artifact.Tree || !strings.EqualFold(path.Ext(artifact.Filename), ".pkg") {
+		return errors.New("a line-of-business app requires a flat PKG")
+	}
+	if artifact.Size > lobLimit {
+		return errors.New("a line-of-business PKG must be at most 2 GiB")
+	}
+	if len(artifact.Evidence["signature"]) == 0 {
+		return errors.New("a line-of-business app requires a verified Developer ID Installer signature; set signature.signer")
+	}
+	components, payload := 0, false
+	apps := map[string]bool{}
+	var installed []plugin.Subject
+	for _, subject := range artifact.Facts.Subjects {
+		if subject.Package != nil {
+			components++
+			payload = payload || subject.Package.HasPayload
+		}
+		if subject.App != nil {
+			apps[subject.ID] = true
+		}
+	}
+	if !payload {
+		return errors.New("a line-of-business PKG requires a payload")
+	}
+	for _, subject := range artifact.Facts.Subjects {
+		if subject.App != nil && !apps[subject.Parent] {
+			installed = append(installed, subject)
+		}
+	}
+	if managed && (components != 1 || len(installed) != 1 || !strings.HasPrefix(installed[0].InstalledPath, "/Applications/")) {
+		return errors.New("install_as_managed requires a PKG with one component that installs one application under /Applications")
+	}
+	return nil
 }
 
 func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origins map[string]string) (object, error) {

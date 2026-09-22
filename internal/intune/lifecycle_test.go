@@ -45,7 +45,7 @@ func TestRetentionKeepsActiveAndNewestPublicationsByVersionNumber(t *testing.T) 
 	fake.versionBase = 9
 	fake.files["8"], fake.files["9"] = committedFile(), committedFile()
 	req := fixtureRequest(t)
-	desired, _ := validateMetadata(req.Metadata)
+	desired, _ := compile(req)
 	delete(desired, "assignments")
 	desired["retention"] = object{"keep": float64(3)}
 	response, err := c.handle(t.Context(), req, desired)
@@ -116,7 +116,7 @@ func TestRetentionKeepsActiveAndNewestPublicationsByVersionNumber(t *testing.T) 
 func TestInterruptedUploadIsAbandonedAndPruned(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, _ := validateMetadata(req.Metadata)
+	desired, _ := compile(req)
 	delete(desired, "assignments")
 	desired["retention"] = object{"keep": float64(2)}
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
@@ -162,7 +162,7 @@ func TestInterruptedUploadIsAbandonedAndPruned(t *testing.T) {
 func TestRetentionRefusesUnorderedContentVersions(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, _ := validateMetadata(req.Metadata)
+	desired, _ := compile(req)
 	delete(desired, "assignments")
 	desired["retention"] = object{"keep": float64(1)}
 	fake.files["draft"] = committedFile()
@@ -179,7 +179,7 @@ func TestRetentionRefusesUnorderedContentVersions(t *testing.T) {
 func TestRetentionWaitsForReferencesAndRetryDoesNotUploadAgain(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, _ := validateMetadata(req.Metadata)
+	desired, _ := compile(req)
 	delete(desired, "assignments")
 	desired["retention"] = object{"keep": float64(1)}
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
@@ -216,7 +216,7 @@ func TestRetentionWaitsForReferencesAndRetryDoesNotUploadAgain(t *testing.T) {
 func TestRelationshipsPreserveOmittedCategoriesAndInboundReferences(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, _ := validateMetadata(req.Metadata)
+	desired, _ := compile(req)
 	delete(desired, "assignments")
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)

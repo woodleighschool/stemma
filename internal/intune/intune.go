@@ -96,7 +96,7 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest[Config]) (response 
 	if err != nil {
 		return response, err
 	}
-	desired, err := validateMetadata(req.Metadata)
+	desired, err := decodeObject(req.Metadata)
 	if err != nil {
 		return response, err
 	}
@@ -156,6 +156,11 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 			return response, errors.New("intune app has a different native subtype")
 		}
 		if published, err = recoverMarker(current, identity); err != nil {
+			return response, err
+		}
+	}
+	if c.appType == lobType && desired["installAsManaged"] == nil && current["installAsManaged"] == true {
+		if err := validateLOB(req.Artifact, true); err != nil {
 			return response, err
 		}
 	}
@@ -462,7 +467,7 @@ func metadataPatch(current, desired object, published publication) (object, []pl
 			value = mergeItems(key, previous, value.([]any))
 		}
 		patch[key] = value
-		changes = append(changes, plugin.Change{Kind: "metadata", Field: key, Action: "set", Before: raw(current[key]), After: raw(value)})
+		changes = append(changes, plugin.Change{Kind: "metadata", Field: reportName(key), Action: "set", Before: raw(current[key]), After: raw(value)})
 	}
 	notes := withMarker(noteText(current, desired), published)
 	if notes != text(current["notes"]) {
@@ -472,37 +477,43 @@ func metadataPatch(current, desired object, published publication) (object, []pl
 	return patch, changes
 }
 
+// validateCreation checks the fields Graph requires to create an app, named as
+// declarations name them.
 func validateCreation(m object) error {
 	required := []string{"displayName", "description", "publisher"}
 	if m["@odata.type"] == win32Type {
 		required = append(required, "installCommandLine", "uninstallCommandLine", "minimumSupportedWindowsRelease")
-	} else {
-		required = append(required, "primaryBundleId", "primaryBundleVersion")
 	}
 	for _, key := range required {
 		if text(m[key]) == "" {
-			return fmt.Errorf("creating an Intune app requires %s", key)
+			return fmt.Errorf("creating an Intune app requires %s", reportName(key))
 		}
 	}
 	if m["@odata.type"] != win32Type {
-		if err := validateMinimumOS(m["minimumSupportedOperatingSystem"]); err != nil {
-			return err
+		if selectedOS(m["minimumSupportedOperatingSystem"]) == "" {
+			return errors.New("creating a macOS app requires a minimum OS; set minimum_os")
 		}
-		if err := validateIncludedApps(m["includedApps"]); err != nil {
-			return err
+		apps, _ := m["includedApps"].([]any)
+		primary := text(m["primaryBundleId"]) != "" && text(m["primaryBundleVersion"]) != ""
+		if m["@odata.type"] == lobType {
+			apps, _ = m["childApps"].([]any)
+			primary = text(m["bundleId"]) != "" && text(m["buildNumber"]) != ""
+		}
+		if len(apps) == 0 || !primary {
+			return errors.New("creating a macOS app requires included_apps")
 		}
 		return nil
 	}
 	install, _ := m["installExperience"].(object)
 	if text(install["runAsAccount"]) == "" {
-		return errors.New("creating a Win32 app requires installExperience.runAsAccount")
+		return errors.New("creating a Win32 app requires install_experience.run_as")
 	}
 	if text(m["allowedArchitectures"]) == "" {
-		return errors.New("creating a Win32 app requires allowedArchitectures")
+		return errors.New("creating a Win32 app requires architecture")
 	}
 	rules, _ := m["rules"].([]any)
 	if len(rules) == 0 {
-		return errors.New("creating a Win32 app requires detection rules")
+		return errors.New("creating a Win32 app requires detection")
 	}
 	return nil
 }

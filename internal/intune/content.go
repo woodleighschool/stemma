@@ -61,7 +61,7 @@ func identifyArtifact(ctx context.Context, artifact plugin.Artifact, appType, se
 			return artifactIdentity{}, errors.New("macOS Intune apps require a file artifact")
 		}
 		extension := ".dmg"
-		if appType == pkgType {
+		if appType == pkgType || appType == lobType {
 			extension = ".pkg"
 		}
 		if !strings.EqualFold(filepath.Ext(artifact.Filename), extension) {

@@ -65,7 +65,7 @@ spec:
     path: ../Shared/setup.exe
   destinations:
     endpoint:
-      displayName: Branding
+      display_name: Branding
 `)
 	p, err := Load(filepath.Join(root, "stemma.yaml"))
 	if err != nil {

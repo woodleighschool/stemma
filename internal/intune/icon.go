@@ -49,7 +49,7 @@ func (c *client) reconcileIcon(ctx context.Context, req plugin.ReconcileRequest[
 	if text(existing["value"]) == value && text(existing["type"]) == "image/png" {
 		return nil, nil
 	}
-	changes := []plugin.Change{{Kind: "content", Field: "largeIcon", Action: "upload", After: raw(artifact.SHA256)}}
+	changes := []plugin.Change{{Kind: "content", Field: "icon", Action: "upload", After: raw(artifact.SHA256)}}
 	if !apply {
 		return changes, nil
 	}

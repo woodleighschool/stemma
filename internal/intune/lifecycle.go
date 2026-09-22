@@ -148,7 +148,7 @@ func (c *client) pruneContent(ctx context.Context, appID, active string, keep in
 	slices.SortFunc(stale, func(a, b string) int { return cmp.Compare(numbers[a], numbers[b]) })
 	changes := make([]plugin.Change, 0, len(stale))
 	for _, id := range stale {
-		changes = append(changes, plugin.Change{Kind: "retention", Field: "contentVersions", Action: "delete", Before: raw(id)})
+		changes = append(changes, plugin.Change{Kind: "retention", Field: "content_version", Action: "delete", Before: raw(id)})
 		if !apply {
 			continue
 		}

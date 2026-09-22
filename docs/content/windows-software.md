@@ -27,22 +27,21 @@ spec:
     windows-win32:
       destinations:
         intune:
-          type: win32
-          allowedArchitectures: x64
-          minimumSupportedWindowsRelease: Windows11_24H2
-          installExperience:
-            runAsAccount: system
-            deviceRestartBehavior: basedOnReturnCode
-          returnCodes:
-            - returnCode: 0
+          architecture: x64
+          minimum_windows_release: Windows11_24H2
+          install_experience:
+            run_as: system
+            restart: based_on_return_code
+          return_codes:
+            - code: 0
               type: success
-            - returnCode: 1707
+            - code: 1707
               type: success
-            - returnCode: 3010
-              type: softReboot
-            - returnCode: 1641
-              type: hardReboot
-            - returnCode: 1618
+            - code: 3010
+              type: soft_reboot
+            - code: 1641
+              type: hard_reboot
+            - code: 1618
               type: retry
 ```
 
@@ -66,7 +65,7 @@ spec:
     url: https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi
   destinations:
     intune:
-      displayName: Google Chrome
+      display_name: Google Chrome
       description: Google Chrome.
       publisher: Google LLC
 ```
@@ -100,24 +99,21 @@ spec:
     filename: VSCodeSetup.exe
   destinations:
     intune:
-      displayName: Visual Studio Code
+      display_name: Visual Studio Code
       description: Visual Studio Code system installation.
       publisher: Microsoft
-      installCommandLine: "VSCodeSetup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /MERGETASKS=!runcode"
-      uninstallCommandLine: '"C:\Program Files\Microsoft VS Code\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART'
-      rules:
-        - "@odata.type": "#microsoft.graph.win32LobAppFileSystemRule"
-          ruleType: detection
+      install_command: "VSCodeSetup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /MERGETASKS=!runcode"
+      uninstall_command: '"C:\Program Files\Microsoft VS Code\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART'
+      detection:
+        - type: file
           path: 'C:\Program Files\Microsoft VS Code'
-          fileOrFolderName: Code.exe
-          check32BitOn64System: false
-          operationType: exists
-          operator: notConfigured
+          name: Code.exe
+          property: exists
 ```
 
 This rule detects presence. It intentionally does not enforce a particular VS Code
-version. To manage a minimum version, use `operationType: version`,
-`operator: greaterThanOrEqual` and a `comparisonValue` matching the installed file's
+version. To manage a minimum version, use `property: version`,
+`operator: greater_than_or_equal` and a `value` matching the installed file's
 version. EXE version and detection values are not automatically inferred.
 
 ## Include a transform or wrapper
@@ -133,7 +129,7 @@ content:
       path: Assets/Organisation.mst
 destinations:
   intune:
-    installCommandLine: 'msiexec /i "Vendor.msi" TRANSFORMS="Organisation.mst" /qn /norestart'
+    install_command: 'msiexec /i "Vendor.msi" TRANSFORMS="Organisation.mst" /qn /norestart'
 ```
 
 This is a spec excerpt using the shared Win32 defaults. Intune includes the whole
@@ -161,57 +157,40 @@ Use file, registry or script detection when you need evidence spanning those
 upgrades. A registry version rule, for example:
 
 ```yaml
-rules:
-  - "@odata.type": "#microsoft.graph.win32LobAppRegistryRule"
-    ruleType: detection
-    keyPath: 'HKEY_LOCAL_MACHINE\SOFTWARE\Example\Client'
-    valueName: Version
-    check32BitOn64System: false
-    operationType: version
-    operator: greaterThanOrEqual
-    comparisonValue: "2.0.0"
+detection:
+  - type: registry
+    key: 'HKEY_LOCAL_MACHINE\SOFTWARE\Example\Client'
+    value_name: Version
+    property: version
+    operator: greater_than_or_equal
+    value: "2.0.0"
 ```
 
-Use a real vendor key and version. `greaterThanOrEqual` accepts an already-newer
-installation; equality alone does not. Native file and registry rules can be
-combined. PowerShell detection must be the only rule, with base64-encoded UTF-8
-source in `scriptContent`, and explicit `runAs32Bit` and `enforceSignatureCheck`
-where needed.
+Use a real vendor key and version. `greater_than_or_equal` accepts an already-newer
+installation; equality alone does not. File and registry rules can be combined, and
+`check_32bit` selects the 32-bit view on 64-bit Windows. A script rule must be the
+only rule, with `run_as_32bit` and `enforce_signature_check` where needed.
 
 Intune considers a detection script successful only when it exits zero and writes
 to stdout; stderr can make detection fail. Stemma does not execute detection scripts
 to prove their endpoint behaviour. See Microsoft's
 [detection documentation](https://learn.microsoft.com/en-us/intune/app-management/deployment/add-win32).
 
-For example, save this as `detect.ps1` and test it on the intended Windows host:
-
-```powershell
-$app = 'C:\Program Files\Microsoft VS Code\Code.exe'
-if (Test-Path -LiteralPath $app -PathType Leaf) {
-    Write-Output 'Detected'
-    exit 0
-}
-exit 1
-```
-
-Encode the file with PowerShell:
-
-```powershell
-[Convert]::ToBase64String([IO.File]::ReadAllBytes((Resolve-Path './detect.ps1')))
-```
-
-Paste that output as `scriptContent` in a rule of this shape:
+For example, test this script on the intended Windows host:
 
 ```yaml
-rules:
-  - "@odata.type": "#microsoft.graph.win32LobAppPowerShellScriptRule"
-    ruleType: detection
-    enforceSignatureCheck: false
-    runAs32Bit: false
-    scriptContent: REPLACE_WITH_BASE64_OUTPUT
+detection:
+  - type: script
+    script: |
+      $app = 'C:\Program Files\Microsoft VS Code\Code.exe'
+      if (Test-Path -LiteralPath $app -PathType Leaf) {
+          Write-Output 'Detected'
+          exit 0
+      }
+      exit 1
 ```
 
-For simple presence detection, the native file rule above avoids a script. Use
+For simple presence detection, the file rule above avoids a script. Use
 script detection when the vendor's installed state needs more than a native rule.
 
 Dependencies and supersedence are [publication relationships](publishing.md#intune-relationships),

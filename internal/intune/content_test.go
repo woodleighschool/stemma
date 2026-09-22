@@ -39,7 +39,7 @@ func TestSetupTreePublicationAndEntrypointIdentity(t *testing.T) {
 	req := fixtureRequest(t)
 	req.Artifact = treeArtifact(t)
 	req.Artifact.Version = "4.2"
-	desired, _ := validateMetadata(req.Metadata)
+	desired, _ := compile(req)
 	delete(desired, "assignments")
 	desired["content"] = object{"setup_file": `bin\setup.cmd`}
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
@@ -93,7 +93,7 @@ func TestSetupTreeRejectsChangedBytesAndUnsafeEntrypoints(t *testing.T) {
 			fake, c := newGraphFixture(t)
 			req := fixtureRequest(t)
 			req.Artifact = treeArtifact(t)
-			desired, _ := validateMetadata(req.Metadata)
+			desired, _ := compile(req)
 			switch name {
 			case "changed companion":
 				if err := os.WriteFile(filepath.Join(req.Artifact.Path, "payload.cab"), []byte("changed"), 0o644); err != nil {

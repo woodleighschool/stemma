@@ -17,12 +17,12 @@ func TestSelectedMSIDefaultsAndNativeOverrides(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		metadata, err := validateMetadata(derived.Metadata)
+		metadata, err := decodeObject(derived.Metadata)
 		if err != nil {
 			t.Fatal(err)
 		}
 		rule := metadata["rules"].([]any)[0].(object)
-		if metadata["installCommandLine"] != `msiexec /i "Example.msi" /qn /norestart` || metadata["uninstallCommandLine"] != `msiexec /x "`+code+`" /qn /norestart` || rule["productCode"] != code || rule["productVersionOperator"] != "greaterThanOrEqual" || rule["productVersion"] != "2.0.0" || origins["rules"] != "windows.installer" {
+		if metadata["installCommandLine"] != `msiexec /i "Example.msi" /qn /norestart` || metadata["uninstallCommandLine"] != `msiexec /x "`+code+`" /qn /norestart` || rule["productCode"] != code || rule["productVersionOperator"] != "greaterThanOrEqual" || rule["productVersion"] != "2.0.0" || origins["detection"] != "windows.installer" {
 			t.Fatalf("incorrect MSI defaults: %+v", metadata)
 		}
 		if metadata["installExperience"] != nil || metadata["returnCodes"] != nil || metadata["allowedArchitectures"] != nil {
@@ -37,13 +37,13 @@ func TestSelectedMSIDefaultsAndNativeOverrides(t *testing.T) {
 		t.Fatalf("destination selected an MSI itself: %s, %v", derived.Metadata, err)
 	}
 	req.Artifact.Evidence = selectedMSI(msi)
-	req.Metadata = raw(object{"type": "win32", "displayName": "Declared", "installCommandLine": "custom install", "uninstallCommandLine": "custom remove", "rules": []any{}})
+	req.Metadata = raw(object{"type": "win32", "display_name": "Declared", "install_command": "custom install", "uninstall_command": "custom remove", "detection": []any{}})
 	derived, origins, err := Derive(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	metadata, _ := decodeObject(derived.Metadata)
-	if metadata["displayName"] != "Declared" || metadata["installCommandLine"] != "custom install" || len(metadata["rules"].([]any)) != 0 || origins["rules"] != "" {
+	if metadata["displayName"] != "Declared" || metadata["installCommandLine"] != "custom install" || len(metadata["rules"].([]any)) != 0 || origins["detection"] != "" {
 		t.Fatal("MSI defaults overwrote declared native fields")
 	}
 	req.Artifact.Filename = "setup.exe"

@@ -31,7 +31,7 @@ func TestResourceEditorSchema(t *testing.T) {
 		"resource source":           {"MacSoftware", `{"source":{"resource":{"kind":"BuildMacPkg","name":"branding"}}}`, true},
 		"source free mac":           {"MacSoftware", `{"destinations":{"external":{"title":"Policy"}}}`, true},
 		"build":                     {"BuildMacPkg", `{"package":{"identifier":"org.example.payload","version":"1"},"inputs":{"text":{"path":"text.txt"}},"payload":{"/Library/Example/text.txt":{"$input":"text","mode":"0644"}}}`, true},
-		"windows":                   {"WindowsSoftware", `{"source":{"path":"setup.exe"},"content":{"files":{"config.xml":{"path":"config.xml"}}},"destinations":{"external":{"displayName":"Fixture"}}}`, true},
+		"windows":                   {"WindowsSoftware", `{"source":{"path":"setup.exe"},"content":{"files":{"config.xml":{"path":"config.xml"}}},"destinations":{"external":{"display_name":"Fixture"}}}`, true},
 		"inherited build":           {"BuildMacPkg", `{"extends":"base","payload":{"/Library/Example/text.txt":{"content":"text"}}}`, true},
 		"inherited windows":         {"WindowsSoftware", `{"extends":"base"}`, true},
 		"inherited source override": {"MacSoftware", `{"extends":"base","source":{"path":"different.pkg"}}`, true},

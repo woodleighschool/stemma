@@ -31,7 +31,7 @@ import (
 func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, err := validateMetadata(req.Metadata)
+	desired, err := compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,8 +53,8 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	fake.app["isFeatured"] = true
 	fake.app["installExperience"].(object)["deviceRestartBehavior"] = "suppress"
 	fake.mu.Unlock()
-	req.Metadata = raw(object{"@odata.type": win32Type, "displayName": "Renamed", "isFeatured": false, "installExperience": object{"runAsAccount": "user"}})
-	desired, err = validateMetadata(req.Metadata)
+	req.Metadata = raw(object{"display_name": "Renamed", "featured": false, "install_experience": object{"run_as": "user"}})
+	desired, err = compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,8 +79,8 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 		t.Fatal("unchanged reconciliation wrote to the tenant")
 	}
 	fake.mu.Unlock()
-	req.Metadata = raw(object{"@odata.type": win32Type, "allowedArchitectures": nil, "assignments": []any{}})
-	desired, err = validateMetadata(req.Metadata)
+	req.Metadata = raw(object{"architecture": nil, "assignments": []any{}})
+	desired, err = compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestInterruptedFirstPublicationIsRepeatedInTheSameApp(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	fake.failCommit = true
 	req := fixtureRequest(t)
-	desired, err := validateMetadata(req.Metadata)
+	desired, err := compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestInterruptedFirstPublicationIsRepeatedInTheSameApp(t *testing.T) {
 func TestUnchangedApplyWaitsForPendingPublication(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, err := validateMetadata(req.Metadata)
+	desired, err := compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestFreshRequestRediscoversPublishedApp(t *testing.T) {
 		t.Run(discovery, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
 			req := fixtureRequest(t)
-			desired, err := validateMetadata(req.Metadata)
+			desired, err := compile(req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -177,7 +177,7 @@ func TestFreshRequestRediscoversPublishedApp(t *testing.T) {
 			fake.mu.Unlock()
 			// A later invocation starts from the catalog and the tenant alone.
 			req = fixtureRequest(t)
-			desired, err = validateMetadata(req.Metadata)
+			desired, err = compile(req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -211,7 +211,7 @@ func TestPlanAndValidationDoNotWrite(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
 	req.Method = "plan"
-	desired, err := validateMetadata(req.Metadata)
+	desired, err := compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,13 +225,16 @@ func TestPlanAndValidationDoNotWrite(t *testing.T) {
 		t.Fatal("plan wrote remote state")
 	}
 	for _, data := range []string{
-		`{"@odata.type":"#microsoft.graph.macOSLobApp"}`,
-		`{"@odata.type":"#microsoft.graph.win32LobApp","id":"read-only"}`,
-		`{"@odata.type":"#microsoft.graph.win32LobApp","isFeatured":null}`,
-		`{"@odata.type":"#microsoft.graph.win32LobApp","installExperience":{"runAsAccount":null}}`,
-		`{"@odata.type":"#microsoft.graph.win32LobApp","assignments":null}`,
+		`{"type":"pkg"}`,
+		`{"@odata.type":"#microsoft.graph.win32LobApp"}`,
+		`{"id":"read-only"}`,
+		`{"featured":null}`,
+		`{"install_experience":{"run_as":null}}`,
+		`{"assignments":null}`,
+		`{"assignments":[{"intent":"required","target":{"@odata.type":"#microsoft.graph.groupAssignmentTarget","groupId":"group-1"}}]}`,
 	} {
-		if _, err := validateMetadata([]byte(data)); err == nil {
+		req.Metadata = json.RawMessage(data)
+		if _, err := compile(req); err == nil {
 			t.Fatalf("accepted unsupported metadata %s", data)
 		}
 	}
@@ -240,7 +243,7 @@ func TestPlanAndValidationDoNotWrite(t *testing.T) {
 func TestPayloadChangeActivatesFreshVersionWithItsMarker(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, err := validateMetadata(req.Metadata)
+	desired, err := compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +287,7 @@ func TestMarkerDriftRepublishesContent(t *testing.T) {
 		t.Run(drift, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
 			req := fixtureRequest(t)
-			desired, err := validateMetadata(req.Metadata)
+			desired, err := compile(req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -337,7 +340,7 @@ func TestMarkerDriftRepublishesContent(t *testing.T) {
 func TestDuplicateMarkerAppsAreAmbiguous(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, err := validateMetadata(req.Metadata)
+	desired, err := compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,11 +383,11 @@ func fixtureRequest(t *testing.T) plugin.ReconcileRequest[Config] {
 	}
 	digest := sha256.Sum256(data)
 	return plugin.ReconcileRequest[Config]{Method: "apply", Identity: plugin.Identity{Project: "example", Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "test"}, Destination: "intune"}, Artifact: plugin.Artifact{Path: path, Filename: "setup.cmd", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}, Metadata: raw(object{
-		"@odata.type": win32Type, "displayName": "Fixture", "description": "Test app", "publisher": "Fixture Publisher",
-		"installCommandLine": "setup.cmd", "uninstallCommandLine": "setup.cmd /remove", "minimumSupportedWindowsRelease": "Windows11_23H2", "allowedArchitectures": "x64",
-		"installExperience": object{"runAsAccount": "system"},
-		"rules":             []any{object{"@odata.type": "#microsoft.graph.win32LobAppProductCodeRule", "ruleType": "detection", "productCode": "{AC01F3D3-C5D5-40DB-9E8C-ED53982E17ED}", "productVersionOperator": "notConfigured"}},
-		"assignments":       []any{object{"intent": "required", "target": object{"@odata.type": "#microsoft.graph.groupAssignmentTarget", "groupId": "group-1"}}},
+		"display_name": "Fixture", "description": "Test app", "publisher": "Fixture Publisher",
+		"install_command": "setup.cmd", "uninstall_command": "setup.cmd /remove", "minimum_windows_release": "Windows11_23H2", "architecture": "x64",
+		"install_experience": object{"run_as": "system"},
+		"detection":          []any{object{"type": "msi", "product_code": "{AC01F3D3-C5D5-40DB-9E8C-ED53982E17ED}"}},
+		"assignments":        []any{object{"intent": "required", "group": "group-1"}},
 	})}
 }
 
@@ -684,12 +687,12 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestMacRawContentAndMetadata(t *testing.T) {
-	for _, appType := range []string{dmgType, pkgType} {
+	for _, appType := range []string{dmgType, pkgType, lobType} {
 		t.Run(appType, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
 			fake.expectedAPI = "beta"
 			extension := ".dmg"
-			if appType == pkgType {
+			if appType != dmgType {
 				extension = ".pkg"
 			}
 			// Transport fixtures deliberately do not claim installer-format validity.
@@ -704,10 +707,16 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 			if err := os.WriteFile(req.Artifact.Path, source, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			req.Metadata = raw(object{"@odata.type": appType, "displayName": "Vendor", "description": "Raw installer", "publisher": "Vendor", "primaryBundleId": "org.example.app", "primaryBundleVersion": "1.0", "includedApps": []any{object{"bundleId": "org.example.app", "bundleVersion": "1.0"}}, "minimumSupportedOperatingSystem": object{"v12_0": true}, "ignoreVersionDetection": false})
-			desired, err := validateMetadata(req.Metadata)
-			if err != nil {
-				t.Fatal(err)
+			desired := object{"@odata.type": appType, "displayName": "Vendor", "description": "Raw installer", "publisher": "Vendor", "primaryBundleId": "org.example.app", "primaryBundleVersion": "1.0", "includedApps": []any{object{"bundleId": "org.example.app", "bundleVersion": "1.0"}}, "minimumSupportedOperatingSystem": object{"v12_0": true}, "ignoreVersionDetection": false}
+			update := object{"@odata.type": appType, "primaryBundleVersion": "1.1", "ignoreVersionDetection": false, "minimumSupportedOperatingSystem": object{"v14_0": true}}
+			if appType == lobType {
+				for _, key := range []string{"primaryBundleId", "primaryBundleVersion", "includedApps"} {
+					delete(desired, key)
+				}
+				desired["bundleId"], desired["buildNumber"], desired["versionNumber"] = "org.example.app", "1.0", "100"
+				desired["childApps"] = []any{object{"bundleId": "org.example.app", "buildNumber": "1.0", "versionNumber": "100"}}
+				delete(update, "primaryBundleVersion")
+				update["buildNumber"] = "1.1"
 			}
 			if _, err := c.handle(t.Context(), req, desired); err != nil {
 				t.Fatal(err)
@@ -723,12 +732,8 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 			}
 			fake.app["owner"] = "Remote owner"
 			fake.app["ignoreVersionDetection"] = true
-			req.Metadata = raw(object{"@odata.type": appType, "primaryBundleVersion": "1.1", "ignoreVersionDetection": false, "minimumSupportedOperatingSystem": object{"v14_0": true}})
-			desired, err = validateMetadata(req.Metadata)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = c.handle(t.Context(), req, desired)
+			desired = update
+			_, err := c.handle(t.Context(), req, desired)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -749,15 +754,19 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 }
 
 func TestMacValidationAndAdoption(t *testing.T) {
+	mac := plugin.ReconcileRequest[Config]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "example"}}}
 	for _, metadata := range []object{
-		{"@odata.type": dmgType, "installCommandLine": "unsupported"},
-		{"@odata.type": win32Type, "primaryBundleId": "org.example.app"},
-		{"@odata.type": dmgType, "minimumSupportedOperatingSystem": object{"v12_0": true, "v13_0": true}},
-		{"@odata.type": dmgType, "minimumSupportedOperatingSystem": object{"v99_0": true}},
-		{"@odata.type": pkgType, "includedApps": []any{}},
-		{"@odata.type": pkgType, "preInstallScript": object{"scriptContent": "unsupported"}},
+		{"type": "dmg", "install_command": "unsupported"},
+		{"type": "win32"},
+		{"minimum_os": "12.0"},
+		{"minimumSupportedOperatingSystem": object{"v12_0": true}},
+		{"primary_bundle_id": "org.example.app"},
+		{"included_apps": []any{}},
+		{"included_apps": []any{object{"bundleId": "org.example.app", "bundleVersion": "1.0"}}},
+		{"pre_install_script": object{"script": "unsupported"}},
 	} {
-		if _, err := validateMetadata(raw(metadata)); err == nil {
+		mac.Metadata = raw(metadata)
+		if _, err := compile(mac); err == nil {
 			t.Fatalf("accepted unsupported native metadata: %s", raw(metadata))
 		}
 	}
@@ -768,8 +777,9 @@ func TestMacValidationAndAdoption(t *testing.T) {
 	req.Method = "plan"
 	req.Artifact.Filename = "existing.dmg"
 	req.Config = Config{GraphURL: fake.url + "/v1.0", Token: "test-token"}
-	req.Metadata = raw(object{"@odata.type": dmgType, "app_id": "app-1", "displayName": "Adopted"})
-	desired, err := validateMetadata(req.Metadata)
+	req.Identity.Resource.Kind = "MacSoftware"
+	req.Metadata = raw(object{"app_id": "app-1", "display_name": "Adopted", "included_apps": []any{object{"id": "org.example.app", "version": "1.0"}}})
+	desired, err := compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -805,10 +815,36 @@ func TestMacValidationAndAdoption(t *testing.T) {
 	}
 }
 
+func TestMacLOBPreservesManagedInstallRequirements(t *testing.T) {
+	fake, c := newGraphFixture(t)
+	fake.expectedAPI = "beta"
+	fake.app = object{"@odata.type": lobType, "id": "app-1", "installAsManaged": true}
+	receipt := plugin.Subject{ID: "PackageInfo", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.package", Version: "2.0", HasPayload: true}}
+	app := plugin.Subject{ID: "Payload/Example.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Library/Example.app", App: &plugin.AppFacts{BundleID: "org.example.app", Version: "2.0"}}
+	req := lobRequest(object{"type": "lob", "app_id": "app-1", "included_apps": []any{object{"id": "org.example.app", "version": "2.0"}}}, receipt, app)
+	req.Method = "plan"
+	req.Artifact.SHA256 = strings.Repeat("a", 64)
+	derived, _, err := Derive(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := decodeObject(derived.Metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), "install_as_managed") {
+		t.Fatalf("omitting install_as_managed bypassed the existing app's requirements: %v", err)
+	}
+	desired["installAsManaged"] = false
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
+		t.Fatalf("explicit unmanaged install kept managed restrictions: %v", err)
+	}
+}
+
 func TestAppSubtypeCannotBeChanged(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, err := validateMetadata(req.Metadata)
+	desired, err := compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}

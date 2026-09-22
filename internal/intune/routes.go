@@ -41,12 +41,14 @@ func (c *client) contentVersion(appID, versionID string) *abs.BaseRequestBuilder
 		return &c.beta.MobileApps().ByMobileAppId(appID).GraphMacOSPkgApp().ContentVersions().ByMobileAppContentId(versionID).BaseRequestBuilder
 	case dmgType:
 		return &c.beta.MobileApps().ByMobileAppId(appID).GraphMacOSDmgApp().ContentVersions().ByMobileAppContentId(versionID).BaseRequestBuilder
+	case lobType:
+		return &c.beta.MobileApps().ByMobileAppId(appID).GraphMacOSLobApp().ContentVersions().ByMobileAppContentId(versionID).BaseRequestBuilder
 	default:
 		return &c.stable.MobileApps().ByMobileAppId(appID).GraphWin32LobApp().ContentVersions().ByMobileAppContentId(versionID).BaseRequestBuilder
 	}
 }
 
-// All three app types share the content protocol; the generated SDK builders
+// Every app type shares the content protocol; the generated SDK builders
 // select their supported endpoint, including beta for current macOS requirements.
 func (c *client) content(appID, versionID, fileID, action string) *abs.BaseRequestBuilder {
 	switch c.appType {
@@ -70,6 +72,24 @@ func (c *client) content(appID, versionID, fileID, action string) *abs.BaseReque
 		}
 	case dmgType:
 		versions := c.beta.MobileApps().ByMobileAppId(appID).GraphMacOSDmgApp().ContentVersions()
+		if versionID == "" {
+			return &versions.BaseRequestBuilder
+		}
+		files := versions.ByMobileAppContentId(versionID).Files()
+		if fileID == "" {
+			return &files.BaseRequestBuilder
+		}
+		file := files.ByMobileAppContentFileId(fileID)
+		switch action {
+		case "commit":
+			return &file.Commit().BaseRequestBuilder
+		case "renewUpload":
+			return &file.RenewUpload().BaseRequestBuilder
+		default:
+			return &file.BaseRequestBuilder
+		}
+	case lobType:
+		versions := c.beta.MobileApps().ByMobileAppId(appID).GraphMacOSLobApp().ContentVersions()
 		if versionID == "" {
 			return &versions.BaseRequestBuilder
 		}

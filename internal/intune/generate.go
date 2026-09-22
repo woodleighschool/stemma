@@ -26,7 +26,7 @@ func generate() error {
 		types   []string
 	}{
 		{"v1.0", "stable", []string{"win32LobApp"}},
-		{"beta", "beta", []string{"macOSDmgApp", "macOSPkgApp"}},
+		{"beta", "beta", []string{"macOSDmgApp", "macOSLobApp", "macOSPkgApp"}},
 	} {
 		base := "/deviceAppManagement/mobileApps"
 		paths := []string{
