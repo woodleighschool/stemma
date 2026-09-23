@@ -48,6 +48,7 @@ require (
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
 	golang.org/x/net v0.59.0
+	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
 	golang.org/x/text v0.42.0
 	howett.net/plist v1.0.1
@@ -129,7 +130,6 @@ require (
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260813180055-c1d0aacb2297 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
@@ -140,3 +140,5 @@ require (
 replace charm.land/bubbletea/v2 => github.com/drawmeanelephant/bubbletea/v2 v2.0.10-0.20260911173320-21176428f2e1
 
 replace github.com/deploymenttheory/go-apfs-v2 => github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0
+
+replace github.com/deploymenttheory/go-macos-pkg => github.com/hydazz/go-macos-pkg v0.5.1-0.20260923113627-c654eeac073e
