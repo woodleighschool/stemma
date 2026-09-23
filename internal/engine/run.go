@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/cas"
@@ -17,6 +18,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/expression"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -58,6 +60,8 @@ type ResourceReport struct {
 	// Icon reports what the icon method did for the resource's declared asset.
 	Icon  string `json:"icon,omitempty"`
 	Error string `json:"error,omitempty"`
+	// BlockedBy names the resources whose unavailable outputs prevented execution.
+	BlockedBy []string `json:"blocked_by,omitempty"`
 }
 
 // DestinationReport describes semantic drift independently of cache hits.
@@ -144,50 +148,23 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err != nil {
 		return report, err
 	}
-	if opts.Lock.Frozen && opts.Method != "icon" {
-		// Verify every reviewed input before any destination can be written.
-		for _, key := range selected {
-			if _, _, err := locked.Acquire(resourceContext(ctx, plans[key].Resource), key); err != nil {
-				return report, err
-			}
-		}
-		result, err := locked.Commit(ctx)
-		if err != nil {
-			return report, err
-		}
-		report.LockChanged = &result.Changed
-	}
-	if opts.Method == "update" {
-		for _, key := range selected {
-			_, hits, err := locked.Acquire(resourceContext(ctx, plans[key].Resource), key)
-			if err != nil {
-				return report, err
-			}
-			resource := plans[key].Resource
-			item := ResourceReport{Name: resource.Metadata.Name, Kind: resource.Kind, Key: key, InputCacheHits: hits}
-			report.Resources = append(report.Resources, item)
-			if opts.ResourceDone != nil {
-				if err := opts.ResourceDone(item); err != nil {
-					return report, err
-				}
-			}
-		}
-		result, err := locked.Commit(ctx)
-		if err == nil {
-			report.LockChanged = &result.Changed
-		}
-		return report, err
-	}
 	preparedItems := map[string]preparedResource{}
 	pending := map[string]int{}
-	for destination := range destinations {
-		pending[destination.Resource]++
+	if opts.Method != "update" {
+		for destination := range destinations {
+			pending[destination.Resource]++
+		}
 	}
 	complete := func(item ResourceReport) error {
-		if opts.ResourceDone != nil {
-			return opts.ResourceDone(item)
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		return nil
+		if opts.ResourceDone != nil {
+			if err := opts.ResourceDone(item); err != nil {
+				return err
+			}
+		}
+		return ctx.Err()
 	}
 	var workdirs []string
 	defer func() {
@@ -219,21 +196,32 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			}
 		}
 		ctx := resourceContext(ctx, plan.Resource)
-		plugin.Logger(ctx).DebugContext(ctx, "Preparing resource")
+		plugin.Logger(ctx).DebugContext(ctx, "Executing resource")
 		started := time.Now()
 		item := ResourceReport{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Key: key}
-		entries, hits, acquisitionErr := locked.Acquire(ctx, key)
-		item.InputCacheHits = hits
-		preparationErr := acquisitionErr
-		var work string
-		if preparationErr == nil {
-			work, preparationErr = os.MkdirTemp(filepath.Join(store.Dir, "work"), "resource-*")
-			if preparationErr == nil {
-				workdirs = append(workdirs, work)
+		for _, producer := range producers(plan) {
+			if !preparedItems[producer].ready {
+				item.BlockedBy = append(item.BlockedBy, producer)
 			}
 		}
+		var preparationErr error
+		var entries map[string]source.Entry
+		if len(item.BlockedBy) > 0 {
+			preparationErr = fmt.Errorf("blocked by %s", strings.Join(item.BlockedBy, ", "))
+		} else {
+			entries, item.InputCacheHits, preparationErr = locked.Acquire(ctx, key)
+		}
+		var work string
+		if preparationErr == nil && opts.Method != "update" {
+			var err error
+			work, err = os.MkdirTemp(filepath.Join(store.Dir, "work"), "resource-*")
+			if err != nil {
+				return err
+			}
+			workdirs = append(workdirs, work)
+		}
 		inputs := map[string]Prepared{}
-		if preparationErr == nil {
+		if preparationErr == nil && opts.Method != "update" {
 			for _, name := range sortedKeys(plan.Inputs) {
 				declaration := plan.Inputs[name]
 				if ref := declaration.Resource; ref != nil {
@@ -255,7 +243,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			}
 		}
 		var outputs map[string]Prepared
-		if preparationErr == nil {
+		if preparationErr == nil && opts.Method != "update" {
 			derive := ""
 			if opts.Method == "signature" {
 				derive = "signature"
@@ -265,7 +253,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		item.Artifacts = outputs
 		if preparationErr != nil {
 			item.Error = preparationErr.Error()
-			if acquisitionErr == nil && ctx.Err() == nil {
+			if len(item.BlockedBy) == 0 && ctx.Err() == nil {
 				failures = append(failures, ReportedError{fmt.Errorf("%s: %w", key, preparationErr)})
 			}
 		}
@@ -274,23 +262,21 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if preparationErr == nil {
+		switch {
+		case preparationErr == nil && opts.Method == "update":
+			plugin.Logger(ctx).DebugContext(ctx, "Inputs resolved", "elapsed", time.Since(started).Round(time.Millisecond))
+		case preparationErr == nil:
 			artifact := outputs["installer"]
 			plugin.Logger(ctx).DebugContext(ctx, "Prepared", "artifact", artifact.Filename, "version", artifact.Version, "cached", item.Cached, "elapsed", time.Since(started).Round(time.Millisecond))
-		} else {
+		case len(item.BlockedBy) > 0:
+			plugin.Logger(ctx).DebugContext(ctx, "Resource blocked", "blocked_by", item.BlockedBy)
+		default:
 			plugin.Logger(ctx).DebugContext(ctx, "Preparation failed", "error", preparationErr)
 		}
-		// An acquisition failure ends the run; the completed report carries it.
-		var aborted error
-		if acquisitionErr != nil {
-			aborted = ReportedError{acquisitionErr}
-		}
 		if preparationErr != nil || pending[key] == 0 {
-			if err := complete(item); err != nil {
-				return errors.Join(aborted, err)
-			}
+			return complete(item)
 		}
-		return aborted
+		return nil
 	}
 	failed, reconciled := map[destinationRef]bool{}, map[destinationRef]bool{}
 	var reconcile func(destinationRef) error
@@ -414,6 +400,9 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 					failures = append(failures, ReportedError{fmt.Errorf("%s: %w", key, err)})
 				}
 			}
+			if err := ctx.Err(); err != nil {
+				return report, errors.Join(append(failures, err)...)
+			}
 			if err := complete(*item); err != nil {
 				return report, errors.Join(append(failures, err)...)
 			}
@@ -421,10 +410,13 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		return report, errors.Join(failures...)
 	}
 	for _, key := range selected {
-		if len(plans[key].Destinations) == 0 {
+		if opts.Method == "update" || len(plans[key].Destinations) == 0 {
 			if err := prepare(key); err != nil {
 				return report, errors.Join(append(failures, err)...)
 			}
+		}
+		if opts.Method == "update" {
+			continue
 		}
 		for _, destination := range sortedKeys(plans[key].Destinations) {
 			if err := reconcile(destinationRef{key, destination}); err != nil {
@@ -432,13 +424,17 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			}
 		}
 	}
-	if !opts.Lock.Frozen {
-		result, err := locked.Commit(ctx)
-		if err != nil {
-			return report, errors.Join(append(failures, err)...)
+	var rejected []string
+	for _, resource := range report.Resources {
+		if resource.Error != "" {
+			rejected = append(rejected, resource.Key)
 		}
-		report.LockChanged = &result.Changed
 	}
+	result, err := locked.Commit(ctx, rejected...)
+	if err != nil {
+		return report, errors.Join(append(failures, err)...)
+	}
+	report.LockChanged = &result.Changed
 	return report, errors.Join(failures...)
 }
 

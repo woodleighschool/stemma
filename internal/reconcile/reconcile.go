@@ -114,14 +114,20 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	var failures []string
 	apply, err := r.apply(ctx, head, reviewed)
 	report.Apply = &apply
+	if ctx.Err() != nil {
+		return report, ctx.Err()
+	}
 	if err != nil {
 		failures = append(failures, fmt.Sprintf("apply %s: %s", short(head), firstLine(err.Error())))
 	}
 	report.Updates, err = r.update(ctx, head, reviewed)
+	if ctx.Err() != nil {
+		return report, ctx.Err()
+	}
 	if err != nil {
 		failed := 0
 		for _, update := range report.Updates {
-			if update.Error != "" {
+			if update.Action == "failed" {
 				failed++
 			}
 		}
@@ -363,12 +369,20 @@ func (r *runner) update(ctx context.Context, head string, reviewed *git.Worktree
 		if resource := candidate.Resources[key]; resource.Error != "" {
 			// An unresolved resource keeps whatever it proposed last time.
 			keep[branchName(resource.Kind, resource.Name)] = true
-			updates = append(updates, Update{Resource: resource.Kind + "/" + resource.Name, Action: "failed", Error: resource.Error})
-			failures = append(failures, fmt.Errorf("%s: %s", key, resource.Error))
+			action := "failed"
+			if len(resource.BlockedBy) > 0 {
+				action = "blocked"
+			} else {
+				failures = append(failures, fmt.Errorf("%s: %s", key, resource.Error))
+			}
+			updates = append(updates, Update{Resource: resource.Kind + "/" + resource.Name, Action: action, Error: resource.Error})
 		}
 	}
 	changes := diff(candidate)
 	for _, key := range slices.Sorted(maps.Keys(changes)) {
+		if err := ctx.Err(); err != nil {
+			return updates, err
+		}
 		update, err := r.propose(ctx, head, key, changes[key], candidate, pulls)
 		keep[update.Branch] = true
 		if err != nil {
@@ -379,6 +393,9 @@ func (r *runner) update(ctx context.Context, head string, reviewed *git.Worktree
 		updates = append(updates, update)
 	}
 	for _, branch := range branches {
+		if err := ctx.Err(); err != nil {
+			return updates, err
+		}
 		if keep[branch] {
 			continue
 		}

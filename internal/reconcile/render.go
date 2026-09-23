@@ -23,9 +23,11 @@ const (
 // applySummary condenses an apply into a status line; the report and logs keep the detail.
 func applySummary(report engine.Report, err error) (state, summary string) {
 	var failed []string
-	changes := 0
+	changes, blocked := 0, 0
 	for _, resource := range report.Resources {
-		if resource.Error != "" {
+		if len(resource.BlockedBy) > 0 {
+			blocked++
+		} else if resource.Error != "" {
 			failed = append(failed, resource.Name)
 		}
 		for _, destination := range resource.Destinations {
@@ -38,7 +40,11 @@ func applySummary(report engine.Report, err error) (state, summary string) {
 	case err == nil:
 		return sourcecontrol.Success, fmt.Sprintf("%s, %s", plural(len(report.Resources), "resource"), plural(changes, "destination change"))
 	case len(failed) > 0:
-		return sourcecontrol.Failure, fmt.Sprintf("%s failed: %s", plural(len(failed), "resource"), strings.Join(failed, ", "))
+		summary := fmt.Sprintf("%s failed: %s", plural(len(failed), "resource"), strings.Join(failed, ", "))
+		if blocked > 0 {
+			summary += "; " + plural(blocked, "resource") + " blocked"
+		}
+		return sourcecontrol.Failure, summary
 	default:
 		return sourcecontrol.Failure, firstLine(err.Error())
 	}
@@ -135,7 +141,11 @@ func body(change change, before, after map[string]source.Entry, v verification) 
 			}
 			fmt.Fprintf(&text, "- %s\n", label)
 			if resource.Error != "" && len(resource.Destinations) == 0 {
-				fmt.Fprintf(&text, "  - failed: %s\n", firstLine(resource.Error))
+				status := "failed"
+				if len(resource.BlockedBy) > 0 {
+					status = "blocked"
+				}
+				fmt.Fprintf(&text, "  - %s: %s\n", status, firstLine(resource.Error))
 			}
 			for _, destination := range resource.Destinations {
 				switch {

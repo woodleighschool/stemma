@@ -109,8 +109,8 @@ spec:
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.LockChanged != nil || report.Error == "" {
-		t.Fatalf("failure reported an unchecked lockfile outcome: %+v", report)
+	if report.LockChanged == nil || *report.LockChanged || report.Error == "" || len(report.Resources) != 1 || report.Resources[0].Error == "" {
+		t.Fatalf("failure did not report the resource and retained lock: %+v", report)
 	}
 	decoder := json.NewDecoder(&logs)
 	var messages []string

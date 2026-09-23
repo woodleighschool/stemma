@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/plugins"
@@ -32,8 +33,9 @@ type CandidateResource struct {
 	Producers []string                `json:"producers,omitempty"`
 	// Suspended marks a resource left unresolved on purpose. Its lock entries
 	// stay as they are and nothing implicit runs it.
-	Suspended bool   `json:"suspended,omitempty"`
-	Error     string `json:"error,omitempty"`
+	Suspended bool     `json:"suspended,omitempty"`
+	Error     string   `json:"error,omitempty"`
+	BlockedBy []string `json:"blocked_by,omitempty"`
 }
 
 // Dependents returns every resource that transitively consumes key's outputs.
@@ -100,14 +102,27 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 	candidate.Plugins = s.ops.plugins
 	candidate.Resources = map[string]CandidateResource{}
 	for _, key := range selected {
+		if err := ctx.Err(); err != nil {
+			return candidate, err
+		}
 		plan := plans[key]
 		resource := CandidateResource{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Producers: producers(plan)}
+		for _, producer := range resource.Producers {
+			if candidate.Resources[producer].Error != "" {
+				resource.BlockedBy = append(resource.BlockedBy, producer)
+			}
+		}
+		if len(resource.BlockedBy) > 0 {
+			resource.Error = "blocked by " + strings.Join(resource.BlockedBy, ", ")
+			candidate.Resources[key] = resource
+			continue
+		}
 		ctx := resourceContext(ctx, plan.Resource)
 		entries, _, err := locked.Acquire(ctx, key)
+		if ctx.Err() != nil {
+			return candidate, ctx.Err()
+		}
 		if err != nil {
-			if ctx.Err() != nil {
-				return candidate, err
-			}
 			plugin.Logger(ctx).DebugContext(ctx, "Resolution failed", "error", err)
 			resource.Error = err.Error()
 		} else if len(entries) > 0 {
@@ -118,6 +133,9 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 	// A suspended resource is reported from its declaration alone; nothing
 	// implicit runs it, so the run never evaluates its operation contract.
 	for _, key := range suspended(s.project.Resources) {
+		if _, selected := candidate.Resources[key]; selected {
+			continue
+		}
 		resource := s.project.Resources[key]
 		candidate.Resources[key] = CandidateResource{Name: resource.Metadata.Name, Kind: resource.Kind, Suspended: true}
 	}

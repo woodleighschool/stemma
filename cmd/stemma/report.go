@@ -24,6 +24,9 @@ func resourceName(resource engine.ResourceReport) string {
 }
 
 func resourceStatus(method string, resource engine.ResourceReport) string {
+	if len(resource.BlockedBy) > 0 {
+		return "blocked"
+	}
 	if resource.Error != "" {
 		return "failed"
 	}
@@ -123,9 +126,11 @@ func signatureDetails(resource engine.ResourceReport) string {
 func printSummary(out io.Writer, method string, report engine.Report) error {
 	style := newTextStyle(out)
 	var text strings.Builder
-	prepared, cached, failed, changes, created, unchanged := 0, 0, 0, 0, 0, 0
+	prepared, cached, failed, blocked, changes, created, unchanged := 0, 0, 0, 0, 0, 0, 0
 	for _, resource := range report.Resources {
 		switch {
+		case len(resource.BlockedBy) > 0:
+			blocked++
 		case resource.Error != "":
 			failed++
 		case resource.Cached:
@@ -147,17 +152,23 @@ func printSummary(out io.Writer, method string, report engine.Report) error {
 		}
 	}
 	if report.LockChanged != nil || len(report.Resources) > 0 {
+		ending := ".\n"
+		if blocked > 0 {
+			ending = fmt.Sprintf(", %d blocked.\n", blocked)
+		}
 		switch method {
+		case "update":
+			_, _ = fmt.Fprintf(&text, "%s %d resolved, %d failed%s", style.paint("Update:", color.Bold), prepared, failed, ending)
 		case "prepare":
-			_, _ = fmt.Fprintf(&text, "%s %d prepared, %d cached, %d failed.\n", style.paint("Preparation:", color.Bold), prepared, cached, failed)
+			_, _ = fmt.Fprintf(&text, "%s %d prepared, %d cached, %d failed%s", style.paint("Preparation:", color.Bold), prepared, cached, failed, ending)
 		case "signature":
-			_, _ = fmt.Fprintf(&text, "%s %d derived, %d failed.\n", style.paint("Signatures:", color.Bold), prepared, failed)
+			_, _ = fmt.Fprintf(&text, "%s %d derived, %d failed%s", style.paint("Signatures:", color.Bold), prepared, failed, ending)
 		case "icon":
-			_, _ = fmt.Fprintf(&text, "%s %d created, %d unchanged, %d failed.\n", style.paint("Icons:", color.Bold), created, unchanged, failed)
+			_, _ = fmt.Fprintf(&text, "%s %d created, %d unchanged, %d failed%s", style.paint("Icons:", color.Bold), created, unchanged, failed, ending)
 		case "plan":
-			_, _ = fmt.Fprintf(&text, "%s %d changes, %d failed resources.\n", style.paint("Plan:", color.Bold), changes, failed)
+			_, _ = fmt.Fprintf(&text, "%s %d changes, %d failed resources%s", style.paint("Plan:", color.Bold), changes, failed, ending)
 		case "apply":
-			_, _ = fmt.Fprintf(&text, "%s %d changes applied, %d failed resources.\n", style.paint("Apply:", color.Bold), changes, failed)
+			_, _ = fmt.Fprintf(&text, "%s %d changes applied, %d failed resources%s", style.paint("Apply:", color.Bold), changes, failed, ending)
 		}
 	}
 	if (method == "update" || method == "prepare") && report.LockChanged != nil {
@@ -179,7 +190,7 @@ func (s textStyle) outcome(text string) string {
 	switch text {
 	case "failed":
 		attribute = color.FgHiRed
-	case "interrupted", "not completed", "skipped", "declined":
+	case "blocked", "interrupted", "not completed", "skipped", "declined":
 		attribute = color.FgHiYellow
 	case "unchanged", "already applied", "no artwork", "no icon declared":
 		attribute = color.Faint

@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -306,5 +307,93 @@ func TestBuiltinSchemaWithoutProject(t *testing.T) {
 	}
 	if !json.Valid(out.Bytes()) {
 		t.Fatalf("schema output is not JSON: %s", out.String())
+	}
+}
+
+func TestUpdateWritesSuccessfulLocksAndReportsFailures(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%t", asJSON), func(t *testing.T) {
+			var refresh atomic.Bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if refresh.Load() && r.URL.Path == "/broken.pkg" {
+					http.NotFound(w, r)
+					return
+				}
+				_, _ = fmt.Fprintf(w, "release refreshed=%t", refresh.Load())
+			}))
+			t.Cleanup(server.Close)
+			project := t.TempDir()
+			filename := filepath.Join(project, "stemma.yaml")
+			testproject.Write(t, filename, fmt.Sprintf(`apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: failures}
+spec: {imports: ['*.software.yaml']}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: broken}
+spec:
+  source: {url: %s/broken.pkg}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: consumer}
+spec:
+  source: {resource: {kind: MacSoftware, name: broken}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: healthy}
+spec:
+  source: {url: %s/healthy.pkg}
+`, server.URL, server.URL))
+			cache := t.TempDir()
+			if _, err := engine.Run(t.Context(), engine.Options{ConfigPath: filename, CacheDir: cache, Method: "update"}); err != nil {
+				t.Fatal(err)
+			}
+			before, err := lockfile.Load(lockfile.Filename(project))
+			if err != nil {
+				t.Fatal(err)
+			}
+			refresh.Store(true)
+			var out, logs bytes.Buffer
+			cmd, finish := command(&out, &logs)
+			args := []string{"update", "--root", project, "--cache-dir", cache, "--no-progress"}
+			if asJSON {
+				args = append(args, "--json")
+			}
+			cmd.SetArgs(args)
+			err = cmd.ExecuteContext(t.Context())
+			finish(err)
+			if err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+				t.Fatalf("failed refresh silently reused its reviewed lock: %v", err)
+			}
+			after, err := lockfile.Load(lockfile.Filename(project))
+			if err != nil {
+				t.Fatal(err)
+			}
+			const broken, healthy = "stemma/v1alpha1/MacSoftware/broken", "stemma/v1alpha1/MacSoftware/healthy"
+			if !before.Inputs[broken]["source"].Equal(after.Inputs[broken]["source"]) || before.Inputs[healthy]["source"].Equal(after.Inputs[healthy]["source"]) {
+				t.Fatalf("partial update wrote the wrong locks: %+v", after)
+			}
+			if asJSON {
+				var report engine.Report
+				if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+					t.Fatal(err)
+				}
+				if report.Error == "" || report.LockChanged == nil || !*report.LockChanged || len(report.Resources) != 3 || report.Resources[2].Error != "" || len(report.Resources[1].BlockedBy) != 1 || report.Resources[1].BlockedBy[0] != broken {
+					t.Fatalf("incomplete JSON report: %+v", report)
+				}
+			} else {
+				for _, want := range []string{"MacSoftware/broken: failed", "MacSoftware/consumer: blocked", "blocked by " + broken, "Update: 1 resolved, 1 failed, 1 blocked.", "Lockfile updated."} {
+					if !strings.Contains(out.String(), want) {
+						t.Fatalf("report missing %q: %s", want, out.String())
+					}
+				}
+			}
+			if !strings.Contains(logs.String(), "1 resource failed") || strings.Contains(logs.String(), "2 resources failed") {
+				t.Fatalf("blocked consumer counted as an independent failure: %s", logs.String())
+			}
+		})
 	}
 }

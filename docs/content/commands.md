@@ -114,9 +114,16 @@ suppress stdout reports.
 Ctrl-C requests cancellation and workspace cleanup. Press Ctrl-C again to exit
 immediately if cleanup or a native operation is taking too long.
 
-A failed run can return partial results with an `error`. Do not infer success
-solely from an artifact appearing in a report. An absent `lock_changed` means the
-lockfile comparison did not complete.
+Acquisition, preparation and destination failures are local: independent resources
+continue, and consumers of unavailable resource outputs are reported as `blocked`
+with `blocked_by` resource keys in JSON. The command emits the complete report
+before exiting nonzero. Global configuration or structural failures and context
+cancellation stop the run immediately and can leave a partial report.
+
+Do not infer success solely from an artifact appearing in a report. Successful
+resources can update the lockfile even when the command exits nonzero; failed or
+blocked resources keep their previous reviewed entries. An absent `lock_changed`
+means the lockfile comparison did not complete.
 
 ## Standalone packaging
 

@@ -39,10 +39,11 @@ command.
    are checked out into temporary directories.
 2. **Apply.** When the reviewed commit differs from the last one applied in full,
    run `apply --offline` for the whole catalog and record the result as the
-   `stemma/apply` commit status. Every locked input is verified from the cache
-   before any destination is written, so one missing object fails the run before
-   it publishes anything. The applied marker moves only when every destination
-   succeeded; a partial apply is retried next run.
+   `stemma/apply` commit status. Each resource's locked inputs are verified from
+   the cache before its destinations are written. Missing or stale inputs fail
+   that resource and block consumers of its outputs; independent resources still
+   publish. The applied marker moves only when the whole apply succeeded; a
+   partial apply is retried next run.
 3. **Update.** Resolve every declared input of the reviewed commit once and keep
    one `stemma/Kind/name` branch per resource whose inputs differ from the lock.
    The branch is regenerated from the reviewed commit with only that resource's
@@ -69,7 +70,8 @@ Further behaviour of the update phase:
 - Branches whose resource no longer differs from the reviewed lock, including
   merged ones, are closed and deleted.
 - A resource that fails to resolve is reported and its existing proposal is left
-  as it is.
+  as it is. Consumers of its outputs are reported as blocked and retain their
+  proposals too. Successful independent resources still get update proposals.
 - Locked plugins must match the lockfile before any plugin code runs. A plugin
   lock problem fails the update phase; fix it with `stemma plugins update` or
   `stemma prepare` and commit the result. A plugin has to be reachable from a

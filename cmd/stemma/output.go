@@ -257,7 +257,7 @@ func (o *commandOutput) live(a activity, level slog.Level) bool {
 func (o *commandOutput) resourceDone(out io.Writer, asJSON bool, method string, resource engine.ResourceReport) (err error) {
 	failure := failureLines(resource)
 	defer func() {
-		if err == nil && len(failure) > 0 {
+		if err == nil && len(failure) > 0 && len(resource.BlockedBy) == 0 {
 			o.failed++
 		}
 	}()
@@ -289,7 +289,7 @@ func (o *commandOutput) resourceDone(out io.Writer, asJSON bool, method string, 
 	case !asJSON && (details || method == "signature" || reported):
 		return printResource(out, method, resource)
 	case asJSON && len(failure) > 0 && !shown && o.format == "json":
-		o.logger.Error("Resource failed", "resource", resourceName(resource), "error", resource.Error)
+		o.logger.Error("Resource "+resourceStatus(method, resource), "resource", resourceName(resource), "error", resource.Error)
 	case asJSON && len(failure) > 0 && !shown:
 		return printResource(o, method, resource)
 	}

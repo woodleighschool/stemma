@@ -594,3 +594,64 @@ func TestRetainedResourcesKeepReviewedEntries(t *testing.T) {
 		t.Fatalf("retention kept the wrong entries: %v %+v", err, retained.File.Inputs)
 	}
 }
+
+func TestCommitRetainsRejectedResourcesWithoutPartialInputs(t *testing.T) {
+	m := manager(t)
+	inputs := map[string]map[string]plugin.Input{}
+	for _, resource := range []string{"acquisition", "preparation", "healthy"} {
+		inputs[resource] = map[string]plugin.Input{}
+		for _, name := range []string{"a", "b"} {
+			filename := resource + "-" + name
+			if err := os.WriteFile(filepath.Join(m.Root, filename), []byte("reviewed"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			inputs[resource][name] = plugin.Input{Resolver: "file", Config: map[string]any{"path": filename}}
+		}
+	}
+	before, err := Prepare(t.Context(), m.Root, inputs, nil, m, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for resource := range inputs {
+		if err := os.WriteFile(filepath.Join(m.Root, resource+"-a"), []byte("updated"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Remove(filepath.Join(m.Root, "acquisition-b")); err != nil {
+		t.Fatal(err)
+	}
+	// Rejected resources keep old inputs even when their declarations removed
+	// them, and new failed resources do not gain partial lock entries.
+	delete(inputs["preparation"], "b")
+	inputs["new"] = inputs["acquisition"]
+	update, err := Begin(t.Context(), m.Root, inputs, nil, m, Options{Refresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range []string{"acquisition", "new", "preparation", "healthy"} {
+		_, _, err := update.Acquire(t.Context(), resource)
+		wantError := resource == "acquisition" || resource == "new"
+		if (err != nil) != wantError {
+			t.Fatalf("acquire %s: %v", resource, err)
+		}
+	}
+	result, err := update.Commit(t.Context(), "acquisition", "preparation", "new")
+	if err != nil || !result.Changed {
+		t.Fatalf("successful resource could not update the lock: %+v, %v", result, err)
+	}
+	after, err := Load(Filename(m.Root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, resource := range []string{"acquisition", "preparation"} {
+		if !maps.EqualFunc(before.File.Inputs[resource], after.Inputs[resource], source.Entry.Equal) {
+			t.Fatalf("rejected %s changed its reviewed entries: %+v", resource, after.Inputs[resource])
+		}
+	}
+	if _, exists := after.Inputs["new"]; exists || before.File.Inputs["healthy"]["a"].Equal(after.Inputs["healthy"]["a"]) {
+		t.Fatalf("wrong resource inputs committed: %+v", after.Inputs)
+	}
+	if _, _, err := update.Acquire(t.Context(), "acquisition"); err == nil {
+		t.Fatal("retaining reviewed entries turned failed acquisition into success")
+	}
+}

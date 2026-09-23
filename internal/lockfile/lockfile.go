@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -157,8 +158,25 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		old = loaded
 	}
 	for resource, entries := range old.Inputs {
-		if _, selected := inputs[resource]; !selected && (opts.PreserveUnselected || slices.Contains(opts.Retain, resource)) {
-			result.File.Inputs[resource] = entries
+		if _, selected := inputs[resource]; !selected && !opts.PluginsOnly {
+			if opts.PreserveUnselected || slices.Contains(opts.Retain, resource) {
+				result.File.Inputs[resource] = entries
+			} else if opts.Frozen {
+				return nil, errors.New("lockfile contains stale entries; run stemma update")
+			}
+		}
+	}
+	if opts.Frozen {
+		before, err := json.Marshal(old.Plugins)
+		if err != nil {
+			return nil, err
+		}
+		after, err := json.Marshal(pluginEntries)
+		if err != nil {
+			return nil, err
+		}
+		if len(old.Plugins)+len(pluginEntries) > 0 && !bytes.Equal(before, after) {
+			return nil, errors.New("lockfile contains stale plugins; run stemma plugins update")
 		}
 	}
 	resolved := map[string]source.Entry{}
@@ -245,6 +263,9 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 	if !ok || resource == "" {
 		return nil, nil, fmt.Errorf("unknown input resource %q", resource)
 	}
+	if u.opts.Frozen && len(u.old.Inputs[resource]) != len(inputs) {
+		return nil, nil, fmt.Errorf("%s inputs are missing or stale in the lockfile; run stemma update", resource)
+	}
 	entries := map[string]source.Entry{}
 	hits := map[string]bool{}
 	for _, name := range names(inputs) {
@@ -270,14 +291,26 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 	return entries, hits, nil
 }
 
-// Commit replaces the lockfile only after every selected input was acquired.
-func (u *Update) Commit(ctx context.Context) (Result, error) {
+// Commit replaces the lockfile after every selected resource was acquired or
+// rejected. Rejected resources retain their complete reviewed entries, including
+// when acquisition succeeded but downstream preparation failed.
+func (u *Update) Commit(ctx context.Context, rejected ...string) (Result, error) {
 	result, old, opts := u.result, u.old, u.opts
+	result.File.Inputs = maps.Clone(result.File.Inputs)
+	result.CacheHits = maps.Clone(result.CacheHits)
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
 	if !opts.PluginsOnly {
 		for resource, inputs := range u.inputs {
+			if slices.Contains(rejected, resource) {
+				delete(result.File.Inputs, resource)
+				delete(result.CacheHits, resource)
+				if entries, ok := old.Inputs[resource]; ok {
+					result.File.Inputs[resource] = entries
+				}
+				continue
+			}
 			if len(result.File.Inputs[resource]) != len(inputs) {
 				return result, fmt.Errorf("%s inputs were not acquired", resource)
 			}

@@ -154,6 +154,13 @@ the bytes, and a source without validators downloads every time. Unchanged
 bytes keep their recorded hints, so a rotated validator alone never changes the
 lock; entries locked without hints record them once.
 
+Resources execute independently. Acquisition or preparation failures leave that
+resource's complete reviewed lock entries unchanged; consumers of its outputs
+are reported as blocked, with the resources that blocked them. Successful
+resources can still update their entries. `update` can therefore write the
+lockfile and exit nonzero after reporting every resource. A failed refresh stays
+a failure even when the previous locked bytes remain cached.
+
 If a vendor replaces bytes at a stable URL, a cold locked run fails the content
 check. It does not silently accept today's download. Run `update` and review the
 change, or restore the locked bytes to the cache from a trusted copy.

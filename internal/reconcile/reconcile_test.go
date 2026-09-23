@@ -805,3 +805,67 @@ func TestRunLeavesSuspendedResourcesAlone(t *testing.T) {
 		t.Fatalf("published items: %v", published)
 	}
 }
+
+func TestRunProposesIndependentResourcesAfterResolutionFailure(t *testing.T) {
+	installer := buildPackage(t, "1.0")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/fixture.pkg" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(installer)
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("GITHUB_APP_CLIENT_ID", "Iv1.fixture")
+	t.Setenv("GITHUB_APP_INSTALLATION_ID", "7")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY", testKey(t))
+	broken := strings.ReplaceAll(software(server.URL), "fixture", "broken")
+	consumer := `apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: consumer}
+spec:
+  source: {resource: {kind: MacSoftware, name: broken}}
+  destinations:
+    repo: {pkginfo: {catalogs: [testing]}}
+`
+	o := newOrigin(t, map[string]string{
+		"stemma.yaml":            project(filepath.Join(t.TempDir(), "munki")),
+		"broken.software.yaml":   broken,
+		"consumer.software.yaml": consumer,
+		"fixture.software.yaml":  software(server.URL),
+	})
+	gh := newFakeGitHub(t, o)
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	if _, err := gogit.PlainCloneContext(t.Context(), checkout, &gogit.CloneOptions{URL: gh.remote(), ClientOptions: []client.Option{gh.auth()}}); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Run(t.Context(), Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()})
+	if err == nil || !strings.Contains(err.Error(), "update: 1 resource failed") || len(report.Updates) != 3 {
+		t.Fatalf("resolution failures were not reported independently: %+v, %v", report, err)
+	}
+	updates := map[string]Update{}
+	for _, update := range report.Updates {
+		updates[update.Resource] = update
+	}
+	if updates["MacSoftware/broken"].Action != "failed" || !strings.Contains(updates["MacSoftware/broken"].Error, "HTTP 404") {
+		t.Fatalf("source failure missing: %+v", updates)
+	}
+	if updates["MacSoftware/consumer"].Action != "blocked" || !strings.Contains(updates["MacSoftware/consumer"].Error, "MacSoftware/broken") {
+		t.Fatalf("blocked consumer missing: %+v", updates)
+	}
+	if updates["MacSoftware/fixture"].Action != "created" || len(gh.open()) != 1 || gh.status(o.tip("stemma/MacSoftware/fixture"), planContext)["state"] != "success" {
+		t.Fatalf("independent proposal failed: %+v", updates)
+	}
+}
+
+func TestApplySummaryDistinguishesBlockedResources(t *testing.T) {
+	report := engine.Report{Resources: []engine.ResourceReport{
+		{Name: "producer", Error: "source unavailable"},
+		{Name: "consumer", Error: "blocked by producer", BlockedBy: []string{"producer"}},
+		{Name: "healthy"},
+	}}
+	state, summary := applySummary(report, errors.New("source unavailable"))
+	if state != "failure" || summary != "1 resource failed: producer; 1 resource blocked" {
+		t.Fatalf("blocked resource counted as failed: %s: %s", state, summary)
+	}
+}

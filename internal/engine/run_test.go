@@ -468,7 +468,7 @@ func TestApplyDoesNotSelectPublicationPeers(t *testing.T) {
 	}
 }
 
-func TestApplyChecksEveryReviewedInputBeforeWriting(t *testing.T) {
+func TestApplyChecksEachResourcesReviewedInputsBeforeWriting(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
 	parts := strings.Split(policyProject, "\n---\n")
@@ -497,12 +497,15 @@ func TestApplyChecksEveryReviewedInputBeforeWriting(t *testing.T) {
 	options.Method = "apply"
 	options.Handlers = map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 		if request.Method == "apply" {
+			if request.Identity.Resource.Name != "a" {
+				t.Fatalf("published unreviewed input: %+v", request.Identity)
+			}
 			writes++
 		}
 		return plugin.ReconcileResponse{}, nil
 	}}
-	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "local input content changed") || writes != 0 {
-		t.Fatalf("apply wrote before checking the later resource: writes=%d error=%v", writes, err)
+	if report, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "local input content changed") || writes != 2 || len(report.Resources) != 2 {
+		t.Fatalf("apply did not isolate the stale resource: writes=%d report=%+v error=%v", writes, report, err)
 	}
 }
 
