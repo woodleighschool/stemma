@@ -40,7 +40,7 @@ func TestPackPreservesConfinedSymlinks(t *testing.T) {
 			t.Fatal(err)
 		}
 		if target, ok := links[header.Name]; ok {
-			if header.Typeflag != tar.TypeSymlink || header.Linkname != target || header.Size != 0 {
+			if header.Typeflag != tar.TypeSymlink || header.Linkname != target || header.Size != 0 || header.Mode != 0o755 {
 				t.Fatalf("symlink changed: %+v", header)
 			}
 			delete(links, header.Name)

@@ -22,7 +22,7 @@ import (
 )
 
 // Content identifies bytes and their filesystem representation. Tree bytes are a
-// canonical TAR containing every selected child mode and confined symlink target.
+// canonical TAR retaining file and directory modes and confined symlink targets.
 type Content struct {
 	Artifact cas.Ref `json:"artifact" yaml:"artifact"`
 	Filename string  `json:"filename" yaml:"filename"`

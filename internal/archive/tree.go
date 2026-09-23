@@ -13,7 +13,8 @@ import (
 	"github.com/woodleighschool/stemma/internal/fileio"
 )
 
-// Pack writes a canonical TAR tree, retaining bytes, modes and confined symlinks.
+// Pack writes a canonical TAR tree, retaining bytes, file and directory modes,
+// and confined symlink targets. Symlink permissions are normalized to 0755.
 func Pack(ctx context.Context, root string, output io.Writer) error {
 	scoped, err := os.OpenRoot(root)
 	if err != nil {
@@ -99,6 +100,11 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 			return err
 		}
 		h.Name = name
+		if h.Typeflag == tar.TypeSymlink {
+			// Hosts assign different symlink modes, including umask-dependent
+			// ones. They must not change a tree's identity when it is leased.
+			h.Mode = 0o755
+		}
 		h.ModTime = time.Unix(0, 0)
 		h.AccessTime = time.Time{}
 		h.ChangeTime = time.Time{}
