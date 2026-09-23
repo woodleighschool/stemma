@@ -161,6 +161,9 @@ func TestImageLZFSE(t *testing.T) {
 }
 
 func TestImageReadBudgetAndCancellation(t *testing.T) {
+	if _, err := openImage(t.Context(), bytes.NewReader(nil), maxBytes+1); err == nil {
+		t.Fatal("accepted encoded image beyond size limit")
+	}
 	r := &imageReader{ctx: t.Context(), reader: bytes.NewReader([]byte("data")), remaining: 2}
 	if _, err := r.ReadAt(make([]byte, 3), 0); err == nil {
 		t.Fatal("accepted read beyond budget")

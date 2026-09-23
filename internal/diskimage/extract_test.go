@@ -252,6 +252,7 @@ func TestExtractRejectsMalformedDMG(t *testing.T) {
 		want   string
 	}{
 		{name: "large plist", mutate: func(f *disk.DMGFooter, _ []block) { f.PlistLength = 1 << 62 }, want: "footer exceeds"},
+		{name: "large logical image", mutate: func(f *disk.DMGFooter, _ []block) { f.SectorCount = (1<<40)/512 + 1 }, want: "image exceeds"},
 		{name: "large chunk", mutate: func(_ *disk.DMGFooter, b []block) { binary.BigEndian.PutUint64(b[0].Data[220:], 1<<62) }, want: "no partitions found"},
 		{name: "truncated expansion", mutate: func(_ *disk.DMGFooter, b []block) { binary.BigEndian.PutUint64(b[0].Data[220:], 1) }, want: "decompressed chunk length mismatch"},
 		{name: "unknown codec", mutate: func(_ *disk.DMGFooter, b []block) { binary.BigEndian.PutUint32(b[0].Data[204:], 0x80000009) }, want: "unsupported chunk type"},
@@ -344,7 +345,7 @@ func TestSparseUnsegmentedImage(t *testing.T) {
 		footer.SegmentCount, footer.SegmentNumber = 0, 0
 		data := blocks[0].Data
 		count := binary.BigEndian.Uint32(data[200:])
-		const extra = (600 << 20) / 512
+		const extra = (224 << 30) / 512
 		sectors := binary.BigEndian.Uint64(data[16:])
 		last := len(data) - 40
 		var sparse [40]byte
@@ -357,8 +358,38 @@ func TestSparseUnsegmentedImage(t *testing.T) {
 		blocks[0].Data = updated
 		footer.SectorCount += extra
 	})
-	if _, err := Extract(t.Context(), image, filepath.Join(t.TempDir(), "out"), "Fixture.pkg", nil); err != nil {
+	selected, err := Extract(t.Context(), image, filepath.Join(t.TempDir(), "out"), "Fixture.pkg", nil)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(selected); err != nil || string(data) != "xar!payload" {
+		t.Fatalf("sparse image payload %q: %v", data, err)
+	}
+}
+
+func TestHFSMetadataCapacity(t *testing.T) {
+	const size = 256 << 20
+	for _, test := range []struct {
+		name     string
+		capacity uint64
+		valid    bool
+	}{
+		{name: "preallocated metadata", capacity: 128 << 20, valid: true},
+		{name: "beyond volume", capacity: size + 512},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			header := hfsplus.VolumeHeader{Signature: hfsplus.HFSXSigWord, BlockSize: 4096, TotalBlocks: size / 4096}
+			fork := hfsplus.ForkData{LogicalSize: test.capacity}
+			header.CatalogFile, header.ExtentsFile, header.AttributesFile = fork, fork, fork
+			data := bytes.NewBuffer(make([]byte, 1024))
+			if err := binary.Write(data, binary.BigEndian, header); err != nil {
+				t.Fatal(err)
+			}
+			err := validateVolume(bytes.NewReader(data.Bytes()), size)
+			if (err == nil) != test.valid {
+				t.Fatalf("metadata capacity %d: %v", test.capacity, err)
+			}
+		})
 	}
 }
 

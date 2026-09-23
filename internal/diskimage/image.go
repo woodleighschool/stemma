@@ -52,7 +52,9 @@ func openImage(ctx context.Context, source io.ReaderAt, size int64) (*Image, err
 	if size < 512 || size > maxBytes {
 		return nil, errors.New("invalid disk image size")
 	}
-	dmg, err := disk.NewDMGReader(&imageReader{ctx: ctx, reader: source, remaining: maxBytes * 4}, size, disk.DMGLimits{MetadataBytes: 16 << 20, ChunkBytes: 64 << 20, ImageBytes: uint64(maxBytes)})
+	// Sparse logical capacity does not consume the encoded or extracted byte
+	// budgets. Keep the reader's separate logical limit and bounded chunks.
+	dmg, err := disk.NewDMGReader(&imageReader{ctx: ctx, reader: source, remaining: maxBytes * 4}, size, disk.DMGLimits{MetadataBytes: 16 << 20, ChunkBytes: 64 << 20})
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +71,7 @@ func openImage(ctx context.Context, source io.ReaderAt, size int64) (*Image, err
 	if count != 1 {
 		return nil, fmt.Errorf("disk image has %d filesystems; exactly one is required", count)
 	}
-	if dmg.Size() <= 0 || dmg.Size() > maxBytes {
+	if dmg.Size() <= 0 {
 		return nil, errors.New("invalid filesystem size")
 	}
 	reader := &imageReader{ctx: ctx, reader: dmg, remaining: 256 << 20}

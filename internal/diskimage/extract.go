@@ -163,8 +163,10 @@ func validateVolume(r io.ReaderAt, size int64) error {
 		return errors.New("filesystem exceeds entry limit")
 	}
 	for _, fork := range []hfsplus.ForkData{header.CatalogFile, header.ExtentsFile, header.AttributesFile} {
-		if fork.LogicalSize > 64<<20 {
-			return errors.New("filesystem metadata exceeds size limit")
+		// Preallocated B-tree capacity can exceed the metadata actually read.
+		// The imageReader bounds that work; logical sizes must fit the volume.
+		if fork.LogicalSize > uint64(header.TotalBlocks)*uint64(header.BlockSize) {
+			return errors.New("filesystem metadata exceeds volume size")
 		}
 	}
 	return nil
