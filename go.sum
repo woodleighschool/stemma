@@ -138,8 +138,8 @@ github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef h1:A9HsByNhogrvm9cWb
 github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef/go.mod h1:lADxMC39cJJqL93Duh1xhAs4I2Zs8mKS89XWXFGp9cs=
 github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0 h1:k5/zDGNs/dNqH78pe+LFuAKVS/Ucqwwj84RkYi5pQ64=
 github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0/go.mod h1:8F+giXscCXK717Q0dV8RSXL+eWhXSOn3eQ1EarZl1LA=
-github.com/hydazz/go-macos-pkg v0.5.1-0.20260923115100-f47e1120185a h1:WJFoeOwn2RIcmWM9nRE7MG4pgxj2e+5RJ1s1kB3M8T8=
-github.com/hydazz/go-macos-pkg v0.5.1-0.20260923115100-f47e1120185a/go.mod h1:NSDY/D4VN5dLcbr9wsR6MhXOovdXlmer5bF18T6WTe4=
+github.com/hydazz/go-macos-pkg v0.5.1-0.20260921084253-0547b85ba382 h1:lbphykHST13zFpzcHL7dBmtUtCoVkICCRrltta03FfU=
+github.com/hydazz/go-macos-pkg v0.5.1-0.20260921084253-0547b85ba382/go.mod h1:NSDY/D4VN5dLcbr9wsR6MhXOovdXlmer5bF18T6WTe4=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/invopop/jsonschema v0.14.0 h1:MHQqLhvpNUZfw+hM3AZDYK7jxO8FZoQeQM77g8iyZjg=
