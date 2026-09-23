@@ -64,8 +64,9 @@ func choose(spec Spec, traversable bool, inventory plugin.Facts) (string, *plugi
 	return found[0].Path, nil, nil
 }
 
-// selectApp finds the application a selector names in an inventory, or without
-// one its only application outside another application.
+// selectApp finds the application a selector names in a package inventory, or
+// infers its only application outside another application. Without application
+// options, packages with no unique application use installer evidence alone.
 func selectApp(facts plugin.Facts, options *Application) (*plugin.Subject, error) {
 	var apps []plugin.Subject
 	for _, subject := range facts.Subjects {
@@ -89,6 +90,9 @@ func selectApp(facts plugin.Facts, options *Application) (*plugin.Subject, error
 		return nil, nil
 	case 1:
 		return &top[0], nil
+	}
+	if options == nil {
+		return nil, nil
 	}
 	return nil, fmt.Errorf("multiple applications observed; select application.path or application.bundle_id%s", candidates(top))
 }

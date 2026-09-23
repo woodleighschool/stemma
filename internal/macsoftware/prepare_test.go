@@ -16,6 +16,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/apple"
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/inspect"
+	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
@@ -147,6 +148,57 @@ func TestPrepareRejectsUnrecognizedContainerFormat(t *testing.T) {
 	_, err := Prepare(t.Context(), Spec{}, Request{Input: plugin.Artifact{Path: filename, Filename: "download.bin"}, Workspace: t.TempDir()})
 	if err == nil {
 		t.Fatal("disk image was accepted as a scalar PKG")
+	}
+}
+
+func TestPackageWithMultipleApplicationsRetainsInstallerEvidence(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(applicationFixture(t), "Example.app")
+	for _, name := range []string{"Main.app", "Helper.app"} {
+		if err := os.CopyFS(filepath.Join(root, "Payload", "Applications", name), os.DirFS(app)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	filename := filepath.Join(t.TempDir(), "Suite.pkg")
+	if err := pkgbuild.Build(t.Context(), root, filename, pkgbuild.Options{Identifier: "org.example.suite", Version: "2.0", Payload: "Payload"}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := plugin.Artifact{Path: filename, Filename: "Suite.pkg", Format: "pkg"}
+	outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := outputs["installer"]
+	if installer.Version != "2.0" || installer.Format != "pkg" || len(topLevel(installer.Facts)) != 2 || installer.Evidence["macos.application"] != nil {
+		t.Fatalf("installer evidence = %+v", installer)
+	}
+	if published, err := os.ReadFile(installer.Path); err != nil || !bytes.Equal(published, data) {
+		t.Fatalf("installer bytes changed: %v", err)
+	}
+	for _, options := range []*Application{
+		{Path: "Payload/Applications/Missing.app"},
+		{BundleID: "org.example.app"},
+		{VersionKey: "CFBundleVersion"},
+		{InstalledPath: "/Applications/Renamed.app"},
+	} {
+		if _, err := Prepare(t.Context(), Spec{Application: options}, Request{Input: input, Workspace: t.TempDir()}); err == nil {
+			t.Fatalf("ignored ambiguous or unmatched application options: %+v", options)
+		}
+	}
+	outputs, err = Prepare(t.Context(), Spec{Application: &Application{Path: "Payload/Applications/Main.app"}}, Request{Input: input, Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected plugin.Subject
+	if err := json.Unmarshal(outputs["installer"].Evidence["macos.application"], &selected); err != nil || selected.Path != "Payload/Applications/Main.app" || outputs["installer"].Version != "1.2" {
+		t.Fatalf("selected application = %+v: %v", selected, err)
+	}
+	if _, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: "apple:developer-id:SMLKBTR495"}}, Request{Input: input, Workspace: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "not signed") {
+		t.Fatalf("unsigned multi-application package accepted: %v", err)
 	}
 }
 
