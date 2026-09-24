@@ -29,7 +29,7 @@ require (
 	github.com/lmittmann/tint v1.2.0
 	github.com/mattn/go-runewidth v0.0.30
 	github.com/mholt/archives v0.1.5
-	github.com/microsoft/kiota-abstractions-go v1.11.0
+	github.com/microsoft/kiota-abstractions-go v1.11.1
 	github.com/microsoft/kiota-http-go v1.5.6
 	github.com/microsoft/kiota-serialization-form-go v1.1.3
 	github.com/microsoft/kiota-serialization-json-go v1.1.4
