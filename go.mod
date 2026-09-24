@@ -7,7 +7,7 @@ ignore node_modules/
 require (
 	cel.dev/cel-go v0.32.0
 	charm.land/bubbles/v2 v2.2.1
-	charm.land/bubbletea/v2 v2.0.9
+	charm.land/bubbletea/v2 v2.0.10
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.1
@@ -135,8 +135,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
-
-// Temporary: https://github.com/charmbracelet/bubbletea/pull/1801
-replace charm.land/bubbletea/v2 => github.com/drawmeanelephant/bubbletea/v2 v2.0.10-0.20260911173320-21176428f2e1
 
 replace github.com/deploymenttheory/go-apfs-v2 => github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0
