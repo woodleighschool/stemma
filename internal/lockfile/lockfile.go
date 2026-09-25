@@ -163,7 +163,10 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 	}
 	if !opts.Ignore {
 		loaded, err := Load(filename)
-		if err != nil && (!errors.Is(err, os.ErrNotExist) || requiresLock && (opts.Frozen || opts.Offline)) {
+		if errors.Is(err, os.ErrNotExist) && requiresLock && (opts.Frozen || opts.Offline) {
+			return nil, errors.New("lockfile: missing; run stemma update")
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, fmt.Errorf("lockfile: %w", err)
 		}
 		old = loaded

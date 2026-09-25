@@ -82,8 +82,8 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	t.Cleanup(server.Close)
 	m := manager(t)
 	inputs := inputset("http", map[string]any{"url": server.URL + "/app.pkg", "token": "first-token"})
-	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil {
-		t.Fatal("accepted missing frozen lock")
+	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil || err.Error() != "lockfile: missing; run stemma update" {
+		t.Fatalf("missing frozen lock: %v", err)
 	}
 	first, err := prepare(t, m, inputs, Options{})
 	if err != nil {
