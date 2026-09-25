@@ -23,6 +23,10 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
+// Version is the lockfile format. It changes whenever older entries no longer
+// read the same, so a mismatch fails before any entry is used.
+const Version = 3
+
 // File pins resource inputs and executable plugin content.
 type File struct {
 	Version int                                `yaml:"version" json:"version"`
@@ -83,6 +87,18 @@ func Parse(data []byte) (File, error) {
 	if len(data) > 8<<20 {
 		return File{}, errors.New("lockfile exceeds 8 MiB")
 	}
+	var header struct {
+		Version int `yaml:"version"`
+	}
+	if err := yaml.Unmarshal(data, &header); err != nil {
+		return File{}, err
+	}
+	switch {
+	case header.Version > Version:
+		return File{}, fmt.Errorf("lockfile version %d needs a newer stemma", header.Version)
+	case header.Version != Version:
+		return File{}, fmt.Errorf("lockfile version %d is not supported; delete it and run stemma update", header.Version)
+	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	var f File
@@ -93,8 +109,8 @@ func Parse(data []byte) (File, error) {
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		return f, errors.New("expected one lockfile document")
 	}
-	if f.Version != 2 || f.Inputs == nil {
-		return f, errors.New("unsupported or incomplete lockfile; run stemma update")
+	if f.Inputs == nil {
+		return f, errors.New("incomplete lockfile; run stemma update")
 	}
 	for resource, inputs := range f.Inputs {
 		if resource == "" || len(inputs) == 0 {
@@ -128,7 +144,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	result := Result{File: File{Version: 2, Inputs: map[string]map[string]source.Entry{}, Plugins: map[string]plugins.Entry{}}, CacheHits: map[string]map[string]bool{}}
+	result := Result{File: File{Version: Version, Inputs: map[string]map[string]source.Entry{}, Plugins: map[string]plugins.Entry{}}, CacheHits: map[string]map[string]bool{}}
 	opts.Offline = opts.Offline || m.Offline
 	manager := *m
 	manager.Offline = opts.Offline

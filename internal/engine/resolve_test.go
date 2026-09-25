@@ -162,7 +162,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.Lock.Version != 2 || !again.Resources[alpha].Inputs["source"].Equal(reviewed.Inputs[alpha]["source"]) {
+	if again.Lock.Version != lockfile.Version || !again.Resources[alpha].Inputs["source"].Equal(reviewed.Inputs[alpha]["source"]) {
 		t.Fatalf("unchanged bytes changed the candidate entry: %+v", again.Resources[alpha].Inputs["source"])
 	}
 }

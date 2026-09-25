@@ -458,7 +458,7 @@ func (r *runner) propose(ctx context.Context, head, key string, change change, c
 		file.Inputs = map[string]map[string]source.Entry{}
 	}
 	if file.Version == 0 {
-		file.Version = 2
+		file.Version = lockfile.Version
 		file.Plugins = candidate.Plugins
 	}
 	if len(change.entries) == 0 {

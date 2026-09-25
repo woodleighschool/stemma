@@ -394,7 +394,7 @@ func installFixturePlugin(t *testing.T, store *cas.Store, root, binary, resource
 	entry := plugins.Entry{Image: "registry.example/plugins/echo:v1", Digest: index.Digest.String(), Size: index.Size}
 	locked, err := lockfile.Load(filepath.Join(root, "stemma.lock.yaml"))
 	if err != nil {
-		locked = lockfile.File{Version: 2, Inputs: map[string]map[string]source.Entry{}}
+		locked = lockfile.File{Version: lockfile.Version, Inputs: map[string]map[string]source.Entry{}}
 	}
 	locked.Plugins = map[string]plugins.Entry{"provider": entry}
 	data, err = yaml.Marshal(locked)

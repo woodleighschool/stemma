@@ -679,3 +679,20 @@ func TestCommitRetainsRejectedResourcesWithoutPartialInputs(t *testing.T) {
 		t.Fatal("retaining reviewed entries turned failed acquisition into success")
 	}
 }
+
+func TestParseChecksTheVersionBeforeAnyEntry(t *testing.T) {
+	// Version 2 entries carried resolved_at, which version 3 entries reject.
+	older := "version: 2\ninputs:\n  app:\n    source:\n      version: 1\n      resolved_at: \"2026-09-23T03:32:34Z\"\n"
+	for data, want := range map[string]string{
+		older:                      "lockfile version 2 is not supported",
+		"version: 4\ninputs: {}\n": "needs a newer stemma",
+		"version: 3\n":             "incomplete lockfile",
+	} {
+		if _, err := Parse([]byte(data)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("Parse(%q) = %v, want %q", data, err, want)
+		}
+	}
+	if _, err := Parse([]byte("version: 3\ninputs: {}\n")); err != nil {
+		t.Fatal(err)
+	}
+}
