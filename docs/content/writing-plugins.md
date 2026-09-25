@@ -312,11 +312,14 @@ are bounded to 4 MiB. No messages may follow the final response. The SDK's `Serv
 and `Run` handle framing and validation.
 
 Reserve stdout for the protocol. Use `plugin.Logger(ctx)` for structured diagnostics
-and `plugin.Stage(ctx, "Preparing installer")` for progress; call the returned
-function with the operation error when the stage finishes. A stage started inside
-another shows as that operation's current step. Raw subprocess stderr
-is discarded by the host, so report operational failures through the protocol.
-Do not log credentials or request bodies.
+and `plugin.Stage(ctx, "Downloading installer", plugin.Detail(filename))` for
+progress; call the returned function with the operation error, and optionally
+`plugin.Detail(version)`, when the stage finishes. A detail names what the stage
+works on, then what it found. A stage started inside another shows as that
+operation's current step. Wrap transfers in `plugin.ProgressReader` to show their
+bytes. Raw subprocess stderr is discarded by the host, so report operational
+failures through the protocol. Do not log credentials, query strings or request
+bodies.
 
 `Platforms` contains supported runner `GOOS/GOARCH` pairs; omission means portable.
 `Requirements` describes commands, purpose and actionable setup instructions.

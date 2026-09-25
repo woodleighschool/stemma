@@ -24,14 +24,16 @@ func Logger(ctx context.Context) *slog.Logger {
 	return slog.New(slog.DiscardHandler)
 }
 
-// Stage starts an operation and returns its completion function. Call the function
-// with the operation error; optional attributes describe its measured result.
+// Stage starts an operation and returns its completion function. Attributes
+// describe the operation; call the function with the operation error and
+// optional attributes that describe its result. Progress displays show a
+// [Detail] beside the operation: its subject while it runs, then its outcome.
 // Nested stages finish independently of their enclosing operation. The first
 // completion call wins; subsequent calls have no effect.
-func Stage(ctx context.Context, message string) func(error, ...any) {
+func Stage(ctx context.Context, message string, attrs ...any) func(error, ...any) {
 	logger := Logger(ctx)
 	started := time.Now()
-	logger.InfoContext(ctx, message, "stage", true)
+	logger.InfoContext(ctx, message, append([]any{"stage", true}, attrs...)...)
 	var once sync.Once
 	return func(err error, attrs ...any) {
 		once.Do(func() {
@@ -43,3 +45,8 @@ func Stage(ctx context.Context, message string) func(error, ...any) {
 		})
 	}
 }
+
+// Detail is short text shown beside a stage: the file, repository or host it
+// works on, or the version, size or count it found. It must not carry
+// credentials, query strings or response bodies.
+func Detail(text string) slog.Attr { return slog.String("detail", text) }
