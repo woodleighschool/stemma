@@ -2131,41 +2131,6 @@
               ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
             },
-            "content": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "setup_file": {
-                      "anyOf": [
-                        {
-                          "minLength": 1,
-                          "type": "string"
-                        },
-                        {
-                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Relative entrypoint inside the immutable setup tree. Defaults to the artifact entrypoint, or the filename for a single file; conflicting entries are rejected. All tree members are included in the provider-prepared Intune envelope."
-                    }
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "required": [
-                    "setup_file"
-                  ],
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ]
-            },
             "dependencies": {
               "anyOf": [
                 {
@@ -7377,18 +7342,6 @@
                             }
                           ],
                           "description": "Additional files keyed by their relative paths in the setup tree. Each value selects its own input."
-                        },
-                        "setup_file": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                              "type": "string"
-                            }
-                          ],
-                          "description": "Relative Windows payload path of the executable to run. Required when the source tree has no selected entrypoint."
                         }
                       },
                       "propertyNames": {
@@ -7403,7 +7356,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Assemble a setup tree from the vendor installer and optional supporting files."
+                  "description": "Supporting files added to the setup directory beside the vendor installer."
                 },
                 "destinations": {
                   "additionalProperties": {
@@ -7439,6 +7392,18 @@
                     }
                   ],
                   "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Create it with stemma icon or commit a square PNG."
+                },
+                "setup_file": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Setup-relative path or glob selecting the file Intune records as the setup entry point. It may name any file, such as a wrapper script. Omit to use the installer of a single-file source, the entry point of a resource output, or the only MSI or EXE in a setup directory or archive."
                 },
                 "signature": {
                   "anyOf": [
@@ -7477,7 +7442,7 @@
                 },
                 "source": {
                   "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/Input",
-                  "description": "Vendor installer or a resource output. A WindowsSoftware document requires a source."
+                  "description": "Vendor installer, setup directory or ZIP or TAR archive holding a setup directory, or a resource output. A WindowsSoftware document requires a source."
                 },
                 "subjects": {
                   "anyOf": [
@@ -7605,18 +7570,6 @@
                                 }
                               ],
                               "description": "Additional files keyed by their relative paths in the setup tree. Each value selects its own input."
-                            },
-                            "setup_file": {
-                              "anyOf": [
-                                {
-                                  "type": "string"
-                                },
-                                {
-                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                  "type": "string"
-                                }
-                              ],
-                              "description": "Relative Windows payload path of the executable to run. Required when the source tree has no selected entrypoint."
                             }
                           },
                           "propertyNames": {
@@ -7631,7 +7584,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Assemble a setup tree from the vendor installer and optional supporting files."
+                      "description": "Supporting files added to the setup directory beside the vendor installer."
                     },
                     "destinations": {
                       "additionalProperties": {
@@ -7672,6 +7625,18 @@
                       ],
                       "description": "Name of the icon asset icons/\u003cname\u003e.png that destinations publish. Create it with stemma icon or commit a square PNG."
                     },
+                    "setup_file": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                          "type": "string"
+                        }
+                      ],
+                      "description": "Setup-relative path or glob selecting the file Intune records as the setup entry point. It may name any file, such as a wrapper script. Omit to use the installer of a single-file source, the entry point of a resource output, or the only MSI or EXE in a setup directory or archive."
+                    },
                     "signature": {
                       "anyOf": [
                         {
@@ -7706,7 +7671,7 @@
                     },
                     "source": {
                       "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/PartialInput",
-                      "description": "Vendor installer or a resource output. A WindowsSoftware document requires a source."
+                      "description": "Vendor installer, setup directory or ZIP or TAR archive holding a setup directory, or a resource output. A WindowsSoftware document requires a source."
                     },
                     "subjects": {
                       "anyOf": [

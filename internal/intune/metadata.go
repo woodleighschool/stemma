@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io/fs"
 	"math"
 	"path"
 	"slices"
@@ -66,7 +65,7 @@ var derivedNames = map[string]string{
 	"versionNumber":                   "primary_bundle_build",
 	"childApps":                       "included_apps",
 	"minimumSupportedOperatingSystem": "minimum_os",
-	"setupFilePath":                   "content.setup_file",
+	"setupFilePath":                   "setup_file",
 }
 
 var msiFields = map[string]string{
@@ -82,8 +81,8 @@ var appTypes = map[string]string{"win32": win32Type, "pkg": pkgType, "dmg": dmgT
 // name concepts in snake_case, while Graph property names, OData types and enum
 // casing stay inside the destination. Omitted fields stay omitted and supported
 // nulls clear, so the object keeps the declaration's presence. app_id,
-// retention, content, dependencies and supersedes belong to the destination and
-// pass through unchanged.
+// retention, dependencies and supersedes belong to the destination and pass
+// through unchanged.
 func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 	declared, err := decodeObject(req.Metadata)
 	if err != nil {
@@ -111,14 +110,9 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 			}
 			m[key] = value
 			continue
-		case "content", "dependencies", "supersedes":
+		case "dependencies", "supersedes":
 			if appType != win32Type {
 				return nil, fmt.Errorf("%s requires a Win32 app", key)
-			}
-			if key == "content" {
-				if err := validateContent(value); err != nil {
-					return nil, err
-				}
 			}
 			m[key] = value
 			continue
@@ -190,21 +184,6 @@ func resolveType(req plugin.ReconcileRequest[Config], m object) (string, error) 
 		return "", fmt.Errorf("intune has no app type for a %q installer", format)
 	}
 	return "", errors.New("intune type is required")
-}
-
-func validateContent(value any) error {
-	content, ok := value.(object)
-	if !ok {
-		return errors.New("content must be an object")
-	}
-	if err := fields(content, "setup_file"); err != nil {
-		return err
-	}
-	setup := strings.ReplaceAll(text(content["setup_file"]), `\`, "/")
-	if !fs.ValidPath(setup) || setup == "." || strings.Contains(setup, ":") {
-		return errors.New("content.setup_file must be a relative Windows payload path")
-	}
-	return nil
 }
 
 func text10k(value any) (any, error) {

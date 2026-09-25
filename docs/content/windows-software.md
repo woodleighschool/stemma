@@ -116,6 +116,21 @@ version. To manage a minimum version, use `property: version`,
 `operator: greater_than_or_equal` and a `value` matching the installed file's
 version. EXE version and detection values are not automatically inferred.
 
+## Publish a setup directory
+
+A committed directory or a vendor ZIP or TAR archive is the setup directory, and
+Intune receives every file in it. The only MSI or EXE inside is the setup file.
+When there are several, select one by its setup-relative path, or by a glob that
+matches exactly one file:
+
+```yaml
+source:
+  url: https://example.com/downloads/VendorSetup_4.2.zip
+setup_file: VendorSetup.exe
+```
+
+An ambiguous directory fails with the installers it found.
+
 ## Include a transform or wrapper
 
 Add accompanying files to the setup content, preserving their relative names:
@@ -133,18 +148,10 @@ destinations:
 ```
 
 This is a spec excerpt using the shared Win32 defaults. Intune includes the whole
-assembled setup directory. A directory source instead names its entry point:
-
-```yaml
-source:
-  path: Assets/Setup
-content:
-  setup_file: VendorSetup.exe
-```
-
-Files may use any shared input resolver. A wrapper can be the setup entry point,
-but commands and detection must describe the actual installed product; MSI
-defaults apply when the selected entry point is an MSI. See Microsoft's
+assembled setup directory, and the vendor installer stays the setup file. Files may
+use any shared input resolver. `setup_file` can select any file instead, such as a
+wrapper script, but commands and detection must describe the actual installed
+product; MSI defaults apply when the setup file is an MSI. See Microsoft's
 [setup-folder model](https://learn.microsoft.com/en-us/intune/app-management/deployment/create-win32-package).
 
 ## Choose installed-product evidence

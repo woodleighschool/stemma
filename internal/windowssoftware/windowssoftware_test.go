@@ -1,8 +1,10 @@
 package windowssoftware
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -81,6 +83,113 @@ func TestSetupTreePreservesFilesAndSelectsMSIEvidence(t *testing.T) {
 	}
 }
 
+func writeZip(t *testing.T, members map[string]string) string {
+	t.Helper()
+	name := filepath.Join(t.TempDir(), "Vendor_1.2.3.zip")
+	f, err := os.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := zip.NewWriter(f)
+	for member, data := range members {
+		entry, err := w.Create(member)
+		if err == nil {
+			_, err = entry.Write([]byte(data))
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := errors.Join(w.Close(), f.Close()); err != nil {
+		t.Fatal(err)
+	}
+	return name
+}
+
+func TestArchiveSourceIsTheSetupTree(t *testing.T) {
+	vendor := writeZip(t, map[string]string{"Installer.exe": "unexecuted installer", "Payload/app.msix": "bundle"})
+	companion := writeFixture(t, t.TempDir(), "settings.reg", []byte("Windows Registry Editor Version 5.00\n"), 0o644)
+	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: filepath.Base(vendor)}, "file:settings.reg": {Path: companion}}
+	spec := Spec{Content: &Content{Files: map[string]plugin.Input{"settings.reg": {}}}}
+	outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := outputs["installer"]
+	if !artifact.Tree || artifact.EntryPoint != "Installer.exe" || artifact.Format != "directory" {
+		t.Fatalf("prepared installer: %#v", artifact)
+	}
+	for name, want := range map[string]string{"Installer.exe": "unexecuted installer", "Payload/app.msix": "bundle"} {
+		data, err := os.ReadFile(filepath.Join(artifact.Path, filepath.FromSlash(name)))
+		if err != nil || string(data) != want {
+			t.Fatalf("archive member %s: %q %v", name, data, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(artifact.Path, "settings.reg")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetupFileSelection(t *testing.T) {
+	members := map[string]string{"Setup.exe": "installer", "Tools/helper.exe": "helper", "install.cmd": "@echo off", "Payload/data.cab": "cabinet"}
+	for _, test := range []struct {
+		name, pattern, want string
+	}{
+		{name: "exact path", pattern: "Setup.exe", want: "Setup.exe"},
+		{name: "glob", pattern: "*/helper.exe", want: "Tools/helper.exe"},
+		{name: "wrapper script", pattern: "install.cmd", want: "install.cmd"},
+		{name: "several installers"},
+		{name: "no match", pattern: "Missing.exe"},
+		{name: "ambiguous glob", pattern: "*"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			inputs := map[string]plugin.Artifact{"source": {Path: writeZip(t, members), Filename: "Vendor_1.2.3.zip"}}
+			workspace := t.TempDir()
+			outputs, err := Prepare(t.Context(), Spec{SetupFile: test.pattern}, inputs, workspace, false)
+			if test.want == "" {
+				if err == nil {
+					t.Fatalf("selected %q", outputs["installer"].EntryPoint)
+				}
+				if entries, err := os.ReadDir(workspace); err != nil || len(entries) != 0 {
+					t.Fatalf("failed preparation left outputs: %v %v", entries, err)
+				}
+				return
+			}
+			if err != nil || outputs["installer"].EntryPoint != test.want {
+				t.Fatalf("entry point: %#v %v", outputs["installer"], err)
+			}
+		})
+	}
+}
+
+func TestSetupFileMustMatchASingleInstaller(t *testing.T) {
+	vendor := writeFixture(t, t.TempDir(), "setup.exe", []byte("unexecuted installer"), 0o644)
+	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: "setup.exe"}}
+	if _, err := Prepare(t.Context(), Spec{SetupFile: "install.exe"}, inputs, t.TempDir(), false); err == nil {
+		t.Fatal("accepted a setup_file naming another installer")
+	}
+	outputs, err := Prepare(t.Context(), Spec{SetupFile: "*.exe"}, inputs, t.TempDir(), false)
+	if err != nil || outputs["installer"].EntryPoint != "setup.exe" || outputs["installer"].Tree {
+		t.Fatalf("single installer: %#v %v", outputs["installer"], err)
+	}
+}
+
+func TestArchiveCompanionOverlappingAMemberFails(t *testing.T) {
+	vendor := writeZip(t, map[string]string{"Installer.exe": "unexecuted installer", "Payload/app.msix": "bundle"})
+	inputs := map[string]plugin.Artifact{
+		"source":                {Path: vendor, Filename: filepath.Base(vendor)},
+		"file:payload/app.msix": {Path: writeFixture(t, t.TempDir(), "companion", []byte("settings"), 0o644)},
+	}
+	spec := Spec{Content: &Content{Files: map[string]plugin.Input{"payload/app.msix": {}}}}
+	workspace := t.TempDir()
+	if _, err := Prepare(t.Context(), spec, inputs, workspace, false); err == nil {
+		t.Fatal("accepted a companion overlapping an archive member")
+	}
+	if entries, err := os.ReadDir(workspace); err != nil || len(entries) != 0 {
+		t.Fatalf("failed preparation left outputs: %v %v", entries, err)
+	}
+}
+
 func TestCompanionScriptReplacesSelectedMSIEvidence(t *testing.T) {
 	msi, err := os.ReadFile("../msi/testdata/test.msi")
 	if err != nil {
@@ -91,7 +200,7 @@ func TestCompanionScriptReplacesSelectedMSIEvidence(t *testing.T) {
 	script := []byte("#!/bin/sh\ntouch " + marker + "\nexit 91\n")
 	command := writeFixture(t, t.TempDir(), "install.cmd", script, 0o755)
 	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: "vendor.msi", Version: "1.2.3", Evidence: map[string]json.RawMessage{"windows.installer": json.RawMessage(`{"msi":{"productCode":"stale"}}`), "vendor.probe": json.RawMessage(`true`)}}, "file:install.cmd": {Path: command}}
-	spec := Spec{Content: &Content{SetupFile: "install.cmd", Files: map[string]plugin.Input{"install.cmd": {}}}}
+	spec := Spec{SetupFile: "install.cmd", Content: &Content{Files: map[string]plugin.Input{"install.cmd": {}}}}
 	outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
@@ -135,13 +244,13 @@ func TestCompanionPathsFailBeforePublishing(t *testing.T) {
 			}
 			companion := writeFixture(t, t.TempDir(), "companion", []byte("settings"), 0o644)
 			inputs := map[string]plugin.Artifact{"source": input, "file:" + test.target: {Path: companion}}
-			content := &Content{SetupFile: test.setup, Files: map[string]plugin.Input{test.target: {}}}
+			content := &Content{Files: map[string]plugin.Input{test.target: {}}}
 			if test.second != "" {
 				content.Files[test.second] = plugin.Input{}
 				inputs["file:"+test.second] = plugin.Artifact{Path: companion}
 			}
 			workspace := t.TempDir()
-			if _, err := Prepare(t.Context(), Spec{Content: content}, inputs, workspace, false); err == nil {
+			if _, err := Prepare(t.Context(), Spec{SetupFile: test.setup, Content: content}, inputs, workspace, false); err == nil {
 				t.Fatal("unsafe content accepted")
 			}
 			entries, err := os.ReadDir(workspace)

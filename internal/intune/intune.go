@@ -106,7 +106,7 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest[Config]) (response 
 	}
 	if req.Method == "validate" {
 		if req.Artifact.Path != "" {
-			_, err := identifyArtifact(ctx, req.Artifact, text(desired["@odata.type"]), setupFile(desired))
+			_, err := identifyArtifact(ctx, req.Artifact, text(desired["@odata.type"]))
 			return response, err
 		}
 		return response, nil
@@ -128,10 +128,9 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 	if err != nil {
 		return response, err
 	}
-	setup := setupFile(desired)
 	pinned := text(desired["app_id"])
 	desired = maps.Clone(desired)
-	for _, key := range []string{"app_id", "retention", "dependencies", "supersedes", "content"} {
+	for _, key := range []string{"app_id", "retention", "dependencies", "supersedes"} {
 		delete(desired, key)
 	}
 	typedClient := *c
@@ -139,7 +138,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 	c = &typedClient
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
-	artifact, err := identifyArtifact(ctx, req.Artifact, c.appType, setup)
+	artifact, err := identifyArtifact(ctx, req.Artifact, c.appType)
 	if err != nil {
 		return response, err
 	}

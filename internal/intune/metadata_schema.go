@@ -32,7 +32,6 @@ func MetadataSchema() *jsonschema.Schema {
 	}
 	win32 := common()
 	win32["type"] = &jsonschema.Schema{Const: "win32", Description: "Windows software publishes a Win32 app, so this is the default."}
-	win32["content"] = objectSchema(map[string]*jsonschema.Schema{"setup_file": {Type: "string", MinLength: new(uint64(1)), Description: "Relative entrypoint inside the immutable setup tree. Defaults to the artifact entrypoint, or the filename for a single file; conflicting entries are rejected. All tree members are included in the provider-prepared Intune envelope."}}, "setup_file")
 	win32["msi"] = msiSchema()
 	win32["dependencies"] = referencesSchema("auto_install", 99)
 	win32["supersedes"] = referencesSchema("uninstall_previous", 9)

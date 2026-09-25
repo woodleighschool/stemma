@@ -82,7 +82,7 @@ func TestApplicationDiskImageDerivesADmgApp(t *testing.T) {
 	if _, named := m["displayName"]; named {
 		t.Fatalf("display name was derived from the application: %+v", m)
 	}
-	if identity, err := identifyArtifact(t.Context(), req.Artifact, dmgType, ""); err != nil || !identity.raw {
+	if identity, err := identifyArtifact(t.Context(), req.Artifact, dmgType); err != nil || !identity.raw {
 		t.Fatalf("disk image was not published as it is: %+v: %v", identity, err)
 	}
 }
@@ -276,10 +276,7 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 		{"type defaults from the kind", "WindowsSoftware", object{"display_name": "Example"}, true},
 		{"null type", "WindowsSoftware", object{"type": nil}, false},
 		{"MSI information", "WindowsSoftware", object{"msi": object{"product_version": "2.0", "package_type": "per_machine"}}, true},
-		{"setup entrypoint", "WindowsSoftware", object{"content": object{"setup_file": "bin/setup.exe"}}, true},
-		{"unknown content option", "WindowsSoftware", object{"content": object{"setup_file": "setup.exe", "run": true}}, false},
-		{"missing setup entrypoint", "WindowsSoftware", object{"content": object{}}, false},
-		{"mac setup tree", "MacSoftware", object{"type": "pkg", "content": object{"setup_file": "setup.exe"}}, false},
+		{"setup entrypoint", "WindowsSoftware", object{"content": object{"setup_file": "bin/setup.exe"}}, false},
 		{"registry", "WindowsSoftware", object{"detection": []any{registry}}, true},
 		{"script", "WindowsSoftware", object{"detection": []any{object{"type": "script", "script": "Write-Output 'installed'\nexit 0\n", "run_as_32bit": false}}}, true},
 		{"assignment", "WindowsSoftware", object{"assignments": []any{object{"intent": "required", "group": "88208ef5-07a0-4627-ad8f-e9c1c0ff5f15"}, object{"intent": "available", "all_users": true}}}, true},

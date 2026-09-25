@@ -41,15 +41,14 @@ func TestSetupTreePublicationAndEntrypointIdentity(t *testing.T) {
 	req.Artifact.Version = "4.2"
 	desired, _ := compile(req)
 	delete(desired, "assignments")
-	desired["content"] = object{"setup_file": `bin\setup.cmd`}
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
 	first := publishedMarker(t, fake)
 	fake.mu.Lock()
 	payload := bytes.Clone(fake.plaintext)
-	if fake.app["setupFilePath"] != `bin\setup.cmd` || fake.app["fileName"] != "test-4.2.intunewin" || fake.app["content"] != nil {
-		t.Fatalf("provider content options leaked or incorrect Graph entrypoint: %+v", fake.app)
+	if fake.app["setupFilePath"] != `bin\setup.cmd` || fake.app["fileName"] != "test-4.2.intunewin" {
+		t.Fatalf("incorrect Graph entrypoint: %+v", fake.app)
 	}
 	fake.mu.Unlock()
 	reader, err := zip.NewReader(bytes.NewReader(payload), int64(len(payload)))
@@ -75,7 +74,6 @@ func TestSetupTreePublicationAndEntrypointIdentity(t *testing.T) {
 		t.Fatal("metadata change published content again")
 	}
 	req.Artifact.EntryPoint = "bin/repair.cmd"
-	delete(desired, "content")
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +86,7 @@ func TestSetupTreePublicationAndEntrypointIdentity(t *testing.T) {
 }
 
 func TestSetupTreeRejectsChangedBytesAndUnsafeEntrypoints(t *testing.T) {
-	for _, name := range []string{"changed companion", "conflict", "escape", "missing", "Windows device name"} {
+	for _, name := range []string{"changed companion", "no entry point", "escape", "missing", "Windows device name"} {
 		t.Run(name, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
 			req := fixtureRequest(t)
@@ -99,8 +97,8 @@ func TestSetupTreeRejectsChangedBytesAndUnsafeEntrypoints(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(req.Artifact.Path, "payload.cab"), []byte("changed"), 0o644); err != nil {
 					t.Fatal(err)
 				}
-			case "conflict":
-				desired["content"] = object{"setup_file": "bin/repair.cmd"}
+			case "no entry point":
+				req.Artifact.EntryPoint = ""
 			case "escape":
 				req.Artifact.EntryPoint = "../setup.cmd"
 			case "missing":
