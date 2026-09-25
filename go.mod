@@ -27,7 +27,6 @@ require (
 	github.com/invopop/jsonschema v0.14.0
 	github.com/kaptinlin/jsonschema v0.9.10
 	github.com/klauspost/compress v1.20.1
-	github.com/lmittmann/tint v1.2.0
 	github.com/mattn/go-runewidth v0.0.30
 	github.com/mholt/archives v0.1.5
 	github.com/microsoft/kiota-abstractions-go v1.11.1
@@ -44,6 +43,7 @@ require (
 	github.com/pb33f/ordered-map/v2 v2.3.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sassoftware/relic/v8 v8.2.0
+	github.com/sergi/go-diff v1.4.0
 	github.com/smallstep/pkcs7 v0.2.3
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.17
@@ -111,7 +111,6 @@ require (
 	github.com/pjbgf/sha1cd v0.6.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/sorairolake/lzip-go v0.3.8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect

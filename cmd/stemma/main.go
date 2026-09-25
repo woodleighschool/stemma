@@ -70,8 +70,8 @@ func interruptContext() (context.Context, context.CancelFunc) {
 func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	var rootDir, configPath, cacheDir, stateDir string
 	root := &cobra.Command{Use: "stemma", Short: "Resolve, prepare and publish reviewed software artifacts", SilenceErrors: true, SilenceUsage: true, Version: version}
-	display := newCommandOutput(root, errOut)
-	out = reportWriter{Writer: out, output: display}
+	display := newCommandOutput(out, errOut)
+	out = finalWriter{Writer: out, output: display}
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		return display.start(cmd)
 	}
@@ -161,7 +161,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		var icons engine.IconOptions
 		var presentation string
 		cmd := &cobra.Command{Use: method + " [Kind/name...]"}
-		asJSON := jsonFlag(cmd)
+		jsonFlag(cmd)
 		cmd.Short = map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "signature": "Derive the verified signer of each published artifact", "icon": "Create declared icon assets from the artwork prepared software carries", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method]
 		cmd.RunE = func(cmd *cobra.Command, args []string) error {
 			path, err := resolve()
@@ -174,14 +174,18 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 				}
 			}
 			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Method: method, Resources: args, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error {
-				return display.resourceDone(out, *asJSON, method, resource)
+				return display.resourceDone(method, resource)
 			}, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply" || method == "icon", Refresh: method == "update", Offline: offline}})
-			if err := display.report(out, *asJSON, method, report, runErr); err != nil {
-				return errors.Join(runErr, err)
+			if err := display.report(out, method, report, runErr); err != nil {
+				if runErr != nil {
+					runErr = fmt.Errorf("%s: %w", method, runErr)
+				}
+				return errors.Join(runErr, fmt.Errorf("write report: %w", err))
 			}
 			return runErr
 		}
 
+		cmd.Flags().Bool("all", false, "Include unchanged resources in the report")
 		cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
 		if method == "icon" {
 			cmd.Flags().BoolVar(&icons.Force, "force", false, "Replace icon assets that already exist")
@@ -197,9 +201,8 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		if err != nil {
 			return err
 		}
-		// Stdout carries only the path, so the resource outcome goes to stderr.
 		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Method: "artifact", Resources: args, Output: output, ResourceDone: func(resource engine.ResourceReport) error {
-			return display.resourceDone(display, false, "artifact", resource)
+			return display.resourceDone("artifact", resource)
 		}, Lock: lockfile.Options{Offline: artifactOffline, IgnoreInputs: noInputLock}})
 		if err != nil {
 			return err
@@ -213,17 +216,16 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	artifact.MarkFlagsMutuallyExclusive("offline", "no-input-lock")
 	root.AddCommand(artifact)
 	reconciler := &cobra.Command{Use: "reconcile", Short: "Apply the reviewed branch of this checkout and propose lock updates as pull requests", Args: cobra.NoArgs}
-	reconcileJSON := jsonFlag(reconciler)
+	jsonFlag(reconciler)
+	reconciler.Flags().Bool("all", false, "Include unchanged resources and proposals in the report")
 	reconciler.Flags().StringVar(&stateDir, "state-dir", os.Getenv("STEMMA_STATE_DIR"), "Directory recording the last reviewed commit applied in full")
 	reconciler.RunE = func(cmd *cobra.Command, _ []string) error {
 		path, err := resolve()
 		if err != nil {
 			return err
 		}
-		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, ResourceDone: func(method string, resource engine.ResourceReport) error {
-			return display.resourceDone(out, *reconcileJSON, method, resource)
-		}})
-		if err := display.reconciled(out, *reconcileJSON, report, runErr); err != nil {
+		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, ResourceDone: display.resourceDone, ApplyDone: display.applyDone, ProposalDone: display.proposalDone})
+		if err := display.reconciled(out, report, runErr); err != nil {
 			return errors.Join(runErr, err)
 		}
 		return runErr
@@ -232,7 +234,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	root.AddCommand(&cobra.Command{Use: "inspect FILE", Short: "Read artifact metadata as JSON without executing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		switch strings.ToLower(filepath.Ext(args[0])) {
 		case ".intunewin":
-			done := plugin.Stage(cmd.Context(), "Inspecting artifact")
+			done := plugin.Stage(cmd.Context(), "Inspecting artifact", plugin.Detail(filepath.Base(args[0])))
 			value, err := intunewin.Inspect(cmd.Context(), args[0])
 			done(err)
 			if err != nil {

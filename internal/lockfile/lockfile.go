@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -51,6 +52,7 @@ type Options struct {
 type Result struct {
 	File      File
 	Changed   bool
+	Changes   []InputChange
 	CacheHits map[string]map[string]bool
 }
 
@@ -80,15 +82,20 @@ func Lock(ctx context.Context, root string) (unlock func() error, err error) {
 func Load(path string) (File, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return File{}, err
+		return File{}, fmt.Errorf("lockfile: %w", err)
 	}
 	return Parse(data)
 }
 
 // Parse validates lockfile bytes read from somewhere other than the project.
-func Parse(data []byte) (File, error) {
+func Parse(data []byte) (f File, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("lockfile: %w", err)
+		}
+	}()
 	if len(data) > 8<<20 {
-		return File{}, errors.New("lockfile exceeds 8 MiB")
+		return File{}, errors.New("exceeds 8 MiB")
 	}
 	var header struct {
 		Version int `yaml:"version"`
@@ -98,22 +105,21 @@ func Parse(data []byte) (File, error) {
 	}
 	switch {
 	case header.Version > Version:
-		return File{}, fmt.Errorf("lockfile version %d needs a newer stemma", header.Version)
+		return File{}, fmt.Errorf("version %d needs a newer stemma", header.Version)
 	case header.Version != Version:
-		return File{}, fmt.Errorf("lockfile version %d is not supported; delete it and run stemma update", header.Version)
+		return File{}, fmt.Errorf("version %d is not supported; delete it and run stemma update", header.Version)
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
-	var f File
 	if err := dec.Decode(&f); err != nil {
 		return f, err
 	}
 	var extra any
 	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
-		return f, errors.New("expected one lockfile document")
+		return f, errors.New("expected one document")
 	}
 	if f.Inputs == nil {
-		return f, errors.New("incomplete lockfile; run stemma update")
+		return f, errors.New("incomplete; run stemma update")
 	}
 	for resource, inputs := range f.Inputs {
 		if resource == "" || len(inputs) == 0 {
@@ -168,7 +174,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		return nil, errors.New("lockfile: missing; run stemma update")
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("lockfile: %w", err)
+		return nil, err
 	}
 	if opts.IgnoreInputs {
 		old.Inputs = nil
@@ -289,7 +295,11 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("input", name))
 		done := plugin.Stage(ctx, "Acquiring input")
 		entry, hit, err := u.acquire(ctx, inputs[name], u.old.Inputs[resource][name])
-		done(err, "cached", hit)
+		detail := entry.Content.Filename
+		if hit {
+			detail = strings.TrimSpace(detail + " (cached)")
+		}
+		done(err, plugin.Detail(detail))
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s input %s: %w", resource, name, err)
 		}
@@ -300,6 +310,15 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 		u.result.CacheHits[resource] = hits
 	}
 	return entries, hits, nil
+}
+
+// Changes compares one acquired resource's inputs with its reviewed entries,
+// as Commit records them unless the resource is rejected.
+func (u *Update) Changes(resource string) []InputChange {
+	if u.opts.IgnoreInputs || u.opts.PluginsOnly {
+		return nil
+	}
+	return DiffInputs(map[string]map[string]source.Entry{resource: u.old.Inputs[resource]}, map[string]map[string]source.Entry{resource: u.result.File.Inputs[resource]})
 }
 
 // Commit replaces the lockfile after every selected resource was acquired or
@@ -348,6 +367,9 @@ func (u *Update) Commit(ctx context.Context, rejected ...string) (Result, error)
 		if err := Save(u.root, result.File); err != nil {
 			return result, err
 		}
+	}
+	if !opts.IgnoreInputs {
+		result.Changes = DiffInputs(old.Inputs, result.File.Inputs)
 	}
 	return result, nil
 }

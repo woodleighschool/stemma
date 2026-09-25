@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -9,8 +11,10 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/woodleighschool/stemma/internal/changes"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/internal/lockfile"
 	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/reconcile"
 	"github.com/woodleighschool/stemma/internal/signature"
@@ -23,37 +27,76 @@ func resourceName(resource engine.ResourceReport) string {
 	return resource.Kind + "/" + resource.Name
 }
 
+// keyName shortens a resource key, which includes the API version, to Kind/name.
+func keyName(key string) string {
+	parts := strings.Split(key, "/")
+	if len(parts) > 2 {
+		return strings.Join(parts[len(parts)-2:], "/")
+	}
+	return key
+}
+
+// selected reports whether a resource belongs in a report without --all:
+// failures, and whatever the method changed or derived.
+func selected(method string, resource engine.ResourceReport) bool {
+	include := resource.Error != "" || len(resource.BlockedBy) > 0 || len(resource.Inputs) > 0
+	switch method {
+	case "signature":
+		include = true
+	case "prepare":
+		include = include || !resource.Cached
+	case "icon":
+		include = include || resource.Icon != "" && resource.Icon != "unchanged" && resource.Icon != "no icon declared"
+	}
+	for _, destination := range resource.Destinations {
+		include = include || destination.Error != "" || len(destination.Changes) > 0
+	}
+	return include
+}
+
+func selectReport(report engine.Report, method string, all bool) engine.Report {
+	if all {
+		return report
+	}
+	resources := make([]engine.ResourceReport, 0, len(report.Resources))
+	for _, resource := range report.Resources {
+		if selected(method, resource) {
+			resources = append(resources, resource)
+		}
+	}
+	report.Resources = resources
+	return report
+}
+
+// resourceStatus names a resource's outcome for its block heading.
 func resourceStatus(method string, resource engine.ResourceReport) string {
-	if len(resource.BlockedBy) > 0 {
+	switch {
+	case len(resource.BlockedBy) > 0:
 		return "blocked"
-	}
-	if resource.Error != "" {
+	case resource.Error != "":
 		return "failed"
-	}
-	if method == "update" {
-		return "inputs resolved"
-	}
-	if method == "signature" {
+	case method == "update" && len(resource.Inputs) > 0:
+		return quantity(len(resource.Inputs), "input") + " changed"
+	case method == "update":
+		return "inputs unchanged"
+	case method == "signature":
 		return "signer derived"
-	}
-	if method == "icon" && resource.Icon != "" {
+	case method == "icon" && resource.Icon != "":
 		return resource.Icon
 	}
 	if len(resource.Destinations) > 0 {
-		changes := 0
+		changed := 0
 		for _, destination := range resource.Destinations {
-			if destination.Error != "" {
-				return "failed"
-			}
-			changes += len(destination.Changes)
+			changed += len(destination.Changes)
 		}
-		if changes == 0 {
+		switch {
+		case changed == 0:
 			return "unchanged"
+		case method == "apply":
+			return quantity(changed, "change") + " applied"
+		default:
+			return quantity(changed, "planned change")
 		}
-		if method == "apply" {
-			return fmt.Sprintf("applied (%d changes)", changes)
-		}
-		return fmt.Sprintf("%d planned changes", changes)
 	}
 	if resource.Cached {
 		return "cached"
@@ -61,49 +104,105 @@ func resourceStatus(method string, resource engine.ResourceReport) string {
 	return "prepared"
 }
 
-func printResource(out io.Writer, method string, resource engine.ResourceReport) error {
-	style := newTextStyle(out)
-	var details strings.Builder
-	for _, destination := range resource.Destinations {
-		switch {
-		case destination.Error != "":
-			for index, line := range errorLines(destination.Error) {
-				if index == 0 {
-					line = destination.Name + ": failed: " + style.paint(line, color.FgHiRed)
-				} else {
-					line = style.paint(line, color.FgHiRed)
-				}
-				_, _ = fmt.Fprintf(&details, "  %s\n", line)
-			}
-		case len(destination.Changes) > 0:
-			verb := "planned"
-			if destination.Applied {
-				verb = "applied"
-			}
-			_, _ = fmt.Fprintf(&details, "  %s: %s\n", destination.Name, style.paint(fmt.Sprintf("%d changes %s", len(destination.Changes), verb), color.FgHiGreen))
-		case resource.Error != "":
-			_, _ = fmt.Fprintf(&details, "  %s: unchanged\n", destination.Name)
-		}
-		for _, change := range destination.Changes {
-			_, _ = fmt.Fprintf(&details, "    %s %s\n", change.Action, change.Field)
-		}
+func destinationStatus(destination engine.DestinationReport) string {
+	switch {
+	case destination.Error != "" && len(destination.Changes) > 0:
+		return "failed (changes not confirmed)"
+	case destination.Error != "":
+		return "failed"
+	case len(destination.Changes) == 0:
+		return "unchanged"
+	case destination.Applied:
+		return quantity(len(destination.Changes), "change") + " applied"
+	default:
+		return quantity(len(destination.Changes), "planned change")
 	}
-	var text strings.Builder
-	_, _ = fmt.Fprintf(&text, "%s: %s\n", style.paint(resourceName(resource), color.Bold), style.outcome(resourceStatus(method, resource)))
-	if details.Len() == 0 {
-		for _, line := range errorLines(resource.Error) {
-			_, _ = fmt.Fprintf(&text, "  %s\n", line)
-		}
-	}
-	text.WriteString(details.String())
-	if method == "signature" && resource.Error == "" {
-		text.WriteString(signatureDetails(resource))
-	}
-	_, err := io.WriteString(out, text.String())
-	return err
 }
 
-// signatureDetails renders the derived signer and the fragment to add.
+// resourceHeading names a resource and its outcome.
+func resourceHeading(style textStyle, method string, resource engine.ResourceReport) string {
+	return style.paint(changes.Text(resourceName(resource)), color.Bold) + ": " + style.outcome(resourceStatus(method, resource)) + "\n"
+}
+
+// renderResource renders one resource's report block.
+func renderResource(style textStyle, method string, resource engine.ResourceReport) string {
+	var text strings.Builder
+	text.WriteString(resourceHeading(style, method, resource))
+	for _, input := range resource.Inputs {
+		for index, line := range changes.InputLines(input) {
+			if index == 0 {
+				line = style.paint(line, inputColour(input))
+			}
+			fmt.Fprintf(&text, "  %s\n", line)
+		}
+	}
+	switch {
+	case len(resource.BlockedBy) > 0:
+		names := make([]string, 0, len(resource.BlockedBy))
+		for _, key := range resource.BlockedBy {
+			names = append(names, changes.Text(keyName(key)))
+		}
+		fmt.Fprintf(&text, "  blocked by %s\n", strings.Join(names, ", "))
+	case resource.Error != "" && len(resource.Destinations) == 0:
+		writeError(&text, style, "  ", resource.Error)
+	}
+	for _, destination := range resource.Destinations {
+		fmt.Fprintf(&text, "  %s: %s\n", changes.Text(destination.Name), style.outcome(destinationStatus(destination)))
+		for _, change := range destination.Changes {
+			for index, line := range changes.Lines(change) {
+				fmt.Fprintf(&text, "    %s\n", changeLine(style, change.Action, index, line))
+			}
+		}
+		if destination.Error != "" {
+			writeError(&text, style, "    ", destination.Error)
+		}
+	}
+	if resource.Error == "" {
+		switch method {
+		case "signature":
+			text.WriteString(signatureDetails(resource))
+		case "prepare":
+			for _, name := range slices.Sorted(maps.Keys(resource.Artifacts)) {
+				artifact := resource.Artifacts[name]
+				fmt.Fprintf(&text, "  %s: %s", changes.Text(name), changes.Text(artifact.Filename))
+				if artifact.Version != "" {
+					fmt.Fprintf(&text, " (%s)", changes.Text(artifact.Version))
+				}
+				text.WriteByte('\n')
+			}
+		}
+	}
+	text.WriteByte('\n')
+	return text.String()
+}
+
+// changeLine colours a change's first line by its action and collection
+// members by whether they are added or removed.
+func changeLine(style textStyle, action string, index int, line string) string {
+	switch {
+	case index == 0 && action == "create":
+		return style.paint(line, color.FgHiGreen)
+	case index == 0 && (action == "delete" || action == "clear"):
+		return style.paint(line, color.FgHiRed)
+	case index == 0:
+		return style.paint(line, color.FgHiYellow)
+	case strings.HasPrefix(strings.TrimLeft(line, " "), "+ "):
+		return style.paint(line, color.FgGreen)
+	case strings.HasPrefix(strings.TrimLeft(line, " "), "- "):
+		return style.paint(line, color.FgRed)
+	}
+	return line
+}
+
+func writeError(text *strings.Builder, style textStyle, indent, message string) {
+	for index, line := range errorLines(message) {
+		if index == 0 {
+			line = "error: " + line
+		}
+		fmt.Fprintf(text, "%s%s\n", indent, style.paint(line, color.FgHiRed))
+	}
+}
+
 func signatureDetails(resource engine.ResourceReport) string {
 	var text strings.Builder
 	for _, name := range slices.Sorted(maps.Keys(resource.Artifacts)) {
@@ -115,94 +214,120 @@ func signatureDetails(resource engine.ResourceReport) string {
 		if err := json.Unmarshal(data, &result); err != nil {
 			continue
 		}
-		_, _ = fmt.Fprintf(&text, "  Signer:    %s (%s)\n  Target:    %s\n", result.Name, result.Authority, result.Target)
+		fmt.Fprintf(&text, "  Signer: %s (%s)\n  Target: %s\n", changes.Text(result.Name), changes.Text(result.Authority), changes.Text(result.Target))
 		for line := range strings.SplitSeq(strings.TrimSuffix(result.Fragment(), "\n"), "\n") {
-			_, _ = fmt.Fprintf(&text, "  %s\n", line)
+			fmt.Fprintf(&text, "  %s\n", changes.Text(line))
 		}
 	}
 	return text.String()
 }
 
-func printSummary(out io.Writer, method string, report engine.Report) error {
+// printReportEnd ends a human report below the resources that streamed: the
+// lock entries of resources no longer declared, then the whole run's totals.
+func printReportEnd(out io.Writer, method string, report engine.Report, runErr error) error {
 	style := newTextStyle(out)
 	var text strings.Builder
-	prepared, cached, failed, blocked, changes, created, unchanged := 0, 0, 0, 0, 0, 0, 0
-	for _, resource := range report.Resources {
-		switch {
-		case len(resource.BlockedBy) > 0:
-			blocked++
-		case resource.Error != "":
-			failed++
-		case resource.Cached:
-			cached++
-		default:
-			prepared++
-		}
-		switch outcome, _, _ := strings.Cut(resource.Icon, " "); outcome {
-		case "created":
-			created++
-		case "":
-		default:
-			unchanged++
-		}
-		for _, destination := range resource.Destinations {
-			if method == "plan" || destination.Applied {
-				changes += len(destination.Changes)
-			}
-		}
-	}
-	if report.LockChanged != nil || len(report.Resources) > 0 {
-		ending := ".\n"
-		if blocked > 0 {
-			ending = fmt.Sprintf(", %d blocked.\n", blocked)
-		}
-		switch method {
-		case "update":
-			_, _ = fmt.Fprintf(&text, "%s %d resolved, %d failed%s", style.paint("Update:", color.Bold), prepared, failed, ending)
-		case "prepare":
-			_, _ = fmt.Fprintf(&text, "%s %d prepared, %d cached, %d failed%s", style.paint("Preparation:", color.Bold), prepared, cached, failed, ending)
-		case "signature":
-			_, _ = fmt.Fprintf(&text, "%s %d derived, %d failed%s", style.paint("Signatures:", color.Bold), prepared, failed, ending)
-		case "icon":
-			_, _ = fmt.Fprintf(&text, "%s %d created, %d unchanged, %d failed%s", style.paint("Icons:", color.Bold), created, unchanged, failed, ending)
-		case "plan":
-			_, _ = fmt.Fprintf(&text, "%s %d changes, %d failed resources%s", style.paint("Plan:", color.Bold), changes, failed, ending)
-		case "apply":
-			_, _ = fmt.Fprintf(&text, "%s %d changes applied, %d failed resources%s", style.paint("Apply:", color.Bold), changes, failed, ending)
-		}
-	}
-	if (method == "update" || method == "prepare") && report.LockChanged != nil {
-		text.WriteString(style.lockfile(*report.LockChanged) + "\n")
-	}
+	text.WriteString(renderRemovedInputs(style, report.RemovedInputs))
+	text.WriteString(renderSummary(style, method, report, runErr))
 	_, err := io.WriteString(out, text.String())
 	return err
 }
 
-func (s textStyle) lockfile(changed bool) string {
-	if changed {
-		return s.paint("Lockfile updated.", color.FgHiGreen)
-	}
-	return s.paint("Lockfile unchanged.", color.Faint)
-}
-
-func (s textStyle) outcome(text string) string {
-	attribute := color.FgHiGreen
-	switch text {
-	case "failed":
-		attribute = color.FgHiRed
-	case "blocked", "interrupted", "not completed", "skipped", "declined":
-		attribute = color.FgHiYellow
-	case "unchanged", "already applied", "no artwork", "no icon declared":
-		attribute = color.Faint
-	}
-	return s.paint(text, attribute)
-}
-
-// printReconcile summarises a reconcile run: the reviewed commit's publication
-// and one line per proposal branch.
-func printReconcile(out io.Writer, report reconcile.Report) error {
-	style := newTextStyle(out)
+func renderRemovedInputs(style textStyle, inputs []lockfile.InputChange) string {
 	var text strings.Builder
+	last := ""
+	for _, input := range inputs {
+		if input.Resource != last {
+			if last != "" {
+				text.WriteByte('\n')
+			}
+			fmt.Fprintf(&text, "%s: %s\n", style.paint(changes.Text(keyName(input.Resource)), color.Bold), style.outcome("no longer declared"))
+			last = input.Resource
+		}
+		for index, line := range changes.InputLines(input) {
+			if index == 0 {
+				line = style.paint(line, inputColour(input))
+			}
+			fmt.Fprintf(&text, "  %s\n", line)
+		}
+	}
+	if last != "" {
+		text.WriteByte('\n')
+	}
+	return text.String()
+}
+
+func inputColour(input lockfile.InputChange) color.Attribute {
+	switch {
+	case input.Before == nil:
+		return color.FgHiGreen
+	case input.After == nil:
+		return color.FgHiRed
+	case input.ContentChanged:
+		return color.FgHiYellow
+	}
+	return color.Faint
+}
+
+func renderSummary(style textStyle, method string, report engine.Report, runErr error) string {
+	s := report.Summary
+	var text strings.Builder
+	label := map[string]string{"update": "Update", "prepare": "Preparation", "signature": "Signatures", "icon": "Icons", "plan": "Plan", "apply": "Apply"}[method]
+	switch {
+	case errors.Is(runErr, context.Canceled):
+		label += " interrupted"
+	case runErr != nil || report.Error != "":
+		label += " incomplete"
+	}
+	text.WriteString(style.paint(label+":", color.Bold) + " ")
+	switch method {
+	case "update":
+		fmt.Fprintf(&text, "%s, %s checked", quantity(s.InputChanges, "input change"), quantity(s.Resources, "resource"))
+	case "prepare":
+		fmt.Fprintf(&text, "%d prepared, %d cached", s.Prepared, s.Cached)
+	case "signature":
+		fmt.Fprintf(&text, "%d derived", s.Prepared+s.Cached)
+	case "icon":
+		fmt.Fprintf(&text, "%d created, %d unchanged", s.Changed, s.Unchanged)
+	case "plan":
+		fmt.Fprintf(&text, "%s with changes across %s, %d unchanged", quantity(s.Changed, "resource"), quantity(s.Destinations, "destination"), s.Unchanged)
+	case "apply":
+		fmt.Fprintf(&text, "%s applied, %s unchanged", quantity(s.Applied, "destination"), quantity(s.Unchanged, "resource"))
+	}
+	if s.Failed > 0 {
+		text.WriteString(", " + style.paint(fmt.Sprintf("%d failed", s.Failed), color.FgHiRed))
+	}
+	if s.Blocked > 0 {
+		text.WriteString(", " + style.paint(fmt.Sprintf("%d blocked", s.Blocked), color.FgHiYellow))
+	}
+	text.WriteString(".\n")
+	if (method == "update" || method == "prepare") && report.LockChanged != nil {
+		text.WriteString(lockfileStatus(style, *report.LockChanged) + "\n")
+	}
+	return text.String()
+}
+
+func quantity(count int, noun string) string {
+	if count != 1 {
+		noun += "s"
+	}
+	return fmt.Sprintf("%d %s", count, noun)
+}
+
+func lockfileStatus(style textStyle, changed bool) string {
+	if changed {
+		return style.paint("Lockfile updated.", color.FgHiGreen)
+	}
+	return style.paint("Lockfile unchanged.", color.Faint)
+}
+
+// renderReviewed describes the reviewed commit's publication, whose resources
+// streamed as they applied.
+func renderReviewed(style textStyle, report reconcile.Report) string {
+	apply := report.Apply
+	if apply == nil {
+		return ""
+	}
 	head := report.Head
 	if len(head) > 12 {
 		head = head[:12]
@@ -210,34 +335,76 @@ func printReconcile(out io.Writer, report reconcile.Report) error {
 	if report.Branch != "" {
 		head = report.Branch + "@" + head
 	}
-	if apply := report.Apply; apply != nil {
-		outcome := "applied"
-		switch {
-		case apply.Skipped:
-			outcome = "already applied"
-		case apply.Error != "":
-			outcome = "failed"
-		}
-		_, _ = fmt.Fprintf(&text, "%s %s %s", style.paint("Reviewed:", color.Bold), head, style.outcome(outcome))
-		if apply.Summary != "" {
-			_, _ = fmt.Fprintf(&text, " (%s)", apply.Summary)
-		}
-		text.WriteString("\n")
+	outcome := "applied"
+	switch {
+	case apply.Skipped:
+		outcome = "already applied"
+	case apply.Failed():
+		outcome = "failed"
 	}
-	if len(report.Updates) > 0 {
-		text.WriteString(style.paint("Updates:", color.Bold) + "\n")
+	var text strings.Builder
+	fmt.Fprintf(&text, "%s %s %s", style.paint("Reviewed:", color.Bold), changes.Text(head), style.outcome(outcome))
+	if apply.Summary != "" {
+		fmt.Fprintf(&text, " (%s)", changes.Text(apply.Summary))
 	}
-	for _, update := range report.Updates {
-		_, _ = fmt.Fprintf(&text, "  %s: %s", update.Resource, style.outcome(update.Action))
-		if update.PullRequest != "" {
-			_, _ = fmt.Fprintf(&text, " %s", update.PullRequest)
+	text.WriteByte('\n')
+	// Resource failures streamed as they happened; the error is the rest.
+	if apply.Error != "" {
+		writeError(&text, style, "  ", apply.Error)
+	}
+	return text.String()
+}
+
+// renderProposal describes one proposal branch's outcome.
+func renderProposal(style textStyle, proposal reconcile.Proposal) string {
+	var text strings.Builder
+	fmt.Fprintf(&text, "%s: %s", style.paint(changes.Text(keyName(proposal.Resource)), color.Bold), style.outcome(proposal.Action))
+	if proposal.PullRequest != "" {
+		fmt.Fprintf(&text, " %s", changes.Text(proposal.PullRequest))
+	}
+	text.WriteByte('\n')
+	if proposal.Error != "" {
+		writeError(&text, style, "  ", proposal.Error)
+	} else if proposal.Summary != "" {
+		fmt.Fprintf(&text, "  %s\n", changes.Text(proposal.Summary))
+	}
+	return text.String()
+}
+
+// printReconcileEnd counts the proposals, which streamed as they finished, or
+// shows why the update phase stopped. A run that never reached the phase has
+// no proposals to count.
+func printReconcileEnd(out io.Writer, report reconcile.Report, runErr error) error {
+	update := report.Update
+	if update == nil {
+		return nil
+	}
+	style := newTextStyle(out)
+	label := "Proposals:"
+	if errors.Is(runErr, context.Canceled) {
+		label = "Proposals interrupted:"
+	}
+	var text strings.Builder
+	text.WriteString(style.paint(label, color.Bold) + " ")
+	if update.Error != "" {
+		text.WriteString(style.outcome("failed") + "\n")
+		writeError(&text, style, "  ", update.Error)
+	} else {
+		var counts []string
+		actions := map[string]int{}
+		for _, proposal := range update.Proposals {
+			if actions[proposal.Action] == 0 {
+				counts = append(counts, proposal.Action)
+			}
+			actions[proposal.Action]++
 		}
-		if update.Error != "" {
-			_, _ = fmt.Fprintf(&text, " %s", style.paint(strings.Join(errorLines(update.Error), "\n  "), color.FgHiRed))
-		} else if update.Summary != "" {
-			_, _ = fmt.Fprintf(&text, " %s", update.Summary)
+		for i, action := range counts {
+			counts[i] = fmt.Sprintf("%d %s", actions[action], action)
 		}
-		text.WriteString("\n")
+		if len(counts) == 0 {
+			counts = []string{"none"}
+		}
+		text.WriteString(strings.Join(counts, ", ") + ".\n")
 	}
 	_, err := io.WriteString(out, text.String())
 	return err
@@ -252,7 +419,7 @@ func printPlugins(out io.Writer, plugins map[string]config.Plugin) error {
 		if declaration.Entrypoint != "" {
 			source += " (" + declaration.Entrypoint + ")"
 		}
-		_, _ = fmt.Fprintf(&text, "%s: %s\n", style.paint(name, color.Bold), source)
+		fmt.Fprintf(&text, "%s: %s\n", style.paint(changes.Text(name), color.Bold), changes.Text(source))
 	}
 	if len(plugins) == 0 {
 		text.WriteString("No plugins configured.\n")
@@ -292,9 +459,9 @@ func printLockedPlugins(out io.Writer, previous, locked map[string]pluginstore.E
 		if len(id) > 19 {
 			id = id[:19]
 		}
-		_, _ = fmt.Fprintf(&text, "%s: %s %s %s\n", style.paint(name, color.Bold), entry.Image+entry.Path, id, style.outcome(outcome))
+		fmt.Fprintf(&text, "%s: %s %s %s\n", style.paint(changes.Text(name), color.Bold), changes.Text(entry.Image+entry.Path), id, style.outcome(outcome))
 	}
-	text.WriteString(style.lockfile(changed) + "\n")
+	text.WriteString(lockfileStatus(style, changed) + "\n")
 	_, err := io.WriteString(out, text.String())
 	return err
 }

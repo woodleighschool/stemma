@@ -66,7 +66,8 @@ func (c Candidate) Dependents(key string) []string {
 
 // Resolve observes every declared input of the catalog once and reports each
 // resource independently, so one unreachable source cannot hide the others.
-// Plugins must match the lockfile: their code runs before anything is observed.
+// ResourceDone receives each resource's input changes as it finishes. Plugins
+// must match the lockfile: their code runs before anything is observed.
 func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr error) {
 	opts.Lock = lockfile.Options{Refresh: true}
 	s, err := open(ctx, opts, true)
@@ -112,23 +113,32 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 				resource.BlockedBy = append(resource.BlockedBy, producer)
 			}
 		}
+		report := ResourceReport{Name: resource.Name, Kind: resource.Kind, Key: key, BlockedBy: resource.BlockedBy}
 		if len(resource.BlockedBy) > 0 {
 			resource.Error = "blocked by " + strings.Join(resource.BlockedBy, ", ")
-			candidate.Resources[key] = resource
-			continue
-		}
-		ctx := resourceContext(ctx, plan.Resource)
-		entries, _, err := locked.Acquire(ctx, key)
-		if ctx.Err() != nil {
-			return candidate, ctx.Err()
-		}
-		if err != nil {
-			plugin.Logger(ctx).DebugContext(ctx, "Resolution failed", "error", err)
-			resource.Error = err.Error()
-		} else if len(entries) > 0 {
-			resource.Inputs = entries
+		} else {
+			ctx := resourceContext(ctx, plan.Resource)
+			entries, hits, err := locked.Acquire(ctx, key)
+			if ctx.Err() != nil {
+				return candidate, ctx.Err()
+			}
+			if err != nil {
+				plugin.Logger(ctx).DebugContext(ctx, "Resolution failed", "error", err)
+				resource.Error = err.Error()
+			} else {
+				if len(entries) > 0 {
+					resource.Inputs = entries
+				}
+				report.Inputs, report.InputCacheHits = locked.Changes(key), hits
+			}
 		}
 		candidate.Resources[key] = resource
+		report.Error = resource.Error
+		if opts.ResourceDone != nil {
+			if err := opts.ResourceDone(report); err != nil {
+				return candidate, err
+			}
+		}
 	}
 	// A suspended resource is reported from its declaration alone; nothing
 	// implicit runs it, so the run never evaluates its operation contract.

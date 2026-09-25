@@ -49,7 +49,9 @@ it. `--no-input-lock` instead resolves the inputs of the resource and the builds
 it consumes from their sources as they are now, to show what an update would
 prepare. Either way the lockfile stays unchanged and plugins must match it. No
 destination receives the artifact. The path is a copy in the cache that each
-run replaces and `stemma cache prune` removes:
+run replaces and `stemma cache prune` removes. Progress and errors stay on
+stderr, and the live tree needs only stderr to be a terminal, so the command
+composes with other tools:
 
 ```sh
 stemma inspect "$(stemma artifact MacSoftware/foo)"
@@ -111,32 +113,41 @@ index; see [writing plugins](writing-plugins.md#distribute-a-bundle).
 
 ## Reports and diagnostics
 
-Stdout contains command reports; stderr contains progress and diagnostics.
-Commands that report an outcome print text, and `--json` prints the same report
-as JSON.
+Outcome commands write each resource's report to stdout as it finishes, then the
+run's totals. Plan and apply show changed, failed and blocked resources with
+before and after values; update shows the input changes it locks, prepare shows
+newly prepared resources, icon shows changed artwork and signature shows every
+derived signer. Multi-line values, such as scripts, show their line counts
+instead of their text. `--all` includes unchanged resources; totals always
+describe the whole run. `--json` writes one JSON document with the same
+selection when the run ends. Reconcile prints the reviewed commit's publication,
+then looks up every resource before pushing each proposal, printing it as it is
+pushed; in a terminal, each looked-up resource also leaves its outcome line.
 
 ```sh
-stemma plan --json
-stemma prepare --log-format json --json
-stemma prepare --verbose --no-progress
+stemma plan
+stemma plan --json --all > plan.json
+stemma prepare --all
 ```
 
-Terminals show live progress. Plain logs name each stage once as it starts;
-debug output and `--log-format json` also record each stage result and its
-duration. A failed command ends with `Error:` lines on stderr, and each failed
-resource shows its error once, in its own report. JSON logs record the raw error.
+When stdout and stderr are both terminals, a live tree on stderr shows each
+unfinished resource's operations with what they work on, the steps of the
+operation in progress and a bar for transfers of known size. A finished resource
+replaces its tree with its report, or with its outcome line when the report
+leaves it out, and reports are coloured. Redirected output and CI get the same
+reports as plain text, without the tree or outcome lines. `NO_COLOR` disables
+colour. Warnings go to stderr as they happen; in JSON mode they are part of the
+document. A failed command exits nonzero and shows each failure once: in its
+report, or after `Error:` on stderr when the failure stopped the run before the
+report could show it.
 
-Use `--quiet` (`-q`) for warnings and errors, `--verbose` (`-v`) or `--debug` (`-d`)
-for debug diagnostics, or `--log-level debug|info|warn|error`. `--no-progress`
-disables terminal animation. `NO_COLOR` disables colours. These choices do not
-suppress stdout reports.
-
-Ctrl-C requests cancellation and workspace cleanup. Press Ctrl-C again to exit
-immediately if cleanup or a native operation is taking too long.
+Ctrl-C requests cancellation and workspace cleanup; results already shown remain.
+Press Ctrl-C again to exit immediately if cleanup or a native operation is
+taking too long.
 
 Acquisition, preparation and destination failures are local: independent resources
 continue, and consumers of unavailable resource outputs are reported as `blocked`
-with `blocked_by` resource keys in JSON. The command emits the complete report
+with `blocked_by` resource keys in JSON. The command emits the selected results
 before exiting nonzero. Global configuration or structural failures and context
 cancellation stop the run immediately and can leave a partial report.
 

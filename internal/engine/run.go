@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -38,31 +39,59 @@ type Options struct {
 	ResourceDone func(ResourceReport) error
 }
 
-// ReportedError is a failure the run's report already carries for its resource,
-// so callers that present the report need not present it again.
-type ReportedError struct{ Err error }
+// ResourceError identifies a resource failure independently of command-wide failures.
+type ResourceError struct {
+	Resource string
+	Err      error
+}
 
-func (e ReportedError) Error() string { return e.Err.Error() }
-func (e ReportedError) Unwrap() error { return e.Err }
+func (e ResourceError) Error() string { return e.Resource + ": " + e.Err.Error() }
+func (e ResourceError) Unwrap() error { return e.Err }
+
+// Unreported is the part of a run's error that its report does not carry with
+// a resource, or nil. Joined errors are split; a wrapped error keeps its
+// context whole.
+func Unreported(err error) error {
+	if _, ok := err.(ResourceError); ok { //nolint:errorlint // A wrapped resource failure has context the report lacks.
+		return nil
+	}
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return err
+	}
+	var rest []error
+	for _, child := range joined.Unwrap() {
+		if child := Unreported(child); child != nil {
+			rest = append(rest, child)
+		}
+	}
+	return errors.Join(rest...)
+}
 
 // Report distinguishes source, preparation and each destination's work.
 type Report struct {
-	LockChanged *bool            `json:"lock_changed,omitempty"`
-	Error       string           `json:"error,omitempty"`
-	Resources   []ResourceReport `json:"resources"`
+	LockChanged *bool `json:"lock_changed,omitempty"`
+	// RemovedInputs are lock entries of resources the catalog no longer declares.
+	RemovedInputs []lockfile.InputChange `json:"removed_inputs,omitempty"`
+	Warnings      []string               `json:"warnings,omitempty"`
+	Summary       Summary                `json:"summary"`
+	Error         string                 `json:"error,omitempty"`
+	Resources     []ResourceReport       `json:"resources"`
 	// Artifact is where the artifact method materialized the selected output.
 	Artifact string `json:"artifact,omitempty"`
 }
 
 // ResourceReport separates immutable outputs from destination reconciliation.
 type ResourceReport struct {
-	Name           string              `json:"name"`
-	Kind           string              `json:"kind"`
-	Key            string              `json:"key"`
-	InputCacheHits map[string]bool     `json:"input_cache_hits,omitempty"`
-	Artifacts      map[string]Prepared `json:"artifacts,omitempty"`
-	Cached         bool                `json:"cached"`
-	Destinations   []DestinationReport `json:"destinations,omitempty"`
+	Name           string          `json:"name"`
+	Kind           string          `json:"kind"`
+	Key            string          `json:"key"`
+	InputCacheHits map[string]bool `json:"input_cache_hits,omitempty"`
+	// Inputs are the lock changes this run commits for the resource.
+	Inputs       []lockfile.InputChange `json:"inputs,omitempty"`
+	Artifacts    map[string]Prepared    `json:"artifacts,omitempty"`
+	Cached       bool                   `json:"cached"`
+	Destinations []DestinationReport    `json:"destinations,omitempty"`
 	// Icon reports what the icon method did for the resource's declared asset.
 	Icon  string `json:"icon,omitempty"`
 	Error string `json:"error,omitempty"`
@@ -89,6 +118,7 @@ type preparedResource struct {
 // Run resolves locked resources in dependency order and reconciles destinations independently.
 func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	defer func() {
+		report.Summarize(opts.Method)
 		if runErr != nil {
 			report.Error = runErr.Error()
 		}
@@ -170,12 +200,17 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			pending[destination.Resource]++
 		}
 	}
-	complete := func(item ResourceReport) error {
+	// complete reports a finished resource. A rejected resource keeps its
+	// reviewed entries, so only a successful one has input changes.
+	complete := func(item *ResourceReport) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if item.Error == "" {
+			item.Inputs = locked.Changes(item.Key)
+		}
 		if opts.ResourceDone != nil {
-			if err := opts.ResourceDone(item); err != nil {
+			if err := opts.ResourceDone(*item); err != nil {
 				return err
 			}
 		}
@@ -269,7 +304,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		if preparationErr != nil {
 			item.Error = preparationErr.Error()
 			if len(item.BlockedBy) == 0 && ctx.Err() == nil {
-				failures = append(failures, ReportedError{fmt.Errorf("%s: %w", key, preparationErr)})
+				failures = append(failures, ResourceError{Resource: key, Err: preparationErr})
 			}
 		}
 		preparedItems[key] = preparedResource{work, outputs, len(report.Resources), preparationErr == nil}
@@ -289,7 +324,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			plugin.Logger(ctx).DebugContext(ctx, "Preparation failed", "error", preparationErr)
 		}
 		if preparationErr != nil || pending[key] == 0 {
-			return complete(item)
+			return complete(&report.Resources[preparedItems[key].report])
 		}
 		return nil
 	}
@@ -351,7 +386,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 				item.Error += "\n" + destinationErr.Error()
 			}
 			if ctx.Err() == nil {
-				failures = append(failures, ReportedError{fmt.Errorf("%s/%s: %w", destination.Resource, destination.Destination, destinationErr)})
+				failures = append(failures, ResourceError{Resource: destination.Resource, Err: fmt.Errorf("%s: %w", destination.Destination, destinationErr)})
 			}
 		}
 		if err := ctx.Err(); err != nil {
@@ -362,7 +397,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		}
 		pending[destination.Resource]--
 		if pending[destination.Resource] == 0 {
-			return complete(*item)
+			return complete(item)
 		}
 		return nil
 	}
@@ -395,7 +430,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 				resource := plans[key].Resource
 				item := ResourceReport{Name: resource.Metadata.Name, Kind: resource.Kind, Key: key, Icon: outcome}
 				report.Resources = append(report.Resources, item)
-				if err := complete(item); err != nil {
+				if err := complete(&report.Resources[len(report.Resources)-1]); err != nil {
 					return report, errors.Join(append(failures, err)...)
 				}
 				continue
@@ -412,13 +447,13 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			if err != nil {
 				item.Error = err.Error()
 				if ctx.Err() == nil {
-					failures = append(failures, ReportedError{fmt.Errorf("%s: %w", key, err)})
+					failures = append(failures, ResourceError{Resource: key, Err: err})
 				}
 			}
 			if err := ctx.Err(); err != nil {
 				return report, errors.Join(append(failures, err)...)
 			}
-			if err := complete(*item); err != nil {
+			if err := complete(item); err != nil {
 				return report, errors.Join(append(failures, err)...)
 			}
 		}
@@ -448,10 +483,10 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		if err != nil {
 			item.Error = err.Error()
 			if ctx.Err() == nil {
-				failures = append(failures, ReportedError{fmt.Errorf("%s: %w", key, err)})
+				failures = append(failures, ResourceError{Resource: key, Err: err})
 			}
 		}
-		if err := complete(*item); err != nil {
+		if err := complete(item); err != nil {
 			return report, errors.Join(append(failures, err)...)
 		}
 		return report, errors.Join(failures...)
@@ -482,6 +517,15 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		return report, errors.Join(append(failures, err)...)
 	}
 	report.LockChanged = &result.Changed
+	reported := map[string]bool{}
+	for _, resource := range report.Resources {
+		reported[resource.Key] = true
+	}
+	for _, change := range result.Changes {
+		if !reported[change.Resource] {
+			report.RemovedInputs = append(report.RemovedInputs, change)
+		}
+	}
 	return report, errors.Join(failures...)
 }
 
@@ -581,7 +625,7 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 	input.report.Changes = response.Changes
 	input.report.Origins = mergeOrigins(input.report.Origins, response.Origins)
 	err = errors.Join(err, verifyLeases(ctx, store, work, input.request))
-	done(err, "changes", len(response.Changes))
+	done(err, plugin.Detail(changeCount(len(response.Changes))))
 	if err == nil && opts.Method == "apply" {
 		input.report, err = deliver(ctx, ops, p, store, work, input)
 	}
@@ -627,8 +671,19 @@ func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.
 	report.Changes = response.Changes
 	report.Origins = mergeOrigins(report.Origins, response.Origins)
 	report.Applied = err == nil
-	done(err, "changes", len(report.Changes))
+	done(err, plugin.Detail(changeCount(len(report.Changes))))
 	return report, err
+}
+
+// changeCount describes a destination stage's changes for progress displays.
+func changeCount(count int) string {
+	switch count {
+	case 0:
+		return "no changes"
+	case 1:
+		return "1 change"
+	}
+	return strconv.Itoa(count) + " changes"
 }
 
 func verifyLeases(ctx context.Context, store *cas.Store, work string, request plugin.ReconcileRequest[json.RawMessage]) error {

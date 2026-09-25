@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -39,35 +40,67 @@ const (
 type Options struct {
 	ConfigPath         string
 	CacheDir, StateDir string
-	// ResourceDone streams engine results for progress display.
+	// ResourceDone streams each engine run's results with the run's method;
+	// the catalog lookup reports as update.
 	ResourceDone func(method string, resource engine.ResourceReport) error
+	// ApplyDone receives the report once the reviewed branch's publication
+	// finished, before any proposal.
+	ApplyDone func(Report) error
+	// ProposalDone streams each proposal branch's outcome.
+	ProposalDone func(Proposal) error
 }
 
-// Report summarises one run.
+// ErrFailed reports a run in which a phase or proposal failed. The report
+// carries each failure where it happened.
+var ErrFailed = errors.New("reconcile: a phase failed")
+
+// Report summarises one run. A phase that did not run is absent; Error is the
+// failure that stopped the run before or between them.
 type Report struct {
-	Branch  string   `json:"branch"`
-	Head    string   `json:"head"`
-	Apply   *Apply   `json:"apply,omitempty"`
-	Updates []Update `json:"updates,omitempty"`
-	Error   string   `json:"error,omitempty"`
+	Branch   string   `json:"branch"`
+	Head     string   `json:"head"`
+	Apply    *Apply   `json:"apply,omitempty"`
+	Update   *Update  `json:"update,omitempty"`
+	Error    string   `json:"error,omitempty"`
+	Warnings []string `json:"warnings,omitempty"`
 }
 
-// Apply reports the reviewed branch's publication.
+// Apply reports the reviewed branch's publication. Resource failures stay with
+// their resources in Report; Error is the rest: what stopped the run, or a
+// status or marker that could not be recorded.
 type Apply struct {
-	Commit  string `json:"commit"`
-	Skipped bool   `json:"skipped"`
-	Summary string `json:"summary,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Commit  string         `json:"commit"`
+	Skipped bool           `json:"skipped"`
+	Summary string         `json:"summary,omitempty"`
+	Error   string         `json:"error,omitempty"`
+	Report  *engine.Report `json:"report,omitempty"`
 }
 
-// Update reports one proposal branch.
+// Failed reports whether the publication or its record failed.
+func (a Apply) Failed() bool { return a.Error != "" || a.Report != nil && a.Report.Error != "" }
+
+// Update reports the update phase: the failure that stopped it before any
+// proposal, or each proposal branch's outcome.
 type Update struct {
-	Resource    string `json:"resource"`
-	Branch      string `json:"branch,omitempty"`
-	Action      string `json:"action"`
-	PullRequest string `json:"pull_request,omitempty"`
-	Summary     string `json:"summary,omitempty"`
-	Error       string `json:"error,omitempty"`
+	Error     string     `json:"error,omitempty"`
+	Proposals []Proposal `json:"proposals,omitempty"`
+}
+
+// Failed reports whether the phase or any proposal failed. A blocked proposal
+// waits on a failure reported for its producer.
+func (u Update) Failed() bool {
+	return u.Error != "" || slices.ContainsFunc(u.Proposals, func(proposal Proposal) bool { return proposal.Action == "failed" })
+}
+
+// Proposal reports one proposal branch.
+type Proposal struct {
+	Resource    string         `json:"resource"`
+	Branch      string         `json:"branch,omitempty"`
+	Action      string         `json:"action"`
+	PullRequest string         `json:"pull_request,omitempty"`
+	Summary     string         `json:"summary,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	Plan        *engine.Report `json:"plan,omitempty"`
 }
 
 type runner struct {
@@ -85,11 +118,12 @@ type runner struct {
 }
 
 // Run applies the reviewed branch when it changed, then proposes one pull
-// request per resource whose current inputs differ from the lock. The phases
-// fail independently: a broken apply never blocks update maintenance.
+// request per resource whose current inputs differ from the lock. Both phases
+// read the reviewed project, so when it does not load neither runs. Otherwise
+// they fail independently: a broken apply never blocks update maintenance.
 func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	defer func() {
-		if runErr != nil {
+		if runErr != nil && runErr != ErrFailed { //nolint:errorlint // The sentinel alone means the report holds every failure.
 			report.Error = runErr.Error()
 		}
 	}()
@@ -99,7 +133,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	done := plugin.Stage(ctx, "Fetching origin")
 	head, err := r.sync(ctx)
-	done(err)
+	done(err, plugin.Detail(r.base))
 	if err != nil {
 		return report, err
 	}
@@ -109,35 +143,30 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		return report, err
 	}
 	defer func() { _ = reviewed.Remove() }()
-	// The report carries each failure; the error names the phases that failed.
-	var failures []string
-	apply, err := r.apply(ctx, head, reviewed)
+	if err := r.load(reviewed); err != nil {
+		err = fmt.Errorf("%s@%s: %w", r.base, short(head), err)
+		return report, errors.Join(err, r.reject(ctx, head))
+	}
+	apply := r.apply(ctx, head, reviewed)
 	report.Apply = &apply
-	if ctx.Err() != nil {
-		return report, ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return report, err
 	}
-	if err != nil {
-		failures = append(failures, fmt.Sprintf("apply %s: %s", short(head), firstLine(err.Error())))
-	}
-	report.Updates, err = r.update(ctx, head, reviewed)
-	if ctx.Err() != nil {
-		return report, ctx.Err()
-	}
-	if err != nil {
-		failed := 0
-		for _, update := range report.Updates {
-			if update.Action == "failed" {
-				failed++
-			}
-		}
-		if failed > 0 {
-			failures = append(failures, "update: "+plural(failed, "resource")+" failed")
-		} else {
-			failures = append(failures, "update: "+firstLine(err.Error()))
+	if opts.ApplyDone != nil {
+		if err := opts.ApplyDone(report); err != nil {
+			return report, err
 		}
 	}
-	if len(failures) > 0 {
-		return report, errors.New(strings.Join(failures, "; "))
+	update, err := r.update(ctx, head, reviewed)
+	report.Update = &update
+	if err != nil {
+		return report, err
+	}
+	if err := ctx.Err(); err != nil {
+		return report, err
+	}
+	if apply.Failed() || update.Failed() {
+		return report, ErrFailed
 	}
 	return report, nil
 }
@@ -229,33 +258,63 @@ func (r *runner) engineOptions(method, configPath string, resources []string, of
 	return opts
 }
 
+// load reads what both phases share: the reviewed project and its lockfile. A
+// missing lockfile loads, since the update phase proposes one.
+func (r *runner) load(reviewed *git.Worktree) error {
+	configPath := r.configIn(reviewed)
+	if _, err := config.Load(configPath); err != nil {
+		return err
+	}
+	_, err := lockfile.Load(lockfile.Filename(filepath.Dir(configPath)))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+// reject records that a reviewed commit whose project does not load cannot
+// apply, unless it applied before.
+func (r *runner) reject(ctx context.Context, head string) error {
+	m, err := readMarker(r.stateDir)
+	if err != nil || m.Applied == head {
+		return err
+	}
+	return r.host.SetCommitStatus(ctx, head, sourcecontrol.Status{Name: applyContext, State: sourcecontrol.Failure, Description: failedDescription})
+}
+
 // apply publishes the reviewed commit offline once. The marker moves only
 // after every destination succeeded, so a partial apply is retried next run.
-func (r *runner) apply(ctx context.Context, head string, reviewed *git.Worktree) (Apply, error) {
+func (r *runner) apply(ctx context.Context, head string, reviewed *git.Worktree) Apply {
 	result := Apply{Commit: head}
 	m, err := readMarker(r.stateDir)
 	if err != nil {
-		return result, err
+		result.Error = err.Error()
+		return result
 	}
 	if m.Applied == head {
 		result.Skipped = true
-		return result, nil
+		return result
 	}
-	done := plugin.Stage(ctx, "Applying reviewed branch")
+	done := plugin.Stage(ctx, "Applying reviewed branch", plugin.Detail(short(head)))
 	report, applyErr := engine.Run(ctx, r.engineOptions("apply", r.configIn(reviewed), nil, true))
+	result.Report = &report
 	done(applyErr)
 	state, summary := applySummary(report, applyErr)
 	result.Summary = summary
-	if applyErr != nil {
-		result.Error = applyErr.Error()
+	if summary == "" {
+		summary = failedDescription
 	}
-	statusErr := r.host.SetCommitStatus(ctx, head, sourcecontrol.Status{Name: applyContext, State: state, Description: summary})
+	failures := []error{engine.Unreported(applyErr)}
+	if err := r.host.SetCommitStatus(ctx, head, sourcecontrol.Status{Name: applyContext, State: state, Description: summary}); err != nil {
+		failures = append(failures, fmt.Errorf("commit status: %w", err))
+	}
 	if applyErr == nil {
-		if err := writeMarker(r.stateDir, head); err != nil {
-			return result, errors.Join(statusErr, err)
-		}
+		failures = append(failures, writeMarker(r.stateDir, head))
 	}
-	return result, errors.Join(applyErr, statusErr)
+	if err := errors.Join(failures...); err != nil {
+		result.Error = err.Error()
+	}
+	return result
 }
 
 // change is one resource whose lock differs from its current inputs.
@@ -337,28 +396,48 @@ func branchName(kind, name string) string {
 }
 
 // update resolves the reviewed catalog once, proposes each differing resource
-// on its own branch and retires branches that no longer propose anything.
-func (r *runner) update(ctx context.Context, head string, reviewed *git.Worktree) ([]Update, error) {
+// on its own branch and retires branches that no longer propose anything. The
+// result holds every failure; the error is an interruption or a proposal the
+// caller could not take.
+func (r *runner) update(ctx context.Context, head string, reviewed *git.Worktree) (Update, error) {
+	var result Update
+	// stop records the failure that ended the phase before any proposal.
+	stop := func(err error) (Update, error) {
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		result.Error = err.Error()
+		return result, nil
+	}
 	branches, err := r.repo.Branches(prefix)
 	if err != nil {
-		return nil, err
+		return stop(err)
+	}
+	opts := engine.Options{ConfigPath: r.configIn(reviewed), CacheDir: r.opts.CacheDir}
+	if r.opts.ResourceDone != nil {
+		opts.ResourceDone = func(resource engine.ResourceReport) error { return r.opts.ResourceDone("update", resource) }
 	}
 	done := plugin.Stage(ctx, "Resolving catalog")
-	candidate, err := engine.Resolve(ctx, engine.Options{ConfigPath: r.configIn(reviewed), CacheDir: r.opts.CacheDir})
+	candidate, err := engine.Resolve(ctx, opts)
 	done(err)
 	if err != nil {
-		return nil, err
+		return stop(err)
 	}
 	open, err := r.host.PullRequests(ctx, sourcecontrol.Open, "")
 	if err != nil {
-		return nil, err
+		return stop(err)
 	}
 	pulls := map[string]sourcecontrol.PullRequest{}
 	for _, pull := range open {
 		pulls[pull.Head] = pull
 	}
-	var updates []Update
-	var failures []error
+	record := func(proposal Proposal) error {
+		result.Proposals = append(result.Proposals, proposal)
+		if r.opts.ProposalDone != nil {
+			return r.opts.ProposalDone(proposal)
+		}
+		return nil
+	}
 	keep := map[string]bool{}
 	for _, key := range slices.Sorted(maps.Keys(candidate.Resources)) {
 		if resource := candidate.Resources[key]; resource.Error != "" {
@@ -367,42 +446,42 @@ func (r *runner) update(ctx context.Context, head string, reviewed *git.Worktree
 			action := "failed"
 			if len(resource.BlockedBy) > 0 {
 				action = "blocked"
-			} else {
-				failures = append(failures, fmt.Errorf("%s: %s", key, resource.Error))
 			}
-			updates = append(updates, Update{Resource: resource.Kind + "/" + resource.Name, Action: action, Error: resource.Error})
+			if err := record(Proposal{Resource: resource.Kind + "/" + resource.Name, Action: action, Error: resource.Error}); err != nil {
+				return result, err
+			}
 		}
 	}
 	changes := diff(candidate)
 	for _, key := range slices.Sorted(maps.Keys(changes)) {
 		if err := ctx.Err(); err != nil {
-			return updates, err
+			return result, err
 		}
-		update, err := r.propose(ctx, head, key, changes[key], candidate, pulls)
-		keep[update.Branch] = true
+		proposal, err := r.propose(ctx, head, key, changes[key], candidate, pulls)
+		keep[proposal.Branch] = true
 		if err != nil {
-			update.Action = "failed"
-			update.Error = err.Error()
-			failures = append(failures, fmt.Errorf("%s: %w", key, err))
+			proposal.Action, proposal.Error = "failed", err.Error()
 		}
-		updates = append(updates, update)
+		if err := record(proposal); err != nil {
+			return result, err
+		}
 	}
 	for _, branch := range branches {
 		if err := ctx.Err(); err != nil {
-			return updates, err
+			return result, err
 		}
 		if keep[branch] {
 			continue
 		}
-		update, err := r.retire(ctx, branch, pulls)
+		proposal, err := r.retire(ctx, branch, pulls)
 		if err != nil {
-			update.Action = "failed"
-			update.Error = err.Error()
-			failures = append(failures, fmt.Errorf("%s: %w", branch, err))
+			proposal.Action, proposal.Error = "failed", err.Error()
 		}
-		updates = append(updates, update)
+		if err := record(proposal); err != nil {
+			return result, err
+		}
 	}
-	return updates, errors.Join(failures...)
+	return result, nil
 }
 
 // managed reports whether the reconciler still owns a branch: exactly one
@@ -434,22 +513,22 @@ func (r *runner) managed(branch string) (bool, error) {
 // propose keeps one branch per resource: regenerated from the reviewed branch
 // whenever the proposal or its base moved, verified again when its last
 // verification did not succeed, and kept as it is once a person touched it.
-func (r *runner) propose(ctx context.Context, head, key string, change change, candidate engine.Candidate, pulls map[string]sourcecontrol.PullRequest) (Update, error) {
+func (r *runner) propose(ctx context.Context, head, key string, change change, candidate engine.Candidate, pulls map[string]sourcecontrol.PullRequest) (Proposal, error) {
 	branch := branchName(change.kind, change.name)
-	update := Update{Resource: change.kind + "/" + change.name, Branch: branch}
+	proposal := Proposal{Resource: change.kind + "/" + change.name, Branch: branch}
 	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("branch", branch))
 	tip, err := r.repo.Tip("refs/remotes/origin/" + branch)
 	if err != nil {
-		return update, err
+		return proposal, err
 	}
 	if tip != "" {
 		managed, err := r.managed(branch)
 		if err != nil {
-			return update, err
+			return proposal, err
 		}
 		if !managed {
-			update.Action, update.Summary = "skipped", "branch has commits by a person"
-			return update, nil
+			proposal.Action, proposal.Summary = "skipped", "branch has commits by a person"
+			return proposal, nil
 		}
 	}
 	file := candidate.Lock
@@ -470,70 +549,70 @@ func (r *runner) propose(ctx context.Context, head, key string, change change, c
 	if tip != "" {
 		published, err = r.repo.Show(tip, r.lockPath)
 		if err != nil {
-			return update, err
+			return proposal, err
 		}
 	}
 	data, err := encode(file)
 	if err != nil {
-		return update, err
+		return proposal, err
 	}
 	pull, open := pulls[branch]
 	if tip != "" {
 		commit, err := r.repo.Commit(tip)
 		if err != nil {
-			return update, err
+			return proposal, err
 		}
 		if !open {
 			// A closed proposal stays declined while the resource would
 			// propose the same entries, however the reviewed branch moved.
 			declined, err := r.declined(ctx, branch, tip)
 			if err != nil {
-				return update, err
+				return proposal, err
 			}
 			if declined && proposes(published, key, file.Inputs[key]) {
-				update.Action, update.Summary = "declined", "a person closed this proposal"
-				return update, nil
+				proposal.Action, proposal.Summary = "declined", "a person closed this proposal"
+				return proposal, nil
 			}
 		}
 		if commit.Parent == head && bytes.Equal(published, data) {
 			state, err := r.host.CommitStatus(ctx, tip, planContext)
 			if err != nil {
-				return update, err
+				return proposal, err
 			}
 			if state == sourcecontrol.Success && open {
-				update.Action, update.PullRequest, update.Summary = "unchanged", pull.URL, pull.Title
-				return update, nil
+				proposal.Action, proposal.PullRequest, proposal.Summary = "unchanged", pull.URL, pull.Title
+				return proposal, nil
 			}
-			update.Action = "retried"
+			proposal.Action = "retried"
 			worktree, err := r.repo.Worktree(tip)
 			if err != nil {
-				return update, err
+				return proposal, err
 			}
 			defer func() { _ = worktree.Remove() }()
-			return r.publish(ctx, update, key, change, candidate, worktree, tip, "", pull, open)
+			return r.publish(ctx, proposal, key, change, candidate, worktree, tip, "", pull, open)
 		}
 	}
-	done := plugin.Stage(ctx, "Proposing lock change")
+	done := plugin.Stage(ctx, "Proposing lock change", plugin.Detail(proposal.Branch))
 	worktree, err := r.repo.Worktree(head)
 	if err != nil {
 		done(err)
-		return update, err
+		return proposal, err
 	}
 	defer func() { _ = worktree.Remove() }()
 	if err := lockfile.Save(filepath.Join(worktree.Dir, r.project), file); err != nil {
 		done(err)
-		return update, err
+		return proposal, err
 	}
 	commit, err := worktree.Commit(commitMessage(change)+"\n\n"+trailer, r.lockPath)
 	done(err)
 	if err != nil {
-		return update, err
+		return proposal, err
 	}
-	update.Action = "created"
+	proposal.Action = "created"
 	if tip != "" {
-		update.Action = "updated"
+		proposal.Action = "updated"
 	}
-	return r.publish(ctx, update, key, change, candidate, worktree, commit, tip, pull, open)
+	return r.publish(ctx, proposal, key, change, candidate, worktree, commit, tip, pull, open)
 }
 
 // closed returns the closed pull request that proposed this exact branch tip,
@@ -597,34 +676,39 @@ func encode(file lockfile.File) ([]byte, error) {
 // publish verifies the proposal commit the worktree has checked out, pushes it
 // when it is new, keeps its pull request current and records the verification
 // as a commit status.
-func (r *runner) publish(ctx context.Context, update Update, key string, change change, candidate engine.Candidate, worktree *git.Worktree, commit, expected string, pull sourcecontrol.PullRequest, open bool) (Update, error) {
+func (r *runner) publish(ctx context.Context, proposal Proposal, key string, change change, candidate engine.Candidate, worktree *git.Worktree, commit, expected string, pull sourcecontrol.PullRequest, open bool) (Proposal, error) {
 	result := r.verify(ctx, worktree, key, change, candidate)
-	if update.Action != "retried" {
-		done := plugin.Stage(ctx, "Pushing proposal")
-		err := worktree.Push(ctx, update.Branch, expected)
+	if result.planned.Resources != nil {
+		proposal.Plan = &result.planned
+	} else if result.prepared.Resources != nil {
+		proposal.Plan = &result.prepared
+	}
+	if proposal.Action != "retried" {
+		done := plugin.Stage(ctx, "Pushing proposal", plugin.Detail(proposal.Branch))
+		err := worktree.Push(ctx, proposal.Branch, expected)
 		done(err)
 		if err != nil {
-			return update, err
+			return proposal, err
 		}
 	}
 	description := body(change, candidate.Lock.Inputs[key], change.entries, result)
 	if open {
 		if err := r.host.UpdatePullRequest(ctx, pull.Number, title(change, result), description); err != nil {
-			return update, err
+			return proposal, err
 		}
 	} else {
 		var err error
-		pull, err = r.host.CreatePullRequest(ctx, update.Branch, r.base, title(change, result), description)
+		pull, err = r.host.CreatePullRequest(ctx, proposal.Branch, r.base, title(change, result), description)
 		if err != nil {
-			return update, err
+			return proposal, err
 		}
 	}
-	update.PullRequest = pull.URL
-	update.Summary = planSummary(change, result)
-	if err := r.host.SetCommitStatus(ctx, commit, sourcecontrol.Status{Name: planContext, State: result.state, Description: update.Summary}); err != nil {
-		return update, err
+	proposal.PullRequest = pull.URL
+	proposal.Summary = planSummary(change, result)
+	if err := r.host.SetCommitStatus(ctx, commit, sourcecontrol.Status{Name: planContext, State: result.state, Description: proposal.Summary}); err != nil {
+		return proposal, err
 	}
-	return update, result.err
+	return proposal, result.err
 }
 
 // verify proves a proposal from its worktree: a removed resource must still
@@ -648,8 +732,8 @@ func (r *runner) verify(ctx context.Context, worktree *git.Worktree, key string,
 			result.planned, result.err = engine.Run(ctx, r.engineOptions("plan", configPath, closure, true))
 			done(result.err)
 		}
-		for _, resource := range result.planned.Resources {
-			if resource.Key == key {
+		for _, resource := range slices.Concat(result.prepared.Resources, result.planned.Resources) {
+			if resource.Key == key && resource.Artifacts["installer"].Version != "" {
 				result.version = resource.Artifacts["installer"].Version
 			}
 		}
@@ -664,38 +748,38 @@ func (r *runner) verify(ctx context.Context, worktree *git.Worktree, key string,
 
 // retire closes and deletes a managed branch whose resource no longer differs
 // from the reviewed lock. Branches a person touched stay as they are.
-func (r *runner) retire(ctx context.Context, branch string, pulls map[string]sourcecontrol.PullRequest) (Update, error) {
-	update := Update{Resource: strings.TrimPrefix(branch, prefix), Branch: branch}
+func (r *runner) retire(ctx context.Context, branch string, pulls map[string]sourcecontrol.PullRequest) (Proposal, error) {
+	proposal := Proposal{Resource: strings.TrimPrefix(branch, prefix), Branch: branch}
 	managed, err := r.managed(branch)
 	if err != nil {
-		return update, err
+		return proposal, err
 	}
 	if !managed {
-		update.Action, update.Summary = "skipped", "branch has commits by a person"
-		return update, nil
+		proposal.Action, proposal.Summary = "skipped", "branch has commits by a person"
+		return proposal, nil
 	}
 	tip, err := r.repo.Tip("refs/remotes/origin/" + branch)
 	if err != nil {
-		return update, err
+		return proposal, err
 	}
 	merged, err := r.merged(ctx, branch, tip)
 	if err != nil {
-		return update, err
+		return proposal, err
 	}
 	if pull, open := pulls[branch]; open {
 		if err := r.host.ClosePullRequest(ctx, pull.Number); err != nil {
-			return update, err
+			return proposal, err
 		}
-		update.PullRequest = pull.URL
+		proposal.PullRequest = pull.URL
 	}
 	if err := r.repo.DeleteBranch(ctx, branch, tip); err != nil {
-		return update, err
+		return proposal, err
 	}
-	update.Action, update.Summary = "retired", "reviewed lock no longer differs"
+	proposal.Action, proposal.Summary = "retired", "reviewed lock no longer differs"
 	if merged {
-		update.Summary = "merged into the reviewed branch"
+		proposal.Summary = "merged into the reviewed branch"
 	}
-	return update, nil
+	return proposal, nil
 }
 
 func short(commit string) string {

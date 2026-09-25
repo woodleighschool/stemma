@@ -31,18 +31,15 @@ func TestReportRetainsIndependentDestinationResults(t *testing.T) {
 			},
 		},
 	}}
-	var out bytes.Buffer
+	var out strings.Builder
 	for _, resource := range report.Resources {
-		if err := printResource(&out, "apply", resource); err != nil {
-			t.Fatal(err)
-		}
+		out.WriteString(renderResource(textStyle{}, "apply", resource))
 	}
 	for _, want := range []string{
-		"missing: failed",
-		"source unavailable",
-		"MacSoftware/Example",
-		"unavailable: failed: remote unavailable",
-		"local: unchanged",
+		"missing: failed\n  error: source unavailable\n",
+		"MacSoftware/Example: failed\n",
+		"  unavailable: failed\n    error: remote unavailable\n",
+		"  local: unchanged\n",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("report missing %q: %s", want, out.String())
@@ -58,22 +55,18 @@ func TestIconReportNamesEachOutcome(t *testing.T) {
 		{Name: "rosetta", Kind: "MacSoftware", Icon: "no artwork"},
 		{Name: "zoom", Kind: "MacSoftware", Error: "quick look icon rendering: timed out"},
 	}}
-	var out bytes.Buffer
+	var out strings.Builder
 	for _, resource := range report.Resources {
-		if err := printResource(&out, "icon", resource); err != nil {
-			t.Fatal(err)
-		}
+		out.WriteString(renderResource(textStyle{}, "icon", resource))
 	}
-	if err := printSummary(&out, "icon", report); err != nil {
-		t.Fatal(err)
-	}
+	report.Summarize("icon")
+	out.WriteString(renderSummary(textStyle{}, "icon", report, nil))
 	for _, want := range []string{
-		"MacSoftware/word: created glassy",
-		"WindowsSoftware/chrome: created raw",
-		"MacSoftware/teams: unchanged",
-		"MacSoftware/rosetta: no artwork",
-		"MacSoftware/zoom: failed",
-		"quick look icon rendering: timed out",
+		"MacSoftware/word: created glassy\n",
+		"WindowsSoftware/chrome: created raw\n",
+		"MacSoftware/teams: unchanged\n",
+		"MacSoftware/rosetta: no artwork\n",
+		"MacSoftware/zoom: failed\n  error: quick look icon rendering: timed out\n",
 		"Icons: 2 created, 2 unchanged, 1 failed.",
 	} {
 		if !strings.Contains(out.String(), want) {
@@ -84,19 +77,19 @@ func TestIconReportNamesEachOutcome(t *testing.T) {
 
 func TestIconRunsShowCreatedIconsAndMissingArtwork(t *testing.T) {
 	var out bytes.Buffer
-	output := &commandOutput{}
+	output := newCommandOutput(&out, &out)
 	for _, resource := range []engine.ResourceReport{
 		{Name: "word", Kind: "MacSoftware", Icon: "created glassy"},
 		{Name: "chrome", Kind: "WindowsSoftware", Icon: "no artwork"},
 		{Name: "teams", Kind: "MacSoftware", Icon: "unchanged"},
 		{Name: "fonts", Kind: "MacSoftware", Icon: "no icon declared"},
 	} {
-		if err := output.resourceDone(&out, false, "icon", resource); err != nil {
+		if err := output.resourceDone("icon", resource); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := out.String(); !strings.Contains(got, "MacSoftware/word: created glassy") || !strings.Contains(got, "WindowsSoftware/chrome: no artwork") || strings.Contains(got, "teams") || strings.Contains(got, "fonts") {
-		t.Fatalf("icon run output: %s", got)
+	if got := out.String(); !strings.Contains(got, "MacSoftware/word: created glassy\n") || !strings.Contains(got, "WindowsSoftware/chrome: no artwork\n") || strings.Contains(got, "teams") || strings.Contains(got, "fonts") {
+		t.Fatalf("icon output: %s", got)
 	}
 }
 
@@ -159,7 +152,7 @@ spec:
 	}
 	run := func(success bool, args ...string) engine.Report {
 		t.Helper()
-		output := invoke(success, append(args, "--json")...)
+		output := invoke(success, append(args, "--json", "--all")...)
 		var report engine.Report
 		if len(output) > 0 {
 			if err := json.Unmarshal(output, &report); err != nil {
@@ -386,7 +379,7 @@ spec:
 			refresh.Store(true)
 			var out, logs bytes.Buffer
 			cmd, finish := command(&out, &logs)
-			args := []string{"update", "--root", project, "--cache-dir", cache, "--no-progress"}
+			args := []string{"update", "--root", project, "--cache-dir", cache}
 			if asJSON {
 				args = append(args, "--json")
 			}
@@ -409,18 +402,19 @@ spec:
 				if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 					t.Fatal(err)
 				}
-				if report.Error == "" || report.LockChanged == nil || !*report.LockChanged || len(report.Resources) != 3 || report.Resources[2].Error != "" || len(report.Resources[1].BlockedBy) != 1 || report.Resources[1].BlockedBy[0] != broken {
+				if report.Error == "" || report.LockChanged == nil || !*report.LockChanged || len(report.Resources) != 3 || report.Resources[2].Error != "" || len(report.Resources[2].Inputs) != 1 || report.Summary.InputChanges != 1 || len(report.Resources[1].BlockedBy) != 1 || report.Resources[1].BlockedBy[0] != broken {
 					t.Fatalf("incomplete JSON report: %+v", report)
 				}
 			} else {
-				for _, want := range []string{"MacSoftware/broken: failed", "MacSoftware/consumer: blocked", "blocked by " + broken, "Update: 1 resolved, 1 failed, 1 blocked.", "Lockfile updated."} {
+				for _, want := range []string{"MacSoftware/broken: failed\n", "MacSoftware/consumer: blocked\n  blocked by MacSoftware/broken\n", "MacSoftware/healthy: 1 input changed\n  source (content changed): healthy.pkg\n", "Update incomplete: 1 input change, 3 resources checked, 1 failed, 1 blocked.", "Lockfile updated."} {
 					if !strings.Contains(out.String(), want) {
 						t.Fatalf("report missing %q: %s", want, out.String())
 					}
 				}
 			}
-			if !strings.Contains(logs.String(), "1 resource failed") || strings.Contains(logs.String(), "2 resources failed") {
-				t.Fatalf("blocked consumer counted as an independent failure: %s", logs.String())
+			// The report shows each failure; stderr repeats none of them.
+			if logs.Len() != 0 {
+				t.Fatalf("stderr repeated the report: %s", logs.String())
 			}
 		})
 	}
