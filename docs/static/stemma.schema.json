@@ -2032,6 +2032,11 @@
                     "anyOf": [
                       {
                         "additionalProperties": false,
+                        "if": {
+                          "required": [
+                            "exclude_group"
+                          ]
+                        },
                         "oneOf": [
                           {
                             "required": [
@@ -2092,6 +2097,66 @@
                             ],
                             "description": "Entra group object ID to exclude."
                           },
+                          "filter": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "id": {
+                                        "anyOf": [
+                                          {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Intune assignment filter ID."
+                                      },
+                                      "mode": {
+                                        "anyOf": [
+                                          {
+                                            "enum": [
+                                              "include",
+                                              "exclude"
+                                            ],
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Include or exclude the devices the filter matches."
+                                      }
+                                    },
+                                    "propertyNames": {
+                                      "not": {
+                                        "pattern": "\\{\\{"
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "mode"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Assignment filter for an included target; null removes it. Omit to keep the assignment's filter."
+                          },
                           "group": {
                             "anyOf": [
                               {
@@ -2122,6 +2187,23 @@
                               }
                             ],
                             "description": "Deployment intent."
+                          },
+                          "notifications": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "show_all",
+                                  "show_reboot",
+                                  "hide_all"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Win32 end-user notifications for an included target. Omit to keep the assignment's setting."
                           }
                         },
                         "propertyNames": {
@@ -2132,6 +2214,22 @@
                         "required": [
                           "intent"
                         ],
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "filter"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "notifications"
+                                ]
+                              }
+                            ]
+                          }
+                        },
                         "type": "object"
                       },
                       {
@@ -2148,7 +2246,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
+              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target, and settings it omits keep their values on a matching target."
             },
             "dependencies": {
               "anyOf": [
@@ -3606,6 +3704,11 @@
                     "anyOf": [
                       {
                         "additionalProperties": false,
+                        "if": {
+                          "required": [
+                            "exclude_group"
+                          ]
+                        },
                         "oneOf": [
                           {
                             "required": [
@@ -3666,6 +3769,66 @@
                             ],
                             "description": "Entra group object ID to exclude."
                           },
+                          "filter": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "id": {
+                                        "anyOf": [
+                                          {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Intune assignment filter ID."
+                                      },
+                                      "mode": {
+                                        "anyOf": [
+                                          {
+                                            "enum": [
+                                              "include",
+                                              "exclude"
+                                            ],
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Include or exclude the devices the filter matches."
+                                      }
+                                    },
+                                    "propertyNames": {
+                                      "not": {
+                                        "pattern": "\\{\\{"
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "mode"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Assignment filter for an included target; null removes it. Omit to keep the assignment's filter."
+                          },
                           "group": {
                             "anyOf": [
                               {
@@ -3696,6 +3859,23 @@
                               }
                             ],
                             "description": "Deployment intent."
+                          },
+                          "notifications": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "show_all",
+                                  "show_reboot",
+                                  "hide_all"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Win32 end-user notifications for an included target. Omit to keep the assignment's setting."
                           }
                         },
                         "propertyNames": {
@@ -3706,6 +3886,22 @@
                         "required": [
                           "intent"
                         ],
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "filter"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "notifications"
+                                ]
+                              }
+                            ]
+                          }
+                        },
                         "type": "object"
                       },
                       {
@@ -3722,7 +3918,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
+              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target, and settings it omits keep their values on a matching target."
             },
             "description": {
               "anyOf": [
@@ -4015,6 +4211,11 @@
                     "anyOf": [
                       {
                         "additionalProperties": false,
+                        "if": {
+                          "required": [
+                            "exclude_group"
+                          ]
+                        },
                         "oneOf": [
                           {
                             "required": [
@@ -4075,6 +4276,66 @@
                             ],
                             "description": "Entra group object ID to exclude."
                           },
+                          "filter": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "id": {
+                                        "anyOf": [
+                                          {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Intune assignment filter ID."
+                                      },
+                                      "mode": {
+                                        "anyOf": [
+                                          {
+                                            "enum": [
+                                              "include",
+                                              "exclude"
+                                            ],
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Include or exclude the devices the filter matches."
+                                      }
+                                    },
+                                    "propertyNames": {
+                                      "not": {
+                                        "pattern": "\\{\\{"
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "mode"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              {
+                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Assignment filter for an included target; null removes it. Omit to keep the assignment's filter."
+                          },
                           "group": {
                             "anyOf": [
                               {
@@ -4105,6 +4366,23 @@
                               }
                             ],
                             "description": "Deployment intent."
+                          },
+                          "notifications": {
+                            "anyOf": [
+                              {
+                                "enum": [
+                                  "show_all",
+                                  "show_reboot",
+                                  "hide_all"
+                                ],
+                                "type": "string"
+                              },
+                              {
+                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                "type": "string"
+                              }
+                            ],
+                            "description": "Win32 end-user notifications for an included target. Omit to keep the assignment's setting."
                           }
                         },
                         "propertyNames": {
@@ -4115,6 +4393,22 @@
                         "required": [
                           "intent"
                         ],
+                        "then": {
+                          "not": {
+                            "anyOf": [
+                              {
+                                "required": [
+                                  "filter"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "notifications"
+                                ]
+                              }
+                            ]
+                          }
+                        },
                         "type": "object"
                       },
                       {
@@ -4131,7 +4425,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured."
+              "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target, and settings it omits keep their values on a matching target."
             },
             "description": {
               "anyOf": [

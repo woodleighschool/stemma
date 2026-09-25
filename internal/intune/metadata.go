@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"path"
 	"slices"
@@ -132,6 +133,13 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 			return nil, fmt.Errorf("%s: %w", key, err)
 		}
 		m[spec.graph] = converted
+	}
+	if list, declared := m["assignments"].([]any); declared && appType != win32Type {
+		for _, item := range list {
+			if _, set := item.(object)["settings"]; set {
+				return nil, errors.New("assignment notifications require a Win32 app")
+			}
+		}
 	}
 	// A line-of-business app lists its included apps as child apps, which
 	// record the version twice.
@@ -264,10 +272,16 @@ func choice(value any, values map[string]string) (string, error) {
 	return native, nil
 }
 
-var intents = map[string]string{"required": "required", "available": "available", "uninstall": "uninstall", "available_without_enrollment": "availableWithoutEnrollment"}
+var (
+	intents       = map[string]string{"required": "required", "available": "available", "uninstall": "uninstall", "available_without_enrollment": "availableWithoutEnrollment"}
+	filterModes   = map[string]string{"include": "include", "exclude": "exclude"}
+	notifications = map[string]string{"show_all": "showAll", "show_reboot": "showReboot", "hide_all": "hideAll"}
+)
 
 // assignments translates each deployment intent and its one target: an Entra
-// group, an excluded group, all devices or all users.
+// group, an excluded group, all devices or all users. An included target may
+// carry an assignment filter and a notification setting, properties of that
+// assignment as in Graph; omitting them keeps what the assignment has.
 func assignments(value any) (any, error) {
 	list, ok := value.([]any)
 	if !ok || len(list) > 1000 {
@@ -280,7 +294,7 @@ func assignments(value any) (any, error) {
 		if !ok {
 			return nil, errors.New("assignment must be an object")
 		}
-		if err := fields(assignment, "intent", "group", "exclude_group", "all_devices", "all_users"); err != nil {
+		if err := fields(assignment, "intent", "group", "exclude_group", "all_devices", "all_users", "filter", "notifications"); err != nil {
 			return nil, err
 		}
 		intent, err := choice(assignment["intent"], intents)
@@ -308,6 +322,27 @@ func assignments(value any) (any, error) {
 			return nil, errors.New("assignment requires exactly one of group, exclude_group, all_devices or all_users")
 		}
 		native := object{"intent": intent, "target": targets[0]}
+		_, excluded := assignment["exclude_group"]
+		if value, exists := assignment["filter"]; exists {
+			if excluded {
+				return nil, errors.New("an excluded group takes no filter")
+			}
+			filter, err := assignmentFilter(value)
+			if err != nil {
+				return nil, fmt.Errorf("filter %w", err)
+			}
+			maps.Copy(targets[0], filter)
+		}
+		if value, exists := assignment["notifications"]; exists {
+			if excluded {
+				return nil, errors.New("an excluded group takes no notifications")
+			}
+			setting, err := choice(value, notifications)
+			if err != nil {
+				return nil, fmt.Errorf("notifications %w", err)
+			}
+			native["settings"] = object{"@odata.type": "#microsoft.graph.win32LobAppAssignmentSettings", "notifications": setting}
+		}
 		key := assignmentKey(native)
 		if seen[key] {
 			return nil, errors.New("duplicate assignment target and intent")
@@ -316,6 +351,29 @@ func assignments(value any) (any, error) {
 		result = append(result, native)
 	}
 	return result, nil
+}
+
+// assignmentFilter translates a filter reference into its target properties;
+// null removes the filter.
+func assignmentFilter(value any) (object, error) {
+	if value == nil {
+		return object{"deviceAndAppManagementAssignmentFilterId": nil, "deviceAndAppManagementAssignmentFilterType": "none"}, nil
+	}
+	filter, ok := value.(object)
+	if !ok {
+		return nil, errors.New("must be an object with id and mode, or null")
+	}
+	if err := fields(filter, "id", "mode"); err != nil {
+		return nil, err
+	}
+	if text(filter["id"]) == "" {
+		return nil, errors.New("id must be an Intune assignment filter ID")
+	}
+	mode, err := choice(filter["mode"], filterModes)
+	if err != nil {
+		return nil, fmt.Errorf("mode %w", err)
+	}
+	return object{"deviceAndAppManagementAssignmentFilterId": filter["id"], "deviceAndAppManagementAssignmentFilterType": mode}, nil
 }
 
 // includedApps translates the application or package identities that detect a Mac installation.

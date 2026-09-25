@@ -155,6 +155,20 @@ assignments:
     all_users: true
 ```
 
+An included target can carry an assignment filter by ID and, for a Win32 app,
+its end-user notifications. A setting the assignment omits keeps its value, and
+`filter: null` removes a filter:
+
+```yaml
+assignments:
+  - intent: required
+    all_devices: true
+    filter:
+      id: 66666666-7777-8888-9999-000000000000
+      mode: include
+    notifications: hide_all
+```
+
 Detection uses application bundle identifiers and versions, with the selected
 application first. Unmanaged PKGs can detect applications outside `/Applications`
 and use package receipt identifiers and versions when no applications are present,

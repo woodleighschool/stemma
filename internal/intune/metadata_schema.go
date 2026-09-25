@@ -135,9 +135,16 @@ func assignmentSchema() *jsonschema.Schema {
 		"exclude_group": {Type: "string", MinLength: new(uint64(1)), Description: "Entra group object ID to exclude."},
 		"all_devices":   {Const: true, Description: "Target all devices."},
 		"all_users":     {Const: true, Description: "Target all licensed users."},
+		"filter": {AnyOf: []*jsonschema.Schema{objectSchema(map[string]*jsonschema.Schema{
+			"id":   {Type: "string", MinLength: new(uint64(1)), Description: "Intune assignment filter ID."},
+			"mode": enumSchema("Include or exclude the devices the filter matches.", "include", "exclude"),
+		}, "id", "mode"), {Type: "null"}}, Description: "Assignment filter for an included target; null removes it. Omit to keep the assignment's filter."},
+		"notifications": enumSchema("Win32 end-user notifications for an included target. Omit to keep the assignment's setting.", "show_all", "show_reboot", "hide_all"),
 	}, "intent")
 	item.OneOf = []*jsonschema.Schema{{Required: []string{"group"}}, {Required: []string{"exclude_group"}}, {Required: []string{"all_devices"}}, {Required: []string{"all_users"}}}
-	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(1000)), Description: "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured.", Items: item}
+	item.If = &jsonschema.Schema{Required: []string{"exclude_group"}}
+	item.Then = &jsonschema.Schema{Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Required: []string{"filter"}}, {Required: []string{"notifications"}}}}}
+	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(1000)), Description: "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target, and settings it omits keep their values on a matching target.", Items: item}
 }
 
 func detectionSchema() *jsonschema.Schema {
