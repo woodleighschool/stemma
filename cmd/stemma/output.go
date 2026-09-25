@@ -52,7 +52,7 @@ func (o *commandOutput) start(cmd *cobra.Command) error {
 	o.asJSON, _ = cmd.Flags().GetBool("json")
 	o.all, _ = cmd.Flags().GetBool("all")
 	switch cmd.Name() {
-	case "inspect", "operations", "schema":
+	case "operations", "schema":
 		o.asJSON = true
 	case "validate":
 		o.asJSON, _ = cmd.Flags().GetBool("resolved")

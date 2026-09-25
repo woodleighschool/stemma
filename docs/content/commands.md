@@ -85,11 +85,13 @@ stemma operations
 stemma version
 ```
 
-`inspect`, `validate --resolved`, `schema --output-file -` and `operations` print JSON documents.
+`validate --resolved`, `schema --output-file -` and `operations` print JSON documents.
 `schema` requires an explicit output file and includes the locally loaded plugins.
 `--builtins` generates the default schema without loading a catalog; it uses the
 same registry and schema composition as project generation.
-`inspect` reads artifact metadata without executing the installer.
+`inspect` describes a local file or directory from its own metadata, without
+executing it or loading a project; `--json` prints its complete facts. Pass it
+the path `artifact` prints to inspect what Stemma prepares for a resource.
 `validate --resolved` prints merged configuration and may expose expanded
 environment values: do not share it without reviewing it.
 

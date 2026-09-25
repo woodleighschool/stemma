@@ -32,17 +32,6 @@ const maxInspectedBytes = 16 << 30
 // It distinguishes installers by their contents and rejects malformed files
 // claiming supported formats. Unknown regular files retain their exact identity.
 func Read(ctx context.Context, name string) (plugin.Facts, error) {
-	return read(ctx, name, true)
-}
-
-// ReadMetadata reads root artifact and receipt facts without scanning package
-// payloads or directory contents. A recognized DMG retains only its container
-// identity; its inventory requires Read.
-func ReadMetadata(ctx context.Context, name string) (plugin.Facts, error) {
-	return read(ctx, name, false)
-}
-
-func read(ctx context.Context, name string, contents bool) (plugin.Facts, error) {
 	if err := ctx.Err(); err != nil {
 		return plugin.Facts{}, err
 	}
@@ -53,15 +42,11 @@ func read(ctx context.Context, name string, contents bool) (plugin.Facts, error)
 	if info.IsDir() {
 		_, plistErr := os.Lstat(filepath.Join(name, "Contents", "Info.plist"))
 		if !strings.EqualFold(filepath.Ext(name), ".app") && os.IsNotExist(plistErr) {
-			facts := plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: ".", Kind: "directory", Path: "."}}}
-			if contents {
-				subjects, err := readTree(ctx, name)
-				if err != nil {
-					return plugin.Facts{}, err
-				}
-				facts.Subjects = append(facts.Subjects, subjects...)
+			subjects, err := readTree(ctx, name)
+			if err != nil {
+				return plugin.Facts{}, err
 			}
-			return facts, nil
+			return plugin.Facts{Version: plugin.FactsVersion, Subjects: append([]plugin.Subject{{ID: ".", Kind: "directory", Path: "."}}, subjects...)}, nil
 		}
 		app, err := apple.InspectApp(name)
 		if err != nil {
@@ -90,12 +75,7 @@ func read(ctx context.Context, name string, contents bool) (plugin.Facts, error)
 	ext := strings.ToLower(filepath.Ext(name))
 	switch {
 	case bytes.HasPrefix(header[:n], []byte("xar!")):
-		var pkg apple.PackageFacts
-		if contents {
-			pkg, err = apple.InspectPackageContents(ctx, name)
-		} else {
-			pkg, err = apple.InspectPackageMetadata(ctx, name)
-		}
+		pkg, err := apple.InspectPackageContents(ctx, name)
 		if err != nil {
 			return plugin.Facts{}, fmt.Errorf("inspect pkg: %w", err)
 		}
@@ -119,11 +99,9 @@ func read(ctx context.Context, name string, contents bool) (plugin.Facts, error)
 			return plugin.Facts{}, fmt.Errorf("inspect: malformed DMG artifact")
 		}
 		root.Kind = "container"
-		if contents {
-			facts.Subjects, err = readDMG(ctx, name)
-			if err != nil {
-				return plugin.Facts{}, fmt.Errorf("inspect dmg: %w", err)
-			}
+		facts.Subjects, err = readDMG(ctx, name)
+		if err != nil {
+			return plugin.Facts{}, fmt.Errorf("inspect dmg: %w", err)
 		}
 	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {

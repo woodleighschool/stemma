@@ -231,24 +231,33 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		return runErr
 	}
 	root.AddCommand(reconciler)
-	root.AddCommand(&cobra.Command{Use: "inspect FILE", Short: "Read artifact metadata as JSON without executing it", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		switch strings.ToLower(filepath.Ext(args[0])) {
-		case ".intunewin":
+	inspect := &cobra.Command{Use: "inspect PATH", Short: "Describe a local file or directory without executing it", Args: cobra.ExactArgs(1)}
+	inspectJSON := jsonFlag(inspect)
+	inspect.RunE = func(cmd *cobra.Command, args []string) error {
+		if strings.EqualFold(filepath.Ext(args[0]), ".intunewin") {
 			done := plugin.Stage(cmd.Context(), "Inspecting artifact", plugin.Detail(filepath.Base(args[0])))
-			value, err := intunewin.Inspect(cmd.Context(), args[0])
+			envelope, err := intunewin.Inspect(cmd.Context(), args[0])
 			done(err)
 			if err != nil {
 				return err
 			}
-			return writeJSON(out, value)
-		default:
-			value, err := engine.Inspect(cmd.Context(), args[0])
-			if err != nil {
-				return err
+			if *inspectJSON {
+				return writeJSON(out, envelope)
 			}
-			return writeJSON(out, value)
+			_, err = io.WriteString(out, renderEnvelope(display.outStyle, filepath.Base(args[0]), envelope))
+			return err
 		}
-	}})
+		inspection, err := engine.Inspect(cmd.Context(), args[0])
+		if err != nil {
+			return err
+		}
+		if *inspectJSON {
+			return writeJSON(out, inspection)
+		}
+		_, err = io.WriteString(out, renderInspection(display.outStyle, inspection))
+		return err
+	}
+	root.AddCommand(inspect)
 	root.AddCommand(packageCommand(out))
 	cache := &cobra.Command{Use: "cache", Short: "Manage disposable cached content"}
 	cache.AddCommand(&cobra.Command{Use: "path", Short: "Print the cache location", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {

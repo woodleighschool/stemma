@@ -10,10 +10,12 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dustin/go-humanize"
 	"github.com/fatih/color"
 	"github.com/woodleighschool/stemma/internal/changes"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/internal/intunewin"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/reconcile"
@@ -464,4 +466,80 @@ func printLockedPlugins(out io.Writer, previous, locked map[string]pluginstore.E
 	text.WriteString(lockfileStatus(style, changed) + "\n")
 	_, err := io.WriteString(out, text.String())
 	return err
+}
+
+// renderInspection describes an inspected artifact, then the facts of each
+// subject in it. --json carries the complete model.
+func renderInspection(style textStyle, inspection engine.Inspection) string {
+	var text strings.Builder
+	var digest string
+	if subjects := inspection.Facts.Subjects; len(subjects) > 0 && subjects[0].ID == "." {
+		digest = subjects[0].SHA256
+	}
+	writeFields(&text, style, inspection.Filename, [][2]string{{"Format", inspection.Format}, {"Version", inspection.Version}, {"SHA-256", digest}})
+	for _, subject := range inspection.Facts.Subjects {
+		name := ""
+		if subject.Path != "." {
+			name = " " + subject.Path
+		}
+		if app := subject.App; app != nil {
+			writeFields(&text, style, "Application"+name, [][2]string{{"Installed path", subject.InstalledPath}, {"Bundle ID", app.BundleID}, {"Name", app.Name}, {"Version", app.Version}, {"Build", app.Build}, {"Executable", app.Executable}, {"Minimum OS", app.MinimumOS}})
+		}
+		if installer := subject.Installer; installer != nil {
+			writeFields(&text, style, "Installer"+name, [][2]string{{"Version", installer.Version}, {"Minimum OS", installer.MinimumOS}, {"Restart action", installer.RestartAction}})
+		}
+		if receipt := subject.Package; receipt != nil {
+			payload := "no"
+			if receipt.HasPayload {
+				payload = "yes"
+			}
+			var size string
+			if receipt.InstalledSize > 0 {
+				size = humanize.IBytes(uint64(receipt.InstalledSize) << 10)
+			}
+			writeFields(&text, style, "Package"+name, [][2]string{{"Identifier", receipt.Identifier}, {"Version", receipt.Version}, {"Install location", receipt.InstallLocation}, {"Installed size", size}, {"Payload", payload}})
+		}
+		if msi := subject.MSI; msi != nil {
+			writeFields(&text, style, "MSI"+name, [][2]string{{"Product name", msi.ProductName}, {"Product version", msi.ProductVersion}, {"Manufacturer", msi.Manufacturer}, {"Product code", msi.ProductCode}, {"Upgrade code", msi.UpgradeCode}, {"Package code", msi.PackageCode}})
+		}
+		if name != "" && subject.App == nil && subject.Installer == nil && subject.Package == nil && subject.MSI == nil {
+			// A package in a disk image or tree is listed without being read.
+			writeFields(&text, style, strings.ToUpper(subject.Kind[:1])+subject.Kind[1:]+name, nil)
+		}
+	}
+	return text.String()
+}
+
+// renderEnvelope describes an Intune Win32 envelope.
+func renderEnvelope(style textStyle, filename string, envelope intunewin.Metadata) string {
+	var text strings.Builder
+	writeFields(&text, style, filename, [][2]string{
+		{"Format", "intunewin"},
+		{"Name", envelope.Name},
+		{"Setup file", envelope.SetupFile},
+		{"Payload size", humanize.IBytes(uint64(max(0, envelope.PlaintextSize)))},
+		{"Payload SHA-256", envelope.PayloadSHA256},
+		{"Encrypted size", humanize.IBytes(uint64(max(0, envelope.EncryptedContentSize)))},
+	})
+	return text.String()
+}
+
+// writeFields writes a titled block of aligned fields, leaving out empty ones.
+// Blocks after the first start with a blank line.
+func writeFields(text *strings.Builder, style textStyle, title string, fields [][2]string) {
+	if text.Len() > 0 {
+		text.WriteByte('\n')
+	}
+	text.WriteString(style.paint(changes.Text(title), color.Bold) + "\n")
+	width := 0
+	for _, field := range fields {
+		if field[1] != "" {
+			width = max(width, len(field[0])+1)
+		}
+	}
+	for _, field := range fields {
+		if field[1] != "" {
+			fmt.Fprintf(text, "  %-*s  %s\n", width, field[0]+":", changes.Text(field[1]))
+		}
+	}
 }

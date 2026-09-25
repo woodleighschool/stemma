@@ -2,19 +2,23 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/internal/intunewin"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
@@ -198,12 +202,12 @@ spec:
 	if downloads.Load() != 0 {
 		t.Fatal("validation or catalog acquired software input")
 	}
-	var inspected engine.Prepared
+	var inspected engine.Inspection
 	fixture, err := filepath.Abs("../../internal/apple/testdata/fixture.pkg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(invoke(true, "inspect", fixture), &inspected); err != nil {
+	if err := json.Unmarshal(invoke(true, "inspect", "--json", fixture), &inspected); err != nil {
 		t.Fatal(err)
 	}
 	if inspected.Facts.Version != plugin.FactsVersion || len(inspected.Facts.Subjects) < 2 {
@@ -227,7 +231,7 @@ spec:
 	if !found || !strings.HasPrefix(materialized, filepath.Join(cache, "materialized")+string(filepath.Separator)) {
 		t.Fatalf("artifact printed %q", materialized)
 	}
-	if err := json.Unmarshal(invoke(true, "inspect", materialized), &inspected); err != nil || len(inspected.Facts.Subjects) < 2 || downloads.Load() != 1 {
+	if err := json.Unmarshal(invoke(true, "inspect", "--json", materialized), &inspected); err != nil || len(inspected.Facts.Subjects) < 2 || downloads.Load() != 1 {
 		t.Fatalf("inspecting the artifact: %+v %v", inspected.Facts, err)
 	}
 	derived := run(true, "signature")
@@ -313,6 +317,78 @@ spec:
 	invoke(true, "cache", "prune")
 	if _, err := os.Stat(materialized); !os.IsNotExist(err) {
 		t.Fatalf("cache prune kept %s: %v", materialized, err)
+	}
+}
+
+// TestInspectDescribesALocalArtifact covers a path outside any project: the
+// text names what the artifact holds, and JSON is the inspection alone.
+func TestInspectDescribesALocalArtifact(t *testing.T) {
+	fixture, err := filepath.Abs("../../internal/apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	data, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspect := func(args ...string) string {
+		t.Helper()
+		var out, stderr bytes.Buffer
+		cmd, finish := command(&out, &stderr)
+		cmd.SetArgs(append([]string{"inspect"}, args...))
+		err := cmd.ExecuteContext(t.Context())
+		finish(err)
+		if err != nil || stderr.Len() != 0 {
+			t.Fatalf("inspect %v: %v; %s", args, err, stderr.String())
+		}
+		return out.String()
+	}
+	want := fmt.Sprintf(`fixture.pkg
+  Format:   pkg
+  Version:  1.2.3
+  SHA-256:  %x
+
+Package PackageInfo
+  Identifier:        au.edu.vic.woodleigh.stemma.fixture
+  Version:           1.2.3
+  Install location:  /Applications
+  Installed size:    85 KiB
+  Payload:           yes
+
+Application Payload/SignedFixture.app
+  Installed path:  /Applications/SignedFixture.app
+  Bundle ID:       au.edu.vic.woodleigh.stemma.fixture
+  Name:            Stemma Fixture
+  Version:         1.2.3
+  Build:           42
+  Executable:      fixture
+  Minimum OS:      13.0
+`, sha256.Sum256(data))
+	if got := inspect(fixture); got != want {
+		t.Fatalf("inspect printed:\n%s\nwant:\n%s", got, want)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(inspect("--json", fixture)), &document); err != nil {
+		t.Fatal(err)
+	}
+	if keys := slices.Sorted(maps.Keys(document)); !slices.Equal(keys, []string{"facts", "filename", "format", "version"}) {
+		t.Fatalf("inspection fields: %v", keys)
+	}
+}
+
+func TestEnvelopeDescribesItsPayload(t *testing.T) {
+	got := renderEnvelope(textStyle{}, "chrome.intunewin", intunewin.Metadata{Name: "Chrome", SetupFile: "setup.exe", PayloadSHA256: "ab12", PlaintextSize: 3 << 20, EncryptedContentSize: 3<<20 + 48})
+	want := `chrome.intunewin
+  Format:           intunewin
+  Name:             Chrome
+  Setup file:       setup.exe
+  Payload size:     3.0 MiB
+  Payload SHA-256:  ab12
+  Encrypted size:   3.0 MiB
+`
+	if got != want {
+		t.Fatalf("envelope printed:\n%s\nwant:\n%s", got, want)
 	}
 }
 
