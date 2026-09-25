@@ -25,6 +25,12 @@ url = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_
 url_api = "https://api.github.com/repos/rhysd/actionlint/releases/assets/384924893"
 provenance = "github-attestations"
 
+[tools.actionlint."platforms.windows-x64"]
+checksum = "sha256:6e7241b51e6817ea6a047693d8e6fed13b31819c9a0dd6c5a726e1592d22f6e9"
+url = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_windows_amd64.zip"
+url_api = "https://api.github.com/repos/rhysd/actionlint/releases/assets/384924919"
+provenance = "github-attestations"
+
 [[tools."github:microsoft/kiota"]]
 version = "1.35.0"
 backend = "github:microsoft/kiota"
@@ -44,6 +50,11 @@ url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/54351925
 checksum = "sha256:bd50a566dbcd2bd10f4ef4a919276dd193202dced990fb5d16d83b68030e2063"
 url = "https://github.com/microsoft/kiota/releases/download/v1.35.0/osx-arm64.zip"
 url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/543519293"
+
+[tools."github:microsoft/kiota"."platforms.windows-x64"]
+checksum = "sha256:66b5547b948f7be724fa5e0ddddebda8f7b662574ae58eb9d3b8c51c609c6271"
+url = "https://github.com/microsoft/kiota/releases/download/v1.35.0/win-x64.zip"
+url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/543519503"
 
 [[tools.go]]
 version = "1.27.1"
@@ -92,6 +103,12 @@ provenance = "github-attestations"
 checksum = "sha256:f4bf83f0b64f055c42b28fc9a38861839f69c096e61c788e72dfaae412011789"
 url = "https://github.com/golangci/golangci-lint/releases/download/v2.13.2/golangci-lint-2.13.2-darwin-arm64.tar.gz"
 url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/532995398"
+provenance = "github-attestations"
+
+[tools.golangci-lint."platforms.windows-x64"]
+checksum = "sha256:4735fdc8e84a0cfb7a15a1c364a650942f88215e0d36c674ebc4024f7b554524"
+url = "https://github.com/golangci/golangci-lint/releases/download/v2.13.2/golangci-lint-2.13.2-windows-amd64.zip"
+url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/532995335"
 provenance = "github-attestations"
 
 [[tools.lefthook]]
@@ -204,4 +221,10 @@ provenance = "github-attestations"
 checksum = "sha256:e28d22b087f9ebb8d99da6e740d348c930f559961c7c3f12badda54f882195a2"
 url = "https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-aarch64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/zizmorcore/zizmor/releases/assets/552067640"
+provenance = "github-attestations"
+
+[tools.zizmor."platforms.windows-x64"]
+checksum = "sha256:b183b1e996eddfab9659f1e9b46e059f1ef1cf984a1f14e5da09f7876a4b3a1c"
+url = "https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/zizmorcore/zizmor/releases/assets/552067645"
 provenance = "github-attestations"
