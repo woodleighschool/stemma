@@ -174,6 +174,43 @@ func TestSetupFileMustMatchASingleInstaller(t *testing.T) {
 	}
 }
 
+func TestVersionFileSelectsTheManagedVersion(t *testing.T) {
+	msi, err := os.ReadFile("../msi/testdata/files.msi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vendor := writeFixture(t, t.TempDir(), "vendor.msi", msi, 0o644)
+	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: "vendor.msi"}}
+	outputs, err := Prepare(t.Context(), Spec{VersionFile: "Vendor.exe"}, inputs, t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected plugin.Subject
+	if err := json.Unmarshal(outputs["installer"].Evidence["windows.installer"], &selected); err != nil {
+		t.Fatal(err)
+	}
+	if outputs["installer"].Version != "7.2.1.48556" || selected.MSI == nil || selected.MSI.ProductVersion != "1.2.3" {
+		t.Fatalf("managed version %q, MSI evidence %+v", outputs["installer"].Version, selected.MSI)
+	}
+	if _, err := Prepare(t.Context(), Spec{VersionFile: "helper.dll"}, inputs, t.TempDir(), false); err == nil {
+		t.Fatal("accepted a companion file's version")
+	}
+	exe := map[string]plugin.Artifact{"source": {Path: writeFixture(t, t.TempDir(), "setup.exe", []byte("unexecuted installer"), 0o644), Filename: "setup.exe"}}
+	if _, err := Prepare(t.Context(), Spec{VersionFile: "Vendor.exe"}, exe, t.TempDir(), false); err == nil {
+		t.Fatal("accepted version_file for an EXE setup file")
+	}
+	spec := Spec{Source: plugin.Input{Resolver: "url"}, Destinations: map[string]map[string]any{"intune": {}}, VersionFile: "Vendor.exe"}
+	if err := spec.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{`bin\Vendor.exe`, "bin/Vendor.exe"} {
+		spec.VersionFile = name
+		if err := spec.Validate(); err == nil {
+			t.Fatalf("accepted version_file %q", name)
+		}
+	}
+}
+
 func TestArchiveCompanionOverlappingAMemberFails(t *testing.T) {
 	vendor := writeZip(t, map[string]string{"Installer.exe": "unexecuted installer", "Payload/app.msix": "bundle"})
 	inputs := map[string]plugin.Artifact{

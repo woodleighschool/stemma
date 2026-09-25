@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: MIT
 // See LICENSE for the full license text.
 
-// Package msi inspects the Property table and package code of Windows installers.
-// It does not execute installers, inspect transforms, or verify signatures.
+// Package msi inspects the Property and File tables and package code of Windows
+// installers. It does not execute installers, inspect transforms, or verify
+// signatures.
 package msi
 
 import (
@@ -12,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 )
 
 // Info records installer-declared metadata. Missing optional properties stay
@@ -73,6 +76,56 @@ func ProductIcon(path string) ([]byte, bool, error) {
 		return nil, false, fmt.Errorf("MSI Icon table has no %q stream", name)
 	}
 	return data, true, nil
+}
+
+// FileVersion returns the version the File table records for the one file the
+// installer names name, compared without case. An unversioned file has none,
+// and neither has a companion file, whose Version names another file's key.
+func FileVersion(path, name string) (string, error) {
+	db, file, err := open(path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = file.Close() }()
+	rows, err := db.stringRows("File", "File", "FileName", "Version")
+	if err != nil {
+		return "", fmt.Errorf("MSI File table: %w", err)
+	}
+	keys := make(map[string]bool, len(rows))
+	var matches [][]string
+	for _, row := range rows {
+		keys[row[0]] = true
+		// FileName holds a short and a long name separated by |, or one name.
+		names := strings.Split(row[1], "|")
+		if strings.EqualFold(names[len(names)-1], name) {
+			matches = append(matches, row)
+		}
+	}
+	if len(matches) != 1 {
+		return "", fmt.Errorf("MSI File table has %d files named %s", len(matches), name)
+	}
+	version := matches[0][2]
+	switch {
+	case version == "":
+		return "", fmt.Errorf("MSI file %s has no version", name)
+	case keys[version]:
+		return "", fmt.Errorf("MSI file %s is a companion of %s and has no version of its own", name, version)
+	case !fileVersion(version):
+		return "", fmt.Errorf("MSI file %s has invalid version %q", name, version)
+	}
+	return version, nil
+}
+
+// fileVersion reports whether version has the form of a file version: at most
+// four dot-separated 16-bit numbers.
+func fileVersion(version string) bool {
+	parts := strings.Split(version, ".")
+	for _, part := range parts {
+		if _, err := strconv.ParseUint(part, 10, 16); err != nil {
+			return false
+		}
+	}
+	return len(parts) <= 4
 }
 
 // open reads the database structure of the MSI at path. Streams are read on

@@ -188,10 +188,25 @@ detection:
 ```
 
 Use a real vendor key. The managed version is the setup MSI's ProductVersion, or
-the version the source reports for its own installer. An explicit `operator` or
-`value` replaces its default; `greater_than_or_equal` accepts an already-newer
-installation, while equality alone does not. File and registry rules can be
-combined, and
+the version the source reports for its own installer. When the installed product
+uses another version scheme, `version_file` takes the version the MSI's File table
+records for one versioned file it installs:
+
+```yaml
+version_file: Zoom.exe
+destinations:
+  intune:
+    detection:
+      - type: file
+        path: 'C:\Program Files\Zoom\bin'
+        name: Zoom.exe
+        property: version
+```
+
+MSI information and the default ProductCode rule keep the ProductVersion. An
+explicit `operator` or `value` replaces its default; `greater_than_or_equal`
+accepts an already-newer installation, while equality alone does not. File and
+registry rules can be combined, and
 `check_32bit` selects the 32-bit view on 64-bit Windows. A script rule must be the
 only rule, with `run_as_32bit` and `enforce_signature_check` where needed.
 

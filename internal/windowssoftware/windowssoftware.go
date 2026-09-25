@@ -20,6 +20,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/icon"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
+	"github.com/woodleighschool/stemma/internal/msi"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -27,8 +28,10 @@ import (
 type Spec struct {
 	Source plugin.Input `json:"source,omitzero" yaml:"source" jsonschema:"required" jsonschema_description:"Vendor installer, setup directory or ZIP or TAR archive holding a setup directory, or a resource output. A WindowsSoftware document requires a source."`
 	// SetupFile selects the setup entry point within the setup directory.
-	SetupFile string   `json:"setup_file,omitempty" yaml:"setup_file,omitempty" jsonschema_description:"Setup-relative path or glob selecting the file Intune records as the setup entry point. It may name any file, such as a wrapper script. Omit to use the installer of a single-file source, the entry point of a resource output, or the only MSI or EXE in a setup directory or archive."`
-	Content   *Content `json:"content,omitempty" yaml:"content,omitempty" jsonschema_description:"Supporting files added to the setup directory beside the vendor installer."`
+	SetupFile string `json:"setup_file,omitempty" yaml:"setup_file,omitempty" jsonschema_description:"Setup-relative path or glob selecting the file Intune records as the setup entry point. It may name any file, such as a wrapper script. Omit to use the installer of a single-file source, the entry point of a resource output, or the only MSI or EXE in a setup directory or archive."`
+	// VersionFile selects the managed version from the setup MSI's File table.
+	VersionFile string   `json:"version_file,omitempty" yaml:"version_file,omitempty" jsonschema_description:"Name of the file the setup MSI installs whose File table version is the managed version, such as Zoom.exe. It must name one versioned file. Omit to use the MSI ProductVersion."`
+	Content     *Content `json:"content,omitempty" yaml:"content,omitempty" jsonschema_description:"Supporting files added to the setup directory beside the vendor installer."`
 	// Signature requires the setup file to carry a complete Authenticode
 	// signature from the expected publisher.
 	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require a complete Authenticode signature from the configured publisher on the setup file."`
@@ -49,6 +52,9 @@ func (s Spec) Validate() error {
 	}
 	if s.SetupFile != "" && !validPattern(s.SetupFile) {
 		return errors.New("setup_file must be a setup-relative path or glob")
+	}
+	if s.VersionFile != "" && (!relative(s.VersionFile) || strings.Contains(s.VersionFile, "/")) {
+		return errors.New("version_file must be a file name")
 	}
 	if err := validateContent(s.Content); err != nil {
 		return err
@@ -143,7 +149,7 @@ func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, 
 	if selected := sourceSetup(source, archived); setup != selected {
 		artifact.Version = ""
 	}
-	result, err := describe(ctx, artifact, setup)
+	result, err := describe(ctx, artifact, setup, spec.VersionFile)
 	if err == nil && (spec.Signature != nil || deriveSignature) {
 		err = verifySignature(ctx, spec, &result)
 	}
@@ -226,7 +232,9 @@ func assemble(ctx context.Context, root, workspace string, source plugin.Artifac
 	return nil
 }
 
-func describe(ctx context.Context, artifact plugin.Artifact, setup string) (plugin.Artifact, error) {
+// describe inspects the setup file. A setup MSI supplies the managed version:
+// its ProductVersion, or the File table version of versionFile.
+func describe(ctx context.Context, artifact plugin.Artifact, setup, versionFile string) (plugin.Artifact, error) {
 	installer := artifact.Path
 	if artifact.Tree {
 		installer = filepath.Join(artifact.Path, filepath.FromSlash(setup))
@@ -258,6 +266,14 @@ func describe(ctx context.Context, artifact plugin.Artifact, setup string) (plug
 			return artifact, err
 		}
 		artifact.Version = subject.MSI.ProductVersion
+	}
+	if versionFile != "" {
+		if len(artifact.Evidence["windows.installer"]) == 0 {
+			return artifact, errors.New("version_file requires an MSI setup file")
+		}
+		if artifact.Version, err = msi.FileVersion(installer, versionFile); err != nil {
+			return artifact, fmt.Errorf("version_file: %w", err)
+		}
 	}
 	artifact.EntryPoint = setup
 	return artifact, nil

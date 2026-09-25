@@ -7927,6 +7927,18 @@
                     }
                   ],
                   "description": "Named inspection subjects exposed in destination expressions as facts.\u003cname\u003e."
+                },
+                "version_file": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Name of the file the setup MSI installs whose File table version is the managed version, such as Zoom.exe. It must name one versioned file. Omit to use the MSI ProductVersion."
                 }
               },
               "propertyNames": {
@@ -8156,6 +8168,18 @@
                         }
                       ],
                       "description": "Named inspection subjects exposed in destination expressions as facts.\u003cname\u003e."
+                    },
+                    "version_file": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                          "type": "string"
+                        }
+                      ],
+                      "description": "Name of the file the setup MSI installs whose File table version is the managed version, such as Zoom.exe. It must name one versioned file. Omit to use the MSI ProductVersion."
                     }
                   },
                   "propertyNames": {

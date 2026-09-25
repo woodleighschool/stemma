@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -16,6 +17,31 @@ func TestMSIFixtureProperties(t *testing.T) {
 	}
 	if info.ProductName != "Stemma MSI Fixture" || info.ProductCode != "{8B2D32B7-0BE9-4CF9-B1E7-42C27753A6B8}" || info.ProductVersion != "1.2.3" || info.PackageCode != "{71C6B8B7-EF12-4C0B-A390-AD3899831AFA}" || info.Manufacturer != "Woodleigh School" || info.Properties["ALLUSERS"] != "1" {
 		t.Fatalf("fixture product facts differ: %+v", info)
+	}
+}
+
+func TestFileVersionNamesOneVersionedFile(t *testing.T) {
+	version, err := FileVersion("testdata/files.msi", "vendor.EXE")
+	if err != nil || version != "7.2.1.48556" {
+		t.Fatalf("versioned file: %q, %v", version, err)
+	}
+	for _, test := range []struct {
+		msi, name, reason string
+	}{
+		{"testdata/files.msi", "VENDOR~1.EXE", "0 files"},
+		{"testdata/files.msi", "missing.exe", "0 files"},
+		{"testdata/files.msi", "shared.dll", "2 files"},
+		{"testdata/files.msi", "fixture.txt", "no version"},
+		{"testdata/files.msi", "helper.dll", "companion of VendorExe"},
+		{"testdata/files.msi", "tool.exe", "invalid version"},
+		{"testdata/test.msi", "fixture.txt", "no version"},
+	} {
+		t.Run(test.msi+"/"+test.name, func(t *testing.T) {
+			version, err := FileVersion(test.msi, test.name)
+			if err == nil || !strings.Contains(err.Error(), test.reason) {
+				t.Fatalf("FileVersion = %q, %v; want an error naming %q", version, err, test.reason)
+			}
+		})
 	}
 }
 
