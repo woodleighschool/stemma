@@ -23,9 +23,13 @@ func (o *operations) check(name string, preparation bool) error {
 	}
 	methods := []string{"validate", "plan", "apply"}
 	if preparation {
-		methods = []string{"validate", "run"}
-		if op.Resource != nil {
-			methods[0] = "discover"
+		switch {
+		case op.Resource != nil:
+			methods = []string{"discover", "run"}
+		case op.Resolver != nil:
+			methods = []string{"validate", "discover", "run"}
+		default:
+			methods = []string{"validate", "run"}
 		}
 		if op.SideEffects == "remote" {
 			return fmt.Errorf("operation %s declares remote effects and cannot run during preparation", name)

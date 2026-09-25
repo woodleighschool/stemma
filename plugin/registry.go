@@ -161,7 +161,10 @@ func (registry *Registry) Handle(ctx context.Context, request Request) (Response
 		if len(config) == 0 {
 			config = json.RawMessage(`{}`)
 		}
-		if request.Method != "discover" {
+		// Resource discovery receives declarations whose expressions are not
+		// evaluated yet; their config is checked once prepared.
+		checked := operation.descriptor.Resource == nil
+		if checked {
 			if err := validateData(operation.config, config); err != nil {
 				return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
 			}
@@ -170,7 +173,7 @@ func (registry *Registry) Handle(ctx context.Context, request Request) (Response
 		if err != nil {
 			return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
 		}
-		if request.Method != "discover" {
+		if checked {
 			if err := validateData(operation.config, config); err != nil {
 				return Response{}, fmt.Errorf("operation %q config: %w", request.Operation, err)
 			}
@@ -262,8 +265,8 @@ func validateIdentity(name, version string) error {
 }
 
 func compileOperation(operation Operation) (registeredOperation, error) {
-	if operation.Resolver != nil && (operation.Kind != "resolve" || operation.Resolver.Version == "" || operation.SideEffects == "remote" || !operation.SupportsMethod("run") || !operation.SupportsMethod("validate")) {
-		return registeredOperation{}, errors.New("resolver registration requires version and workspace-only validate/run methods")
+	if operation.Resolver != nil && (operation.Kind != "resolve" || operation.Resolver.Version == "" || operation.SideEffects == "remote" || !operation.SupportsMethod("validate") || !operation.SupportsMethod("discover") || !operation.SupportsMethod("run")) {
+		return registeredOperation{}, errors.New("resolver registration requires version and workspace-only validate/discover/run methods")
 	}
 	if operation.Resource != nil && (operation.Kind != "resource" || operation.Resource.APIVersion == "" || operation.Resource.Kind == "" || !operation.SupportsMethod("discover") || !operation.SupportsMethod("run") || operation.SideEffects == "remote") {
 		return registeredOperation{}, errors.New("resource registration requires apiVersion, kind and workspace-only discover/run methods")

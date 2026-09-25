@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/woodleighschool/stemma/internal/apple"
 	"github.com/woodleighschool/stemma/internal/signature"
@@ -40,11 +39,11 @@ func fixture(t *testing.T) (Spec, map[string]plugin.Artifact) {
 
 func TestBuildMappedPayloadIsReproducibleAndScriptsAreNotRun(t *testing.T) {
 	spec, inputs := fixture(t)
-	first, err := Build(t.Context(), spec, inputs, t.TempDir(), time.Time{})
+	first, err := Build(t.Context(), spec, inputs, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Build(t.Context(), spec, inputs, t.TempDir(), time.Time{})
+	second, err := Build(t.Context(), spec, inputs, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +86,7 @@ func TestBuildRejectsUnsafeLayout(t *testing.T) {
 				cancel()
 			}
 			work := t.TempDir()
-			if _, err := Build(ctx, spec, inputs, work, time.Time{}); err == nil {
+			if _, err := Build(ctx, spec, inputs, work); err == nil {
 				t.Fatal("invalid layout accepted")
 			}
 			files, err := os.ReadDir(work)

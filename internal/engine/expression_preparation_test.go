@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 )
 
@@ -78,6 +79,12 @@ spec:
 	unchanged := run()
 	if !unchanged.Cached {
 		t.Fatal("unchanged build missed cache")
+	}
+	if err := os.Remove(lockfile.Filename(root)); err != nil {
+		t.Fatal(err)
+	}
+	if recreated := run(); !recreated.Cached || recreated.Artifacts["installer"].Payload != first.Artifacts["installer"].Payload {
+		t.Fatal("a recreated lock rebuilt unchanged inputs")
 	}
 	t.Setenv("STEMMA_TEST_DESCRIPTION", "changed publication")
 	t.Setenv("STEMMA_TEST_UNUSED", "unrelated")

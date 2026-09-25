@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -344,12 +343,8 @@ func (r *runner) update(ctx context.Context, head string, reviewed *git.Worktree
 	if err != nil {
 		return nil, err
 	}
-	hints, err := r.hints(reviewed, branches)
-	if err != nil {
-		return nil, err
-	}
 	done := plugin.Stage(ctx, "Resolving catalog")
-	candidate, err := engine.Resolve(ctx, engine.Options{ConfigPath: r.configIn(reviewed), CacheDir: r.opts.CacheDir, Lock: lockfile.Options{Hints: hints}})
+	candidate, err := engine.Resolve(ctx, engine.Options{ConfigPath: r.configIn(reviewed), CacheDir: r.opts.CacheDir})
 	done(err)
 	if err != nil {
 		return nil, err
@@ -410,43 +405,6 @@ func (r *runner) update(ctx context.Context, head string, reviewed *git.Worktree
 	return updates, errors.Join(failures...)
 }
 
-// hints collects the entries pending proposals recorded for resources the
-// reviewed lock has not accepted, so refreshing them confirms the proposed
-// bytes with a conditional request instead of downloading them every run.
-func (r *runner) hints(reviewed *git.Worktree, branches []string) (map[string]map[string]source.Entry, error) {
-	current, err := lockfile.Load(lockfile.Filename(filepath.Join(reviewed.Dir, r.project)))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	hints := map[string]map[string]source.Entry{}
-	for _, branch := range branches {
-		managed, err := r.managed(branch)
-		if err != nil {
-			return nil, err
-		}
-		if !managed {
-			continue
-		}
-		data, err := r.repo.Show("refs/remotes/origin/"+branch, r.lockPath)
-		if err != nil {
-			return nil, err
-		}
-		if len(data) == 0 {
-			continue
-		}
-		proposed, err := lockfile.Parse(data)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", branch, err)
-		}
-		for key, entries := range proposed.Inputs {
-			if !equalEntries(current.Inputs[key], entries) {
-				hints[key] = entries
-			}
-		}
-	}
-	return hints, nil
-}
-
 // managed reports whether the reconciler still owns a branch: exactly one
 // commit beyond the reviewed branch, carrying the trailer, with the configured
 // identity as its author and committer. A branch the reviewed branch already
@@ -500,7 +458,7 @@ func (r *runner) propose(ctx context.Context, head, key string, change change, c
 		file.Inputs = map[string]map[string]source.Entry{}
 	}
 	if file.Version == 0 {
-		file.Version = 2
+		file.Version = lockfile.Version
 		file.Plugins = candidate.Plugins
 	}
 	if len(change.entries) == 0 {
@@ -512,9 +470,6 @@ func (r *runner) propose(ctx context.Context, head, key string, change change, c
 	if tip != "" {
 		published, err = r.repo.Show(tip, r.lockPath)
 		if err != nil {
-			return update, err
-		}
-		if err := stabilise(file.Inputs[key], published, key); err != nil {
 			return update, err
 		}
 	}
@@ -637,25 +592,6 @@ func encode(file lockfile.File) ([]byte, error) {
 		return nil, nil
 	}
 	return lockfile.Encode(file)
-}
-
-// stabilise keeps the branch's recorded timestamp for inputs whose bytes the
-// candidate resolved unchanged, so re-resolving never rewrites a proposal.
-func stabilise(entries map[string]source.Entry, published []byte, key string) error {
-	if len(published) == 0 || len(entries) == 0 {
-		return nil
-	}
-	file, err := lockfile.Parse(published)
-	if err != nil {
-		return fmt.Errorf("proposed lockfile: %w", err)
-	}
-	for name, entry := range entries {
-		if previous, ok := file.Inputs[key][name]; ok && previous.Content.Artifact == entry.Content.Artifact && !previous.ResolvedAt.IsZero() {
-			entry.ResolvedAt = previous.ResolvedAt
-			entries[name] = entry
-		}
-	}
-	return nil
 }
 
 // publish verifies the proposal commit the worktree has checked out, pushes it

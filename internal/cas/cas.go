@@ -33,7 +33,8 @@ type Ref struct {
 	Size   int64  `json:"size" yaml:"size"`
 }
 
-// Store contains content-addressed objects and disposable derivation indexes.
+// Store contains content-addressed objects and disposable source and
+// derivation indexes.
 type Store struct{ Dir string }
 
 // Open creates the cache directories. Call Lease while using cache objects.
@@ -49,7 +50,7 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, sub := range []string{"objects", "work", "derivations"} {
+	for _, sub := range []string{"objects", "work", "sources", "derivations"} {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o700); err != nil {
 			return nil, err
 		}
@@ -103,6 +104,17 @@ func (s *Store) Verify(ctx context.Context, ref Ref) error {
 		return fmt.Errorf("cache object %s failed integrity verification", ref.SHA256)
 	}
 	return nil
+}
+
+// Has reports whether an object is stored at its recorded size. It reads no
+// bytes; Verify checks them before anything uses the object.
+func (s *Store) Has(ref Ref) bool {
+	path, err := s.Path(ref)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Size() == ref.Size
 }
 
 // Import streams bytes to a temporary object and atomically publishes the digest.
@@ -221,6 +233,28 @@ func (s *Store) Remember(key string, ref Ref) error {
 	return fileio.Write(filepath.Join(s.Dir, "derivations", key), data, 0o600)
 }
 
+// RecallSource reads the source index record for key into record.
+func (s *Store) RecallSource(key string, record any) bool {
+	if !validDigest(key) {
+		return false
+	}
+	data, err := os.ReadFile(filepath.Join(s.Dir, "sources", key))
+	return err == nil && json.Unmarshal(data, record) == nil
+}
+
+// RememberSource records what fetching a source produced. The index saves
+// work only; locks never depend on it.
+func (s *Store) RememberSource(key string, record any) error {
+	if !validDigest(key) {
+		return errors.New("invalid source key")
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	return fileio.Write(filepath.Join(s.Dir, "sources", key), data, 0o600)
+}
+
 // Prune removes disposable cache contents only when no run holds a lease.
 func (s *Store) Prune(ctx context.Context) error {
 	l := flock.New(filepath.Join(s.Dir, "cache.lock"))
@@ -237,7 +271,7 @@ func (s *Store) Prune(ctx context.Context) error {
 		return ctx.Err()
 	}
 	defer func() { _ = l.Close() }()
-	for _, sub := range []string{"objects", "work", "derivations"} {
+	for _, sub := range []string{"objects", "work", "sources", "derivations"} {
 		path := filepath.Join(s.Dir, sub)
 		if err := os.RemoveAll(path); err != nil {
 			return err

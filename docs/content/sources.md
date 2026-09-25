@@ -137,22 +137,23 @@ their consumers even when only the consumer was selected on the command line.
 | `prepare`        | Reuse remote pins, observe changed local inputs, prepare artifacts and record locks               |
 | `plan` / `apply` | Require matching locked declarations and local inputs; fetch only the recorded remote observation |
 
-An unchanged input keeps its recorded timestamp. A lock records the resolver and
-its version, the relevant declaration, a resolver-owned observation and content
-identity. It is not merely a version number or download URL. GitHub locks retain
-the selected release ID, asset ID, release tag, download URL, filename and digest.
-Locked fetches replay that concrete selection without evaluating the asset glob
-or looking up the latest release again. Changing the pattern or release selector
-makes the declaration stale and requires a lock update, even with cached bytes.
+A lock records the resolver and its version, the relevant declaration, a
+resolver-owned observation and content identity. It is not merely a version
+number or download URL. GitHub locks retain the selected release ID, asset ID,
+release tag, download URL, filename and digest. Locked fetches replay that
+concrete selection without evaluating the asset glob or looking up the latest
+release again. Changing the pattern or release selector makes the declaration
+stale and requires a lock update, even with cached bytes.
 
-`update` asks a source whether locked content still stands before downloading
-it again. GitHub compares the locked release and asset IDs; HTTP sends the
-recorded `etag` and `last_modified` hints as a conditional request, after
-rediscovering a `match` link. Hints never identify content: a confirmed answer
-keeps the locked digest and timestamp, a changed answer downloads and hashes
-the bytes, and a source without validators downloads every time. Unchanged
-bytes keep their recorded hints, so a rotated validator alone never changes the
-lock; entries locked without hints record them once.
+`update` avoids downloads the cache or the lock can answer. A GitHub asset never
+changes, so an asset the cache fetched before, or the one the lock records, is
+not downloaded again. An HTTP URL can serve new bytes at any time: after
+rediscovering a `match` link, `update` asks the server with the `ETag` and
+`Last-Modified` the cache kept from its last download of that URL, and downloads
+when the answer is new or the server sends no validators. The cache remembers
+what it fetched whichever lock is checked out; the lock only decides whether
+the result is a change. Runs that prepare fetch any content the cache no longer
+holds.
 
 Resources execute independently. Acquisition or preparation failures leave that
 resource's complete reviewed lock entries unchanged; consumers of its outputs
@@ -183,6 +184,8 @@ Set `STEMMA_CACHE_DIR` or `--cache-dir` to relocate the disposable cache. For
 example, `stemma --cache-dir .stemma/cache prepare` keeps it visible in the catalog.
 `stemma cache prune` clears cached content after active runs finish. Locked remote
 inputs can be fetched again if the publisher still serves the recorded bytes.
+Prepared outputs depend only on input content, configuration and the stemma or
+plugin build, so a new or recreated lock reuses them.
 
 Destinations keep no local state either: each one identifies its publications
 itself. See [publication identity and retention](publishing.md#identity-and-retention).
