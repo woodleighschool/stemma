@@ -11,6 +11,7 @@ Run commands from a catalog. Stemma discovers its Git root and `stemma.yaml`.
 | `stemma update [Kind/name...]`    | Discover current inputs and update their locks                               |
 | `stemma prepare [Kind/name...]`   | Lock and prepare inputs without publication                                  |
 | `stemma signature [Kind/name...]` | Derive the verified signer of each published artifact                        |
+| `stemma artifact Kind/name`       | Prepare one resource from the lockfile and print the path of its artifact    |
 | `stemma icon [Kind/name...]`      | Create missing declared icons from the software's own artwork                |
 | `stemma plan [Kind/name...]`      | Read destinations and report proposed changes                                |
 | `stemma apply [Kind/name...]`     | Re-read and reconcile destinations once                                      |
@@ -40,6 +41,17 @@ artifact against the signer it observes and prints the `signature` fragment to
 add. It never writes documents, and a document that already names a different
 signer fails. See [macOS](mac-software.md#signature) and
 [Windows](windows-software.md#signature) signature policy.
+
+`artifact` prepares one resource from the reviewed lockfile and prints only the
+absolute path of its `installer` output, or of the output `--output` names. It
+never updates the lockfile: an input without a reviewed entry fails until
+`stemma update` records it. No destination receives the artifact. The path is a
+copy in the cache that each run replaces and `stemma cache prune` removes:
+
+```sh
+stemma inspect "$(stemma artifact MacSoftware/foo)"
+pkgutil --check-signature "$(stemma artifact MacSoftware/foo)"
+```
 
 `--offline` requires cached network inputs and plugin bundles; destination calls
 are still allowed. Only `plan` is the publication dry run. See

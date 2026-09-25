@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,7 +30,10 @@ type Options struct {
 	Resources            []string
 	Lock                 lockfile.Options
 	Icons                IconOptions
-	Handlers             map[string]reconcileHandler
+	// Output names the resource output the artifact method materializes;
+	// empty selects installer.
+	Output   string
+	Handlers map[string]reconcileHandler
 	// ResourceDone receives each final resource result, including failures.
 	ResourceDone func(ResourceReport) error
 }
@@ -46,6 +50,8 @@ type Report struct {
 	LockChanged *bool            `json:"lock_changed,omitempty"`
 	Error       string           `json:"error,omitempty"`
 	Resources   []ResourceReport `json:"resources"`
+	// Artifact is where the artifact method materialized the selected output.
+	Artifact string `json:"artifact,omitempty"`
 }
 
 // ResourceReport separates immutable outputs from destination reconciliation.
@@ -89,6 +95,10 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}()
 	switch opts.Method {
 	case "update", "prepare", "signature", "plan", "apply", "icon":
+	case "artifact":
+		if len(opts.Resources) != 1 {
+			return report, errors.New("artifact requires one resource selector")
+		}
 	default:
 		return report, fmt.Errorf("unsupported run method %q", opts.Method)
 	}
@@ -103,7 +113,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	// signature derives each resource's signer through the preparation path;
 	// icon presents the artwork of prepared software the same way.
 	preparing := opts.Method == "prepare" || opts.Method == "signature" || opts.Method == "icon"
-	if opts.Method == "plan" || opts.Method == "apply" || opts.Method == "icon" {
+	if opts.Method == "plan" || opts.Method == "apply" || opts.Method == "icon" || opts.Method == "artifact" {
 		opts.Lock.Frozen = true
 	}
 	s, err := open(ctx, opts, opts.Lock.Frozen || opts.Lock.Offline)
@@ -406,6 +416,38 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			if err := complete(*item); err != nil {
 				return report, errors.Join(append(failures, err)...)
 			}
+		}
+		return report, errors.Join(failures...)
+	}
+	if opts.Method == "artifact" {
+		// The selected resource and the builds it consumes are prepared from the
+		// reviewed lockfile. No destination sees the prepared artifact.
+		key := roots[0]
+		clear(pending)
+		pending[key] = 1
+		if err := prepare(key); err != nil {
+			return report, errors.Join(append(failures, err)...)
+		}
+		prepared := preparedItems[key]
+		if !prepared.ready {
+			return report, errors.Join(failures...)
+		}
+		item := &report.Resources[prepared.report]
+		output := cmp.Or(opts.Output, "installer")
+		artifact, ok := prepared.outputs[output]
+		if ok {
+			report.Artifact, err = expose(resourceContext(ctx, plans[key].Resource), store, artifact, filepath.Join(prepared.work, "materialized"))
+		} else {
+			err = fmt.Errorf("no %s output; the resource prepares %s", output, strings.Join(sortedKeys(prepared.outputs), ", "))
+		}
+		if err != nil {
+			item.Error = err.Error()
+			if ctx.Err() == nil {
+				failures = append(failures, ReportedError{fmt.Errorf("%s: %w", key, err)})
+			}
+		}
+		if err := complete(*item); err != nil {
+			return report, errors.Join(append(failures, err)...)
 		}
 		return report, errors.Join(failures...)
 	}

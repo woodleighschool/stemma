@@ -189,6 +189,26 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		}
 		root.AddCommand(cmd)
 	}
+	var output string
+	var artifactOffline bool
+	artifact := &cobra.Command{Use: "artifact Kind/name", Short: "Prepare one resource from the lockfile and print the path of its artifact", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		path, err := resolve()
+		if err != nil {
+			return err
+		}
+		// Stdout carries only the path, so the resource outcome goes to stderr.
+		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Method: "artifact", Resources: args, Output: output, ResourceDone: func(resource engine.ResourceReport) error {
+			return display.resourceDone(display, false, "artifact", resource)
+		}, Lock: lockfile.Options{Offline: artifactOffline}})
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(out, report.Artifact)
+		return err
+	}}
+	artifact.Flags().StringVar(&output, "output", "installer", "Resource output to materialize")
+	artifact.Flags().BoolVar(&artifactOffline, "offline", false, "Use verified cached locked inputs without source network access")
+	root.AddCommand(artifact)
 	reconciler := &cobra.Command{Use: "reconcile", Short: "Apply the reviewed branch of this checkout and propose lock updates as pull requests", Args: cobra.NoArgs}
 	reconcileJSON := jsonFlag(reconciler)
 	reconciler.Flags().StringVar(&stateDir, "state-dir", os.Getenv("STEMMA_STATE_DIR"), "Directory recording the last reviewed commit applied in full")
