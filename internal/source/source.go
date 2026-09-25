@@ -179,66 +179,68 @@ func (m *Manager) IsLocal(name string) bool {
 
 // Resolve observes a declaration without a reviewed entry.
 func (m *Manager) Resolve(ctx context.Context, input plugin.Input) (Entry, error) {
-	return m.Refresh(ctx, input, Entry{})
+	entry, _, err := m.Refresh(ctx, input, Entry{})
+	return entry, err
 }
 
-// Refresh observes a declaration again. An immutable observation takes its
-// content from the source index, or from the reviewed entry when it records
-// the same observation; anything else is fetched, and a mutable HTTP source
-// is asked conditionally with the validators the index kept. Local inputs are
-// read in full every time.
-func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry) (Entry, error) {
+// Refresh observes a declaration again and reports whether the cache already
+// held its content. An immutable observation takes its content from the
+// source index, or from the reviewed entry when it records the same
+// observation; anything else is fetched, and a mutable HTTP source is asked
+// conditionally with the validators the index kept. Local inputs are read in
+// full every time.
+func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry) (Entry, bool, error) {
 	version, declaration, err := m.Declaration(input)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, false, err
 	}
 	resolver, _ := m.resolver(input.Resolver)
 	if m.Offline && !resolver.Local {
-		return Entry{}, errors.New("offline mode cannot resolve inputs")
+		return Entry{}, false, errors.New("offline mode cannot resolve inputs")
 	}
 	found, err := m.discover(ctx, resolver, input)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, false, err
 	}
 	entry := Entry{Version: 1, Resolver: input.Resolver, ResolverVersion: version, Declaration: declaration}
 	entry.Observation, err = canonicalJSON(found.Observation)
 	if err != nil {
-		return Entry{}, fmt.Errorf("resolver observation: %w", err)
+		return Entry{}, false, fmt.Errorf("resolver observation: %w", err)
 	}
 	if resolver.Local {
-		current, err := m.fetch(ctx, resolver, input, entry.Observation, nil)
+		current, _, err := m.fetch(ctx, resolver, input, entry.Observation, nil)
 		if err != nil {
-			return Entry{}, err
+			return Entry{}, false, err
 		}
 		entry.Content, entry.Evidence = current.Content, current.Evidence
-		return entry, entry.Validate()
+		return entry, false, entry.Validate()
 	}
 	key, err := sourceKey(input.Resolver, resolver, declaration, entry.Observation)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, false, err
 	}
 	var known record
 	recalled := m.Store.RecallSource(key, &known) && known.Content.valid()
 	switch {
 	case found.Immutable && recalled:
 		entry.Content, entry.Evidence = known.Content, known.Evidence
-		return entry, entry.Validate()
+		return entry, m.Store.Has(entry.Content.Artifact), entry.Validate()
 	case found.Immutable && locked.Validate() == nil && locked.Resolver == entry.Resolver && locked.ResolverVersion == version && locked.Declaration == declaration && sameJSON(locked.Observation, entry.Observation):
-		return locked, nil
+		return locked, m.Store.Has(locked.Content.Artifact), nil
 	}
 	var previous *record
 	if recalled {
 		previous = &known
 	}
-	current, err := m.fetch(ctx, resolver, input, entry.Observation, previous)
+	current, reused, err := m.fetch(ctx, resolver, input, entry.Observation, previous)
 	if err != nil {
-		return Entry{}, err
+		return Entry{}, false, err
 	}
 	if err := m.Store.RememberSource(key, current); err != nil {
-		return Entry{}, err
+		return Entry{}, false, err
 	}
 	entry.Content, entry.Evidence = current.Content, current.Evidence
-	return entry, entry.Validate()
+	return entry, reused && m.Store.Has(entry.Content.Artifact), entry.Validate()
 }
 
 // FetchLocked uses verified cached content or fetches the locked observation
@@ -277,7 +279,7 @@ func (m *Manager) FetchLocked(ctx context.Context, input plugin.Input, entry Ent
 	if m.Offline {
 		return false, fmt.Errorf("offline cache miss for %s", entry.Content.Filename)
 	}
-	current, err := m.fetch(ctx, resolver, input, entry.Observation, nil)
+	current, _, err := m.fetch(ctx, resolver, input, entry.Observation, nil)
 	if err != nil {
 		return false, err
 	}
@@ -302,21 +304,21 @@ func (m *Manager) discover(ctx context.Context, resolver Resolver, input plugin.
 }
 
 // fetch acquires the content an observation names. Only native HTTP uses the
-// previous record, returning it when the server confirms it still stands.
-func (m *Manager) fetch(ctx context.Context, resolver Resolver, input plugin.Input, observation json.RawMessage, previous *record) (record, error) {
+// previous record, reusing it when the server confirms it still stands.
+func (m *Manager) fetch(ctx context.Context, resolver Resolver, input plugin.Input, observation json.RawMessage, previous *record) (record, bool, error) {
 	if resolver.Fetch == nil {
 		return m.fetchNative(ctx, input, observation, previous)
 	}
 	artifact, err := resolver.Fetch(ctx, input, observation)
 	if err != nil {
-		return record{}, err
+		return record{}, false, err
 	}
 	content, err := m.importArtifact(ctx, artifact)
 	if err != nil {
-		return record{}, err
+		return record{}, false, err
 	}
 	evidence, err := canonicalEvidence(artifact.Evidence)
-	return record{Content: content, Evidence: evidence}, err
+	return record{Content: content, Evidence: evidence}, false, err
 }
 
 // sourceKey identifies an observation in the source index. The resolver

@@ -184,18 +184,18 @@ func (m *Manager) discoverNative(ctx context.Context, input plugin.Input) (Disco
 }
 
 // fetchNative reads a local input or downloads the observed URL.
-func (m *Manager) fetchNative(ctx context.Context, input plugin.Input, observation json.RawMessage, previous *record) (record, error) {
+func (m *Manager) fetchNative(ctx context.Context, input plugin.Input, observation json.RawMessage, previous *record) (record, bool, error) {
 	s, err := native(input)
 	if err != nil {
-		return record{}, err
+		return record{}, false, err
 	}
 	if s.Type == "file" || s.Type == "local" {
 		content, err := m.readLocal(ctx, s)
-		return record{Content: content}, err
+		return record{Content: content}, false, err
 	}
 	var observed nativeObservation
 	if err := decode(observation, &observed); err != nil {
-		return record{}, fmt.Errorf("observation: %w", err)
+		return record{}, false, fmt.Errorf("observation: %w", err)
 	}
 	return m.download(ctx, s, observed.URL, previous)
 }
@@ -397,22 +397,21 @@ func (m *Manager) readLocal(ctx context.Context, s nativeConfig) (content Conten
 }
 
 // download fetches an observed URL into the cache. With a previous record it
-// asks conditionally and returns that record when the server confirms it.
-func (m *Manager) download(ctx context.Context, s nativeConfig, address string, previous *record) (result record, err error) {
+// asks conditionally and reuses that record when the server confirms it.
+func (m *Manager) download(ctx context.Context, s nativeConfig, address string, previous *record) (result record, reused bool, err error) {
 	if err := validateHTTPURL(address); err != nil {
-		return record{}, fmt.Errorf("observation URL: %w", err)
+		return record{}, false, fmt.Errorf("observation URL: %w", err)
 	}
 	u, _ := url.Parse(address)
 	if s.Type == "http" && s.Match == "" && address != s.URL {
-		return record{}, errors.New("observed HTTP URL does not match configuration")
+		return record{}, false, errors.New("observed HTTP URL does not match configuration")
 	}
 	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
-		return record{}, errors.New("observed asset does not belong to the configured GitHub repository")
+		return record{}, false, errors.New("observed asset does not belong to the configured GitHub repository")
 	}
 	done := plugin.Stage(ctx, "Downloading input")
-	confirmed := false
 	defer func() {
-		if confirmed {
+		if reused {
 			done(nil, "unchanged", true)
 			return
 		}
@@ -420,7 +419,7 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, address string, 
 	}()
 	req, err := m.request(ctx, address, s)
 	if err != nil {
-		return record{}, err
+		return record{}, false, err
 	}
 	validators := previous != nil && (previous.ETag != "" || previous.LastModified != "")
 	if validators {
@@ -433,24 +432,22 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, address string, 
 	}
 	res, err := m.Client.Do(req)
 	if err != nil {
-		return record{}, transportError("download", err)
+		return record{}, false, transportError("download", err)
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode == http.StatusNotModified && validators {
-		confirmed = true
-		return *previous, nil
+		return *previous, true, nil
 	}
 	if res.StatusCode != http.StatusOK {
-		return record{}, fmt.Errorf("download returned HTTP %d", res.StatusCode)
+		return record{}, false, fmt.Errorf("download returned HTTP %d", res.StatusCode)
 	}
 	// Hosts that ignore conditional requests still send validators; the same
 	// strong ETag confirms the previous bytes without transferring them.
 	if validators && previous.ETag != "" && !strings.HasPrefix(previous.ETag, "W/") && res.Header.Get("ETag") == previous.ETag && res.Header.Get("Last-Modified") == previous.LastModified {
-		confirmed = true
-		return *previous, nil
+		return *previous, true, nil
 	}
 	if res.ContentLength > cas.MaxObjectSize {
-		return record{}, errors.New("download exceeds 16 GiB")
+		return record{}, false, errors.New("download exceeds 16 GiB")
 	}
 	result.ETag, result.LastModified = res.Header.Get("ETag"), res.Header.Get("Last-Modified")
 	result.Content = Content{Filename: s.Filename, Mode: 0o644}
@@ -461,11 +458,11 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, address string, 
 		result.Content.Filename = responseFilename(res, address)
 	}
 	if !validFilename(result.Content.Filename) {
-		return record{}, errors.New("input has no safe filename; set filename explicitly")
+		return record{}, false, errors.New("input has no safe filename; set filename explicitly")
 	}
 	plugin.Logger(ctx).DebugContext(ctx, "Download response", "bytes", res.ContentLength)
 	result.Content.Artifact, err = m.Store.Import(ctx, plugin.ProgressReader(ctx, res.Body, res.ContentLength), s.SHA256)
-	return result, err
+	return result, false, err
 }
 
 func (m *Manager) importTree(ctx context.Context, root *os.Root, names []string, expected string) (cas.Ref, error) {

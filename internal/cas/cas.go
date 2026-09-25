@@ -106,6 +106,17 @@ func (s *Store) Verify(ctx context.Context, ref Ref) error {
 	return nil
 }
 
+// Has reports whether an object is stored at its recorded size. It reads no
+// bytes; Verify checks them before anything uses the object.
+func (s *Store) Has(ref Ref) bool {
+	path, err := s.Path(ref)
+	if err != nil {
+		return false
+	}
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular() && info.Size() == ref.Size
+}
+
 // Import streams bytes to a temporary object and atomically publishes the digest.
 func (s *Store) Import(ctx context.Context, r io.Reader, expected string) (Ref, error) {
 	if expected != "" && !validDigest(expected) {

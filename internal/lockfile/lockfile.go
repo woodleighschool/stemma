@@ -191,21 +191,21 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		}
 	}
 	resolved := map[string]source.Entry{}
-	resolve := func(ctx context.Context, input plugin.Input, previous source.Entry) (source.Entry, error) {
+	resolve := func(ctx context.Context, input plugin.Input, previous source.Entry) (source.Entry, bool, error) {
 		version, declaration, err := m.Declaration(input)
 		if err != nil {
-			return source.Entry{}, err
+			return source.Entry{}, false, err
 		}
 		// Inputs sharing a declaration share one observation.
 		key := input.Resolver + "\x00" + version + "\x00" + declaration
 		if current, ok := resolved[key]; ok {
-			return current, nil
+			return current, m.Store.Has(current.Content.Artifact), nil
 		}
-		current, err := m.Refresh(ctx, input, previous)
+		current, cached, err := m.Refresh(ctx, input, previous)
 		if err == nil {
 			resolved[key] = current
 		}
-		return current, err
+		return current, cached, err
 	}
 	acquire := func(ctx context.Context, input plugin.Input, entry source.Entry) (source.Entry, bool, error) {
 		version, declaration, err := m.Declaration(input)
@@ -218,7 +218,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 				return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 			}
 			cached := matches && m.Store.Verify(ctx, entry.Content.Artifact) == nil
-			current, err := resolve(ctx, input, entry)
+			current, _, err := resolve(ctx, input, entry)
 			if err != nil {
 				return current, false, err
 			}
@@ -235,16 +235,16 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		if opts.Frozen || opts.Offline {
 			return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 		}
-		current, err := resolve(ctx, input, entry)
+		current, cached, err := resolve(ctx, input, entry)
 		if err != nil || opts.Refresh {
-			return current, false, err
+			return current, cached, err
 		}
 		// A refresh can name content from the source index without holding
 		// its bytes. Update only records the entry; runs that prepare fetch it.
 		if _, err := m.FetchLocked(ctx, input, current); err != nil {
 			return source.Entry{}, false, err
 		}
-		return current, false, nil
+		return current, cached, nil
 	}
 	if opts.PluginsOnly {
 		result.File.Inputs = old.Inputs

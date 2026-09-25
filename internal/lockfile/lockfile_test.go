@@ -502,6 +502,10 @@ func TestRefreshConfirmsLockedContentWithoutDownloading(t *testing.T) {
 	if err != nil || refreshed.Changed || bodies.Load() != 1 || conditionals.Load() != 1 {
 		t.Fatalf("refresh downloaded confirmed content: %v changed=%v bodies=%d conditionals=%d", err, refreshed.Changed, bodies.Load(), conditionals.Load())
 	}
+	twin := "stemma/v1alpha1/Software/twin"
+	if first.CacheHits[resource]["source"] || !refreshed.CacheHits[resource]["source"] || !refreshed.CacheHits[twin]["source"] {
+		t.Fatalf("cache hits do not follow what was downloaded: first=%v refreshed=%v", first.CacheHits, refreshed.CacheHits)
+	}
 	if !bytes.Equal(before, lockedBytes(t, m)) || !entry(refreshed).Equal(entry(first)) {
 		t.Fatal("confirmed content rewrote the lock")
 	}
