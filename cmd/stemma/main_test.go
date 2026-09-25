@@ -216,6 +216,9 @@ spec:
 	if inspected.Facts.Version != plugin.FactsVersion || len(inspected.Facts.Subjects) < 2 {
 		t.Fatalf("inspection lost container/receipt facts: %+v", inspected.Facts)
 	}
+	if output := invoke(false, "artifact", "fixture"); len(output) != 0 || downloads.Load() != 0 {
+		t.Fatalf("artifact without a lockfile printed %q or acquired input", output)
+	}
 	firstPrepare := run(true, "prepare")
 	if firstPrepare.LockChanged == nil || !*firstPrepare.LockChanged {
 		t.Fatal("first preparation did not record inputs")
@@ -226,6 +229,13 @@ spec:
 	}
 	if downloads.Load() != 1 {
 		t.Fatal("unexpected acquisition count")
+	}
+	materialized, found := strings.CutSuffix(string(invoke(true, "artifact", "MacSoftware/fixture")), "\n")
+	if !found || !strings.HasPrefix(materialized, filepath.Join(cache, "materialized")+string(filepath.Separator)) {
+		t.Fatalf("artifact printed %q", materialized)
+	}
+	if err := json.Unmarshal(invoke(true, "inspect", materialized), &inspected); err != nil || len(inspected.Facts.Subjects) < 2 || downloads.Load() != 1 {
+		t.Fatalf("inspecting the artifact: %+v %v", inspected.Facts, err)
 	}
 	derived := run(true, "signature")
 	var signer struct {
@@ -292,6 +302,24 @@ spec:
 		if !destination.Applied || len(destination.Changes) != 0 {
 			t.Fatalf("a runner without local state replayed publication: %+v", destination)
 		}
+	}
+	materialized = strings.TrimSpace(string(invoke(true, "artifact", "--offline", "MacSoftware/fixture")))
+	lockPath := filepath.Join(project, "stemma.lock.yaml")
+	reviewed, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The source still serves the reviewed bytes, so both runs name one copy.
+	if unlocked := strings.TrimSpace(string(invoke(true, "artifact", "--no-input-lock", "MacSoftware/fixture"))); unlocked != materialized {
+		t.Fatalf("artifact --no-input-lock printed %s, want %s", unlocked, materialized)
+	}
+	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
+		t.Fatalf("artifact --no-input-lock changed the lockfile: %v", err)
+	}
+	invoke(false, "artifact", "--offline", "--no-input-lock", "MacSoftware/fixture")
+	invoke(true, "cache", "prune")
+	if _, err := os.Stat(materialized); !os.IsNotExist(err) {
+		t.Fatalf("cache prune kept %s: %v", materialized, err)
 	}
 }
 

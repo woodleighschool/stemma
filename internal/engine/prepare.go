@@ -52,6 +52,33 @@ func materialize(ctx context.Context, store *cas.Store, p Prepared, work string)
 	return p, os.Chmod(p.Path, os.FileMode(p.Mode))
 }
 
+// expose materializes a prepared artifact for the operator at a cache path its
+// digest and filename name. The copy is writable and nothing verifies it later,
+// so each call replaces it from the verified object.
+func expose(ctx context.Context, store *cas.Store, p Prepared, work string) (path string, err error) {
+	done := plugin.Stage(ctx, "Materializing artifact", plugin.Detail(p.Filename))
+	defer func() { done(err) }()
+	p, err = materialize(ctx, store, p, work)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(store.Dir, "materialized", p.Payload.SHA256)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path = filepath.Join(dir, p.Filename)
+	if err := os.RemoveAll(path); err != nil {
+		return "", err
+	}
+	if err := os.Rename(p.Path, path); err != nil {
+		// Another project sharing the cache materialized the same bytes.
+		if _, statErr := os.Lstat(path); statErr != nil {
+			return "", err
+		}
+	}
+	return path, nil
+}
+
 // Inspect reads complete supported artifact facts without acquisition or publication.
 func Inspect(ctx context.Context, path string) (result Prepared, err error) {
 	done := plugin.Stage(ctx, "Inspecting artifact")
