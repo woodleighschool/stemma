@@ -136,12 +136,28 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	if !bytes.Equal(before, lockedBytes(t, m)) {
 		t.Fatal("failed recovery rewrote lock")
 	}
+	current, err := prepare(t, m, inputs, Options{IgnoreInputs: true})
+	if err != nil || entry(current).Content == original.Content || !bytes.Equal(before, lockedBytes(t, m)) {
+		t.Fatalf("ignoring input locks did not resolve the source without saving: %v", err)
+	}
 	updated, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil || !updated.Changed || entry(updated).Content == original.Content {
 		t.Fatalf("refresh failed to record changed input: %v", err)
 	}
-	if _, err := prepare(t, m, inputs, Options{Ignore: true, Frozen: true}); err == nil {
+	if _, err := prepare(t, m, inputs, Options{IgnoreInputs: true, Frozen: true}); err == nil {
 		t.Fatal("accepted conflicting lock options")
+	}
+}
+
+// TestIgnoringInputLocksStillReadsTheLockfile keeps "no input lock" apart from
+// "no lockfile": the file still has to load.
+func TestIgnoringInputLocksStillReadsTheLockfile(t *testing.T) {
+	m := manager(t)
+	if err := os.WriteFile(Filename(m.Root), []byte("inputs: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepare(t, m, inputset("file", map[string]any{"path": "app.pkg"}), Options{IgnoreInputs: true}); err == nil || !strings.HasPrefix(err.Error(), "lockfile: ") {
+		t.Fatalf("an unreadable lockfile was ignored: %v", err)
 	}
 }
 

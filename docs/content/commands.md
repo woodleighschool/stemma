@@ -42,14 +42,18 @@ add. It never writes documents, and a document that already names a different
 signer fails. See [macOS](mac-software.md#signature) and
 [Windows](windows-software.md#signature) signature policy.
 
-`artifact` prepares one resource from the reviewed lockfile and prints only the
-absolute path of its `installer` output, or of the output `--output` names. It
-never updates the lockfile: an input without a reviewed entry fails until
-`stemma update` records it. No destination receives the artifact. The path is a
-copy in the cache that each run replaces and `stemma cache prune` removes:
+`artifact` prepares one resource and prints only the absolute path of its
+`installer` output, or of the output `--output` names. It uses the reviewed
+lockfile: an input without a reviewed entry fails until `stemma update` records
+it. `--no-input-lock` instead resolves the inputs of the resource and the builds
+it consumes from their sources as they are now, to show what an update would
+prepare. Either way the lockfile stays unchanged and plugins must match it. No
+destination receives the artifact. The path is a copy in the cache that each
+run replaces and `stemma cache prune` removes:
 
 ```sh
 stemma inspect "$(stemma artifact MacSoftware/foo)"
+stemma inspect "$(stemma artifact MacSoftware/foo --no-input-lock)"
 pkgutil --check-signature "$(stemma artifact MacSoftware/foo)"
 ```
 

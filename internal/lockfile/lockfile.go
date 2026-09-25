@@ -36,8 +36,11 @@ type File struct {
 
 // Options controls lock consumption independently of cache use.
 type Options struct {
-	Frozen, Refresh, Ignore, Offline bool
-	PluginsOnly                      bool
+	Frozen, Refresh, Offline bool
+	// IgnoreInputs resolves inputs as if the lockfile had no input entries and
+	// saves nothing.
+	IgnoreInputs bool
+	PluginsOnly  bool
 	// PreserveUnselected keeps every reviewed resource the run did not select.
 	PreserveUnselected bool
 	// Retain keeps these reviewed resources when the run did not select them.
@@ -149,27 +152,26 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 	manager := *m
 	manager.Offline = opts.Offline
 	m = &manager
-	if opts.Frozen && (opts.Refresh || opts.Ignore) {
-		return nil, errors.New("frozen lockfile conflicts with refresh or no-lockfile")
+	if opts.Frozen && (opts.Refresh || opts.IgnoreInputs) {
+		return nil, errors.New("frozen lockfile conflicts with refreshing or ignoring input locks")
 	}
-	if opts.Offline && (opts.Refresh || opts.Ignore) {
-		return nil, errors.New("offline requires a lockfile and cannot refresh")
+	if opts.Offline && (opts.Refresh || opts.IgnoreInputs) {
+		return nil, errors.New("offline runs use input locks and cannot refresh or ignore them")
 	}
 	filename := Filename(root)
-	old := File{}
 	requiresLock := len(pluginEntries) != 0
 	for _, named := range inputs {
 		requiresLock = requiresLock || len(named) != 0
 	}
-	if !opts.Ignore {
-		loaded, err := Load(filename)
-		if errors.Is(err, os.ErrNotExist) && requiresLock && (opts.Frozen || opts.Offline) {
-			return nil, errors.New("lockfile: missing; run stemma update")
-		}
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("lockfile: %w", err)
-		}
-		old = loaded
+	old, err := Load(filename)
+	if errors.Is(err, os.ErrNotExist) && requiresLock && (opts.Frozen || opts.Offline) {
+		return nil, errors.New("lockfile: missing; run stemma update")
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("lockfile: %w", err)
+	}
+	if opts.IgnoreInputs {
+		old.Inputs = nil
 	}
 	for resource, entries := range old.Inputs {
 		if _, selected := inputs[resource]; !selected && !opts.PluginsOnly {
@@ -231,7 +233,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 			}
 			return current, unchanged && cached, nil
 		}
-		if matches && !opts.Refresh && !opts.Ignore {
+		if matches && !opts.Refresh {
 			hit, err := m.FetchLocked(ctx, input, entry)
 			return entry, hit, err
 		}
@@ -342,7 +344,7 @@ func (u *Update) Commit(ctx context.Context, rejected ...string) (Result, error)
 	if opts.Frozen && result.Changed {
 		return result, errors.New("lockfile contains stale entries; run stemma update")
 	}
-	if result.Changed && !opts.Ignore {
+	if result.Changed && !opts.IgnoreInputs {
 		if err := Save(u.root, result.File); err != nil {
 			return result, err
 		}

@@ -113,10 +113,15 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	// signature derives each resource's signer through the preparation path;
 	// icon presents the artwork of prepared software the same way.
 	preparing := opts.Method == "prepare" || opts.Method == "signature" || opts.Method == "icon"
-	if opts.Method == "plan" || opts.Method == "apply" || opts.Method == "icon" || opts.Method == "artifact" {
+	switch opts.Method {
+	case "plan", "apply", "icon":
 		opts.Lock.Frozen = true
+	case "artifact":
+		opts.Lock.Frozen = !opts.Lock.IgnoreInputs
 	}
-	s, err := open(ctx, opts, opts.Lock.Frozen || opts.Lock.Offline)
+	// A run that ignores input locks records nothing, so its plugins must still
+	// match the lockfile.
+	s, err := open(ctx, opts, opts.Lock.Frozen || opts.Lock.Offline || opts.Lock.IgnoreInputs)
 	if err != nil {
 		return report, err
 	}

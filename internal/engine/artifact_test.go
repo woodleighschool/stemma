@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/cas"
+	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -50,11 +51,11 @@ spec:
 		}
 		return plugin.ReconcileResponse{}, nil
 	}}}
-	lockfile := filepath.Join(root, "stemma.lock.yaml")
+	lockPath := filepath.Join(root, "stemma.lock.yaml")
 	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "run stemma update") {
 		t.Fatalf("artifact prepared an unreviewed input: %v", err)
 	}
-	if _, err := os.Stat(lockfile); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(lockPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("artifact wrote the lockfile")
 	}
 	update := options
@@ -62,7 +63,7 @@ spec:
 	if _, err := Run(t.Context(), update); err != nil {
 		t.Fatal(err)
 	}
-	reviewed, err := os.ReadFile(lockfile)
+	reviewed, err := os.ReadFile(lockPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,12 +91,90 @@ spec:
 			t.Fatal(err)
 		}
 	}
-	if current, err := os.ReadFile(lockfile); err != nil || !bytes.Equal(current, reviewed) {
+	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
 		t.Fatalf("artifact changed the lockfile: %v", err)
 	}
 	options.Output = "uninstaller"
 	if report, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "no uninstaller output; the resource prepares installer") || report.Artifact != "" {
 		t.Fatalf("missing output: %q %v", report.Artifact, err)
+	}
+}
+
+// TestArtifactWithoutInputLocksPreparesTheSourceAsItIs changes a reviewed
+// application: the locked artifact refuses it, and --no-input-lock prepares it
+// without changing the lockfile.
+func TestArtifactWithoutInputLocksPreparesTheSourceAsItIs(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(root, "Fixture.app")
+	if err := os.CopyFS(app, os.DirFS("../apple/testdata/Fixture.app")); err != nil {
+		t.Fatal(err)
+	}
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: artifacts}
+spec:
+  imports: ['*.software.yaml']
+  destinations:
+    repo: {operation: munki, config: {path: repo}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: app}
+spec:
+  source: {path: Fixture.app}
+  destinations:
+    repo: {pkginfo: {catalogs: [testing]}}
+`)
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, "stemma.lock.yaml")
+	reviewed, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plist := filepath.Join(app, "Contents", "Info.plist")
+	data, err := os.ReadFile(plist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plist, bytes.Replace(data, []byte("<string>1.2.3</string>"), []byte("<string>2.0.0</string>"), 1), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	options.Method, options.Resources = "artifact", []string{"MacSoftware/app"}
+	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "local input content changed; run stemma update") {
+		t.Fatalf("locked artifact accepted a changed input: %v", err)
+	}
+	options.Lock.IgnoreInputs = true
+	report, err := Run(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if installer := report.Resources[0].Artifacts["installer"]; installer.Version != "2.0.0" || filepath.Base(report.Artifact) != installer.Filename {
+		t.Fatalf("artifact %s for %+v", report.Artifact, installer)
+	}
+	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
+		t.Fatalf("--no-input-lock changed the lockfile: %v", err)
+	}
+}
+
+// TestArtifactWithoutInputLocksKeepsPluginsLocked declares a local plugin the
+// lockfile has not reviewed: ignoring input locks must not run it.
+func TestArtifactWithoutInputLocksKeepsPluginsLocked(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, strings.Replace(policyProject, "  imports:\n", "  plugins:\n    probe:\n      path: plugins/probe\n      trusted: true\n  imports:\n", 1))
+	if err := os.MkdirAll(filepath.Join(root, "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "plugins", "probe"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "artifact", Resources: []string{"MacSoftware/policy"}, Lock: lockfile.Options{IgnoreInputs: true}}
+	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "run stemma plugins update") {
+		t.Fatalf("an unreviewed plugin loaded: %v", err)
 	}
 }
 

@@ -304,6 +304,19 @@ spec:
 		}
 	}
 	materialized = strings.TrimSpace(string(invoke(true, "artifact", "--offline", "MacSoftware/fixture")))
+	lockPath := filepath.Join(project, "stemma.lock.yaml")
+	reviewed, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The source still serves the reviewed bytes, so both runs name one copy.
+	if unlocked := strings.TrimSpace(string(invoke(true, "artifact", "--no-input-lock", "MacSoftware/fixture"))); unlocked != materialized {
+		t.Fatalf("artifact --no-input-lock printed %s, want %s", unlocked, materialized)
+	}
+	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
+		t.Fatalf("artifact --no-input-lock changed the lockfile: %v", err)
+	}
+	invoke(false, "artifact", "--offline", "--no-input-lock", "MacSoftware/fixture")
 	invoke(true, "cache", "prune")
 	if _, err := os.Stat(materialized); !os.IsNotExist(err) {
 		t.Fatalf("cache prune kept %s: %v", materialized, err)

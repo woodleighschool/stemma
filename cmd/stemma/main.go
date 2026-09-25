@@ -190,7 +190,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		root.AddCommand(cmd)
 	}
 	var output string
-	var artifactOffline bool
+	var artifactOffline, noInputLock bool
 	artifact := &cobra.Command{Use: "artifact Kind/name", Short: "Prepare one resource from the lockfile and print the path of its artifact", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		path, err := resolve()
 		if err != nil {
@@ -199,7 +199,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		// Stdout carries only the path, so the resource outcome goes to stderr.
 		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Method: "artifact", Resources: args, Output: output, ResourceDone: func(resource engine.ResourceReport) error {
 			return display.resourceDone(display, false, "artifact", resource)
-		}, Lock: lockfile.Options{Offline: artifactOffline}})
+		}, Lock: lockfile.Options{Offline: artifactOffline, IgnoreInputs: noInputLock}})
 		if err != nil {
 			return err
 		}
@@ -208,6 +208,8 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	}}
 	artifact.Flags().StringVar(&output, "output", "installer", "Resource output to materialize")
 	artifact.Flags().BoolVar(&artifactOffline, "offline", false, "Use verified cached locked inputs without source network access")
+	artifact.Flags().BoolVar(&noInputLock, "no-input-lock", false, "Resolve inputs from their sources now instead of their lock entries; plugins stay locked")
+	artifact.MarkFlagsMutuallyExclusive("offline", "no-input-lock")
 	root.AddCommand(artifact)
 	reconciler := &cobra.Command{Use: "reconcile", Short: "Apply the reviewed branch of this checkout and propose lock updates as pull requests", Args: cobra.NoArgs}
 	reconcileJSON := jsonFlag(reconciler)
