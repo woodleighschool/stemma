@@ -152,7 +152,8 @@ rediscovering a `match` link, `update` asks the server with the `ETag` and
 `Last-Modified` the cache kept from its last download of that URL, and downloads
 when the answer is new or the server sends no validators. The cache remembers
 what it fetched whichever lock is checked out; the lock only decides whether
-the result is a change.
+the result is a change. Runs that prepare fetch any content the cache no longer
+holds.
 
 Resources execute independently. Acquisition or preparation failures leave that
 resource's complete reviewed lock entries unchanged; consumers of its outputs

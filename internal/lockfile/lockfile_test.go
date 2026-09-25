@@ -550,6 +550,47 @@ func TestRefreshReusesPendingBytesWhicheverLockIsCheckedOut(t *testing.T) {
 	}
 }
 
+func TestPreparationFetchesContentTheSourceIndexNamed(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "input.pkg")
+	if err := os.WriteFile(file, []byte("installer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var fetches atomic.Int32
+	m := manager(t)
+	m.Resolvers["example.release"] = source.Resolver{
+		Version: "1",
+		Discover: func(context.Context, plugin.Input) (source.Discovery, error) {
+			return source.Discovery{Observation: json.RawMessage(`{"release":"1.0"}`), Immutable: true}, nil
+		},
+		Fetch: func(context.Context, plugin.Input, json.RawMessage) (plugin.Artifact, error) {
+			fetches.Add(1)
+			return plugin.Artifact{Path: file, Filename: "input.pkg"}, nil
+		},
+	}
+	inputs := inputset("example.release", nil)
+	first, err := prepare(t, m, inputs, Options{Refresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, err := m.Store.Path(entry(first).Content.Artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(object); err != nil {
+		t.Fatal(err)
+	}
+	// The index still names the release, and update reads no bytes.
+	if updated, err := prepare(t, m, inputs, Options{Refresh: true}); err != nil || updated.Changed || fetches.Load() != 1 {
+		t.Fatalf("update fetched bytes it does not read: %v fetches=%d", err, fetches.Load())
+	}
+	if err := os.Remove(filepath.Join(m.Root, "stemma.lock.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepare(t, m, inputs, Options{}); err != nil || fetches.Load() != 2 || m.Store.Verify(t.Context(), entry(first).Content.Artifact) != nil {
+		t.Fatalf("preparation was left without the bytes the index named: %v fetches=%d", err, fetches.Load())
+	}
+}
+
 func TestRetainedResourcesKeepReviewedEntries(t *testing.T) {
 	m := manager(t)
 	for _, name := range []string{"first", "other", "gone"} {

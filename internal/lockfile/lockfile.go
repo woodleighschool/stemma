@@ -220,7 +220,15 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 			return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 		}
 		current, err := resolve(ctx, input, entry)
-		return current, false, err
+		if err != nil || opts.Refresh {
+			return current, false, err
+		}
+		// A refresh can name content from the source index without holding
+		// its bytes. Update only records the entry; runs that prepare fetch it.
+		if _, err := m.FetchLocked(ctx, input, current); err != nil {
+			return source.Entry{}, false, err
+		}
+		return current, false, nil
 	}
 	if opts.PluginsOnly {
 		result.File.Inputs = old.Inputs
