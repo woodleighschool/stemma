@@ -531,7 +531,7 @@ func fileMatches(ctx context.Context, path string, artifact plugin.Artifact) (bo
 	return hex.EncodeToString(h.Sum(nil)) == artifact.SHA256, nil
 }
 func publishContent(ctx context.Context, path string, artifact plugin.Artifact) (err error) {
-	done := plugin.Stage(ctx, "Publishing Munki installer")
+	done := plugin.Stage(ctx, "Publishing Munki installer", plugin.Detail(filepath.Base(path)))
 	defer func() { done(err) }()
 	if matches, err := fileMatches(ctx, path, artifact); err != nil || matches {
 		return err

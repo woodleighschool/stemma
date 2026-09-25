@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
@@ -281,7 +282,9 @@ func preflight(plans map[string]resourcePlan, selected []string, p config.Projec
 // cache.
 func prepareResource(ctx context.Context, store *cas.Store, ops *operations, plan resourcePlan, inputs map[string]Prepared, work string, derive string) (result map[string]Prepared, cacheHit bool, err error) {
 	done := plugin.Stage(ctx, "Checking preparation cache")
-	defer func() { done(err) }()
+	// The deferred call finishes whichever stage is current, with the outputs it found.
+	var detail string
+	defer func() { done(err, plugin.Detail(detail)) }()
 	identityInputs := map[string]plugin.Artifact{}
 	modes := map[string]uint32{}
 	for name, input := range inputs {
@@ -315,10 +318,11 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			}
 			cached[name] = artifact
 		}
+		detail = strings.TrimSpace(outputDetail(cached) + " (cached)")
 		return cached, true, nil
 	}
 
-	done(nil)
+	done(nil, plugin.Detail("not cached"))
 	done = plugin.Stage(ctx, "Materializing inputs")
 	workspace := filepath.Join(work, "output")
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
@@ -435,7 +439,14 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		}{identityInputs, modes})
 		outputs[name] = observed
 	}
+	detail = outputDetail(outputs)
 	return outputs, false, rememberOutputs(ctx, store, key, outputs)
+}
+
+// outputDetail names a preparation's installer for progress displays.
+func outputDetail(outputs map[string]Prepared) string {
+	installer := outputs["installer"]
+	return strings.TrimSpace(installer.Filename + " " + installer.Version)
 }
 
 func rememberOutputs(ctx context.Context, store *cas.Store, key string, outputs map[string]Prepared) error {

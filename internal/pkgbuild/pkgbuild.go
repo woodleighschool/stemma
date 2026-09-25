@@ -75,7 +75,7 @@ var packageIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
 // It supports ordinary files/directories and install hooks with resources.
 // Relative symlinks are retained; unrepresentable filesystem metadata is rejected.
 func Build(ctx context.Context, root, output string, opts Options) (err error) {
-	done := plugin.Stage(ctx, "Building Apple package")
+	done := plugin.Stage(ctx, "Building Apple package", plugin.Detail(filepath.Base(output)))
 	defer func() { done(err) }()
 	if err := Validate(opts); err != nil {
 		return err

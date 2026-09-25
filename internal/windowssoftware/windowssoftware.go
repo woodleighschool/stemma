@@ -90,7 +90,7 @@ func relative(name string) bool {
 // Prepare assembles the setup content. DeriveSignature verifies the setup
 // file against its observed publisher instead of the configured one.
 func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string, deriveSignature bool) (artifacts map[string]plugin.Artifact, err error) {
-	done := plugin.Stage(ctx, "Preparing Windows installer")
+	done := plugin.Stage(ctx, "Preparing Windows installer", plugin.Detail(inputs["source"].Filename))
 	defer func() { done(err) }()
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -163,9 +163,9 @@ func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact) 
 	if artifact.Tree {
 		setup = filepath.Join(artifact.Path, filepath.FromSlash(artifact.EntryPoint))
 	}
-	done := plugin.Stage(ctx, "Verifying signature")
+	done := plugin.Stage(ctx, "Verifying signature", plugin.Detail(filepath.Base(setup)))
 	result, err := authenticode.Verify(ctx, setup, want)
-	done(err)
+	done(err, plugin.Detail(result.Name))
 	if err != nil {
 		return err
 	}

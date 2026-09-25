@@ -56,7 +56,7 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	if spec.PackagePath != "" && !source.Traversable() {
 		return nil, errors.New("package_path requires an archive source")
 	}
-	done := plugin.Stage(ctx, "Inspecting installer")
+	done := plugin.Stage(ctx, "Inspecting installer", plugin.Detail(input.Filename))
 	inventory, err := inspect.Source(ctx, source)
 	done(err)
 	if err != nil {
@@ -165,14 +165,14 @@ func publishPackage(ctx context.Context, spec Spec, request Request, source *con
 		}
 		local = node.Local
 		if local == "" {
-			done := plugin.Stage(ctx, "Extracting package from disk image")
+			done := plugin.Stage(ctx, "Extracting package from disk image", plugin.Detail(path.Base(pkg)))
 			local, err = node.Materialize(ctx, filepath.Join(request.Workspace, "expanded"))
 			done(err)
 			if err != nil {
 				return plugin.Artifact{}, nil, nil, err
 			}
 		}
-		done := plugin.Stage(ctx, "Inspecting package")
+		done := plugin.Stage(ctx, "Inspecting package", plugin.Detail(path.Base(pkg)))
 		facts, err = inspect.Read(ctx, local)
 		done(err)
 		if err != nil {
@@ -238,7 +238,7 @@ func verify(ctx context.Context, spec Spec, check func(signature.Signer) (signat
 	}
 	done := plugin.Stage(ctx, "Verifying signature")
 	result, err := check(want)
-	done(err)
+	done(err, plugin.Detail(result.Name))
 	if err != nil {
 		return nil, err
 	}

@@ -88,7 +88,7 @@ func createIcon(ctx context.Context, options IconOptions, root string, plan reso
 		return "no artwork", nil
 	}
 	workspace := filepath.Join(work, "icon")
-	done := plugin.Stage(ctx, "Extracting artwork")
+	done := plugin.Stage(ctx, "Extracting artwork", plugin.Detail(installer.Filename))
 	subject, err := iconSubject(ctx, plan.Resource.Kind, installer.artifact(), workspace, options.Presentation)
 	done(err)
 	if errors.Is(err, icon.ErrNoArtwork) || errors.Is(err, macsoftware.ErrNoApplication) {
@@ -97,7 +97,7 @@ func createIcon(ctx context.Context, options IconOptions, root string, plan reso
 	if err != nil {
 		return "", err
 	}
-	done = plugin.Stage(ctx, "Presenting icon")
+	done = plugin.Stage(ctx, "Presenting icon", plugin.Detail(string(options.Presentation)))
 	data, presentation, err := icon.Present(ctx, subject, icon.Options{Presentation: options.Presentation, Size: options.Size, Workspace: workspace})
 	done(err)
 	if errors.Is(err, icon.ErrNoArtwork) {

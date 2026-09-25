@@ -89,7 +89,7 @@ func inputFacts(ctx context.Context, sources *sources, name string) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	done := plugin.Stage(ctx, "Inspecting input")
+	done := plugin.Stage(ctx, "Inspecting input", plugin.Detail(name))
 	facts, err := inspect.Source(ctx, source)
 	done(err)
 	if err != nil {

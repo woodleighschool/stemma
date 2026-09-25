@@ -28,7 +28,7 @@ import (
 // with every date set to timestamp, so the same bundle and timestamp produce the
 // same bytes on every host. The bundle is never mounted or executed.
 func WriteApplication(ctx context.Context, app, output string, timestamp time.Time) (err error) {
-	done := plugin.Stage(ctx, "Building disk image")
+	done := plugin.Stage(ctx, "Building disk image", plugin.Detail(filepath.Base(output)))
 	defer func() { done(err) }()
 	name := filepath.Base(app)
 	if !strings.EqualFold(filepath.Ext(name), ".app") {

@@ -32,7 +32,7 @@ func ValidateSource(ctx context.Context, sourceDir, setupFile string) error {
 // source tree and must not exist. Temporary files are removed on failure.
 // Payload identity ignores source timestamps and normalizes Windows file modes.
 func Write(ctx context.Context, sourceDir, setupFile, outputPath string) (result Metadata, err error) {
-	done := plugin.Stage(ctx, "Packaging Intune content")
+	done := plugin.Stage(ctx, "Packaging Intune content", plugin.Detail(filepath.Base(outputPath)))
 	defer func() { done(err) }()
 	var m Metadata
 	if err := ctx.Err(); err != nil {
