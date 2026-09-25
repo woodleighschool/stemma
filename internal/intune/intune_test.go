@@ -79,7 +79,7 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 		t.Fatal("unchanged reconciliation wrote to the tenant")
 	}
 	fake.mu.Unlock()
-	req.Metadata = raw(object{"architecture": nil, "assignments": []any{}})
+	req.Metadata = raw(object{"architectures": nil, "assignments": []any{}})
 	desired, err = compile(req)
 	if err != nil {
 		t.Fatal(err)
@@ -384,7 +384,7 @@ func fixtureRequest(t *testing.T) plugin.ReconcileRequest[Config] {
 	digest := sha256.Sum256(data)
 	return plugin.ReconcileRequest[Config]{Method: "apply", Identity: plugin.Identity{Project: "example", Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "test"}, Destination: "intune"}, Artifact: plugin.Artifact{Path: path, Filename: "setup.cmd", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}, Metadata: raw(object{
 		"display_name": "Fixture", "description": "Test app", "publisher": "Fixture Publisher",
-		"install_command": "setup.cmd", "uninstall_command": "setup.cmd /remove", "minimum_windows_release": "Windows11_23H2", "architecture": "x64",
+		"install_command": "setup.cmd", "uninstall_command": "setup.cmd /remove", "minimum_windows_release": "Windows11_23H2", "architectures": []any{"x64"},
 		"install_experience": object{"run_as": "system"},
 		"detection":          []any{object{"type": "msi", "product_code": "{AC01F3D3-C5D5-40DB-9E8C-ED53982E17ED}"}},
 		"assignments":        []any{object{"intent": "required", "group": "group-1"}},
@@ -405,7 +405,6 @@ type graphFixture struct {
 	creates, versions, blobLists, commits, assigns, appLists, writes int
 	failBlob, failCommit, failRelationships                          bool
 
-	expectedAPI        string
 	pendingAppReads    int
 	contentTypes       []string
 	paths              []string
@@ -426,7 +425,7 @@ func newGraphFixture(t *testing.T) (*graphFixture, *client) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := newSDKClient(server.URL+"/v1.0", auth, server.Client().Transport)
+	c, err := newSDKClient(server.URL, auth, server.Client().Transport)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,13 +499,7 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing auth", http.StatusUnauthorized)
 		return
 	}
-	api := f.expectedAPI
-	if api == "" {
-		api = "v1.0"
-	}
-	if strings.Contains(r.URL.Path, "/relationships") || strings.HasSuffix(r.URL.Path, "/updateRelationships") {
-		api = "beta"
-	}
+	const api = "beta"
 	if !strings.HasPrefix(r.URL.Path, "/"+api+"/") {
 		http.Error(w, "wrong API version", http.StatusBadRequest)
 		return
@@ -690,7 +683,6 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 	for _, appType := range []string{dmgType, pkgType, lobType} {
 		t.Run(appType, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
-			fake.expectedAPI = "beta"
 			extension := ".dmg"
 			if appType != dmgType {
 				extension = ".pkg"
@@ -771,12 +763,11 @@ func TestMacValidationAndAdoption(t *testing.T) {
 		}
 	}
 	fake, c := newGraphFixture(t)
-	fake.expectedAPI = "beta"
 	fake.app = object{"@odata.type": dmgType, "id": "app-1", "notes": "", "committedContentVersion": "1", "publishingState": "published"}
 	req := fixtureRequest(t)
 	req.Method = "plan"
 	req.Artifact.Filename = "existing.dmg"
-	req.Config = Config{GraphURL: fake.url + "/v1.0", Token: "test-token"}
+	req.Config = Config{GraphURL: fake.url, Token: "test-token"}
 	req.Identity.Resource.Kind = "MacSoftware"
 	req.Metadata = raw(object{"app_id": "app-1", "display_name": "Adopted", "included_apps": []any{object{"id": "org.example.app", "version": "1.0"}}})
 	desired, err := compile(req)
@@ -817,7 +808,6 @@ func TestMacValidationAndAdoption(t *testing.T) {
 
 func TestMacLOBPreservesManagedInstallRequirements(t *testing.T) {
 	fake, c := newGraphFixture(t)
-	fake.expectedAPI = "beta"
 	fake.app = object{"@odata.type": lobType, "id": "app-1", "installAsManaged": true}
 	receipt := plugin.Subject{ID: "PackageInfo", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.package", Version: "2.0", HasPayload: true}}
 	app := plugin.Subject{ID: "Payload/Example.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Library/Example.app", App: &plugin.AppFacts{BundleID: "org.example.app", Version: "2.0"}}
@@ -851,9 +841,6 @@ func TestAppSubtypeCannotBeChanged(t *testing.T) {
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
-	fake.mu.Lock()
-	fake.expectedAPI = "beta"
-	fake.mu.Unlock()
 	req.Artifact.Filename = "vendor.dmg"
 	desired = object{"@odata.type": dmgType}
 	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), "different native subtype") {

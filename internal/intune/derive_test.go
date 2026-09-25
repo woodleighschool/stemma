@@ -251,7 +251,7 @@ func TestLineOfBusinessUploadRequirements(t *testing.T) {
 }
 
 func TestStaticValidationAcceptsReferencesWithoutContent(t *testing.T) {
-	req := plugin.ReconcileRequest[Config]{Method: "validate", Config: Config{GraphURL: "https://graph.microsoft.com/v1.0", Token: "synthetic"},
+	req := plugin.ReconcileRequest[Config]{Method: "validate", Config: Config{GraphURL: "https://graph.microsoft.com", Token: "synthetic"},
 		Metadata: raw(object{
 			"type":         "win32",
 			"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": true}},
@@ -262,6 +262,16 @@ func TestStaticValidationAcceptsReferencesWithoutContent(t *testing.T) {
 	response, err := Handle(t.Context(), req)
 	if err != nil {
 		t.Fatalf("static relationship validation: %+v, %v", response, err)
+	}
+}
+
+// Graph returns architecture flags in its own order; a declared set in any
+// order must compile to that spelling or every plan would report a change.
+func TestArchitecturesCompileToGraphFlags(t *testing.T) {
+	req := plugin.ReconcileRequest[Config]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "example"}}, Metadata: raw(object{"architectures": []any{"arm64", "x64"}})}
+	m, err := compile(req)
+	if err != nil || m["allowedArchitectures"] != "x64,arm64" {
+		t.Fatalf("allowedArchitectures = %#v, %v", m["allowedArchitectures"], err)
 	}
 }
 
@@ -295,6 +305,11 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 		{"named subject derivation", "WindowsSoftware", object{"derive": object{"msi": "installer"}}, false},
 		{"declared minimum OS", "MacSoftware", object{"minimum_os": "14.0"}, false},
 		{"line-of-business app", "MacSoftware", object{"type": "lob", "install_as_managed": true}, true},
+		{"architectures", "WindowsSoftware", object{"architectures": []any{"x64", "arm64"}}, true},
+		{"cleared architectures", "WindowsSoftware", object{"architectures": nil}, true},
+		{"single architecture", "WindowsSoftware", object{"architecture": "x64"}, false},
+		{"empty architectures", "WindowsSoftware", object{"architectures": []any{}}, false},
+		{"repeated architecture", "WindowsSoftware", object{"architectures": []any{"x64", "x64"}}, false},
 		{"managed PKG app", "MacSoftware", object{"type": "pkg", "install_as_managed": true}, false},
 		{"Windows line-of-business app", "WindowsSoftware", object{"type": "lob", "install_command": "setup.exe"}, false},
 	} {
@@ -304,7 +319,7 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 				t.Fatalf("schema validity differs: %v", err)
 			}
 			identity := plugin.Identity{Resource: plugin.ResourceReference{Kind: test.kind, Name: "example"}}
-			_, err := Handle(t.Context(), plugin.ReconcileRequest[Config]{Method: "validate", Identity: identity, Config: Config{GraphURL: "https://graph.microsoft.com/v1.0", Token: "synthetic"}, Metadata: metadata})
+			_, err := Handle(t.Context(), plugin.ReconcileRequest[Config]{Method: "validate", Identity: identity, Config: Config{GraphURL: "https://graph.microsoft.com", Token: "synthetic"}, Metadata: metadata})
 			if (err == nil) != test.valid {
 				t.Fatalf("provider validity differs: %v", err)
 			}

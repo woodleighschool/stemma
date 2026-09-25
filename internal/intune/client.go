@@ -18,11 +18,10 @@ import (
 	core "github.com/microsoftgraph/msgraph-sdk-go-core"
 	graphauth "github.com/microsoftgraph/msgraph-sdk-go-core/authentication"
 	betadam "github.com/woodleighschool/stemma/internal/intune/graph/beta/deviceappmanagement"
-	dam "github.com/woodleighschool/stemma/internal/intune/graph/stable/deviceappmanagement"
 )
 
 type Config struct {
-	GraphURL     string `json:"graph_url,omitempty" jsonschema:"default=https://graph.microsoft.com/v1.0" jsonschema_description:"Graph base URL ending in /v1.0. macOS apps select /beta automatically. HTTPS is required."`
+	GraphURL     string `json:"graph_url,omitempty" jsonschema:"default=https://graph.microsoft.com" jsonschema_description:"Graph service origin, such as https://graph.microsoft.us for a national cloud. HTTPS is required; app management uses the beta API."`
 	Token        string `json:"token,omitempty" jsonschema:"minLength=1,writeOnly=true" jsonschema_description:"Bearer token. Choose this or all three client credentials; supply secrets through environment references."`
 	TenantID     string `json:"tenant_id,omitempty" jsonschema:"minLength=1" jsonschema_description:"Microsoft Entra tenant ID for client-credential authentication."`
 	ClientID     string `json:"client_id,omitempty" jsonschema:"minLength=1" jsonschema_description:"App registration client ID for client-credential authentication."`
@@ -30,7 +29,6 @@ type Config struct {
 }
 
 type client struct {
-	stable       *dam.DeviceAppManagementRequestBuilder
 	beta         *betadam.DeviceAppManagementRequestBuilder
 	appType      string
 	http         *http.Client
@@ -41,11 +39,8 @@ type client struct {
 func (cfg Config) Validate() error {
 	base, err := url.Parse(cfg.GraphURL)
 	if err != nil || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" ||
-		base.Scheme != "https" {
-		return errors.New("graph_url must be HTTPS without user info, query or fragment")
-	}
-	if !strings.HasSuffix(strings.TrimRight(base.Path, "/"), "/v1.0") {
-		return errors.New("graph_url must end in /v1.0; macOS apps select /beta automatically")
+		base.Scheme != "https" || strings.Trim(base.Path, "/") != "" {
+		return errors.New("graph_url must be an HTTPS origin without path, user info, query or fragment")
 	}
 	if cfg.Token == "" && (cfg.TenantID == "" || cfg.ClientID == "" || cfg.ClientSecret == "") {
 		return errors.New("set token or tenant_id, client_id and client_secret")
@@ -76,7 +71,7 @@ func newClient(cfg Config) (*client, error) {
 	return newSDKClient(cfg.GraphURL, auth, nil)
 }
 
-func newSDKClient(base string, auth authentication.AuthenticationProvider, transport http.RoundTripper) (*client, error) {
+func newSDKClient(origin string, auth authentication.AuthenticationProvider, transport http.RoundTripper) (*client, error) {
 	middleware, err := khttp.GetDefaultMiddlewaresWithOptions(
 		khttp.NewCompressionOptionsReference(false),
 		&khttp.RetryHandlerOptions{ShouldRetry: func(_ time.Duration, _ int, req *http.Request, response *http.Response) bool {
@@ -94,30 +89,17 @@ func newSDKClient(base string, auth authentication.AuthenticationProvider, trans
 	}
 	graphHTTP.Transport = boundedTransport{graphHTTP.Transport}
 	graphHTTP.Timeout = 2 * time.Minute
-	base = strings.TrimRight(base, "/")
-	betaURL := strings.TrimSuffix(base, "/v1.0") + "/beta"
-	newAdapter := func(endpoint string) (*core.GraphRequestAdapterBase, error) {
-		adapter, err := core.NewGraphRequestAdapterBaseWithParseNodeFactoryAndSerializationWriterFactoryAndHttpClient(
-			auth, core.GraphClientOptions{}, kjson.NewJsonParseNodeFactory(), kjson.NewJsonSerializationWriterFactory(), graphHTTP,
-		)
-		if err != nil {
-			return nil, err
-		}
-		adapter.SetBaseUrl(endpoint)
-		return adapter, nil
-	}
-	adapter, err := newAdapter(base)
+	betaURL := strings.TrimRight(origin, "/") + "/beta"
+	adapter, err := core.NewGraphRequestAdapterBaseWithParseNodeFactoryAndSerializationWriterFactoryAndHttpClient(
+		auth, core.GraphClientOptions{}, kjson.NewJsonParseNodeFactory(), kjson.NewJsonSerializationWriterFactory(), graphHTTP,
+	)
 	if err != nil {
 		return nil, err
 	}
-	betaAdapter, err := newAdapter(betaURL)
-	if err != nil {
-		return nil, err
-	}
+	adapter.SetBaseUrl(betaURL)
 
 	return &client{
-		stable:       dam.NewDeviceAppManagementRequestBuilderInternal(map[string]string{"baseurl": base}, adapter),
-		beta:         betadam.NewDeviceAppManagementRequestBuilderInternal(map[string]string{"baseurl": betaURL}, betaAdapter),
+		beta:         betadam.NewDeviceAppManagementRequestBuilderInternal(map[string]string{"baseurl": betaURL}, adapter),
 		http:         &http.Client{Transport: transport, Timeout: 2 * time.Minute, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
 		pollInterval: 5 * time.Second,
 	}, nil

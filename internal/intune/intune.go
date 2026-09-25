@@ -508,7 +508,7 @@ func validateCreation(m object) error {
 		return errors.New("creating a Win32 app requires install_experience.run_as")
 	}
 	if text(m["allowedArchitectures"]) == "" {
-		return errors.New("creating a Win32 app requires architecture")
+		return errors.New("creating a Win32 app requires architectures")
 	}
 	rules, _ := m["rules"].([]any)
 	if len(rules) == 0 {

@@ -38,7 +38,10 @@ func MetadataSchema() *jsonschema.Schema {
 	win32["install_command"] = textSchema("Silent Windows install command. Selected MSI content defaults to msiexec /i with /qn /norestart; EXE switches and architecture-specific executable paths are explicit. Payloads and hooks are never executed during preparation.")
 	win32["uninstall_command"] = textSchema("Windows uninstall command. Selected MSI content defaults to msiexec /x ProductCode /qn /norestart; EXE uninstall behavior is explicit.")
 	win32["minimum_windows_release"] = textSchema("Minimum Windows release, such as Windows11_23H2. Required for creation.")
-	win32["architecture"] = &jsonschema.Schema{Enum: []any{"x86", "x64", "arm64", nil}, Description: "Supported processor architecture; null clears it on an existing app. A non-null value is required for creation."}
+	win32["architectures"] = &jsonschema.Schema{
+		AnyOf:       []*jsonschema.Schema{{Type: "array", MinItems: new(uint64(1)), UniqueItems: true, Items: &jsonschema.Schema{Enum: []any{"x86", "x64", "arm64"}}}, {Type: "null"}},
+		Description: "Processor architectures the app installs on, such as [x64, arm64] for an x64 app that also runs emulated on Arm. Null clears the restriction on an existing app; a list is required for creation.",
+	}
 	for key, description := range map[string]string{
 		"minimum_disk_space_mb": "Minimum free disk space in MB.",
 		"minimum_memory_mb":     "Minimum memory in MB.",

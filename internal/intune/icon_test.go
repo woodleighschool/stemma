@@ -16,7 +16,6 @@ import (
 
 func TestIconPublicationIndependentOfContent(t *testing.T) {
 	fake, c := newGraphFixture(t)
-	fake.expectedAPI = "beta"
 	req := fixtureRequest(t)
 	req.Artifact.Filename = "example.pkg"
 	desired := object{"@odata.type": pkgType, "displayName": "Example", "description": "Synthetic application", "publisher": "Example", "primaryBundleId": "org.example.app", "primaryBundleVersion": "1.0", "includedApps": []any{object{"bundleId": "org.example.app", "bundleVersion": "1.0"}}, "minimumSupportedOperatingSystem": object{"v12_0": true}}

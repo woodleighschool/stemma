@@ -1,5 +1,5 @@
 {
-  "descriptionHash": "7EE74488BEE06DCA53F804A1F0749349422B8FEF1303D3F0C4709DE6282A1944EFCAD18954E7919BB8B653973E421A614DDA9B68A16A72950A3D7BD703A76BC1",
+  "descriptionHash": "BC9DC515890E46873A7FC0266246B5C607CE1221955BC2B868C09CEB3A42BA1BF5ECD896C8852A571211E77C8ACD86E09F1480257B6B81B83D0AAC0EFE3F5FD2",
   "descriptionLocation": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/0d13ff1/openapi/beta/openapi.yaml",
   "lockFileVersion": "1.0.0",
   "kiotaVersion": "1.35.0",
@@ -57,7 +57,15 @@
     "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSPkgApp/contentVersions/{mobileAppContent-id}/files#POST",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSPkgApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}#GET",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSPkgApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}/commit#POST",
-    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSPkgApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}/renewUpload#POST"
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSPkgApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}/renewUpload#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions#GET",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions/{mobileAppContent-id}#DELETE",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions/{mobileAppContent-id}/files#GET",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions/{mobileAppContent-id}/files#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}#GET",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}/commit#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.win32LobApp/contentVersions/{mobileAppContent-id}/files/{mobileAppContentFile-id}/renewUpload#POST"
   ],
   "excludePatterns": [],
   "disabledValidationRules": [],

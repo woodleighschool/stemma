@@ -34,7 +34,7 @@ func TestDerivedFieldWithoutArtifactValueIsClearedOrMustBeSet(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req := plugin.ReconcileRequest[Config]{
-				Prepared: true, Config: Config{GraphURL: "https://graph.microsoft.com/v1.0", Token: "synthetic"}, Metadata: raw(test.metadata), Artifact: test.artifact,
+				Prepared: true, Config: Config{GraphURL: "https://graph.microsoft.com", Token: "synthetic"}, Metadata: raw(test.metadata), Artifact: test.artifact,
 				MinimumOS: &plugin.MinimumOS{Version: "14.0", Origin: "app.minimum_os"},
 			}
 			// The rule reads only this declaration and artifact, so it holds for every

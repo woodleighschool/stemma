@@ -1847,8 +1847,8 @@
               "type": "string"
             }
           ],
-          "default": "https://graph.microsoft.com/v1.0",
-          "description": "Graph base URL ending in /v1.0. macOS apps select /beta automatically. HTTPS is required."
+          "default": "https://graph.microsoft.com",
+          "description": "Graph service origin, such as https://graph.microsoft.us for a national cloud. HTTPS is required; app management uses the beta API."
         },
         "tenant_id": {
           "anyOf": [
@@ -1989,14 +1989,33 @@
               ],
               "description": "Pin this software to an existing Intune app, which must exist and must not carry another software's identity marker. Omit to find the app by the identity marker in its notes, or create one."
             },
-            "architecture": {
+            "architectures": {
               "anyOf": [
                 {
-                  "enum": [
-                    "x86",
-                    "x64",
-                    "arm64",
-                    null
+                  "anyOf": [
+                    {
+                      "items": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "x86",
+                              "x64",
+                              "arm64"
+                            ]
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "minItems": 1,
+                      "type": "array",
+                      "uniqueItems": true
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 },
                 {
@@ -2004,7 +2023,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Supported processor architecture; null clears it on an existing app. A non-null value is required for creation."
+              "description": "Processor architectures the app installs on, such as [x64, arm64] for an x64 app that also runs emulated on Arm. Null clears the restriction on an existing app; a list is required for creation."
             },
             "assignments": {
               "anyOf": [

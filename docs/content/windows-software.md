@@ -27,7 +27,7 @@ spec:
     windows-win32:
       destinations:
         intune:
-          architecture: x64
+          architectures: [x64]
           minimum_windows_release: Windows11_24H2
           install_experience:
             run_as: system
@@ -47,8 +47,9 @@ spec:
 
 Supply credentials through your shell or runner's secret management. The Entra app
 needs Graph application permissions appropriate to app management; see
-[publishing](publishing.md#intune). Change architecture, minimum release and
-installation context to match the vendor and your devices.
+[publishing](publishing.md#intune). Change architectures, minimum release and
+installation context to match the vendor and your devices; an x64 app that should
+also install on Arm devices lists `[x64, arm64]`.
 
 ## Publish an enterprise MSI
 

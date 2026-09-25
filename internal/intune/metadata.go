@@ -46,7 +46,7 @@ var win32Fields = map[string]field{
 	"uninstall_command":       {"uninstallCommandLine", text10k},
 	"install_experience":      {"installExperience", installExperience},
 	"minimum_windows_release": {"minimumSupportedWindowsRelease", text10k},
-	"architecture":            {"allowedArchitectures", architecture},
+	"architectures":           {"allowedArchitectures", architectures},
 	"minimum_disk_space_mb":   {"minimumFreeDiskSpaceInMB", int32Value},
 	"minimum_memory_mb":       {"minimumMemoryInMB", int32Value},
 	"minimum_processors":      {"minimumNumberOfProcessors", int32Value},
@@ -219,11 +219,35 @@ func int32Value(value any) (any, error) {
 	return value, nil
 }
 
-func architecture(value any) (any, error) {
-	if value != nil && !enum(value, "x86", "x64", "arm64") {
-		return nil, errors.New("must be x86, x64, arm64 or null")
+// windowsArchitectures lists Graph's architecture flags in the order Graph
+// writes them, so a declared set compares equal to its readback.
+var windowsArchitectures = []string{"x86", "x64", "arm64"}
+
+// architectures translates a set of processor architectures into Graph's
+// comma-separated flags; null clears the restriction.
+func architectures(value any) (any, error) {
+	if value == nil {
+		return nil, nil
 	}
-	return value, nil
+	list, ok := value.([]any)
+	if !ok || len(list) == 0 {
+		return nil, errors.New("must be a nonempty list of x86, x64 and arm64, or null")
+	}
+	declared := map[string]bool{}
+	for _, item := range list {
+		name := text(item)
+		if !slices.Contains(windowsArchitectures, name) || declared[name] {
+			return nil, errors.New("must list each of x86, x64 and arm64 at most once")
+		}
+		declared[name] = true
+	}
+	var flags []string
+	for _, name := range windowsArchitectures {
+		if declared[name] {
+			flags = append(flags, name)
+		}
+	}
+	return strings.Join(flags, ","), nil
 }
 
 // choice translates a declared enum value into its Graph spelling.
