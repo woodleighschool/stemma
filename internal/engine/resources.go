@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
-	"time"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
@@ -285,18 +284,11 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	defer func() { done(err) }()
 	identityInputs := map[string]plugin.Artifact{}
 	modes := map[string]uint32{}
-	var timestamp time.Time
 	for name, input := range inputs {
 		artifact := input.artifact()
 		artifact.Path = ""
 		identityInputs[name] = artifact
 		modes[name] = input.Mode
-		if input.Timestamp.After(timestamp) {
-			timestamp = input.Timestamp
-		}
-	}
-	if timestamp.IsZero() {
-		timestamp = time.Unix(0, 0).UTC()
 	}
 	key := config.Fingerprint(struct {
 		Implementation, Provider string
@@ -304,9 +296,8 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		Config                   json.RawMessage
 		Inputs                   map[string]plugin.Artifact
 		Modes                    map[string]uint32
-		Timestamp                time.Time
 		Environment              map[string]string
-	}{"resource/2", ops.identity[plan.Operation], plan.Resource.Reference(), plan.Config, identityInputs, modes, timestamp, plan.Environment})
+	}{"resource/2", ops.identity[plan.Operation], plan.Resource.Reference(), plan.Config, identityInputs, modes, plan.Environment})
 	cached, complete, err := recallOutputs(ctx, store, key)
 	if err != nil {
 		return nil, false, err
@@ -337,7 +328,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	if err != nil {
 		return nil, false, err
 	}
-	request := plugin.ResourceRequest[json.RawMessage]{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Timestamp: timestamp, Derive: derive, Environment: plan.Environment}
+	request := plugin.ResourceRequest[json.RawMessage]{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Derive: derive, Environment: plan.Environment}
 	// Windows stores only the read-only bit, so compare modes against the lease.
 	leasedModes := map[string]os.FileMode{}
 	for name, input := range inputs {
@@ -438,7 +429,6 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		}
 		observed.EntryPoint = artifact.EntryPoint
 		observed.Evidence = artifact.Evidence
-		observed.Timestamp = timestamp
 		observed.InputsHash = config.Fingerprint(struct {
 			Artifacts map[string]plugin.Artifact
 			Modes     map[string]uint32

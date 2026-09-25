@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
@@ -17,9 +16,9 @@ import (
 func TestEntryEvidenceRoundTripAndEquality(t *testing.T) {
 	entry := Entry{
 		Version: 1, Resolver: "vendor.release", ResolverVersion: "1", Declaration: strings.Repeat("a", 64),
-		ResolvedAt: time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC), Observation: json.RawMessage(`{}`),
-		Content:  Content{Artifact: cas.Ref{SHA256: strings.Repeat("b", 64), Size: 1}, Filename: "input.pkg", Mode: 0o644},
-		Evidence: map[string]json.RawMessage{"vendor.release": json.RawMessage(`{ "version": "1.2", "id": 9007199254740993, "enabled": false }`)},
+		Observation: json.RawMessage(`{}`),
+		Content:     Content{Artifact: cas.Ref{SHA256: strings.Repeat("b", 64), Size: 1}, Filename: "input.pkg", Mode: 0o644},
+		Evidence:    map[string]json.RawMessage{"vendor.release": json.RawMessage(`{ "version": "1.2", "id": 9007199254740993, "enabled": false }`)},
 	}
 	data, err := yaml.Marshal(entry)
 	if err != nil {
@@ -71,11 +70,11 @@ func TestResolveRejectsInvalidEvidence(t *testing.T) {
 			evidence := map[string]json.RawMessage{"vendor.release": json.RawMessage(test.value)}
 			m.Resolvers["vendor.release"] = Resolver{
 				Version: "1",
-				Resolve: func(context.Context, plugin.Input) (Resolution, error) {
-					return Resolution{Observation: json.RawMessage(`{}`), Artifact: plugin.Artifact{Path: filename, Filename: "input.pkg", Evidence: evidence}}, nil
+				Discover: func(context.Context, plugin.Input) (Discovery, error) {
+					return Discovery{Observation: json.RawMessage(`{}`)}, nil
 				},
-				FetchLocked: func(context.Context, plugin.Input, json.RawMessage) (plugin.Artifact, error) {
-					return plugin.Artifact{}, nil
+				Fetch: func(context.Context, plugin.Input, json.RawMessage) (plugin.Artifact, error) {
+					return plugin.Artifact{Path: filename, Filename: "input.pkg", Evidence: evidence}, nil
 				},
 			}
 			if _, err := m.Resolve(t.Context(), plugin.Input{Resolver: "vendor.release"}); err == nil || !strings.Contains(err.Error(), `resolver evidence "vendor.release"`) {

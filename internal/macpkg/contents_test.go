@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/deploymenttheory/go-macos-pkg/pkg/cpio"
 	"github.com/deploymenttheory/go-macos-pkg/pkg/xar"
@@ -70,7 +69,7 @@ func TestContentsComposeIdenticallyFromTreeZIPTARAndDMG(t *testing.T) {
 	var digest string
 	for _, format := range []string{"tree", "zip", "tar", "dmg"} {
 		t.Run(format, func(t *testing.T) {
-			artifact, err := Build(t.Context(), spec, map[string]plugin.Artifact{"vendor": inputs[format]}, t.TempDir(), time.Unix(1, 0))
+			artifact, err := Build(t.Context(), spec, map[string]plugin.Artifact{"vendor": inputs[format]}, t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -106,7 +105,7 @@ func TestWrapperKeepsOriginalMediaAndSelectsArchiveRoot(t *testing.T) {
 		"postinstall": {Content: &hook}, "vendor.zip": {Input: "vendor"}, "expanded": {Input: "vendor", Path: "."},
 	}}
 	input := plugin.Artifact{Path: filename, Filename: "vendor.zip"}
-	result, err := Build(t.Context(), spec, map[string]plugin.Artifact{"vendor": input}, t.TempDir(), time.Time{})
+	result, err := Build(t.Context(), spec, map[string]plugin.Artifact{"vendor": input}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +117,7 @@ func TestWrapperKeepsOriginalMediaAndSelectsArchiveRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	testarchive.Zip(t, filename, root)
-	next, err := Build(t.Context(), spec, map[string]plugin.Artifact{"vendor": input}, t.TempDir(), time.Time{})
+	next, err := Build(t.Context(), spec, map[string]plugin.Artifact{"vendor": input}, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +131,7 @@ func TestContentPathsRejectTraversalAndScalarMembers(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			spec, inputs := fixture(t)
 			spec.Payload = map[string]Entry{"/Library/Example": {Input: "script", Path: name}}
-			_, err := Build(t.Context(), spec, inputs, t.TempDir(), time.Time{})
+			_, err := Build(t.Context(), spec, inputs, t.TempDir())
 			if err == nil {
 				t.Fatal("invalid input member accepted")
 			}
@@ -150,7 +149,7 @@ func TestCompositionPreservesConfinedSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec.Scripts["fonts"] = Script{Input: "fonts"}
-	result, err := Build(t.Context(), spec, inputs, t.TempDir(), time.Time{})
+	result, err := Build(t.Context(), spec, inputs, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +164,7 @@ func TestCompositionPreservesConfinedSymlinks(t *testing.T) {
 		}
 	}
 	spec.Payload = map[string]Entry{"/Library/Example": {Input: "fonts", Path: "current/child"}}
-	if _, err := Build(t.Context(), spec, inputs, t.TempDir(), time.Time{}); err == nil {
+	if _, err := Build(t.Context(), spec, inputs, t.TempDir()); err == nil {
 		t.Fatal("selected through a symlink")
 	}
 }
@@ -185,7 +184,7 @@ func TestCompositionRejectsSymlinkDestinationParents(t *testing.T) {
 	spec.Payload = nil
 	spec.Scripts["."] = Script{Input: "fonts", Path: "."}
 	spec.Scripts["alias/outside"] = Script{Content: &content}
-	_, err := Build(t.Context(), spec, inputs, t.TempDir(), time.Time{})
+	_, err := Build(t.Context(), spec, inputs, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "destination parent") {
 		t.Fatalf("symlink parent was not rejected during staging: %v", err)
 	}

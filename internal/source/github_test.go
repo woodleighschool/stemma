@@ -117,7 +117,7 @@ func TestGitHubAssetSelection(t *testing.T) {
 func TestGitHubLockedFetchVerification(t *testing.T) {
 	for _, test := range []struct{ name, address, body, failure string }{
 		{"origin", "https://github.com/other/app/releases/download/v1/App.pkg", "installer", "configured GitHub repository"},
-		{"content", "https://github.com/example/app/releases/download/v1/App.pkg", "changed installer", "source integrity mismatch"},
+		{"content", "https://github.com/example/app/releases/download/v1/App.pkg", "changed installer", "differs from the input lock"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, err := cas.Open(t.TempDir())

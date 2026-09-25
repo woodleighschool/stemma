@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"strings"
-	"time"
 
 	"go.yaml.in/yaml/v4"
 )
@@ -156,7 +155,6 @@ type ResourceRequest[C any] struct {
 	Identity  ResourceReference   `json:"identity"`
 	Inputs    map[string]Artifact `json:"inputs,omitempty"`
 	Workspace string              `json:"workspace,omitempty"`
-	Timestamp time.Time           `json:"timestamp,omitzero"`
 	// Environment contains the immutable process values referenced by delayed
 	// preparation expressions. The host includes them in preparation identity.
 	Environment map[string]string `json:"environment,omitempty"`
@@ -208,26 +206,37 @@ func (contract ContentContract) Accepts(artifact Artifact) error {
 	return nil
 }
 
-// ResolverKind versions an observation contract. Local resolvers also validate
-// the current checkout when consuming a lock, rather than trusting cached bytes.
+// ResolverKind versions an observation contract: within one version, an
+// observation keeps its meaning and an immutable one always fetches the same
+// bytes. Local resolvers also validate the current checkout when consuming a
+// lock, rather than trusting cached bytes.
 type ResolverKind struct {
 	Version string `json:"version"`
 	Local   bool   `json:"local,omitempty"`
 }
 
+// ResolveRequest asks discover for the declaration's current observation,
+// without downloading it, and run for the artifact Observation names,
+// reproducing that observation rather than looking up the latest release.
 type ResolveRequest[C any] struct {
+	Method      string          `json:"-"`
 	Config      C               `json:"config,omitempty"`
 	Base        string          `json:"base,omitempty"`
 	Root        string          `json:"root,omitempty"`
 	Workspace   string          `json:"workspace,omitempty"`
-	Locked      bool            `json:"locked,omitempty"`
 	Observation json.RawMessage `json:"observation,omitempty"`
 }
 
+// ResolveResponse answers discover with Observation and run with Artifact.
+// Immutable promises that the observation always fetches the same bytes, so
+// the host reuses content it fetched for it before instead of calling run.
 type ResolveResponse struct {
-	Observation json.RawMessage `json:"observation"`
-	Artifact    Artifact        `json:"artifact"`
+	Observation json.RawMessage `json:"observation,omitempty"`
+	Immutable   bool            `json:"immutable,omitempty"`
+	Artifact    Artifact        `json:"artifact,omitzero"`
 }
+
+func (request *ResolveRequest[C]) setMethod(method string) { request.Method = method }
 
 func (request ResolveRequest[C]) validateConfig() error { return validateConfig(request.Config) }
 

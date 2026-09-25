@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
@@ -18,7 +17,6 @@ import (
 // Prepared preserves the original source alongside selected payloads and verification evidence.
 type Prepared struct {
 	InputsHash    string                     `json:"inputs_hash,omitempty"`
-	Timestamp     time.Time                  `json:"timestamp"`
 	Payload       cas.Ref                    `json:"payload"`
 	Filename      string                     `json:"filename"`
 	Format        string                     `json:"format"`

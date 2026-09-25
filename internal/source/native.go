@@ -52,31 +52,14 @@ var nativeFields = map[string][]string{
 	"local":  {"base", "include", "filename", "sha256"},
 }
 
-// nativeObservation records where locked content came from. ETag and
-// Last-Modified are refresh hints: they let a later refresh ask the server
-// whether the same bytes still stand, and never identify content themselves.
+// nativeObservation records where remote content came from. File and local
+// inputs observe nothing beyond their declaration.
 type nativeObservation struct {
-	URL          string `json:"url,omitempty"`
-	Release      string `json:"release,omitempty"`
-	ReleaseID    int64  `json:"release_id,omitempty"`
-	AssetID      int64  `json:"asset_id,omitempty"`
-	ETag         string `json:"etag,omitempty"`
-	LastModified string `json:"last_modified,omitempty"`
+	URL       string `json:"url,omitempty"`
+	Release   string `json:"release,omitempty"`
+	ReleaseID int64  `json:"release_id,omitempty"`
+	AssetID   int64  `json:"asset_id,omitempty"`
 }
-
-func (o nativeObservation) hints() bool { return o.ETag != "" || o.LastModified != "" }
-
-type nativeEntry struct {
-	nativeObservation
-
-	Filename string
-	Tree     bool
-	// revalidate carries the previous hints a refresh may send conditionally.
-	revalidate nativeObservation
-}
-
-// errNotModified reports that a conditional download confirmed the previous content.
-var errNotModified = errors.New("source content not modified")
 
 // NativeResolver reports whether the name is reserved for a built-in source.
 func NativeResolver(name string) bool {
@@ -176,128 +159,45 @@ func (s nativeConfig) hostPath(root string) string {
 	return filepath.Join(root, filepath.FromSlash(s.Path))
 }
 
-func (m *Manager) resolveNative(ctx context.Context, input plugin.Input) (Content, json.RawMessage, error) {
-	content, observation, _, err := m.observeNative(ctx, input, nil)
-	return content, observation, err
-}
-
-// refreshNative asks the source whether previous still stands before
-// downloading: GitHub identifies assets by release and asset ID, HTTP by a
-// conditional request with the recorded hints. Unchanged bytes keep the
-// previous hints so a rotated validator alone never changes a lock; entries
-// locked without hints adopt them once.
-func (m *Manager) refreshNative(ctx context.Context, input plugin.Input, previous Entry) (Content, json.RawMessage, bool, error) {
+// discoverNative reports what a native declaration names now. A GitHub
+// release asset never changes; an HTTP URL can serve new bytes at any time.
+func (m *Manager) discoverNative(ctx context.Context, input plugin.Input) (Discovery, error) {
+	s, err := native(input)
+	if err != nil {
+		return Discovery{}, err
+	}
 	var observed nativeObservation
-	if err := decode(previous.Observation, &observed); err != nil {
-		return Content{}, nil, false, fmt.Errorf("locked observation: %w", err)
-	}
-	content, observation, unchanged, err := m.observeNative(ctx, input, &observed)
-	if err != nil || unchanged {
-		return content, observation, unchanged, err
-	}
-	if content.Artifact == previous.Content.Artifact && observed.hints() {
-		var current nativeObservation
-		if err := decode(observation, &current); err != nil {
-			return Content{}, nil, false, err
+	switch s.Type {
+	case "github":
+		err = m.github(ctx, s, &observed)
+	case "http":
+		observed.URL = s.URL
+		if s.Match != "" {
+			observed.URL, err = m.discoverLink(ctx, s)
 		}
-		current.ETag, current.LastModified = observed.ETag, observed.LastModified
-		observation, err = json.Marshal(current)
 	}
-	return content, observation, false, err
+	if err != nil {
+		return Discovery{}, err
+	}
+	data, err := json.Marshal(observed)
+	return Discovery{Observation: data, Immutable: s.Type == "github"}, err
 }
 
-// observeNative resolves a declaration, or with a previous observation of the
-// same declaration reports unchanged when the source confirms its content.
-func (m *Manager) observeNative(ctx context.Context, input plugin.Input, previous *nativeObservation) (Content, json.RawMessage, bool, error) {
+// fetchNative reads a local input or downloads the observed URL.
+func (m *Manager) fetchNative(ctx context.Context, input plugin.Input, observation json.RawMessage, previous *record) (record, error) {
 	s, err := native(input)
 	if err != nil {
-		return Content{}, nil, false, err
+		return record{}, err
 	}
-	entry := nativeEntry{URL: s.URL, Filename: s.Filename, Tree: s.Type == "local"}
-	mode := uint32(0o644)
-	if s.Type == "file" {
-		info, err := os.Stat(s.hostPath(m.Root))
-		if err != nil {
-			return Content{}, nil, false, err
-		}
-		entry.Tree = info.IsDir()
-		mode = uint32(info.Mode().Perm())
+	if s.Type == "file" || s.Type == "local" {
+		content, err := m.readLocal(ctx, s)
+		return record{Content: content}, err
 	}
-	if s.Type == "local" {
-		root, err := os.OpenRoot(m.Root)
-		if err != nil {
-			return Content{}, nil, false, err
-		}
-		defer func() { _ = root.Close() }()
-		name := s.Base
-		if name == "" {
-			name = "."
-		}
-		info, err := root.Lstat(name)
-		if err != nil {
-			return Content{}, nil, false, err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return Content{}, nil, false, errors.New("local input base must not be a symlink")
-		}
-		entry.Tree = info.IsDir()
-		mode = uint32(info.Mode().Perm())
+	var observed nativeObservation
+	if err := decode(observation, &observed); err != nil {
+		return record{}, fmt.Errorf("observation: %w", err)
 	}
-	if s.Type == "github" {
-		if err := m.github(ctx, s, &entry); err != nil {
-			return Content{}, nil, false, err
-		}
-		if previous != nil && entry.nativeObservation == *previous {
-			return Content{}, nil, true, nil
-		}
-	}
-	if s.Type == "http" && s.Match != "" {
-		if err := m.discover(ctx, s, &entry); err != nil {
-			return Content{}, nil, false, err
-		}
-	}
-	if s.Type == "http" && previous != nil && previous.URL == entry.URL {
-		entry.revalidate = *previous
-	}
-	if entry.Filename == "" {
-		switch s.Type {
-		case "local":
-			entry.Filename = path.Base(s.Base)
-			if entry.Filename == "." || entry.Filename == "" {
-				entry.Filename = "local"
-			}
-		case "file":
-			entry.Filename = filepath.Base(s.Path)
-		}
-	}
-	if s.Type != "http" && !validFilename(entry.Filename) {
-		return Content{}, nil, false, errors.New("input has no safe filename; set filename explicitly")
-	}
-	ref, err := m.download(ctx, s, &entry, s.SHA256)
-	if errors.Is(err, errNotModified) {
-		return Content{}, nil, true, nil
-	}
-	observation, encodeErr := json.Marshal(entry.nativeObservation)
-	if err != nil {
-		return Content{}, nil, false, err
-	}
-	return Content{Artifact: ref, Filename: entry.Filename, Tree: entry.Tree, Mode: mode}, observation, false, encodeErr
-}
-
-func (m *Manager) fetchNative(ctx context.Context, input plugin.Input, entry Entry) (Content, error) {
-	s, err := native(input)
-	if err != nil {
-		return Content{}, err
-	}
-	var observation nativeObservation
-	if err := decode(entry.Observation, &observation); err != nil {
-		return Content{}, err
-	}
-	download := nativeEntry{nativeObservation: observation, Filename: entry.Content.Filename, Tree: entry.Content.Tree}
-	ref, err := m.download(ctx, s, &download, entry.Content.Artifact.SHA256)
-	content := entry.Content
-	content.Artifact = ref
-	return content, err
+	return m.download(ctx, s, observed.URL, previous)
 }
 
 func safeRelative(name string) bool {
@@ -399,22 +299,41 @@ func validateHTTPURL(address string) error {
 	return nil
 }
 
-func (m *Manager) download(ctx context.Context, s nativeConfig, entry *nativeEntry, expected string) (result cas.Ref, err error) {
+// readLocal hashes a file or local tree as it is now.
+func (m *Manager) readLocal(ctx context.Context, s nativeConfig) (content Content, err error) {
+	content.Filename = s.Filename
 	if s.Type == "local" {
 		done := plugin.Stage(ctx, "Reading local inputs")
 		defer func() { done(err) }()
 		project, err := os.OpenRoot(m.Root)
 		if err != nil {
-			return cas.Ref{}, err
+			return content, err
 		}
 		defer func() { _ = project.Close() }()
 		base := s.Base
 		if base == "" {
 			base = "."
 		}
+		info, err := project.Lstat(base)
+		if err != nil {
+			return content, err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return content, errors.New("local input base must not be a symlink")
+		}
+		content.Tree, content.Mode = info.IsDir(), uint32(info.Mode().Perm())
+		if content.Filename == "" {
+			content.Filename = path.Base(s.Base)
+			if content.Filename == "." || content.Filename == "" {
+				content.Filename = "local"
+			}
+		}
+		if !validFilename(content.Filename) {
+			return content, errors.New("input has no safe filename; set filename explicitly")
+		}
 		root, err := project.OpenRoot(base)
 		if err != nil {
-			return cas.Ref{}, err
+			return content, err
 		}
 		defer func() { _ = root.Close() }()
 		var names []string
@@ -433,103 +352,120 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, entry *nativeEnt
 				return nil
 			}, doublestar.WithNoFollow(), doublestar.WithFailOnIOErrors())
 			if err != nil {
-				return cas.Ref{}, fmt.Errorf("local include %q: %w", pattern, err)
+				return content, fmt.Errorf("local include %q: %w", pattern, err)
 			}
 			if !matched {
-				return cas.Ref{}, fmt.Errorf("local include %q matched no files", pattern)
+				return content, fmt.Errorf("local include %q matched no files", pattern)
 			}
 		}
-		return m.importTree(ctx, root, names, expected)
+		content.Artifact, err = m.importTree(ctx, root, names, s.SHA256)
+		return content, err
 	}
-	if s.Type == "file" {
-		done := plugin.Stage(ctx, "Reading local input")
-		defer func() { done(err) }()
-		name := s.hostPath(m.Root)
-		f, err := os.Open(name)
+	done := plugin.Stage(ctx, "Reading local input")
+	defer func() { done(err) }()
+	name := s.hostPath(m.Root)
+	f, err := os.Open(name)
+	if err != nil {
+		return content, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return content, err
+	}
+	content.Tree, content.Mode = info.IsDir(), uint32(info.Mode().Perm())
+	if content.Filename == "" {
+		content.Filename = filepath.Base(s.Path)
+	}
+	if !validFilename(content.Filename) {
+		return content, errors.New("input has no safe filename; set filename explicitly")
+	}
+	switch {
+	case info.IsDir():
+		tree, err := os.OpenRoot(name)
 		if err != nil {
-			return cas.Ref{}, err
+			return content, err
 		}
-		defer func() { _ = f.Close() }()
-		info, err := f.Stat()
-		if err != nil {
-			return cas.Ref{}, err
-		}
-		if !info.Mode().IsRegular() {
-			if !info.IsDir() || !entry.Tree {
-				return cas.Ref{}, errors.New("file source changed type or is not a regular file/directory")
-			}
-			tree, err := os.OpenRoot(name)
-			if err != nil {
-				return cas.Ref{}, err
-			}
-			defer func() { _ = tree.Close() }()
-			return m.importTree(ctx, tree, nil, expected)
-		}
-		if entry.Tree {
-			return cas.Ref{}, errors.New("file source changed from directory to file")
-		}
-		return m.Store.Import(ctx, f, expected)
+		defer func() { _ = tree.Close() }()
+		content.Artifact, err = m.importTree(ctx, tree, nil, s.SHA256)
+		return content, err
+	case info.Mode().IsRegular():
+		content.Artifact, err = m.Store.Import(ctx, f, s.SHA256)
+		return content, err
 	}
-	if err := validateHTTPURL(entry.URL); err != nil {
-		return cas.Ref{}, fmt.Errorf("lockfile URL: %w", err)
+	return content, errors.New("file source is not a regular file or directory")
+}
+
+// download fetches an observed URL into the cache. With a previous record it
+// asks conditionally and returns that record when the server confirms it.
+func (m *Manager) download(ctx context.Context, s nativeConfig, address string, previous *record) (result record, err error) {
+	if err := validateHTTPURL(address); err != nil {
+		return record{}, fmt.Errorf("observation URL: %w", err)
 	}
-	u, _ := url.Parse(entry.URL)
-	if s.Type == "http" {
-		if s.Match == "" && entry.URL != s.URL {
-			return cas.Ref{}, errors.New("locked HTTP URL does not match configuration")
-		}
+	u, _ := url.Parse(address)
+	if s.Type == "http" && s.Match == "" && address != s.URL {
+		return record{}, errors.New("observed HTTP URL does not match configuration")
 	}
 	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
-		return cas.Ref{}, errors.New("locked asset does not belong to the configured GitHub repository")
+		return record{}, errors.New("observed asset does not belong to the configured GitHub repository")
 	}
 	done := plugin.Stage(ctx, "Downloading input")
+	confirmed := false
 	defer func() {
-		if errors.Is(err, errNotModified) {
+		if confirmed {
 			done(nil, "unchanged", true)
 			return
 		}
 		done(err)
 	}()
-	req, err := m.request(ctx, entry.URL, s)
+	req, err := m.request(ctx, address, s)
 	if err != nil {
-		return cas.Ref{}, err
+		return record{}, err
 	}
-	if entry.revalidate.ETag != "" {
-		req.Header.Set("If-None-Match", entry.revalidate.ETag)
-	}
-	if entry.revalidate.LastModified != "" {
-		req.Header.Set("If-Modified-Since", entry.revalidate.LastModified)
+	validators := previous != nil && (previous.ETag != "" || previous.LastModified != "")
+	if validators {
+		if previous.ETag != "" {
+			req.Header.Set("If-None-Match", previous.ETag)
+		}
+		if previous.LastModified != "" {
+			req.Header.Set("If-Modified-Since", previous.LastModified)
+		}
 	}
 	res, err := m.Client.Do(req)
 	if err != nil {
-		return cas.Ref{}, transportError("download", err)
+		return record{}, transportError("download", err)
 	}
 	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode == http.StatusNotModified && entry.revalidate.hints() {
-		return cas.Ref{}, errNotModified
+	if res.StatusCode == http.StatusNotModified && validators {
+		confirmed = true
+		return *previous, nil
 	}
 	if res.StatusCode != http.StatusOK {
-		return cas.Ref{}, fmt.Errorf("download returned HTTP %d", res.StatusCode)
+		return record{}, fmt.Errorf("download returned HTTP %d", res.StatusCode)
 	}
 	// Hosts that ignore conditional requests still send validators; the same
-	// strong ETag confirms the locked bytes without transferring them.
-	if s.Type == "http" && entry.revalidate.ETag != "" && !strings.HasPrefix(entry.revalidate.ETag, "W/") && res.Header.Get("ETag") == entry.revalidate.ETag && res.Header.Get("Last-Modified") == entry.revalidate.LastModified {
-		return cas.Ref{}, errNotModified
+	// strong ETag confirms the previous bytes without transferring them.
+	if validators && previous.ETag != "" && !strings.HasPrefix(previous.ETag, "W/") && res.Header.Get("ETag") == previous.ETag && res.Header.Get("Last-Modified") == previous.LastModified {
+		confirmed = true
+		return *previous, nil
 	}
 	if res.ContentLength > cas.MaxObjectSize {
-		return cas.Ref{}, errors.New("download exceeds 16 GiB")
+		return record{}, errors.New("download exceeds 16 GiB")
 	}
-	if s.Type == "http" {
-		entry.ETag, entry.LastModified = res.Header.Get("ETag"), res.Header.Get("Last-Modified")
+	result.ETag, result.LastModified = res.Header.Get("ETag"), res.Header.Get("Last-Modified")
+	result.Content = Content{Filename: s.Filename, Mode: 0o644}
+	if result.Content.Filename == "" && s.Type == "github" {
+		result.Content.Filename = path.Base(u.Path)
 	}
-	if entry.Filename == "" {
-		entry.Filename = responseFilename(res, entry.URL)
+	if result.Content.Filename == "" {
+		result.Content.Filename = responseFilename(res, address)
 	}
-	if !validFilename(entry.Filename) {
-		return cas.Ref{}, errors.New("input has no safe filename; set filename explicitly")
+	if !validFilename(result.Content.Filename) {
+		return record{}, errors.New("input has no safe filename; set filename explicitly")
 	}
 	plugin.Logger(ctx).DebugContext(ctx, "Download response", "bytes", res.ContentLength)
-	return m.Store.Import(ctx, plugin.ProgressReader(ctx, res.Body, res.ContentLength), expected)
+	result.Content.Artifact, err = m.Store.Import(ctx, plugin.ProgressReader(ctx, res.Body, res.ContentLength), s.SHA256)
+	return result, err
 }
 
 func (m *Manager) importTree(ctx context.Context, root *os.Root, names []string, expected string) (cas.Ref, error) {
@@ -600,32 +536,33 @@ func stripPrivateHeaders(headers http.Header) {
 	}
 }
 
-func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEntry) (err error) {
+// discoverLink finds the one download URL a page's match selects.
+func (m *Manager) discoverLink(ctx context.Context, s nativeConfig) (link string, err error) {
 	done := plugin.Stage(ctx, "Discovering source release")
 	defer func() { done(err) }()
 	req, err := m.request(ctx, s.URL, s)
 	if err != nil {
-		return err
+		return "", err
 	}
 	res, err := m.Client.Do(req)
 	if err != nil {
-		return transportError("download page", err)
+		return "", transportError("download page", err)
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("download page returned HTTP %d", res.StatusCode)
+		return "", fmt.Errorf("download page returned HTTP %d", res.StatusCode)
 	}
 	const limit = 4 << 20
 	data, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
 	if err != nil {
-		return transportError("download page", err)
+		return "", transportError("download page", err)
 	}
 	if len(data) > limit {
-		return errors.New("download page exceeds 4 MiB")
+		return "", errors.New("download page exceeds 4 MiB")
 	}
 	pattern, err := regexp.Compile(s.Match)
 	if err != nil {
-		return err
+		return "", err
 	}
 	base := req.URL
 	if res.Request != nil {
@@ -642,23 +579,23 @@ func (m *Manager) discover(ctx context.Context, s nativeConfig, entry *nativeEnt
 		for _, address := range pattern.FindAllString(text, -1) {
 			reference, err := url.Parse(address)
 			if err != nil || address == "" {
-				return errors.New("download page match is not a valid URL reference")
+				return "", errors.New("download page match is not a valid URL reference")
 			}
 			resolved := base.ResolveReference(reference)
 			address = resolved.String()
 			if err := validateHTTPURL(address); err != nil {
-				return fmt.Errorf("download page match must resolve to a stable HTTP(S) URL: %w", err)
+				return "", fmt.Errorf("download page match must resolve to a stable HTTP(S) URL: %w", err)
 			}
 			matches[address] = true
 		}
 	}
 	if len(matches) != 1 {
-		return fmt.Errorf("download page matched %d distinct artifact URLs; expected one", len(matches))
+		return "", fmt.Errorf("download page matched %d distinct artifact URLs; expected one", len(matches))
 	}
 	for address := range matches {
-		entry.URL = address
+		link = address
 	}
-	return nil
+	return link, nil
 }
 
 // markup reports whether a download page is HTML. Pages served without a
@@ -705,7 +642,7 @@ func attributes(page string, base *url.URL) ([]string, *url.URL) {
 	}
 }
 
-func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry) (err error) {
+func (m *Manager) github(ctx context.Context, s nativeConfig, observed *nativeObservation) (err error) {
 	done := plugin.Stage(ctx, "Discovering GitHub release")
 	defer func() { done(err) }()
 	endpoint := "https://api.github.com/repos/" + s.Repository + "/releases/latest"
@@ -763,13 +700,7 @@ func (m *Manager) github(ctx context.Context, s nativeConfig, entry *nativeEntry
 		return fmt.Errorf("GitHub release %s has %d assets matching %q; expected exactly one%s", release.Tag, len(matches), s.Asset, assetNames("matched assets", names))
 	}
 	asset := release.Assets[matches[0]]
-	entry.URL = asset.URL
-	entry.ReleaseID = release.ID
-	entry.AssetID = asset.ID
-	entry.Release = release.Tag
-	if entry.Filename == "" {
-		entry.Filename = asset.Name
-	}
+	*observed = nativeObservation{URL: asset.URL, Release: release.Tag, ReleaseID: release.ID, AssetID: asset.ID}
 	return nil
 }
 

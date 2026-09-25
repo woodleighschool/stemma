@@ -21,13 +21,13 @@ import (
 
 // Build assembles a private layout from leased inputs and writes one unsigned
 // component package. Input files and packaged endpoint scripts are never run.
-func Build(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string, timestamp time.Time) (plugin.Artifact, error) {
+func Build(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string) (plugin.Artifact, error) {
 	sources := newSources(inputs, workspace)
 	defer sources.close()
-	return build(ctx, spec, sources, workspace, timestamp)
+	return build(ctx, spec, sources, workspace)
 }
 
-func build(ctx context.Context, spec Spec, sources *sources, workspace string, timestamp time.Time) (plugin.Artifact, error) {
+func build(ctx context.Context, spec Spec, sources *sources, workspace string) (plugin.Artifact, error) {
 	spec.Inputs = make(map[string]plugin.Input, len(sources.inputs))
 	for name := range sources.inputs {
 		spec.Inputs[name] = plugin.Input{}
@@ -38,15 +38,13 @@ func build(ctx context.Context, spec Spec, sources *sources, workspace string, t
 	if !filepath.IsAbs(workspace) {
 		return plugin.Artifact{}, errors.New("package workspace must be absolute")
 	}
-	if timestamp.IsZero() {
-		timestamp = time.Unix(0, 0).UTC()
-	}
 	root, err := os.MkdirTemp(workspace, ".macpkg-*")
 	if err != nil {
 		return plugin.Artifact{}, err
 	}
 	defer func() { _ = os.RemoveAll(root) }()
-	opts := pkgbuild.Options{Identifier: spec.Package.Identifier, Version: spec.Package.Version, Timestamp: timestamp}
+	// A fixed date keeps the package a function of its inputs alone.
+	opts := pkgbuild.Options{Identifier: spec.Package.Identifier, Version: spec.Package.Version, Timestamp: time.Unix(0, 0).UTC()}
 	for _, area := range []string{"Payload", "Scripts"} {
 		names := make([]string, 0)
 		if area == "Payload" {

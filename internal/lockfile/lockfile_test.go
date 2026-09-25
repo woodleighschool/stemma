@@ -93,9 +93,6 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 		t.Fatal("initial input did not resolve once")
 	}
 	original := entry(first)
-	original.ResolvedAt = time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
-	first.File.Inputs[resource]["source"] = original
-	save(t, m, first.File)
 	before := lockedBytes(t, m)
 	if bytes.Contains(before, []byte("first-token")) {
 		t.Fatal("lock retained a credential")
@@ -106,8 +103,8 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 		t.Fatalf("warm offline input changed: %v", err)
 	}
 	refreshed, err := prepare(t, m, inputs, Options{Refresh: true})
-	if err != nil || refreshed.Changed || !entry(refreshed).ResolvedAt.Equal(original.ResolvedAt) {
-		t.Fatalf("same bytes changed reviewed timestamp: %v", err)
+	if err != nil || refreshed.Changed || !entry(refreshed).Equal(original) {
+		t.Fatalf("same bytes changed the reviewed entry: %v", err)
 	}
 	object, err := m.Store.Path(original.Content.Artifact)
 	if err != nil {
@@ -140,7 +137,7 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 		t.Fatal("failed recovery rewrote lock")
 	}
 	updated, err := prepare(t, m, inputs, Options{Refresh: true})
-	if err != nil || !updated.Changed || entry(updated).Content == original.Content || !entry(updated).ResolvedAt.After(original.ResolvedAt) {
+	if err != nil || !updated.Changed || entry(updated).Content == original.Content {
 		t.Fatalf("refresh failed to record changed input: %v", err)
 	}
 	if _, err := prepare(t, m, inputs, Options{Ignore: true, Frozen: true}); err == nil {
@@ -148,7 +145,7 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	}
 }
 
-func TestReleaseObservationChangesWithoutContentTimestampChurn(t *testing.T) {
+func TestReleaseObservationChangesKeepContentIdentity(t *testing.T) {
 	var currentRelease atomic.Value
 	currentRelease.Store("v1.2.3")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -168,17 +165,14 @@ func TestReleaseObservationChangesWithoutContentTimestampChurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	previous := entry(first)
-	previous.ResolvedAt = time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
-	first.File.Inputs[resource]["source"] = previous
-	save(t, m, first.File)
 	release := "v1.2.4"
 	currentRelease.Store(release)
 	current, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !current.Changed || entry(current).Content != previous.Content || !entry(current).ResolvedAt.Equal(previous.ResolvedAt) || !bytes.Contains(entry(current).Observation, []byte(release)) {
-		t.Fatal("resolver observation changed content timestamp")
+	if !current.Changed || entry(current).Content != previous.Content || !bytes.Contains(entry(current).Observation, []byte(release)) {
+		t.Fatal("resolver observation changed content identity")
 	}
 	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err != nil {
 		t.Fatal(err)
@@ -192,7 +186,7 @@ func TestReleaseObservationChangesWithoutContentTimestampChurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !updated.Changed || entry(updated).Declaration == entry(current).Declaration || entry(updated).Content != entry(current).Content || !entry(updated).ResolvedAt.Equal(entry(current).ResolvedAt) {
+	if !updated.Changed || entry(updated).Declaration == entry(current).Declaration || entry(updated).Content != entry(current).Content {
 		t.Fatal("pattern update lost content identity or failed to replace declaration")
 	}
 	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err != nil {
@@ -240,9 +234,6 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 		t.Fatal("named input representation was lost")
 	}
 	script := first.File.Inputs[resource]["script"]
-	script.ResolvedAt = time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
-	first.File.Inputs[resource]["script"] = script
-	save(t, m, first.File)
 	before := lockedBytes(t, m)
 	if err := os.Chmod(file, 0o755); err != nil {
 		t.Fatal(err)
@@ -261,7 +252,7 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.File.Inputs[resource]["script"].Content.Artifact != script.Content.Artifact || second.File.Inputs[resource]["script"].Content.Mode != uint32(info.Mode().Perm()) || !second.File.Inputs[resource]["script"].ResolvedAt.Equal(script.ResolvedAt) {
+	if second.File.Inputs[resource]["script"].Content.Artifact != script.Content.Artifact || second.File.Inputs[resource]["script"].Content.Mode != uint32(info.Mode().Perm()) {
 		t.Fatal("mode-only change did not preserve byte identity")
 	}
 	if err := os.Remove(link); err != nil {
@@ -298,25 +289,25 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 	digest := sha256.Sum256(data)
 	artifact := plugin.Artifact{Path: file, Filename: "input.bin", Evidence: map[string]json.RawMessage{"vendor.release": json.RawMessage(`{ "version": "1.2", "id": 9007199254740993 }`)}}
 	observation := json.RawMessage(`{"revision":{"id":9007199254740993,"labels":["stable"]},"cursor":"opaque"}`)
-	resolves, fetches := 0, 0
+	discoveries, fetches := 0, 0
 	resolver := source.Resolver{Version: "resolver-1", Fingerprint: func(input plugin.Input) (string, error) {
 		safe := maps.Clone(input.Config)
 		delete(safe, "credential")
 		data, err := json.Marshal(safe)
 		digest := sha256.Sum256(data)
 		return hex.EncodeToString(digest[:]), err
-	}, Resolve: func(_ context.Context, input plugin.Input) (source.Resolution, error) {
+	}, Discover: func(_ context.Context, input plugin.Input) (source.Discovery, error) {
 		if input.Base != "software/App" {
 			t.Fatal("external resolver lost its resource-relative context")
 		}
-		resolves++
-		return source.Resolution{Observation: observation, Artifact: artifact}, nil
-	}, FetchLocked: func(_ context.Context, input plugin.Input, locked json.RawMessage) (plugin.Artifact, error) {
+		discoveries++
+		return source.Discovery{Observation: observation}, nil
+	}, Fetch: func(_ context.Context, input plugin.Input, observed json.RawMessage) (plugin.Artifact, error) {
 		if input.Base != "software/App" {
-			t.Fatal("external locked fetch lost its resource-relative context")
+			t.Fatal("external fetch lost its resource-relative context")
 		}
 		fetches++
-		if !bytes.Contains(locked, []byte("9007199254740993")) {
+		if !bytes.Contains(observed, []byte("9007199254740993")) {
 			t.Fatal("opaque observation lost integer precision")
 		}
 		return artifact, nil
@@ -331,16 +322,12 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolves != 1 {
-		t.Fatal("identical named inputs repeated discovery")
+	if discoveries != 1 || fetches != 1 {
+		t.Fatal("identical named inputs repeated acquisition")
 	}
 	if entry(first).Content.Artifact.SHA256 != hex.EncodeToString(digest[:]) || entry(first).Content.Artifact.Size != int64(len(data)) {
 		t.Fatal("manager did not establish the resolver output's content identity")
 	}
-	original := entry(first)
-	original.ResolvedAt = time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
-	first.File.Inputs[resource]["source"] = original
-	save(t, m, first.File)
 	before := lockedBytes(t, m)
 	if bytes.Contains(before, []byte("private")) || !bytes.Contains(before, []byte("9007199254740993")) || !bytes.Contains(before, []byte("observation:\n")) {
 		t.Fatal("lock leaked credentials or lost opaque observation")
@@ -349,7 +336,7 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 		t.Fatalf("resolver evidence was not canonicalized: %s", got)
 	}
 	warm, err := prepare(t, m, inputs, Options{Frozen: true, Offline: true})
-	if err != nil || warm.Changed || !entry(warm).Equal(entry(first)) || resolves != 1 || fetches != 0 {
+	if err != nil || warm.Changed || !entry(warm).Equal(entry(first)) || discoveries != 1 || fetches != 1 {
 		t.Fatalf("warm offline resolver evidence changed: %v", err)
 	}
 	artifact.Evidence = map[string]json.RawMessage{"vendor.release": json.RawMessage(`{"version":"2.0"}`)}
@@ -358,12 +345,12 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	recovered, err := prepare(t, m, inputs, Options{Frozen: true})
-	if err != nil || recovered.Changed || fetches != 1 || resolves != 1 || !entry(recovered).Equal(entry(first)) {
+	if err != nil || recovered.Changed || fetches != 2 || discoveries != 1 || !entry(recovered).Equal(entry(first)) {
 		t.Fatalf("cold fetch rediscovered or changed locked resolver content: %v", err)
 	}
 	refreshed, err := prepare(t, m, inputs, Options{Refresh: true})
-	if err != nil || !refreshed.Changed || entry(refreshed).Content != entry(first).Content || !entry(refreshed).ResolvedAt.Equal(entry(first).ResolvedAt) || string(entry(refreshed).Evidence["vendor.release"]) != `{"version":"2.0"}` {
-		t.Fatalf("evidence refresh lost content identity or timestamp: %v", err)
+	if err != nil || !refreshed.Changed || entry(refreshed).Content != entry(first).Content || string(entry(refreshed).Evidence["vendor.release"]) != `{"version":"2.0"}` {
+		t.Fatalf("evidence refresh lost content identity: %v", err)
 	}
 	before = lockedBytes(t, m)
 	resolver.Version = "resolver-2"
@@ -510,21 +497,17 @@ func TestRefreshConfirmsLockedContentWithoutDownloading(t *testing.T) {
 	if err != nil || bodies.Load() != 1 {
 		t.Fatalf("initial resolution: %v bodies=%d", err, bodies.Load())
 	}
-	original := entry(first)
-	original.ResolvedAt = time.Date(2025, 3, 4, 5, 6, 7, 0, time.UTC)
-	first.File.Inputs[resource]["source"] = original
-	save(t, m, first.File)
 	before := lockedBytes(t, m)
 	refreshed, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil || refreshed.Changed || bodies.Load() != 1 || conditionals.Load() != 1 {
 		t.Fatalf("refresh downloaded confirmed content: %v changed=%v bodies=%d conditionals=%d", err, refreshed.Changed, bodies.Load(), conditionals.Load())
 	}
-	if !bytes.Equal(before, lockedBytes(t, m)) || !entry(refreshed).ResolvedAt.Equal(original.ResolvedAt) {
+	if !bytes.Equal(before, lockedBytes(t, m)) || !entry(refreshed).Equal(entry(first)) {
 		t.Fatal("confirmed content rewrote the lock")
 	}
 }
 
-func TestHintsConfirmPendingBytesWithoutDownloading(t *testing.T) {
+func TestRefreshReusesPendingBytesWhicheverLockIsCheckedOut(t *testing.T) {
 	var bodies atomic.Int32
 	var release atomic.Value
 	release.Store("one")
@@ -553,16 +536,16 @@ func TestHintsConfirmPendingBytesWithoutDownloading(t *testing.T) {
 
 	// The reviewed lock still records the first release while the proposal waits.
 	save(t, m, reviewed.File)
-	hinted, err := prepare(t, m, inputs, Options{Refresh: true, Hints: proposed.File.Inputs})
-	if err != nil || bodies.Load() != 2 || !entry(hinted).Equal(entry(proposed)) || !entry(hinted).ResolvedAt.Equal(entry(proposed).ResolvedAt) {
-		t.Fatalf("pending bytes were downloaded again: %v bodies=%d %+v", err, bodies.Load(), entry(hinted))
+	pending, err := prepare(t, m, inputs, Options{Refresh: true})
+	if err != nil || bodies.Load() != 2 || !entry(pending).Equal(entry(proposed)) {
+		t.Fatalf("pending bytes were downloaded again: %v bodies=%d %+v", err, bodies.Load(), entry(pending))
 	}
 
-	// A source back at the reviewed bytes keeps the reviewed timestamp.
+	// A source back at the reviewed bytes leaves the reviewed entry as it was.
 	release.Store("one")
 	save(t, m, reviewed.File)
-	reverted, err := prepare(t, m, inputs, Options{Refresh: true, Hints: proposed.File.Inputs})
-	if err != nil || reverted.Changed || !entry(reverted).ResolvedAt.Equal(entry(reviewed).ResolvedAt) {
+	reverted, err := prepare(t, m, inputs, Options{Refresh: true})
+	if err != nil || reverted.Changed {
 		t.Fatalf("reverted source rewrote the reviewed entry: %v changed=%v %+v", err, reverted.Changed, entry(reverted))
 	}
 }

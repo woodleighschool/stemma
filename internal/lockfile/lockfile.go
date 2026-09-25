@@ -38,11 +38,6 @@ type Options struct {
 	PreserveUnselected bool
 	// Retain keeps these reviewed resources when the run did not select them.
 	Retain []string
-	// Hints are entries pending review, keyed like inputs. A refresh sends
-	// their validators, so a source still serving proposed bytes confirms
-	// them without another download; the reviewed entries still decide what
-	// changed.
-	Hints map[string]map[string]source.Entry
 }
 
 // Result reports acquisition separately from downstream metadata changes.
@@ -125,7 +120,7 @@ type Update struct {
 	root    string
 	opts    Options
 	inputs  map[string]map[string]plugin.Input
-	acquire func(ctx context.Context, input plugin.Input, entry, hint source.Entry) (source.Entry, bool, error)
+	acquire func(ctx context.Context, input plugin.Input, entry source.Entry) (source.Entry, bool, error)
 }
 
 // Begin loads reviewed inputs without acquiring resource content.
@@ -185,29 +180,23 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		if err != nil {
 			return source.Entry{}, err
 		}
+		// Inputs sharing a declaration share one observation.
 		key := input.Resolver + "\x00" + version + "\x00" + declaration
-		current, ok := resolved[key]
-		if !ok {
-			// Inputs sharing a declaration share one observation; a source that
-			// confirms the first input's locked bytes confirms them for all.
-			current, err = m.Refresh(ctx, input, previous)
-			if err != nil {
-				return current, err
-			}
+		if current, ok := resolved[key]; ok {
+			return current, nil
+		}
+		current, err := m.Refresh(ctx, input, previous)
+		if err == nil {
 			resolved[key] = current
 		}
-		// Keep the reviewed timestamp whenever immutable bytes stay the same.
-		if current.Content.Artifact == previous.Content.Artifact && !previous.ResolvedAt.IsZero() {
-			current.ResolvedAt = previous.ResolvedAt
-		}
-		return current, nil
+		return current, err
 	}
-	acquire := func(ctx context.Context, input plugin.Input, entry, hint source.Entry) (source.Entry, bool, error) {
+	acquire := func(ctx context.Context, input plugin.Input, entry source.Entry) (source.Entry, bool, error) {
 		version, declaration, err := m.Declaration(input)
 		if err != nil {
 			return source.Entry{}, false, err
 		}
-		matches := entry.Version == 1 && entry.Resolver == input.Resolver && entry.ResolverVersion == version && entry.Declaration == declaration && !entry.ResolvedAt.IsZero()
+		matches := entry.Version == 1 && entry.Resolver == input.Resolver && entry.ResolverVersion == version && entry.Declaration == declaration
 		if m.IsLocal(input.Resolver) {
 			if !matches && (opts.Frozen || opts.Offline) {
 				return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
@@ -230,14 +219,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		if opts.Frozen || opts.Offline {
 			return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 		}
-		previous := entry
-		if hint.Version != 0 {
-			previous = hint
-		}
-		current, err := resolve(ctx, input, previous)
-		if err == nil && current.Content.Artifact == entry.Content.Artifact && !entry.ResolvedAt.IsZero() {
-			current.ResolvedAt = entry.ResolvedAt
-		}
+		current, err := resolve(ctx, input, entry)
 		return current, false, err
 	}
 	if opts.PluginsOnly {
@@ -277,7 +259,7 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 		}
 		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("input", name))
 		done := plugin.Stage(ctx, "Acquiring input")
-		entry, hit, err := u.acquire(ctx, inputs[name], u.old.Inputs[resource][name], u.opts.Hints[resource][name])
+		entry, hit, err := u.acquire(ctx, inputs[name], u.old.Inputs[resource][name])
 		done(err, "cached", hit)
 		if err != nil {
 			return nil, nil, fmt.Errorf("%s input %s: %w", resource, name, err)

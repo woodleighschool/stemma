@@ -52,8 +52,10 @@ func TestExternalResolverEvidenceFeedsNativeMetadata(t *testing.T) {
 	version.Store("1.2")
 	revision.Store("first")
 	var downloads atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		downloads.Add(1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			downloads.Add(1)
+		}
 		w.Header().Set("X-Fixture-Version", version.Load().(string))
 		w.Header().Set("X-Fixture-Revision", revision.Load().(string))
 		_, _ = w.Write(payload)
@@ -134,7 +136,7 @@ spec:
 	wantVersion = "2.0"
 	refreshed := run()
 	updated := refreshed.Artifacts["installer"]
-	if refreshed.Cached || updated.InputsHash == installer.InputsHash || updated.Payload != installer.Payload || !updated.Timestamp.Equal(installer.Timestamp) {
+	if refreshed.Cached || updated.InputsHash == installer.InputsHash || updated.Payload != installer.Payload {
 		t.Fatal("evidence refresh did not invalidate preparation while retaining byte identity")
 	}
 	revision.Store("second")
@@ -159,7 +161,12 @@ func TestExternalResolverBuilderAndNativeDestination(t *testing.T) {
 			var served atomic.Value
 			served.Store(payload)
 			var downloads atomic.Int32
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { downloads.Add(1); _, _ = w.Write(served.Load().([]byte)) }))
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					downloads.Add(1)
+				}
+				_, _ = w.Write(served.Load().([]byte))
+			}))
 			defer server.Close()
 			manifest := fmt.Sprintf(`apiVersion: stemma/v1alpha1
 kind: Project
