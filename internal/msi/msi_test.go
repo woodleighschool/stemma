@@ -3,6 +3,7 @@ package msi
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,11 +59,37 @@ func TestStringCodePages(t *testing.T) {
 }
 
 func TestSectorChainLimits(t *testing.T) {
-	if _, err := readChain(0, 1<<30, 512, []uint32{cfbEndOfChain}, func(uint32) (int, error) { return 0, nil }, make([]byte, 512)); err == nil {
+	read := func(uint32, []byte) error { return nil }
+	if _, err := readChain(0, 1<<20, 512, 512, func(uint32) (uint32, error) { return cfbEndOfChain, nil }, read); err == nil {
 		t.Fatal("accepted stream larger than backing file")
 	}
-	if _, err := readChain(0, -1, 512, []uint32{0}, func(uint32) (int, error) { return 0, nil }, make([]byte, 512)); err == nil {
+	if _, err := readChain(0, -1, 512, 1<<20, func(uint32) (uint32, error) { return 0, nil }, read); err == nil {
 		t.Fatal("accepted cyclic sector chain")
+	}
+}
+
+// A large installer's cabinets are never read, so its size does not bound
+// inspection.
+func TestReadIgnoresCabinetSize(t *testing.T) {
+	data, err := os.ReadFile("testdata/test.msi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "large.msi")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.Write(data)
+	if err == nil {
+		err = f.Truncate(int64(len(data)) + 1<<30)
+	}
+	if err := errors.Join(err, f.Close()); err != nil {
+		t.Fatal(err)
+	}
+	info, err := Read(path)
+	if err != nil || info.ProductVersion != "1.2.3" {
+		t.Fatalf("large MSI: %+v %v", info, err)
 	}
 }
 

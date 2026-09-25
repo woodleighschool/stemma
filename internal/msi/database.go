@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"unicode/utf8"
 )
@@ -25,8 +26,8 @@ type stringTable struct {
 	bytesPerRef int
 }
 
-func newDatabase(data []byte) (*database, error) {
-	cf, err := newCompoundFile(data)
+func newDatabase(file io.ReaderAt, size int64) (*database, error) {
+	cf, err := newCompoundFile(file, size)
 	if err != nil {
 		return nil, err
 	}

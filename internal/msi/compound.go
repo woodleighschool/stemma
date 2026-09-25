@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"unicode/utf16"
 )
@@ -20,8 +21,10 @@ const (
 	cfbFatSect    = uint32(0xfffffffd)
 	cfbDifSect    = uint32(0xfffffffc)
 
+	cfbHeaderSize         = 512
 	cfbDirectoryEntrySize = 128
 	cfbMaxChainSectors    = 1_000_000
+	cfbMaxStreamSize      = 32 << 20
 )
 
 var cfbSignature = []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1}
@@ -33,33 +36,43 @@ type directoryEntry struct {
 	size        int64
 }
 
+// compoundFile reads metadata streams by random access. Cabinet streams are
+// never read, so memory follows the metadata rather than the installer size.
 type compoundFile struct {
-	data           []byte
+	file           io.ReaderAt
+	size           int64
 	sectorSize     int64
 	miniSectorSize int64
 	miniCutoff     int64
-	fat            []uint32
-	miniFat        []uint32
-	miniStream     []byte
-	streams        []directoryEntry
+	fatSectors     []uint32
+	// fat caches the FAT sector read last; chains are mostly contiguous, so
+	// consecutive links usually share it.
+	fat struct {
+		index   int
+		entries []uint32
+	}
+	miniFat    []uint32
+	miniStream []byte
+	streams    []directoryEntry
 }
 
-func newCompoundFile(data []byte) (*compoundFile, error) {
-	if len(data) < 512 || !bytes.Equal(data[:8], cfbSignature) {
+func newCompoundFile(file io.ReaderAt, size int64) (*compoundFile, error) {
+	if size < cfbHeaderSize {
 		return nil, errors.New("bad compound file signature")
 	}
-	if binary.LittleEndian.Uint16(data[28:30]) != 0xfffe {
+	header := make([]byte, cfbHeaderSize)
+	if _, err := file.ReadAt(header, 0); err != nil {
+		return nil, fmt.Errorf("read compound file header: %w", err)
+	}
+	if !bytes.Equal(header[:8], cfbSignature) {
+		return nil, errors.New("bad compound file signature")
+	}
+	if binary.LittleEndian.Uint16(header[28:30]) != 0xfffe {
 		return nil, errors.New("unsupported compound file byte order")
 	}
 
-	sectorShift, ok := u16(data, 30)
-	if !ok {
-		return nil, errors.New("truncated compound file header")
-	}
-	miniSectorShift, ok := u16(data, 32)
-	if !ok {
-		return nil, errors.New("truncated compound file header")
-	}
+	sectorShift := binary.LittleEndian.Uint16(header[30:32])
+	miniSectorShift := binary.LittleEndian.Uint16(header[32:34])
 	if sectorShift != 9 && sectorShift != 12 {
 		return nil, fmt.Errorf("unsupported sector shift %d", sectorShift)
 	}
@@ -68,29 +81,30 @@ func newCompoundFile(data []byte) (*compoundFile, error) {
 	}
 
 	cf := &compoundFile{
-		data:           data,
+		file:           file,
+		size:           size,
 		sectorSize:     int64(1) << sectorShift,
 		miniSectorSize: int64(1) << miniSectorShift,
 	}
-	if int64(len(data)) < cf.sectorSize {
+	cf.fat.index = -1
+	if size < cf.sectorSize {
 		return nil, errors.New("compound file is smaller than its header sector")
 	}
 
-	firstDirSector, _ := u32(data, 48)
-	miniCutoff, _ := u32(data, 56)
-	firstMiniFatSector, _ := u32(data, 60)
-	miniFatSectorCount, _ := u32(data, 64)
-	firstDifatSector, _ := u32(data, 68)
-	difatSectorCount, _ := u32(data, 72)
-	cf.miniCutoff = int64(miniCutoff)
+	firstDirSector := binary.LittleEndian.Uint32(header[48:52])
+	cf.miniCutoff = int64(binary.LittleEndian.Uint32(header[56:60]))
+	firstMiniFatSector := binary.LittleEndian.Uint32(header[60:64])
+	miniFatSectorCount := binary.LittleEndian.Uint32(header[64:68])
+	firstDifatSector := binary.LittleEndian.Uint32(header[68:72])
+	difatSectorCount := binary.LittleEndian.Uint32(header[72:76])
 
-	fatSectors, err := cf.readDifat(firstDifatSector, difatSectorCount)
+	var err error
+	cf.fatSectors, err = cf.readDifat(header, firstDifatSector, difatSectorCount)
 	if err != nil {
 		return nil, err
 	}
-	cf.fat, err = cf.readFat(fatSectors)
-	if err != nil {
-		return nil, err
+	if int64(len(cf.fatSectors)) > size/cf.sectorSize {
+		return nil, errors.New("FAT exceeds file size")
 	}
 
 	if firstMiniFatSector != cfbEndOfChain && firstMiniFatSector != cfbFreeSect && miniFatSectorCount > 0 {
@@ -131,17 +145,14 @@ func (cf *compoundFile) readStream(entry directoryEntry) ([]byte, error) {
 	return cf.readRegularChain(entry.startSector, entry.size)
 }
 
-func (cf *compoundFile) readDifat(firstDifatSector uint32, difatSectorCount uint32) ([]uint32, error) {
+func (cf *compoundFile) readDifat(header []byte, firstDifatSector uint32, difatSectorCount uint32) ([]uint32, error) {
 	if difatSectorCount > 4096 {
 		return nil, errors.New("DIFAT exceeds supported limit")
 	}
 	entriesPerSector := int(cf.sectorSize / 4)
 	fatSectors := make([]uint32, 0)
 	for i := range 109 {
-		sector, ok := u32(cf.data, 76+i*4)
-		if !ok {
-			return nil, errors.New("truncated DIFAT header")
-		}
+		sector := binary.LittleEndian.Uint32(header[76+i*4:])
 		if sector != cfbFreeSect && sector != cfbEndOfChain {
 			fatSectors = append(fatSectors, sector)
 		}
@@ -149,30 +160,22 @@ func (cf *compoundFile) readDifat(firstDifatSector uint32, difatSectorCount uint
 
 	sector := firstDifatSector
 	seen := map[uint32]bool{}
+	buf := make([]byte, cf.sectorSize)
 	for i := uint32(0); sector != cfbEndOfChain && sector != cfbFreeSect && i < difatSectorCount; i++ {
 		if seen[sector] {
 			return nil, errors.New("cycle in DIFAT chain")
 		}
 		seen[sector] = true
-
-		off, err := cf.sectorOffset(sector)
-		if err != nil {
+		if err := cf.readSector(sector, buf); err != nil {
 			return nil, err
 		}
 		for j := range entriesPerSector - 1 {
-			fatSector, ok := u32(cf.data, off+j*4)
-			if !ok {
-				return nil, errors.New("truncated DIFAT sector")
-			}
+			fatSector := binary.LittleEndian.Uint32(buf[j*4:])
 			if fatSector != cfbFreeSect && fatSector != cfbEndOfChain {
 				fatSectors = append(fatSectors, fatSector)
 			}
 		}
-		next, ok := u32(cf.data, off+(entriesPerSector-1)*4)
-		if !ok {
-			return nil, errors.New("truncated DIFAT next sector")
-		}
-		sector = next
+		sector = binary.LittleEndian.Uint32(buf[(entriesPerSector-1)*4:])
 	}
 	if sector != cfbEndOfChain && sector != cfbFreeSect {
 		return nil, errors.New("DIFAT chain exceeds declared sector count")
@@ -180,61 +183,60 @@ func (cf *compoundFile) readDifat(firstDifatSector uint32, difatSectorCount uint
 	return fatSectors, nil
 }
 
-func (cf *compoundFile) readFat(fatSectors []uint32) ([]uint32, error) {
-	if len(fatSectors) > len(cf.data)/int(cf.sectorSize) {
-		return nil, errors.New("FAT exceeds file size")
-	}
+// next returns the FAT entry linking sector to the one that follows it.
+func (cf *compoundFile) next(sector uint32) (uint32, error) {
 	entriesPerSector := int(cf.sectorSize / 4)
-	fat := make([]uint32, 0, len(fatSectors)*entriesPerSector)
-	seen := make(map[uint32]bool, len(fatSectors))
-	for _, sector := range fatSectors {
-		if seen[sector] {
-			return nil, errors.New("duplicate FAT sector")
-		}
-		seen[sector] = true
-		off, err := cf.sectorOffset(sector)
-		if err != nil {
-			return nil, err
-		}
-		for i := range entriesPerSector {
-			v, ok := u32(cf.data, off+i*4)
-			if !ok {
-				return nil, errors.New("truncated FAT sector")
-			}
-			fat = append(fat, v)
-		}
+	index := int(sector) / entriesPerSector
+	if index >= len(cf.fatSectors) {
+		return 0, errors.New("sector chain points outside the FAT")
 	}
-	return fat, nil
+	if cf.fat.index != index {
+		buf := make([]byte, cf.sectorSize)
+		if err := cf.readSector(cf.fatSectors[index], buf); err != nil {
+			return 0, err
+		}
+		cf.fat.index, cf.fat.entries = index, uint32s(buf)
+	}
+	return cf.fat.entries[int(sector)%entriesPerSector], nil
 }
 
 func (cf *compoundFile) readRegularChain(start uint32, size int64) ([]byte, error) {
-	return readChain(start, size, cf.sectorSize, cf.fat, func(sector uint32) (int, error) {
-		return cf.sectorOffset(sector)
-	}, cf.data)
+	return readChain(start, size, cf.sectorSize, cf.size, cf.next, cf.readSector)
 }
 
 func (cf *compoundFile) readMiniChain(start uint32, size int64) ([]byte, error) {
 	if size == 0 {
 		return nil, nil
 	}
-	return readChain(start, size, cf.miniSectorSize, cf.miniFat, func(sector uint32) (int, error) {
+	next := func(sector uint32) (uint32, error) {
+		if int(sector) >= len(cf.miniFat) {
+			return 0, errors.New("sector chain points outside the FAT")
+		}
+		return cf.miniFat[sector], nil
+	}
+	read := func(sector uint32, buf []byte) error {
 		off := int64(sector) * cf.miniSectorSize
 		if off < 0 || off+cf.miniSectorSize > int64(len(cf.miniStream)) {
-			return 0, errors.New("mini stream sector is out of bounds")
+			return errors.New("mini stream sector is out of bounds")
 		}
-		return int(off), nil
-	}, cf.miniStream)
+		copy(buf, cf.miniStream[off:off+cf.miniSectorSize])
+		return nil
+	}
+	return readChain(start, size, cf.miniSectorSize, int64(len(cf.miniStream)), next, read)
 }
 
+// readChain follows a sector chain from start and returns size bytes, or the
+// whole chain when size is negative. No stream is larger than limit, the size
+// of the store holding it.
 func readChain(
 	start uint32,
 	size int64,
 	sectorSize int64,
-	fat []uint32,
-	offset func(uint32) (int, error),
-	source []byte,
+	limit int64,
+	next func(uint32) (uint32, error),
+	read func(uint32, []byte) error,
 ) ([]byte, error) {
-	if size > 32<<20 || size > int64(len(source)) {
+	if size > cfbMaxStreamSize || size > limit {
 		return nil, errors.New("metadata stream exceeds supported size")
 	}
 	if size == 0 {
@@ -248,14 +250,12 @@ func readChain(
 	}
 
 	var out []byte
-	if size > 0 && size <= int64(math.MaxInt32) {
+	if size > 0 {
 		out = make([]byte, 0, size)
 	}
+	buf := make([]byte, sectorSize)
 	seen := map[uint32]bool{}
 	for sector := start; sector != cfbEndOfChain && sector != cfbFreeSect; {
-		if int(sector) >= len(fat) {
-			return nil, errors.New("sector chain points outside the FAT")
-		}
 		if seen[sector] {
 			return nil, errors.New("cycle in sector chain")
 		}
@@ -264,27 +264,25 @@ func readChain(
 		}
 		seen[sector] = true
 
-		off, err := offset(sector)
+		link, err := next(sector)
 		if err != nil {
 			return nil, err
 		}
-		end := int64(off) + sectorSize
-		if off < 0 || end > int64(len(source)) {
-			return nil, errors.New("sector is out of bounds")
+		if err := read(sector, buf); err != nil {
+			return nil, err
 		}
-		out = append(out, source[off:int(end)]...)
-		if len(out) > 32<<20 {
+		out = append(out, buf...)
+		if len(out) > cfbMaxStreamSize {
 			return nil, errors.New("metadata stream exceeds supported size")
 		}
 		if size >= 0 && int64(len(out)) >= size {
 			return out[:size], nil
 		}
 
-		next := fat[sector]
-		if next == cfbFatSect || next == cfbDifSect {
+		if link == cfbFatSect || link == cfbDifSect {
 			return nil, errors.New("sector chain points at a reserved sector")
 		}
-		sector = next
+		sector = link
 	}
 	if size >= 0 && int64(len(out)) < size {
 		return nil, errors.New("sector chain ended before stream size")
@@ -292,15 +290,17 @@ func readChain(
 	return out, nil
 }
 
-func (cf *compoundFile) sectorOffset(sector uint32) (int, error) {
+// readSector fills buf with a regular sector. Sector 0 follows the header,
+// which occupies one sector.
+func (cf *compoundFile) readSector(sector uint32, buf []byte) error {
 	off := (int64(sector) + 1) * cf.sectorSize
-	if off < 0 || off+cf.sectorSize > int64(len(cf.data)) {
-		return 0, errors.New("sector offset is out of bounds")
+	if off+cf.sectorSize > cf.size {
+		return errors.New("sector offset is out of bounds")
 	}
-	if off > int64(math.MaxInt32) {
-		return 0, errors.New("sector offset is too large")
+	if _, err := cf.file.ReadAt(buf[:cf.sectorSize], off); err != nil {
+		return fmt.Errorf("read compound file sector: %w", err)
 	}
-	return int(off), nil
+	return nil
 }
 
 func parseDirectory(data []byte, v3 bool) (*directoryEntry, []directoryEntry, error) {
@@ -362,18 +362,4 @@ func uint32s(data []byte) []uint32 {
 		values[i] = binary.LittleEndian.Uint32(data[i*4 : i*4+4])
 	}
 	return values
-}
-
-func u16(data []byte, off int) (uint16, bool) {
-	if off < 0 || off+2 > len(data) {
-		return 0, false
-	}
-	return binary.LittleEndian.Uint16(data[off : off+2]), true
-}
-
-func u32(data []byte, off int) (uint32, bool) {
-	if off < 0 || off+4 > len(data) {
-		return 0, false
-	}
-	return binary.LittleEndian.Uint32(data[off : off+4]), true
 }
