@@ -310,6 +310,12 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 		{"single architecture", "WindowsSoftware", object{"architecture": "x64"}, false},
 		{"empty architectures", "WindowsSoftware", object{"architectures": []any{}}, false},
 		{"repeated architecture", "WindowsSoftware", object{"architectures": []any{"x64", "x64"}}, false},
+		{"MSI properties", "WindowsSoftware", object{"msi_properties": object{"PORTAL": "vpn.example.com", "zConfig": "AU2_EnableAutoUpdate=true"}}, true},
+		{"MSI properties and install command", "WindowsSoftware", object{"msi_properties": object{"PORTAL": "vpn"}, "install_command": "setup.exe /S"}, false},
+		{"MSI property name", "WindowsSoftware", object{"msi_properties": object{"1PORTAL": "vpn"}}, false},
+		{"MSI property name with NUL", "WindowsSoftware", object{"msi_properties": object{"POR\x00TAL": "vpn"}}, false},
+		{"MSI property value line break", "WindowsSoftware", object{"msi_properties": object{"PORTAL": "vpn\r\nother"}}, false},
+		{"Mac MSI properties", "MacSoftware", object{"type": "pkg", "msi_properties": object{"PORTAL": "vpn"}}, false},
 		{"managed PKG app", "MacSoftware", object{"type": "pkg", "install_as_managed": true}, false},
 		{"Windows line-of-business app", "WindowsSoftware", object{"type": "lob", "install_command": "setup.exe"}, false},
 	} {

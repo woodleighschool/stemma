@@ -7,6 +7,7 @@ import (
 	"maps"
 	"math"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -82,8 +83,8 @@ var appTypes = map[string]string{"win32": win32Type, "pkg": pkgType, "dmg": dmgT
 // name concepts in snake_case, while Graph property names, OData types and enum
 // casing stay inside the destination. Omitted fields stay omitted and supported
 // nulls clear, so the object keeps the declaration's presence. app_id,
-// retention, dependencies and supersedes belong to the destination and pass
-// through unchanged.
+// retention, dependencies, supersedes and msi_properties belong to the
+// destination and pass through unchanged.
 func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 	declared, err := decodeObject(req.Metadata)
 	if err != nil {
@@ -114,6 +115,18 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 		case "dependencies", "supersedes":
 			if appType != win32Type {
 				return nil, fmt.Errorf("%s requires a Win32 app", key)
+			}
+			m[key] = value
+			continue
+		case "msi_properties":
+			if appType != win32Type {
+				return nil, errors.New("msi_properties requires a Win32 app")
+			}
+			if _, commanded := declared["install_command"]; commanded {
+				return nil, errors.New("set msi_properties or install_command, not both")
+			}
+			if err := validateMSIProperties(value); err != nil {
+				return nil, fmt.Errorf("msi_properties: %w", err)
 			}
 			m[key] = value
 			continue
@@ -351,6 +364,28 @@ func assignments(value any) (any, error) {
 		result = append(result, native)
 	}
 	return result, nil
+}
+
+// msiProperty matches a Windows Installer property name.
+var msiProperty = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
+
+// validateMSIProperties checks the public properties a derived msiexec
+// command passes, as property names and single-line text values.
+func validateMSIProperties(value any) error {
+	properties, ok := value.(object)
+	if !ok || len(properties) == 0 {
+		return errors.New("must map at least one property name to a text value")
+	}
+	for name, value := range properties {
+		if !msiProperty.MatchString(name) {
+			return fmt.Errorf("%q is not a Windows Installer property name", name)
+		}
+		text, ok := value.(string)
+		if !ok || strings.ContainsAny(text, "\r\n\x00") {
+			return fmt.Errorf("%s must be a single-line text value", name)
+		}
+	}
+	return nil
 }
 
 // assignmentFilter translates a filter reference into its target properties;

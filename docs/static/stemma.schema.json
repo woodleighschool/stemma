@@ -1975,6 +1975,12 @@
       "anyOf": [
         {
           "additionalProperties": false,
+          "not": {
+            "required": [
+              "install_command",
+              "msi_properties"
+            ]
+          },
           "properties": {
             "app_id": {
               "anyOf": [
@@ -3362,6 +3368,43 @@
                 }
               ],
               "description": "MSI information. The selected setup MSI supplies it; declared fields override it."
+            },
+            "msi_properties": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[^\\r\\n\\x00]*$",
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "minProperties": 1,
+                  "propertyNames": {
+                    "allOf": [
+                      {
+                        "pattern": "^[A-Za-z_][A-Za-z0-9_.]*$"
+                      },
+                      {
+                        "not": {
+                          "pattern": "\\{\\{"
+                        }
+                      }
+                    ]
+                  },
+                  "type": "object"
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Windows Installer properties the derived install command passes to the selected setup MSI, such as PORTAL for GlobalProtect. Values are quoted in name order. Use instead of install_command."
             },
             "notes": {
               "anyOf": [

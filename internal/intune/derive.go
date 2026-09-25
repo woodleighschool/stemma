@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -198,19 +199,24 @@ func validateLOB(artifact plugin.Artifact, managed bool) error {
 	return nil
 }
 
+// deriveInstaller supplies the standard msiexec commands, MSI information and
+// ProductCode detection of a selected setup MSI. Declared MSI properties
+// extend the derived install command.
 func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origins map[string]string) (object, error) {
 	if metadata["@odata.type"] != win32Type {
 		return metadata, nil
 	}
+	properties, _ := metadata["msi_properties"].(object)
+	delete(metadata, "msi_properties")
 	setup := req.Artifact.EntryPoint
 	if setup == "" {
 		setup = req.Artifact.Filename
 	}
-	if !strings.EqualFold(path.Ext(setup), ".msi") {
-		return metadata, nil
-	}
 	data := req.Artifact.Evidence["windows.installer"]
-	if len(data) == 0 {
+	if !strings.EqualFold(path.Ext(setup), ".msi") || len(data) == 0 {
+		if properties != nil && req.Artifact.Path != "" {
+			return nil, errors.New("msi_properties requires an MSI setup file")
+		}
 		return metadata, nil
 	}
 	var selected *plugin.Subject
@@ -222,7 +228,7 @@ func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origi
 	if strings.ContainsAny(setup, "\"%\r\n") && metadata["installCommandLine"] == nil {
 		return nil, errors.New("MSI setup path cannot be represented safely in a standard command")
 	}
-	defaults["installCommandLine"] = `msiexec /i "` + strings.ReplaceAll(setup, "/", `\`) + `" /qn /norestart`
+	defaults["installCommandLine"] = `msiexec /i "` + strings.ReplaceAll(setup, "/", `\`) + `" /qn /norestart` + msiArguments(properties)
 	defaults["uninstallCommandLine"], defaults["rules"] = "", nil
 	if msi.ProductCode != "" {
 		if strings.ContainsAny(msi.ProductCode, "\"%\r\n") && metadata["uninstallCommandLine"] == nil {
@@ -234,6 +240,18 @@ func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origi
 		}
 	}
 	return mergeDerived(metadata, defaults, "windows.installer", origins)
+}
+
+// msiArguments renders public properties for msiexec in name order. Values
+// are quoted, and a quote inside a value is doubled as Windows Installer reads
+// it.
+func msiArguments(properties object) string {
+	var arguments strings.Builder
+	for _, name := range slices.Sorted(maps.Keys(properties)) {
+		value := strings.ReplaceAll(text(properties[name]), `"`, `""`)
+		arguments.WriteString(" " + name + `="` + value + `"`)
+	}
+	return arguments.String()
 }
 
 // msiDefaults lists the MSI identity Graph records; an empty value is one this

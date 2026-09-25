@@ -35,6 +35,11 @@ func MetadataSchema() *jsonschema.Schema {
 	win32["msi"] = msiSchema()
 	win32["dependencies"] = referencesSchema("auto_install", 99)
 	win32["supersedes"] = referencesSchema("uninstall_previous", 9)
+	win32["msi_properties"] = &jsonschema.Schema{
+		Type: "object", MinProperties: new(uint64(1)), PropertyNames: &jsonschema.Schema{Pattern: "^[A-Za-z_][A-Za-z0-9_.]*$"},
+		AdditionalProperties: &jsonschema.Schema{Type: "string", Pattern: "^[^\\r\\n\\x00]*$"},
+		Description:          "Windows Installer properties the derived install command passes to the selected setup MSI, such as PORTAL for GlobalProtect. Values are quoted in name order. Use instead of install_command.",
+	}
 	win32["install_command"] = textSchema("Silent Windows install command. Selected MSI content defaults to msiexec /i with /qn /norestart; EXE switches and architecture-specific executable paths are explicit. Payloads and hooks are never executed during preparation.")
 	win32["uninstall_command"] = textSchema("Windows uninstall command. Selected MSI content defaults to msiexec /x ProductCode /qn /norestart; EXE uninstall behavior is explicit.")
 	win32["minimum_windows_release"] = textSchema("Minimum Windows release, such as Windows11_23H2. Required for creation.")
@@ -71,6 +76,7 @@ func MetadataSchema() *jsonschema.Schema {
 	lob["ignore_version_detection"], lob["included_apps"] = mac["ignore_version_detection"], mac["included_apps"]
 	lob["install_as_managed"] = &jsonschema.Schema{Type: "boolean", Description: "Install the app as managed on macOS 11 or later. The PKG must have one component that installs one application under /Applications."}
 	windows, macOS, lineOfBusiness := objectSchema(win32), objectSchema(mac), objectSchema(lob, "type")
+	windows.Not = &jsonschema.Schema{Required: []string{"install_command", "msi_properties"}}
 	windows.Title, macOS.Title, lineOfBusiness.Title = "Win32 app", "Mac app", "Mac line-of-business app"
 	return &jsonschema.Schema{AnyOf: []*jsonschema.Schema{windows, macOS, lineOfBusiness}, Description: "Intune app metadata. Windows software publishes a Win32 envelope; Mac software publishes its PKG or DMG, or a signed PKG as a line-of-business app. The minimum macOS derives from the software's minimum_os and its installer."}
 }

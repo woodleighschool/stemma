@@ -130,7 +130,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 	}
 	pinned := text(desired["app_id"])
 	desired = maps.Clone(desired)
-	for _, key := range []string{"app_id", "retention", "dependencies", "supersedes"} {
+	for _, key := range []string{"app_id", "retention", "dependencies", "supersedes", "msi_properties"} {
 		delete(desired, key)
 	}
 	typedClient := *c

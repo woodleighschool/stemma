@@ -82,6 +82,19 @@ and uninstall commands, and ProductCode/version detection. Explicit destination
 values override these defaults. The display name, description and publisher are
 always set. `apply` publishes when you are ready.
 
+Windows Installer properties extend the standard install command:
+
+```yaml
+destinations:
+  intune:
+    msi_properties:
+      PORTAL: vpn.example.com
+      CONNECTMETHOD: on-demand
+```
+
+Values are quoted in name order, with a quote inside a value doubled. Set
+`msi_properties` or a complete `install_command`, not both.
+
 ## Publish an EXE
 
 EXE switches are vendor-specific. This uses VS Code's **system** installer, its
@@ -145,7 +158,8 @@ content:
       path: Assets/Organisation.mst
 destinations:
   intune:
-    install_command: 'msiexec /i "Vendor.msi" TRANSFORMS="Organisation.mst" /qn /norestart'
+    msi_properties:
+      TRANSFORMS: Organisation.mst
 ```
 
 This is a spec excerpt using the shared Win32 defaults. Intune includes the whole
