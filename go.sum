@@ -102,8 +102,6 @@ github.com/felixge/httpsnoop v1.1.0 h1:3YtUj32ZZkqZtt3sZZsClsymw/QDuVfpNhoA31zeO
 github.com/felixge/httpsnoop v1.1.0/go.mod h1:Zqxgdd+1Rkcz8euOqdr7lqgCRJztwr5hp9vDSi5UZCE=
 github.com/gliderlabs/ssh v0.3.8 h1:a4YXD1V7xMF9g5nTkdfnja3Sxy1PVDCj1Zg4Wb8vY6c=
 github.com/gliderlabs/ssh v0.3.8/go.mod h1:xYoytBv1sV0aL3CavoDuJIQNURXkkfPA/wxQ1pL1fAU=
-github.com/go-compressions/lzfse v0.3.0 h1:slxIjY9HeG2llJSoXTwTnQ+u/iKMbr2WHUwaNAl/2yI=
-github.com/go-compressions/lzfse v0.3.0/go.mod h1:geg9IRFbMNHPgbm8xNwF3AnYTsldTX9YptJ0DOWzYv8=
 github.com/go-git/gcfg/v2 v2.0.2 h1:MY5SIIfTGGEMhdA7d7JePuVVxtKL7Hp+ApGDJAJ7dpo=
 github.com/go-git/gcfg/v2 v2.0.2/go.mod h1:/lv2NsxvhepuMrldsFilrgct6pxzpGdSRC13ydTLSLs=
 github.com/go-git/go-billy/v6 v6.0.0-alpha.2 h1:1Sv5WemXL8CxKrAx1gioJ+uHNb2bZJhiQLfwSZ4Et8c=
@@ -140,6 +138,8 @@ github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef h1:A9HsByNhogrvm9cWb
 github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef/go.mod h1:lADxMC39cJJqL93Duh1xhAs4I2Zs8mKS89XWXFGp9cs=
 github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0 h1:k5/zDGNs/dNqH78pe+LFuAKVS/Ucqwwj84RkYi5pQ64=
 github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0/go.mod h1:8F+giXscCXK717Q0dV8RSXL+eWhXSOn3eQ1EarZl1LA=
+github.com/hydazz/lzfse v0.3.1-0.20260925154549-a48bc31a2561 h1:RTkV7YPf3tJfkhscfcRtOTFdSH650Lx0NrfLB2LfZzg=
+github.com/hydazz/lzfse v0.3.1-0.20260925154549-a48bc31a2561/go.mod h1:c8Yl3UXxC+5JgCqXIy/zEOug1KC4vSrwKt4+6/qFgNo=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/invopop/jsonschema v0.14.0 h1:MHQqLhvpNUZfw+hM3AZDYK7jxO8FZoQeQM77g8iyZjg=

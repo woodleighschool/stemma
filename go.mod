@@ -137,3 +137,5 @@ require (
 )
 
 replace github.com/deploymenttheory/go-apfs-v2 => github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0
+
+replace github.com/go-compressions/lzfse => github.com/hydazz/lzfse v0.3.1-0.20260925154549-a48bc31a2561
