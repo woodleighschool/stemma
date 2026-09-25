@@ -126,9 +126,9 @@ spec:
 ```
 
 This rule detects presence. It intentionally does not enforce a particular VS Code
-version. To manage a minimum version, use `property: version`,
-`operator: greater_than_or_equal` and a `value` matching the installed file's
-version. EXE version and detection values are not automatically inferred.
+version. To manage a minimum version, use `property: version` with a `value`
+matching the installed file's version, or omit `value` when the source reports the
+installer's version. Stemma does not infer EXE commands or detection.
 
 ## Publish a setup directory
 
@@ -176,7 +176,8 @@ Intune app. A major upgrade may change ProductCode while publication still updat
 the same bound app ID. A ProductCode rule cannot detect a different ProductCode.
 
 Use file, registry or script detection when you need evidence spanning those
-upgrades. A registry version rule, for example:
+upgrades. A file or registry version rule without `operator` and `value` accepts
+the managed version or newer:
 
 ```yaml
 detection:
@@ -184,12 +185,13 @@ detection:
     key: 'HKEY_LOCAL_MACHINE\SOFTWARE\Example\Client'
     value_name: Version
     property: version
-    operator: greater_than_or_equal
-    value: "2.0.0"
 ```
 
-Use a real vendor key and version. `greater_than_or_equal` accepts an already-newer
-installation; equality alone does not. File and registry rules can be combined, and
+Use a real vendor key. The managed version is the setup MSI's ProductVersion, or
+the version the source reports for its own installer. An explicit `operator` or
+`value` replaces its default; `greater_than_or_equal` accepts an already-newer
+installation, while equality alone does not. File and registry rules can be
+combined, and
 `check_32bit` selects the 32-bit view on 64-bit Windows. A script rule must be the
 only rule, with `run_as_32bit` and `enforce_signature_check` where needed.
 

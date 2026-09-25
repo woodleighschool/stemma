@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -201,13 +202,17 @@ func validateLOB(artifact plugin.Artifact, managed bool) error {
 
 // deriveInstaller supplies the standard msiexec commands, MSI information and
 // ProductCode detection of a selected setup MSI. Declared MSI properties
-// extend the derived install command.
+// extend the derived install command, and declared version comparisons
+// without a value compare with the managed version.
 func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origins map[string]string) (object, error) {
 	if metadata["@odata.type"] != win32Type {
 		return metadata, nil
 	}
 	properties, _ := metadata["msi_properties"].(object)
 	delete(metadata, "msi_properties")
+	if err := deriveVersionRules(req, metadata, origins); err != nil {
+		return nil, err
+	}
 	setup := req.Artifact.EntryPoint
 	if setup == "" {
 		setup = req.Artifact.Filename
@@ -240,6 +245,34 @@ func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origi
 		}
 	}
 	return mergeDerived(metadata, defaults, "windows.installer", origins)
+}
+
+// windowsVersion matches the dotted version a file or registry rule compares.
+var windowsVersion = regexp.MustCompile(`^[0-9]+(\.[0-9]+){0,3}$`)
+
+// deriveVersionRules sets the artifact's managed version as the value of each
+// declared version comparison that omits one. Detection itself is declared, so
+// each derived value reports its own origin.
+func deriveVersionRules(req plugin.ReconcileRequest[Config], metadata object, origins map[string]string) error {
+	rules, _ := metadata["rules"].([]any)
+	for i, item := range rules {
+		rule := item.(object)
+		if _, compared := rule["comparisonValue"]; compared || rule["operationType"] != "version" {
+			continue
+		}
+		version := req.Artifact.Version
+		switch {
+		case version == "" && !req.Prepared && req.Artifact.Path == "":
+			continue
+		case version == "":
+			return errors.New("the artifact has no managed version to detect; set the version rule's value")
+		case !windowsVersion.MatchString(version):
+			return fmt.Errorf("managed version %q is not a Windows version; set the version rule's value", version)
+		}
+		rule["comparisonValue"] = version
+		origins[fmt.Sprintf("rules.%d.value", i)] = "artifact.version"
+	}
+	return nil
 }
 
 // msiArguments renders public properties for msiexec in name order. Values

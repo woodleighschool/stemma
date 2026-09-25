@@ -19,8 +19,17 @@ func TestDetectionRules(t *testing.T) {
 	script := object{"type": "script", "script": "Write-Output 'Installed'; exit 0", "run_as_32bit": false}
 	missingVersion := maps.Clone(msi)
 	delete(missingVersion, "product_version")
-	missingComparison := maps.Clone(file)
-	delete(missingComparison, "value")
+	derivedValue := maps.Clone(file)
+	delete(derivedValue, "value")
+	derivedComparison := maps.Clone(registry)
+	delete(derivedComparison, "operator")
+	delete(derivedComparison, "value")
+	missingSize := maps.Clone(file)
+	missingSize["property"] = "size_mb"
+	delete(missingSize, "value")
+	missingOperator := maps.Clone(registry)
+	missingOperator["property"], missingOperator["value"] = "string", "stable"
+	delete(missingOperator, "operator")
 	comparedExistence := maps.Clone(exists)
 	comparedExistence["operator"] = "equal"
 	for _, tt := range []struct {
@@ -37,7 +46,10 @@ func TestDetectionRules(t *testing.T) {
 		{"two product codes cannot express OR", []any{msi, maps.Clone(msi)}, false},
 		{"script cannot mix manual detection", []any{script, file}, false},
 		{"missing MSI version", []any{missingVersion}, false},
-		{"missing file comparison", []any{missingComparison}, false},
+		{"version comparison derives its value", []any{derivedValue}, true},
+		{"version comparison derives its operator and value", []any{derivedComparison}, true},
+		{"size comparison requires a value", []any{missingSize}, false},
+		{"string comparison requires an operator", []any{missingOperator}, false},
 		{"compared existence", []any{comparedExistence}, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,6 +70,13 @@ func TestDetectionRules(t *testing.T) {
 	if rule := m["rules"].([]any)[0].(object); rule["fileOrFolderName"] != "Example.exe" || rule["operationType"] != "version" || rule["operator"] != "greaterThanOrEqual" || rule["comparisonValue"] != "2.0.0" || rule["ruleType"] != "detection" {
 		t.Fatalf("file rule reached Graph as %+v", rule)
 	}
+	m, err = compile(plugin.ReconcileRequest[Config]{Metadata: raw(object{"type": "win32", "detection": []any{derivedComparison}})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rule := m["rules"].([]any)[0].(object); rule["operator"] != "greaterThanOrEqual" || rule["comparisonValue"] != nil {
+		t.Fatalf("derived comparison reached Graph as %+v", rule)
+	}
 	m, err = compile(plugin.ReconcileRequest[Config]{Metadata: raw(object{"type": "win32", "detection": []any{script}})})
 	if err != nil {
 		t.Fatal(err)
@@ -65,6 +84,45 @@ func TestDetectionRules(t *testing.T) {
 	content, _ := base64.StdEncoding.DecodeString(text(m["rules"].([]any)[0].(object)["scriptContent"]))
 	if string(content) != script["script"] {
 		t.Fatalf("script reached Graph as %q", content)
+	}
+}
+
+func TestVersionRulesCompareWithTheManagedVersion(t *testing.T) {
+	file := object{"type": "file", "path": `C:\Program Files\Example`, "name": "Example.exe", "property": "version"}
+	pinned := object{"type": "registry", "key": `HKEY_LOCAL_MACHINE\Software\Example`, "value_name": "Version", "property": "version", "operator": "equal"}
+	declared := object{"type": "file", "path": `C:\Program Files\Example`, "name": "Helper.exe", "property": "version", "operator": "greater_than_or_equal", "value": "1.0"}
+	msi := &plugin.MSIFacts{ProductName: "Example", Manufacturer: "Vendor", ProductCode: "{11111111-1111-4111-8111-111111111111}", ProductVersion: "2.0.0"}
+	identity := plugin.Identity{Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "example"}}
+	artifact := plugin.Artifact{Path: "/leased/Example.msi", Filename: "Example.msi", Version: "2.0.1.300", Evidence: selectedMSI(msi)}
+	req := plugin.ReconcileRequest[Config]{Prepared: true, Identity: identity, Metadata: raw(object{"detection": []any{file, pinned, declared}}), Artifact: artifact}
+	derived, origins, err := Derive(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, _ := decodeObject(derived.Metadata)
+	rules := metadata["rules"].([]any)
+	want := [][2]string{{"greaterThanOrEqual", "2.0.1.300"}, {"equal", "2.0.1.300"}, {"greaterThanOrEqual", "1.0"}}
+	for i, rule := range rules {
+		if rule := rule.(object); rule["operator"] != want[i][0] || rule["comparisonValue"] != want[i][1] {
+			t.Fatalf("rule %d reached Graph as %+v", i, rule)
+		}
+	}
+	if origins["detection.0.value"] != "artifact.version" || origins["detection.1.value"] != "artifact.version" || origins["detection.2.value"] != "" || metadata["msiInformation"].(object)["productVersion"] != "2.0.0" {
+		t.Fatalf("origins %v, MSI information %v", origins, metadata["msiInformation"])
+	}
+	req.Metadata = raw(object{"detection": []any{file}})
+	for name, artifact := range map[string]plugin.Artifact{
+		"no managed version": {Path: "/leased/setup.exe", Filename: "setup.exe"},
+		"not a version":      {Path: "/leased/setup.exe", Filename: "setup.exe", Version: "v2.0"},
+	} {
+		req.Artifact = artifact
+		if _, _, err := Derive(req); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+	req.Prepared, req.Artifact = false, plugin.Artifact{}
+	if _, _, err := Derive(req); err != nil {
+		t.Fatalf("validation without an artifact: %v", err)
 	}
 }
 

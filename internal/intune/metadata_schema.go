@@ -154,15 +154,20 @@ func assignmentSchema() *jsonschema.Schema {
 }
 
 func detectionSchema() *jsonschema.Schema {
-	operator := func() *jsonschema.Schema {
-		return enumSchema("Comparison operator.", "equal", "not_equal", "greater_than", "greater_than_or_equal", "less_than", "less_than_or_equal")
+	operator := func(description string) *jsonschema.Schema {
+		return enumSchema(description, "equal", "not_equal", "greater_than", "greater_than_or_equal", "less_than", "less_than_or_equal")
 	}
 	absent := &jsonschema.Schema{Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Required: []string{"operator"}}, {Required: []string{"value"}}}}}
+	// A version comparison defaults to greater_than_or_equal the managed version.
+	compared := &jsonschema.Schema{
+		If:   &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"property": {Const: "version"}}).Properties},
+		Else: &jsonschema.Schema{Required: []string{"operator", "value"}},
+	}
 	msi := objectSchema(map[string]*jsonschema.Schema{
 		"type":            {Const: "msi"},
 		"product_code":    {Type: "string", MinLength: new(uint64(1)), Description: "Exact MSI ProductCode GUID. Major MSI upgrades can change it; a version comparison only detects installations with this code. Declared detection overrides selected MSI defaults."},
 		"product_version": textSchema("Version compared with the operator."),
-		"operator":        operator(),
+		"operator":        operator("Comparison operator."),
 	}, "type", "product_code")
 	msi.If = &jsonschema.Schema{Required: []string{"operator"}}
 	msi.Then = &jsonschema.Schema{Required: []string{"product_version"}}
@@ -172,24 +177,24 @@ func detectionSchema() *jsonschema.Schema {
 		"name":        {Type: "string", MinLength: new(uint64(1)), Description: "File or folder name."},
 		"check_32bit": {Type: "boolean", Description: "Check the 32-bit location on 64-bit Windows."},
 		"property":    enumSchema("Detected file property.", "exists", "version", "size_mb", "modified", "created"),
-		"operator":    operator(),
-		"value":       {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(10000)), Description: "Compared value. A stable file path with version greater_than_or_equal detects already-newer installations; equal intentionally does not."},
+		"operator":    operator("Comparison operator. A version comparison defaults to greater_than_or_equal."),
+		"value":       {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(10000)), Description: "Compared value. A version comparison defaults to the managed version. A stable file path with version greater_than_or_equal detects already-newer installations; equal intentionally does not."},
 	}, "type", "path", "name", "property")
 	file.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"property": {Const: "exists"}}).Properties}
 	file.Then = absent
-	file.Else = &jsonschema.Schema{Required: []string{"operator", "value"}}
+	file.Else = compared
 	registry := objectSchema(map[string]*jsonschema.Schema{
 		"type":        {Const: "registry"},
 		"key":         {Type: "string", MinLength: new(uint64(1)), Description: "Registry key path."},
 		"value_name":  {Type: "string"},
 		"check_32bit": {Type: "boolean", Description: "Check the 32-bit view on 64-bit Windows."},
 		"property":    enumSchema("Registry comparison.", "exists", "does_not_exist", "string", "integer", "version"),
-		"operator":    operator(),
-		"value":       {Type: "string", Description: "Compared value. Version greater_than_or_equal can detect already-newer installations at a stable vendor registry value."},
+		"operator":    operator("Comparison operator. A version comparison defaults to greater_than_or_equal."),
+		"value":       {Type: "string", Description: "Compared value. A version comparison defaults to the managed version. Version greater_than_or_equal can detect already-newer installations at a stable vendor registry value."},
 	}, "type", "key", "property")
 	registry.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"property": {Enum: []any{"exists", "does_not_exist"}}}).Properties}
 	registry.Then = absent
-	registry.Else = &jsonschema.Schema{Required: []string{"operator", "value"}}
+	registry.Else = compared
 	script := objectSchema(map[string]*jsonschema.Schema{
 		"type":                    {Const: "script"},
 		"script":                  {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(200000)), Description: "PowerShell detection script. Detection requires exit code 0, nonempty STDOUT and empty STDERR. Runs in the app install context. This is an alternative to other rules; preparation never executes it."},

@@ -622,7 +622,9 @@ func msiRule(rule object) (object, error) {
 }
 
 // propertyRule translates a file or registry rule. An existence check takes
-// no operator; every other property compares against a value.
+// no operator; every other property compares against a value. A version
+// comparison defaults to greater than or equal to the managed version, which
+// derivation supplies.
 func propertyRule(rule object, properties, locations map[string]string, existence ...string) (object, error) {
 	allowed := []string{"type", "check_32bit", "property", "operator", "value"}
 	for key := range locations {
@@ -666,15 +668,22 @@ func propertyRule(rule object, properties, locations map[string]string, existenc
 		}
 		return native, nil
 	}
-	operator, err := choice(rule["operator"], operators)
-	if err != nil {
-		return nil, fmt.Errorf("operator %w", err)
+	version := rule["property"] == "version"
+	operator := "greaterThanOrEqual"
+	if hasOperator || !version {
+		if operator, err = choice(rule["operator"], operators); err != nil {
+			return nil, fmt.Errorf("operator %w", err)
+		}
+	}
+	native["operator"] = operator
+	if !hasValue && version {
+		return native, nil
 	}
 	comparison, ok := value.(string)
 	if !hasValue || !ok || (comparison == "" && rule["property"] != "string") {
 		return nil, fmt.Errorf("a %s comparison requires a value", rule["property"])
 	}
-	native["operator"], native["comparisonValue"] = operator, comparison
+	native["comparisonValue"] = comparison
 	return native, nil
 }
 

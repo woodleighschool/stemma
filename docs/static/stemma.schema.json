@@ -2651,10 +2651,32 @@
                           {
                             "additionalProperties": false,
                             "else": {
-                              "required": [
-                                "operator",
-                                "value"
-                              ]
+                              "else": {
+                                "required": [
+                                  "operator",
+                                  "value"
+                                ]
+                              },
+                              "if": {
+                                "properties": {
+                                  "property": {
+                                    "anyOf": [
+                                      {
+                                        "const": "version"
+                                      },
+                                      {
+                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "propertyNames": {
+                                  "not": {
+                                    "pattern": "\\{\\{"
+                                  }
+                                }
+                              }
                             },
                             "if": {
                               "properties": {
@@ -2720,7 +2742,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Comparison operator."
+                                "description": "Comparison operator. A version comparison defaults to greater_than_or_equal."
                               },
                               "path": {
                                 "anyOf": [
@@ -2776,7 +2798,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Compared value. A stable file path with version greater_than_or_equal detects already-newer installations; equal intentionally does not."
+                                "description": "Compared value. A version comparison defaults to the managed version. A stable file path with version greater_than_or_equal detects already-newer installations; equal intentionally does not."
                               }
                             },
                             "propertyNames": {
@@ -2811,10 +2833,32 @@
                           {
                             "additionalProperties": false,
                             "else": {
-                              "required": [
-                                "operator",
-                                "value"
-                              ]
+                              "else": {
+                                "required": [
+                                  "operator",
+                                  "value"
+                                ]
+                              },
+                              "if": {
+                                "properties": {
+                                  "property": {
+                                    "anyOf": [
+                                      {
+                                        "const": "version"
+                                      },
+                                      {
+                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  }
+                                },
+                                "propertyNames": {
+                                  "not": {
+                                    "pattern": "\\{\\{"
+                                  }
+                                }
+                              }
                             },
                             "if": {
                               "properties": {
@@ -2883,7 +2927,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Comparison operator."
+                                "description": "Comparison operator. A version comparison defaults to greater_than_or_equal."
                               },
                               "property": {
                                 "anyOf": [
@@ -2925,7 +2969,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Compared value. Version greater_than_or_equal can detect already-newer installations at a stable vendor registry value."
+                                "description": "Compared value. A version comparison defaults to the managed version. Version greater_than_or_equal can detect already-newer installations at a stable vendor registry value."
                               },
                               "value_name": {
                                 "anyOf": [
