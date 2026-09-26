@@ -12,7 +12,7 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func TestMinimumOSIsTheLatestRequirement(t *testing.T) {
+func TestMinimumOSIsDeclaredOrTheLatestRequirement(t *testing.T) {
 	installer := func(version string) plugin.Artifact {
 		return plugin.Artifact{Facts: plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: ".", Kind: "container", Installer: &plugin.InstallerFacts{MinimumOS: version}}}}}
 	}
@@ -29,9 +29,8 @@ func TestMinimumOSIsTheLatestRequirement(t *testing.T) {
 	}{
 		{"installer", withApp(installer("14.2"), "13.0"), "", &plugin.MinimumOS{Version: "14.2", Origin: "installer.minimum_os"}},
 		{"application", withApp(installer("13.0"), "14.1"), "", &plugin.MinimumOS{Version: "14.1", Origin: "app.minimum_os"}},
-		{"declared raises", installer("14.0"), "15", &plugin.MinimumOS{Version: "15", Origin: "software.minimum_os"}},
-		{"declared never lowers", installer("14.0"), "13.0", &plugin.MinimumOS{Version: "14.0", Origin: "installer.minimum_os"}},
-		{"equal keeps the observed origin", installer("14.0"), "14", &plugin.MinimumOS{Version: "14.0", Origin: "installer.minimum_os"}},
+		{"declared above", installer("14.0"), "15", &plugin.MinimumOS{Version: "15", Origin: "software.minimum_os"}},
+		{"declared below", withApp(installer("14.0"), "27.0"), "26.0", &plugin.MinimumOS{Version: "26.0", Origin: "software.minimum_os"}},
 		{"declared alone", plugin.Artifact{}, "12.0", &plugin.MinimumOS{Version: "12.0", Origin: "software.minimum_os"}},
 		{"declared replaces an unreadable requirement", withApp(plugin.Artifact{}, "${MACOSX_DEPLOYMENT_TARGET}"), "12.0", &plugin.MinimumOS{Version: "12.0", Origin: "software.minimum_os"}},
 		{"unknown", plugin.Artifact{}, "", nil},
@@ -105,7 +104,7 @@ func TestDeclaredMinimumOSReusesPreparation(t *testing.T) {
 		declared string
 		want     plugin.MinimumOS
 	}{
-		{"12.0", plugin.MinimumOS{Version: "13.0", Origin: "app.minimum_os"}},
+		{"12.0", plugin.MinimumOS{Version: "12.0", Origin: "software.minimum_os"}},
 		{"15.0", plugin.MinimumOS{Version: "15.0", Origin: "software.minimum_os"}},
 	} {
 		testproject.Write(t, filename, fmt.Sprintf(minimumProject, test.declared))

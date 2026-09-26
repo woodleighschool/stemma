@@ -27,9 +27,9 @@ type Spec struct {
 	// published disk image outside another application, to carry a complete
 	// Developer ID signature from the expected team.
 	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require a complete Developer ID signature from the expected team on the published PKG, or on every application in the published disk image, before publication."`
-	// MinimumOS raises the macOS requirement destinations receive above the
-	// installer's and the selected application's; it never lowers them.
-	MinimumOS string `json:"minimum_os,omitempty" yaml:"minimum_os,omitempty" jsonschema:"pattern=^[0-9]+([.][0-9]+)?([.][0-9]+)?$" jsonschema_description:"Minimum macOS release, such as 14.0. Destinations receive the latest of this, the installer's requirement and the selected application's, so it raises their requirements but never lowers them."`
+	// MinimumOS replaces the installer's and the selected application's macOS
+	// requirements for every destination.
+	MinimumOS string `json:"minimum_os,omitempty" yaml:"minimum_os,omitempty" jsonschema:"pattern=^[0-9]+([.][0-9]+)?([.][0-9]+)?$" jsonschema_description:"Minimum macOS release, such as 14.0. Destinations receive this instead of the installer's and the selected application's requirements. Omit to use the latest of those."`
 	// Icon names the catalog asset icons/<name>.png that destinations publish.
 	Icon         string                            `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Create it with stemma icon or commit a square PNG."`
 	Destinations map[string]map[string]any         `json:"destinations,omitempty" yaml:"destinations,omitempty" jsonschema_description:"Native publication metadata keyed by a Project destination name. Explicit values override derived values."`

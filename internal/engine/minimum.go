@@ -14,12 +14,13 @@ import (
 
 var macOSVersion = regexp.MustCompile(`^[0-9]+(\.[0-9]+)*$`)
 
-// minimumOS returns the latest macOS requirement of the installer, the primary
-// application and the declared floor, which raises the others but never lowers
-// them. It runs after preparation, so a changed floor reuses prepared outputs.
-// An observed requirement that is not a version is unknown: only a declared
-// floor can stand in for it.
+// minimumOS returns the declared minimum_os, or else the latest macOS
+// requirement of the installer and the primary application. It runs after
+// preparation, so a changed declaration reuses prepared outputs.
 func minimumOS(artifact plugin.Artifact, declared string) (*plugin.MinimumOS, error) {
+	if declared != "" {
+		return &plugin.MinimumOS{Version: declared, Origin: "software.minimum_os"}, nil
+	}
 	var candidates []plugin.MinimumOS
 	for _, subject := range artifact.Facts.Subjects {
 		if subject.ID == "." && subject.Installer != nil && subject.Installer.MinimumOS != "" {
@@ -38,17 +39,11 @@ func minimumOS(artifact plugin.Artifact, declared string) (*plugin.MinimumOS, er
 	var result *plugin.MinimumOS
 	for _, candidate := range candidates {
 		if !macOSVersion.MatchString(candidate.Version) {
-			if declared == "" {
-				return nil, fmt.Errorf("%s %q is not a macOS version; set minimum_os", candidate.Origin, candidate.Version)
-			}
-			continue
+			return nil, fmt.Errorf("%s %q is not a macOS version; set minimum_os", candidate.Origin, candidate.Version)
 		}
 		if result == nil || compareVersions(candidate.Version, result.Version) > 0 {
 			result = &candidate
 		}
-	}
-	if declared != "" && (result == nil || compareVersions(declared, result.Version) > 0) {
-		result = &plugin.MinimumOS{Version: declared, Origin: "software.minimum_os"}
 	}
 	return result, nil
 }

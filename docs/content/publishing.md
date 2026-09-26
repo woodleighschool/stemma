@@ -73,10 +73,8 @@ method, and an item with a method is uninstallable unless `uninstallable` is set
 Explicit `installs`, `receipts`, `installcheck_script` and other supported native
 fields allow more specific behaviour.
 
-`minimum_os_version` is the software's effective minimum macOS: the latest of the
-installer's requirement, the selected application's and the software's
-[`minimum_os`](mac-software.md#minimum-macos). Set `minimum_os` to raise it; pkginfo
-cannot declare it.
+`minimum_os_version` is the software's
+[minimum macOS](mac-software.md#minimum-macos); pkginfo cannot declare it.
 
 Munki's `supported_architectures` is an optional pkginfo restriction. There is no
 core `spec.arch`: download selection, installation eligibility and runner

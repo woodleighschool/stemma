@@ -258,9 +258,9 @@ Register `kind: reconcile` with methods `validate`, `plan` and `apply`. Use
 `ConfigSchema` for connection settings and `MetadataSchema` for native
 settings. `ReconcileRequest[Config]` includes logical identity, the primary
 artifact with its facts and managed `Version`, named artifact inputs, peers and,
-for macOS software, `MinimumOS`: the latest of the installer's requirement, the
-selected application's and the software's `minimum_os`, with the origin of the
-value that won.
+for macOS software, `MinimumOS`: the software's `minimum_os`, or else the latest
+of the installer's requirement and the selected application's, with the origin of
+the value.
 
 `validate` checks metadata, and the prepared artifact when there is one, without
 connecting: it receives no `Config`. `plan` and `apply` receive the connection

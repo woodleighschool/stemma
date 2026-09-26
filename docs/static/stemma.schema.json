@@ -1317,7 +1317,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Minimum macOS release, such as 14.0. Destinations receive the latest of this, the installer's requirement and the selected application's, so it raises their requirements but never lowers them."
+                  "description": "Minimum macOS release, such as 14.0. Destinations receive this instead of the installer's and the selected application's requirements. Omit to use the latest of those."
                 },
                 "package_path": {
                   "anyOf": [
@@ -1590,7 +1590,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Minimum macOS release, such as 14.0. Destinations receive the latest of this, the installer's requirement and the selected application's, so it raises their requirements but never lowers them."
+                      "description": "Minimum macOS release, such as 14.0. Destinations receive this instead of the installer's and the selected application's requirements. Omit to use the latest of those."
                     },
                     "package_path": {
                       "anyOf": [

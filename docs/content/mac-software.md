@@ -129,18 +129,17 @@ Their contents cannot prove the eventual installed application. Leave
 
 ## Minimum macOS
 
-Destinations receive one minimum macOS: the latest of the installer's requirement,
-the selected application's `LSMinimumSystemVersion` and `minimum_os`:
+Destinations receive one minimum macOS: `minimum_os` when it is set, otherwise the
+latest of the installer's requirement and the selected application's
+`LSMinimumSystemVersion`:
 
 ```yaml
 spec:
   minimum_os: "14.0"
 ```
 
-`minimum_os` raises the requirement but never lowers it, so a release that needs a
-newer macOS keeps its own requirement. Changing it reuses prepared installers. An
-item without an installer takes `minimum_os` alone. Each destination maps the
-value to its own field, as described in [publishing](publishing.md).
+Changing `minimum_os` reuses prepared installers. Each destination maps the value
+to its own field, as described in [publishing](publishing.md).
 
 ## Publish without an installer
 

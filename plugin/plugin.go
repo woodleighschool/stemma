@@ -75,9 +75,9 @@ type ReconcileRequest[C any] struct {
 	Root      string                     `json:"root,omitempty"`
 }
 
-// MinimumOS is the latest of the installer's requirement, the primary
-// application's and the software's declared floor. Origin names the one that
-// set Version: installer.minimum_os, app.minimum_os or software.minimum_os.
+// MinimumOS is the software's declared minimum_os, or else the latest of the
+// installer's requirement and the primary application's. Origin names the one
+// that set Version: software.minimum_os, installer.minimum_os or app.minimum_os.
 type MinimumOS struct {
 	Version string `json:"version"`
 	Origin  string `json:"origin"`
