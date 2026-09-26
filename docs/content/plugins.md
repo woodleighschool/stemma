@@ -56,7 +56,9 @@ stemma operations
 
 Installation pins the OCI index digest and downloads the current runner's bundle.
 Use `stemma plugins update` to move existing pins. A cold cache uses the locked
-digest. Private registries use Docker/ORAS registry credentials.
+digest. Private registries use Docker/ORAS registry credentials. Plugin authors
+publish these indexes with `stemma plugins publish`; see
+[writing plugins](writing-plugins.md#distribute-a-bundle).
 
 ## Configure an operation
 

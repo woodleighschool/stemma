@@ -320,9 +320,10 @@ intended for installation remain endpoint payload, not runner commands.
 
 ## Distribute a bundle
 
-Local files are a first-class distribution option. For OCI distribution, create
-one tar.zst bundle per runner platform with `plugin` or `plugin.exe` and its helper
-files at the archive root. Use:
+Local files are a first-class distribution option. A published plugin is an OCI
+platform index with one manifest per runner platform. Each manifest carries a
+tar.zst bundle with `plugin` or `plugin.exe` and its helper files at the archive
+root:
 
 | OCI field               | Value                                              |
 | ----------------------- | -------------------------------------------------- |
@@ -330,6 +331,39 @@ files at the archive root. Use:
 | Bundle layer media type | `application/vnd.stemma.plugin.bundle.v1.tar+zstd` |
 | Index platform          | The runner's OS and architecture                   |
 
-Combine platform manifests in an OCI index and publish it with a tag or digest.
 Stemma pins the index and fetches only the selected runner's bundle. All code runs
 with the caller's privileges; the protocol is not a sandbox.
+
+### Release a Go plugin
+
+GoReleaser builds the bundles and Stemma publishes them. Build a `plugin`
+executable for each runner platform and archive it as tar.zst:
+
+```yaml
+version: 2
+builds:
+  - binary: plugin
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+archives:
+  - formats: [tar.zst]
+```
+
+After GoReleaser runs, publish the archives it lists in `dist/artifacts.json` from
+the same directory:
+
+```sh
+stemma plugins publish ghcr.io/example/catalog-tools:1.0.0 --goreleaser dist
+```
+
+The archives must come from one GoReleaser archive id and all be tar.zst. When
+more than one archive id builds tar.zst, name the plugin's with `--goreleaser-id`.
+
+`publish` checks each bundle the way the loader will, pushes a manifest for each
+platform and tags their index last, so a failed run tags nothing. A published tag
+keeps its release: publishing the same bundles again changes nothing, and
+different bundles need a new tag. Registry credentials come from `docker login`.
+Add index annotations with `--annotation KEY=VALUE`, such as
+`org.opencontainers.image.source` for the repository URL.

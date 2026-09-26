@@ -261,6 +261,14 @@ func printPlugins(out io.Writer, plugins map[string]config.Plugin) error {
 	return err
 }
 
+// publishedPlugin reports a publication: the pin stemma plugins install
+// records for the tag, and the runner platforms it serves.
+type publishedPlugin struct {
+	pluginstore.Entry
+
+	Platforms []string `json:"platforms"`
+}
+
 // printLockedPlugins names the code each plugin is locked to and whether this
 // run changed it.
 func printLockedPlugins(out io.Writer, previous, locked map[string]pluginstore.Entry, changed bool) error {

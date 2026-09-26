@@ -81,9 +81,13 @@ environment values: do not share it without reviewing it.
 stemma plugins list
 stemma plugins install
 stemma plugins update
+stemma plugins publish IMAGE --goreleaser dist
 stemma cache path
 stemma cache prune
 ```
+
+`plugins publish` pushes a GoReleaser release of plugin bundles as an OCI platform
+index; see [writing plugins](writing-plugins.md#distribute-a-bundle).
 
 `--cache-dir` / `STEMMA_CACHE_DIR` relocates disposable cached content.
 `reconcile --state-dir` / `STEMMA_STATE_DIR` relocates the applied marker.
