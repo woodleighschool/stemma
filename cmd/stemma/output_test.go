@@ -13,11 +13,8 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/engine"
-	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/reconcile"
-	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -111,40 +108,59 @@ func TestOutcomeCommandsPrintTextUnlessAskedForJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(run("version", "--json")), &build); err != nil || build["version"] != "dev" {
 		t.Fatalf("version --json: %v %v", build, err)
 	}
-	project := t.TempDir()
-	testproject.Write(t, filepath.Join(project, "stemma.yaml"), `apiVersion: stemma/v1alpha1
-kind: Project
-metadata: {name: fixture}
-spec:
-  plugins:
-    echo: {trusted: true, path: plugins/echo, entrypoint: echo}
-  imports: ['*.software.yaml']
----
-apiVersion: stemma/v1alpha1
-kind: MacSoftware
-metadata: {name: example}
-spec:
-  source: {path: example.pkg}
-  signature: {signer: apple:developer-id:SMLKBTR495}
-`)
-	if got := run("plugins", "list", "--root", project); got != "echo: plugins/echo (echo)\n" {
-		t.Fatalf("plugins list: %q", got)
+}
+
+func TestPluginUpdateNamesWhatHappenedToEachEntry(t *testing.T) {
+	digest := func(c string) string { return "sha256:" + strings.Repeat(c, 64) }
+	update := engine.PluginUpdate{LockChanged: true, Removed: []string{"retired"}, Plugins: []engine.PluginReport{
+		{Name: "echo", Path: "plugins/echo", Locked: true, Before: digest("a"), Digest: digest("b")},
+		{Name: "kept", Image: "registry.example/kept:dev", Locked: true, Before: digest("c"), Digest: digest("c")},
+		{Name: "new", Image: "registry.example/new:dev", Locked: true, Digest: digest("d")},
+		{Name: "pinned", Image: "registry.example/pinned:1@" + digest("e"), Digest: digest("e")},
+		{Name: "stale", Image: "registry.example/stale:dev", Error: "image tag is not locked; run stemma plugins update"},
+	}}
+	var out bytes.Buffer
+	if err := printPluginUpdate(&out, update); err != nil {
+		t.Fatal(err)
+	}
+	want := "echo: updated\n  sha256:aaaaaaaaaaaa -> sha256:bbbbbbbbbbbb\nkept: unchanged\nnew: locked\n  sha256:dddddddddddd\npinned: pinned\nstale: failed\n  error: image tag is not locked; run stemma plugins update\nretired: no longer declared\nLockfile updated.\n"
+	if out.String() != want {
+		t.Fatalf("plugins update:\n%s", out.String())
 	}
 }
 
-func TestLockedPluginsNameWhatChanged(t *testing.T) {
-	local := func(digest string) pluginstore.Entry {
-		return pluginstore.Entry{Path: "plugins/echo", Local: &source.Entry{Content: source.Content{Artifact: cas.Ref{SHA256: digest}}}}
+func TestPluginListDescribesCodeAndOfferings(t *testing.T) {
+	reports := []engine.PluginReport{
+		{
+			Name: "downloads", Image: "registry.example/downloads:0.3.0@sha256:" + strings.Repeat("e", 64), Digest: "sha256:" + strings.Repeat("e", 64),
+			Version: "0.3.0", Revision: "58d5d19c08d2cbf5cdca2bfd2e658e5f29a130e5", Platforms: []string{"darwin/arm64", "linux/amd64"},
+			Operations: []engine.PluginOperation{{Name: "audinate", Kind: "resolve"}, {Name: "blender", Kind: "resolve"}},
+		},
+		{
+			Name: "tools", Path: "plugins/tools", Locked: true, Digest: "sha256:" + strings.Repeat("f", 64), Version: "dev", Revision: "df2cf21a6fa9ee49a9483dc734e9612577cbb891+dirty",
+			Operations:  []engine.PluginOperation{{Name: "tools.build", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "example.org/v1", Kind: "VendorPackage"}}},
+			Unavailable: []plugin.Unavailable{{Name: "tools.publish", Kind: "reconcile", Reason: "implements reconcile interface 2; this Stemma uses 1"}, {Name: "tools.mirror", Kind: "reconcile", Reason: "implements reconcile interface 2; this Stemma uses 1"}},
+		},
 	}
-	previous := map[string]pluginstore.Entry{"echo": local(strings.Repeat("a", 64)), "kept": {Image: "registry.example/kept:1", Digest: "sha256:" + strings.Repeat("c", 64)}}
-	locked := map[string]pluginstore.Entry{"echo": local(strings.Repeat("b", 64)), "kept": previous["kept"], "new": {Image: "registry.example/new:1", Digest: "sha256:" + strings.Repeat("d", 64)}}
 	var out bytes.Buffer
-	if err := printLockedPlugins(&out, previous, locked, true); err != nil {
+	if err := printPlugins(&out, reports); err != nil {
 		t.Fatal(err)
 	}
-	want := "echo: plugins/echo sha256:bbbbbbbbbbbb updated\nkept: registry.example/kept:1 sha256:cccccccccccc unchanged\nnew: registry.example/new:1 sha256:dddddddddddd locked\nLockfile updated.\n"
+	want := `downloads
+  Image:      registry.example/downloads:0.3.0@sha256:eeeeeeeeeeee
+  Version:    0.3.0 (58d5d19c08d2)
+  Platforms:  darwin/arm64, linux/amd64
+  Resolvers:  audinate, blender
+
+tools
+  Path:            plugins/tools
+  Digest:          sha256:ffffffffffff
+  Version:         dev (df2cf21a6fa9+dirty)
+  Resource kinds:  example.org/v1/VendorPackage
+  error: tools.publish, tools.mirror: implements reconcile interface 2; this Stemma uses 1
+`
 	if out.String() != want {
-		t.Fatalf("locked plugins:\n%s", out.String())
+		t.Fatalf("plugins list:\n%s", out.String())
 	}
 }
 

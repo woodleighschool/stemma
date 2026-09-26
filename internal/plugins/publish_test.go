@@ -80,14 +80,14 @@ func TestPublishedGoReleaserReleaseRunsOnEachPlatform(t *testing.T) {
 				}
 				return repo, nil
 			}
-			entry, err := s.Resolve(t.Context(), image)
+			indexDigest, err := s.Resolve(t.Context(), image)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if entry.Digest != published.Digest.String() {
-				t.Fatalf("installed %s, published %s", entry.Digest, published.Digest)
+			if indexDigest != published.Digest.String() {
+				t.Fatalf("resolved %s, published %s", indexDigest, published.Digest)
 			}
-			bundle, err := s.Acquire(t.Context(), image, entry)
+			bundle, err := s.Acquire(t.Context(), image, indexDigest)
 			if err != nil {
 				t.Fatal(err)
 			}

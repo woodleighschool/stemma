@@ -63,6 +63,7 @@ type Result struct {
 	File      File
 	Changed   bool
 	Changes   []InputChange
+	Plugins   []PluginChange
 	CacheHits map[string]map[string]bool
 }
 
@@ -173,7 +174,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 	}
 	frozen := opts.frozen()
 	old, err := Load(Filename(root))
-	if errors.Is(err, os.ErrNotExist) && requiresLock(inputs, pluginEntries) && frozen {
+	if errors.Is(err, os.ErrNotExist) && requiresLock(inputs) && frozen {
 		return nil, errors.New("lockfile: missing; run stemma update")
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -189,19 +190,6 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 			} else if frozen {
 				return nil, errors.New("lockfile contains stale entries; run stemma update")
 			}
-		}
-	}
-	if frozen {
-		before, err := json.Marshal(old.Plugins)
-		if err != nil {
-			return nil, err
-		}
-		after, err := json.Marshal(pluginEntries)
-		if err != nil {
-			return nil, err
-		}
-		if len(old.Plugins)+len(pluginEntries) > 0 && !bytes.Equal(before, after) {
-			return nil, errors.New("lockfile contains stale plugins; run stemma plugins update")
 		}
 	}
 	resolved := map[string]source.Entry{}
@@ -277,7 +265,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 func Check(root string, inputs map[string]map[string]plugin.Input, retain []string) error {
 	old, err := Load(Filename(root))
 	if errors.Is(err, os.ErrNotExist) {
-		if requiresLock(inputs, nil) {
+		if requiresLock(inputs) {
 			return errors.New("lockfile: missing; run stemma update")
 		}
 		return nil
@@ -306,10 +294,7 @@ func Check(root string, inputs map[string]map[string]plugin.Input, retain []stri
 	return errors.Join(stale...)
 }
 
-func requiresLock(inputs map[string]map[string]plugin.Input, pluginEntries map[string]plugins.Entry) bool {
-	if len(pluginEntries) != 0 {
-		return true
-	}
+func requiresLock(inputs map[string]map[string]plugin.Input) bool {
 	for _, named := range inputs {
 		if len(named) != 0 {
 			return true
@@ -422,6 +407,7 @@ func (u *Update) Commit(ctx context.Context, rejected ...string) (Result, error)
 	if !opts.IgnoreInputs {
 		result.Changes = DiffInputs(old.Inputs, result.File.Inputs)
 	}
+	result.Plugins = DiffPlugins(old.Plugins, result.File.Plugins)
 	return result, nil
 }
 

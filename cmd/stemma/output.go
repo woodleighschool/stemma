@@ -131,7 +131,7 @@ func (o *commandOutput) warning(text string) string {
 // resource is in the report with its totals, and a reconcile report holds each
 // failed phase and proposal; the exit status alone says the command failed.
 func commandError(err error) string {
-	if err == reconcile.ErrFailed { //nolint:errorlint // Joined with anything else, the report was not written.
+	if err == reconcile.ErrFailed || err == engine.ErrPluginsFailed { //nolint:errorlint // Joined with anything else, the report was not written.
 		return ""
 	}
 	if err = engine.Unreported(err); err == nil {

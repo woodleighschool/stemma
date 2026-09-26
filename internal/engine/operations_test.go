@@ -21,12 +21,10 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
-	"go.yaml.in/yaml/v4"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -223,17 +221,14 @@ spec:
 				t.Helper()
 				testproject.Write(t, filename, text)
 			}
-			if transport == "path" {
-				manifest = strings.Replace(manifest, "image: registry.example/plugins/echo:v1", "path: local-plugin", 1)
-			}
-			write(manifest)
 			store, err := cas.Open(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
+			var index string
 			install := func() {
 				if transport == "image" {
-					installFixturePlugin(t, store, root, binary, "original resource")
+					index = installFixturePlugin(t, store, binary, "original resource")
 					return
 				}
 				directory := filepath.Join(root, "local-plugin")
@@ -257,7 +252,18 @@ spec:
 			}
 
 			install()
+			// An image names its digest; a local path is locked by updating plugins.
+			manifest = strings.Replace(manifest, "image: registry.example/plugins/echo:v1", "image: registry.example/plugins/echo:v1@"+index, 1)
+			if transport == "path" {
+				manifest = strings.Replace(manifest, "image: registry.example/plugins/echo:v1@", "path: local-plugin", 1)
+			}
+			write(manifest)
 			opts := Options{ConfigPath: filename, CacheDir: store.Dir, Method: "update"}
+			if transport == "path" {
+				if _, err := UpdatePlugins(t.Context(), opts, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if _, err := ValidateProject(t.Context(), opts, false); err != nil {
 				t.Fatal(err)
 			}
@@ -348,7 +354,8 @@ spec:
 	}
 }
 
-func installFixturePlugin(t *testing.T, store *cas.Store, root, binary, resource string) {
+// installFixturePlugin caches a platform index holding binary and returns its digest.
+func installFixturePlugin(t *testing.T, store *cas.Store, binary, resource string) string {
 	t.Helper()
 	data, err := os.ReadFile(binary)
 	if err != nil {
@@ -401,20 +408,7 @@ func installFixturePlugin(t *testing.T, store *cas.Store, root, binary, resource
 	if err != nil {
 		t.Fatal(err)
 	}
-	index := put(ocispec.MediaTypeImageIndex, data)
-	entry := plugins.Entry{Image: "registry.example/plugins/echo:v1", Digest: index.Digest.String(), Size: index.Size}
-	locked, err := lockfile.Load(filepath.Join(root, "stemma.lock.yaml"))
-	if err != nil {
-		locked = lockfile.File{Version: lockfile.Version, Inputs: map[string]map[string]source.Entry{}}
-	}
-	locked.Plugins = map[string]plugins.Entry{"provider": entry}
-	data, err = yaml.Marshal(locked)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "stemma.lock.yaml"), data, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	return put(ocispec.MediaTypeImageIndex, data).Digest.String()
 }
 
 // TestStaleInterfaceFailsOnlyWhereUsed loads a plugin whose reconcile

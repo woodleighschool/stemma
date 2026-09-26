@@ -67,10 +67,10 @@ func (c Candidate) Dependents(key string) []string {
 // Resolve observes every declared input of the catalog once and reports each
 // resource independently, so one unreachable source cannot hide the others.
 // ResourceDone receives each resource's input changes as it finishes. Plugins
-// must match the lockfile: their code runs before anything is observed.
+// load from the lockfile: their code runs before anything is observed.
 func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr error) {
 	opts.Lock = lockfile.Options{Refresh: true}
-	s, err := open(ctx, opts, true)
+	s, err := open(ctx, opts, false)
 	if err != nil {
 		return candidate, err
 	}

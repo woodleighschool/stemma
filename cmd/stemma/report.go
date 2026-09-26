@@ -13,13 +13,12 @@ import (
 	"github.com/dustin/go-humanize"
 	"github.com/fatih/color"
 	"github.com/woodleighschool/stemma/internal/changes"
-	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/intunewin"
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/reconcile"
 	"github.com/woodleighschool/stemma/internal/signature"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 func resourceName(resource engine.ResourceReport) string {
@@ -225,10 +224,12 @@ func signatureDetails(resource engine.ResourceReport) string {
 }
 
 // printReportEnd ends a human report below the resources that streamed: the
-// lock entries of resources no longer declared, then the whole run's totals.
+// plugin lock entries an update changed, the lock entries of resources no
+// longer declared, then the whole run's totals.
 func printReportEnd(out io.Writer, method string, report engine.Report, runErr error) error {
 	style := newTextStyle(out)
 	var text strings.Builder
+	text.WriteString(renderPluginChanges(style, report.Plugins))
 	text.WriteString(renderRemovedInputs(style, report.RemovedInputs))
 	text.WriteString(renderSummary(style, method, report, runErr))
 	_, err := io.WriteString(out, text.String())
@@ -412,60 +413,148 @@ func printReconcileEnd(out io.Writer, report reconcile.Report, runErr error) err
 	return err
 }
 
-func printPlugins(out io.Writer, plugins map[string]config.Plugin) error {
+func printPlugins(out io.Writer, reports []engine.PluginReport) error {
 	style := newTextStyle(out)
 	var text strings.Builder
-	for _, name := range slices.Sorted(maps.Keys(plugins)) {
-		declaration := plugins[name]
-		source := declaration.Image + declaration.Path
-		if declaration.Entrypoint != "" {
-			source += " (" + declaration.Entrypoint + ")"
+	for _, report := range reports {
+		fields := [][2]string{{"Image", shortImage(report.Image)}, {"Path", changes.Text(report.Path)}}
+		if report.Locked {
+			fields = append(fields, [2]string{"Digest", shortDigest(report.Digest)})
 		}
-		fmt.Fprintf(&text, "%s: %s\n", style.paint(changes.Text(name), color.Bold), changes.Text(source))
+		version := report.Version
+		if revision := report.Revision; revision != "" {
+			hash, dirty, _ := strings.Cut(revision, "+")
+			if len(hash) > 12 {
+				hash = hash[:12]
+			}
+			if dirty != "" {
+				hash += "+" + dirty
+			}
+			version += " (" + hash + ")"
+		}
+		fields = append(fields, [2]string{"Version", version}, [2]string{"Platforms", strings.Join(report.Platforms, ", ")})
+		provides := map[string][]string{}
+		for _, operation := range report.Operations {
+			provides[operation.Kind] = append(provides[operation.Kind], operationLabel(operation.Name, operation.Resource))
+		}
+		fields = append(fields, [2]string{"Resolvers", strings.Join(provides["resolve"], ", ")}, [2]string{"Resource kinds", strings.Join(provides["resource"], ", ")}, [2]string{"Destinations", strings.Join(provides["reconcile"], ", ")})
+		writeFields(&text, style, report.Name, fields)
+		for _, problem := range pluginProblems(report) {
+			writeError(&text, style, "  ", problem)
+		}
 	}
-	if len(plugins) == 0 {
+	if len(reports) == 0 {
 		text.WriteString("No plugins configured.\n")
 	}
 	_, err := io.WriteString(out, text.String())
 	return err
 }
 
-// publishedPlugin reports a publication: the pin stemma plugins install
-// records for the tag, and the runner platforms it serves.
+// publishedPlugin reports a publication: the tagged platform index and the
+// runner platforms it serves.
 type publishedPlugin struct {
-	pluginstore.Entry
-
+	Image     string   `json:"image"`
+	Digest    string   `json:"digest"`
 	Platforms []string `json:"platforms"`
 }
 
-// printLockedPlugins names the code each plugin is locked to and whether this
-// run changed it.
-func printLockedPlugins(out io.Writer, previous, locked map[string]pluginstore.Entry, changed bool) error {
+// printPluginUpdate names what plugins update did to each plugin's lock entry,
+// then the entries of plugins no longer declared.
+func printPluginUpdate(out io.Writer, update engine.PluginUpdate) error {
 	style := newTextStyle(out)
-	digest := func(entry pluginstore.Entry) string {
-		if entry.Local != nil {
-			return "sha256:" + entry.Local.Content.Artifact.SHA256
-		}
-		return entry.Digest
-	}
 	var text strings.Builder
-	for _, name := range slices.Sorted(maps.Keys(locked)) {
-		entry := locked[name]
+	for _, report := range update.Plugins {
 		outcome := "unchanged"
-		if before, ok := previous[name]; !ok {
+		switch {
+		case report.Error != "":
+			outcome = "failed"
+		case !report.Locked:
+			outcome = "pinned"
+		case report.Before == "":
 			outcome = "locked"
-		} else if digest(before) != digest(entry) {
+		case report.Before != report.Digest:
 			outcome = "updated"
 		}
-		id := digest(entry)
-		if len(id) > 19 {
-			id = id[:19]
+		fmt.Fprintf(&text, "%s: %s\n", style.paint(changes.Text(report.Name), color.Bold), style.outcome(outcome))
+		switch outcome {
+		case "locked":
+			fmt.Fprintf(&text, "  %s\n", shortDigest(report.Digest))
+		case "updated":
+			fmt.Fprintf(&text, "  %s -> %s\n", shortDigest(report.Before), shortDigest(report.Digest))
 		}
-		fmt.Fprintf(&text, "%s: %s %s %s\n", style.paint(changes.Text(name), color.Bold), changes.Text(entry.Image+entry.Path), id, style.outcome(outcome))
+		for _, problem := range pluginProblems(report) {
+			writeError(&text, style, "  ", problem)
+		}
 	}
-	text.WriteString(lockfileStatus(style, changed) + "\n")
+	for _, name := range update.Removed {
+		fmt.Fprintf(&text, "%s: %s\n", style.paint(changes.Text(name), color.Bold), style.outcome("no longer declared"))
+	}
+	text.WriteString(lockfileStatus(style, update.LockChanged) + "\n")
 	_, err := io.WriteString(out, text.String())
 	return err
+}
+
+// renderPluginChanges describes the plugin lock entries an update changed.
+func renderPluginChanges(style textStyle, plugins []lockfile.PluginChange) string {
+	var text strings.Builder
+	for _, change := range plugins {
+		heading := style.paint("plugin "+changes.Text(change.Name), color.Bold) + ": "
+		switch {
+		case change.After == nil:
+			fmt.Fprintf(&text, "%s%s\n", heading, style.outcome("no longer locked"))
+		case change.Before == nil:
+			fmt.Fprintf(&text, "%s%s\n  %s\n", heading, style.outcome("locked"), shortDigest(change.After.Digest))
+		default:
+			fmt.Fprintf(&text, "%s%s\n  %s -> %s\n", heading, style.outcome("updated"), shortDigest(change.Before.Digest), shortDigest(change.After.Digest))
+		}
+		text.WriteByte('\n')
+	}
+	return text.String()
+}
+
+// pluginProblems names why a plugin did not load, then the operations it
+// offers that this Stemma cannot use, grouped by reason.
+func pluginProblems(report engine.PluginReport) []string {
+	var problems []string
+	if report.Error != "" {
+		problems = append(problems, report.Error)
+	}
+	var reasons []string
+	unavailable := map[string][]string{}
+	for _, operation := range report.Unavailable {
+		if _, seen := unavailable[operation.Reason]; !seen {
+			reasons = append(reasons, operation.Reason)
+		}
+		unavailable[operation.Reason] = append(unavailable[operation.Reason], operationLabel(operation.Name, operation.Resource))
+	}
+	for _, reason := range reasons {
+		problems = append(problems, strings.Join(unavailable[reason], ", ")+": "+reason)
+	}
+	return problems
+}
+
+// operationLabel names an operation the way catalogs refer to it: a resource
+// kind by its apiVersion and kind, anything else by its name.
+func operationLabel(name string, resource *plugin.ResourceKind) string {
+	if resource != nil {
+		return changes.Text(resource.APIVersion + "/" + resource.Kind)
+	}
+	return changes.Text(name)
+}
+
+// shortDigest keeps enough of a digest to recognise it; --json has all of it.
+func shortDigest(digest string) string {
+	if len(digest) > 19 {
+		digest = digest[:19]
+	}
+	return changes.Text(digest)
+}
+
+func shortImage(image string) string {
+	if name, digest, pinned := strings.Cut(image, "@"); pinned {
+		return changes.Text(name) + "@" + shortDigest(digest)
+	}
+	return changes.Text(image)
 }
 
 // renderInspection describes an inspected artifact, then the facts of each

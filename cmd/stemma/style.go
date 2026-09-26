@@ -44,7 +44,7 @@ func (s textStyle) outcome(text string) string {
 		attribute = color.FgHiRed
 	case slices.Contains([]string{"blocked", "skipped", "declined"}, text):
 		attribute = color.FgHiYellow
-	case slices.Contains([]string{"unchanged", "inputs unchanged", "already applied", "cached", "retired", "no artwork", "no icon declared"}, text):
+	case slices.Contains([]string{"unchanged", "inputs unchanged", "already applied", "cached", "retired", "no artwork", "no icon declared", "pinned"}, text):
 		attribute = color.Faint
 	}
 	return s.paint(text, attribute)

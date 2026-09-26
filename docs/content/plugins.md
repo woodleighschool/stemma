@@ -28,10 +28,11 @@ Executable scripts can implement the protocol too. On Unix they need executable
 permissions and a working shebang. Interpreters and helper tools must be available
 on the runner.
 
-Run `stemma plugins install` to snapshot the selected files and record their
-content in the lockfile. Changing the executable or bundled helpers changes plugin
-identity, and runs reject the changed code until `stemma plugins update` or
-`stemma update` records it. Local plugins need no registry or container runtime.
+Run `stemma plugins update` to snapshot the selected files and lock their
+content. Changing the executable or bundled helpers changes plugin identity: the
+plugin does not load, and commands that use it fail, until `stemma plugins update`
+or `stemma update` locks it again. Local plugins need no registry or container
+runtime.
 
 ## Load an OCI bundle
 
@@ -39,25 +40,71 @@ identity, and runs reject the changed code until `stemma plugins update` or
 spec:
   plugins:
     catalog-tools:
-      image: ghcr.io/example/catalog-tools:1.0.0
+      image: ghcr.io/example/catalog-tools:1.0.0@sha256:0f5c…
       trusted: true
 ```
 
-Replace the example with an actual Stemma plugin reference containing a tag or
-digest. These are executable bundles, not arbitrary container images. A container
-runtime is not required.
+These are executable bundles, not arbitrary container images, and need no
+container runtime. Stemma fetches the platform index the image names and the
+current runner's bundle from it.
+
+An image that names its digest selects its code by itself and needs no lock
+entry. A tag without a digest is locked to the index it names when
+`stemma plugins update` or `stemma update` resolves it. Other commands keep using
+the locked index after the tag moves; `stemma plugins update` resolves the tag
+again. Stemma never moves a declaration to another release.
+
+Private registries use Docker/ORAS registry credentials. `stemma plugins publish`
+creates these indexes; see [writing plugins](writing-plugins.md#distribute-a-bundle).
+
+## Inspect plugins
 
 ```sh
-stemma plugins install
 stemma plugins list
-stemma operations
 ```
 
-Installation pins the OCI index digest and downloads the current runner's bundle.
-Use `stemma plugins update` to move existing pins. A cold cache uses the locked
-digest. Private registries use Docker/ORAS registry credentials. Plugin authors
-publish these indexes with `stemma plugins publish`; see
-[writing plugins](writing-plugins.md#distribute-a-bundle).
+`plugins list` loads each plugin from its lock entry, as every command does, and
+describes it: the code it runs, its version and VCS revision, the runner platforms
+an image has bundles for, and the resolvers, resource kinds and destinations it
+offers. A plugin that does not load, or offers operations this Stemma cannot use,
+is reported with the reason, and the command exits non-zero. `--json` prints the
+complete report.
+
+```text
+catalog-tools
+  Image:           ghcr.io/example/catalog-tools:1.0.0@sha256:0f5c2e9b7a41
+  Version:         1.0.0 (58d5d19c08d2)
+  Platforms:       darwin/arm64, linux/amd64, windows/amd64
+  Resolvers:       vendor-feed
+  Resource kinds:  example.org/v1/VendorPackage
+```
+
+`stemma operations` prints the complete contracts of every operation.
+
+## Updates
+
+A declaration that names its digest suits automated updates: the tag and digest
+move together in `stemma.yaml` and the lockfile does not change. Renovate's docker
+datasource can do this with a regex manager:
+
+```json5
+{
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/(^|/)stemma\\.yaml$/"],
+      matchStrings: [
+        "image:\\s*[\"']?(?<depName>[^\\s\"'@]+):(?<currentValue>[^\\s\"'@:/]+)@(?<currentDigest>sha256:[a-f0-9]{64})",
+      ],
+      datasourceTemplate: "docker",
+    },
+  ],
+}
+```
+
+`stemma validate` then loads the new plugin and fails if the catalog uses an
+operation it cannot provide. Without automation, declare a tag without a digest and run
+`stemma plugins update` whenever you want the index it names now.
 
 ## Compatibility
 

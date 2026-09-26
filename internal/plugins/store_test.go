@@ -12,6 +12,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -110,11 +112,11 @@ func TestRegistryCredentialsPinnedRecoveryAndIntegrity(t *testing.T) {
 		return repo, nil
 	}
 	image := host + "/plugin:v1"
-	entry, err := s.Resolve(t.Context(), image)
+	indexDigest, err := s.Resolve(t.Context(), image)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundle, err := s.Acquire(t.Context(), image, entry)
+	bundle, err := s.Acquire(t.Context(), image, indexDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,11 +130,11 @@ func TestRegistryCredentialsPinnedRecoveryAndIntegrity(t *testing.T) {
 		t.Fatal(err)
 	}
 	corrupt.Store(true)
-	if _, err := s.Acquire(t.Context(), image, entry); err == nil {
+	if _, err := s.Acquire(t.Context(), image, indexDigest); err == nil {
 		t.Fatal("corrupt registry response was accepted")
 	}
 	corrupt.Store(false)
-	if recovered, err := s.Acquire(t.Context(), image, entry); err != nil || recovered != bundle {
+	if recovered, err := s.Acquire(t.Context(), image, indexDigest); err != nil || !reflect.DeepEqual(recovered, bundle) {
 		t.Fatalf("pinned recovery=%+v error=%v", recovered, err)
 	}
 	mu.Lock()
@@ -144,7 +146,7 @@ func TestRegistryCredentialsPinnedRecoveryAndIntegrity(t *testing.T) {
 
 func TestPinnedPlatformBundleSurvivesTagMovementAndCacheLoss(t *testing.T) {
 	ctx := t.Context()
-	remote := &recordedTarget{ReadOnlyTarget: memory.New(), fetches: map[digest.Digest]int{}}
+	remote := &recordedTarget{ReadOnlyTarget: memory.New(), fetches: map[digest.Digest]int{}, resolves: map[string]int{}}
 	target := remote.ReadOnlyTarget.(*memory.Store)
 	linux, linuxBlob := fixtureManifest(t, target, "linux", "amd64", fixtureArchive(t, "plugin", "original", false))
 	darwin, darwinBlob := fixtureManifest(t, target, "darwin", "arm64", fixtureArchive(t, "plugin", "darwin", false))
@@ -160,16 +162,19 @@ func TestPinnedPlatformBundleSurvivesTagMovementAndCacheLoss(t *testing.T) {
 	s := New(cache, false)
 	s.platform = ocispec.Platform{OS: "linux", Architecture: "amd64"}
 	s.registry = func(string) (oras.ReadOnlyTarget, error) { return remote, nil }
-	entry, err := s.Resolve(ctx, image)
+	indexDigest, err := s.Resolve(ctx, image)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundle, err := s.Acquire(ctx, image, entry)
+	bundle, err := s.Acquire(ctx, image, indexDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if bundle.Manifest != linux.Digest.String() || remote.fetches[darwin.Digest] != 0 || remote.fetches[darwinBlob.Digest] != 0 {
 		t.Fatalf("downloaded the wrong platform: %+v fetches=%v", bundle, remote.fetches)
+	}
+	if !slices.Equal(bundle.Platforms, []string{"darwin/arm64", "linux/amd64"}) {
+		t.Fatalf("index platforms = %v", bundle.Platforms)
 	}
 	executable, err := s.Materialize(ctx, bundle, filepath.Join(t.TempDir(), "installed"))
 	if err != nil {
@@ -189,10 +194,11 @@ func TestPinnedPlatformBundleSurvivesTagMovementAndCacheLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.offline = true
-	if warm, err := s.Acquire(ctx, image, entry); err != nil || warm != bundle {
+	resolved := len(remote.resolves)
+	if warm, err := s.Acquire(ctx, image, indexDigest); err != nil || !reflect.DeepEqual(warm, bundle) {
 		t.Fatalf("offline bundle=%+v error=%v", warm, err)
 	}
-	if remote.resolves != 1 || remote.fetches[linuxBlob.Digest] != 1 {
+	if len(remote.resolves) != resolved || remote.fetches[linuxBlob.Digest] != 1 {
 		t.Fatal("warm run contacted registry")
 	}
 	path, err := cache.Path(bundle.Artifact)
@@ -205,29 +211,26 @@ func TestPinnedPlatformBundleSurvivesTagMovementAndCacheLoss(t *testing.T) {
 	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), int(bundle.Artifact.Size)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Acquire(ctx, image, entry); err == nil {
+	if _, err := s.Acquire(ctx, image, indexDigest); err == nil {
 		t.Fatal("offline cache corruption went unnoticed")
 	}
 	s.offline = false
 	if err := cache.Prune(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if cold, err := s.Acquire(ctx, image, entry); err != nil || cold != bundle {
+	if cold, err := s.Acquire(ctx, image, indexDigest); err != nil || !reflect.DeepEqual(cold, bundle) {
 		t.Fatalf("cold run followed moved tag: %+v %v", cold, err)
 	}
-	if remote.resolves != 1 {
+	if remote.resolves[image] != 1 {
 		t.Fatal("cold recovery resolved a mutable tag")
 	}
 	updated, err := s.Resolve(ctx, image)
-	if err != nil || updated.Digest == entry.Digest {
-		t.Fatalf("explicit update=%+v error=%v", updated, err)
+	if err != nil || updated == indexDigest {
+		t.Fatalf("explicit update=%s error=%v", updated, err)
 	}
 	s.platform.OS, s.platform.Architecture = "windows", "arm64"
-	if _, err := s.Acquire(ctx, image, entry); err == nil || !strings.Contains(err.Error(), "no bundle") {
+	if _, err := s.Acquire(ctx, image, indexDigest); err == nil || !strings.Contains(err.Error(), "no bundle") {
 		t.Fatalf("unsupported platform: %v", err)
-	}
-	if _, err := s.Acquire(ctx, image+"-changed", entry); err == nil {
-		t.Fatal("changed image reused stale lock")
 	}
 }
 
@@ -301,14 +304,16 @@ func TestRejectAmbiguousIndexAndInvalidManifest(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if test == "oversized-index" {
+				index = putJSON(t, target, ocispec.MediaTypeImageIndex, ocispec.Index{SchemaVersion: 2, MediaType: ocispec.MediaTypeImageIndex, Manifests: manifests, Annotations: map[string]string{"padding": strings.Repeat("x", maxMetadataSize)}})
+				if err := target.Tag(t.Context(), index, index.Digest.String()); err != nil {
+					t.Fatal(err)
+				}
+			}
 			s := New(cache, false)
 			s.platform = *platform
 			s.registry = func(string) (oras.ReadOnlyTarget, error) { return target, nil }
-			entry := Entry{Image: "registry.example/plugin:v1", Digest: index.Digest.String(), Size: index.Size}
-			if test == "oversized-index" {
-				entry.Size = maxMetadataSize + 1
-			}
-			if _, err := s.Acquire(t.Context(), entry.Image, entry); err == nil {
+			if _, err := s.Acquire(t.Context(), "registry.example/plugin:v1", index.Digest.String()); err == nil {
 				t.Fatal("invalid package accepted")
 			}
 		})
@@ -319,7 +324,7 @@ type recordedTarget struct {
 	oras.ReadOnlyTarget
 
 	fetches  map[digest.Digest]int
-	resolves int
+	resolves map[string]int
 }
 
 func (r *recordedTarget) Fetch(ctx context.Context, desc ocispec.Descriptor) (io.ReadCloser, error) {
@@ -328,7 +333,7 @@ func (r *recordedTarget) Fetch(ctx context.Context, desc ocispec.Descriptor) (io
 }
 
 func (r *recordedTarget) Resolve(ctx context.Context, ref string) (ocispec.Descriptor, error) {
-	r.resolves++
+	r.resolves[ref]++
 	return r.ReadOnlyTarget.Resolve(ctx, ref)
 }
 
@@ -361,9 +366,14 @@ func fixtureManifest(t *testing.T, target *memory.Store, goos, goarch string, bu
 	return manifest, layer
 }
 
+// fixtureIndex pushes an index a registry also resolves by its digest.
 func fixtureIndex(t *testing.T, target *memory.Store, manifests ...ocispec.Descriptor) ocispec.Descriptor {
 	t.Helper()
-	return putJSON(t, target, ocispec.MediaTypeImageIndex, ocispec.Index{SchemaVersion: 2, MediaType: ocispec.MediaTypeImageIndex, Manifests: manifests})
+	index := putJSON(t, target, ocispec.MediaTypeImageIndex, ocispec.Index{SchemaVersion: 2, MediaType: ocispec.MediaTypeImageIndex, Manifests: manifests})
+	if err := target.Tag(t.Context(), index, index.Digest.String()); err != nil {
+		t.Fatal(err)
+	}
+	return index
 }
 
 func putJSON(t *testing.T, target *memory.Store, media string, value any) ocispec.Descriptor {

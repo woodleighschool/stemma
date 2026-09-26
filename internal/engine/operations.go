@@ -347,8 +347,11 @@ func (o *operations) call(ctx context.Context, name, method string, input, outpu
 
 // loadOperations registers the built-in operations and those each declared
 // plugin offers. A plugin that does not load, or offers operations at another
-// interface version, fails only the runs that use what it would provide.
-func loadOperations(ctx context.Context, p config.Project, manager *source.Manager, work string, handlers map[string]reconcileHandler, frozen bool) (*operations, error) {
+// interface version, fails only the runs that use what it would provide. Only
+// a run that resolves plugins changes their lock entries: it locks a tag or
+// local path whose entry is missing or stale and keeps the entry of a plugin
+// that does not load.
+func loadOperations(ctx context.Context, p config.Project, manager *source.Manager, work string, handlers map[string]reconcileHandler, resolve bool) (*operations, error) {
 	ops, err := builtins(handlers)
 	if err != nil || len(p.Plugins) == 0 {
 		return ops, err
@@ -357,16 +360,21 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	ops.plugins = map[string]plugins.Entry{}
+	ops.plugins = maps.Clone(locked.Plugins)
+	if resolve {
+		ops.plugins = map[string]plugins.Entry{}
+	}
 	store := plugins.New(manager.Store, manager.Offline)
 	for _, name := range slices.Sorted(maps.Keys(p.Plugins)) {
-		loaded := loadPlugin(ctx, store, manager.Root, work, name, p.Plugins[name], locked.Plugins[name], frozen)
+		loaded := loadPlugin(ctx, store, manager.Root, work, name, p.Plugins[name], locked.Plugins[name], resolve)
 		entry := loaded.entry
 		if !ops.add(loaded) {
-			// The reviewed entry stays for the runs that do not use the plugin.
 			entry = locked.Plugins[name]
+			if resolve {
+				plugin.Logger(ctx).WarnContext(ctx, "Plugin "+name+" did not load", "error", ops.failed[name])
+			}
 		}
-		if entry != (plugins.Entry{}) {
+		if resolve && entry != (plugins.Entry{}) {
 			ops.plugins[name] = entry
 		}
 	}

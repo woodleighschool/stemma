@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/cas"
-	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 	"go.yaml.in/yaml/v4"
@@ -397,9 +396,6 @@ func TestInputRemovalAndSourceFreeProjects(t *testing.T) {
 	}
 	if _, err := prepare(t, m, nil, Options{Offline: true}); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := Prepare(t.Context(), m.Root, nil, map[string]plugins.Entry{"fixture": {Image: "registry.example/plugin:v1"}}, m, Options{}); err == nil {
-		t.Fatal("source-free project bypassed required plugin lock")
 	}
 }
 

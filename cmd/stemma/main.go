@@ -27,7 +27,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/reconcile"
-	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -281,71 +280,53 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		return store.Prune(cmd.Context())
 	}})
 	root.AddCommand(cache)
-	plugins := &cobra.Command{Use: "plugins", Short: "Install, update and publish executable plugins"}
-	list := &cobra.Command{Use: "list", Short: "Show configured plugins", Args: cobra.NoArgs}
+	plugins := &cobra.Command{Use: "plugins", Short: "Inspect, update and publish executable plugins"}
+	var listOffline bool
+	list := &cobra.Command{Use: "list", Short: "Load each plugin from its lock entry and describe what it offers", Args: cobra.NoArgs}
 	listJSON := jsonFlag(list)
-	list.RunE = func(_ *cobra.Command, _ []string) error {
+	list.Flags().BoolVar(&listOffline, "offline", false, "Require verified cached plugin bundles")
+	list.RunE = func(cmd *cobra.Command, _ []string) error {
 		path, err := resolve()
 		if err != nil {
 			return err
 		}
-		p, err := config.Load(path)
+		reports, listErr := engine.ListPlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Lock: lockfile.Options{Offline: listOffline}})
+		if listErr != nil && !errors.Is(listErr, engine.ErrPluginsFailed) {
+			return listErr
+		}
+		if *listJSON {
+			err = writeJSON(out, reports)
+		} else {
+			err = printPlugins(out, reports)
+		}
+		if err != nil {
+			return errors.Join(listErr, fmt.Errorf("write report: %w", err))
+		}
+		return listErr
+	}
+	plugins.AddCommand(list)
+	updatePlugins := &cobra.Command{Use: "update [NAME...]", Short: "Lock plugins to the code their declarations select now", Args: cobra.ArbitraryArgs}
+	updateJSON := jsonFlag(updatePlugins)
+	updatePlugins.RunE = func(cmd *cobra.Command, args []string) error {
+		path, err := resolve()
 		if err != nil {
 			return err
 		}
-		if *listJSON {
-			return writeJSON(out, p.Plugins)
+		update, updateErr := engine.UpdatePlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir}, args)
+		if updateErr != nil && !errors.Is(updateErr, engine.ErrPluginsFailed) {
+			return updateErr
 		}
-		return printPlugins(out, p.Plugins)
-	}
-	plugins.AddCommand(list)
-	for _, method := range []string{"install", "update"} {
-		install := &cobra.Command{Use: method, Short: map[string]string{"install": "Lock configured plugins, keeping locked images", "update": "Lock configured plugins, resolving images again"}[method], Args: cobra.NoArgs}
-		installJSON := jsonFlag(install)
-		install.RunE = func(cmd *cobra.Command, _ []string) error {
-			plugin.Logger(cmd.Context()).DebugContext(cmd.Context(), "Loading plugin declarations")
-			path, err := resolve()
-			if err != nil {
-				return err
-			}
-			p, err := config.Load(path)
-			if err != nil {
-				return err
-			}
-			projectRoot := filepath.Dir(path)
-			unlock, err := lockfile.Lock(cmd.Context(), projectRoot)
-			if err != nil {
-				return err
-			}
-			defer func() { _ = unlock() }()
-			store, err := cas.Open(cacheDir)
-			if err != nil {
-				return err
-			}
-			release, err := store.Lease(cmd.Context())
-			if err != nil {
-				return err
-			}
-			defer func() { _ = release() }()
-			previous, err := lockfile.Load(lockfile.Filename(projectRoot))
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				return err
-			}
-			entries, err := pluginstore.New(store, false).Install(cmd.Context(), projectRoot, p.Plugins, previous.Plugins, method == "update")
-			if err != nil {
-				return err
-			}
-			result, err := lockfile.Prepare(cmd.Context(), projectRoot, nil, entries, source.New(store, projectRoot, false), lockfile.Options{PluginsOnly: true})
-			if err != nil {
-				return err
-			}
-			if *installJSON {
-				return writeJSON(out, result.File.Plugins)
-			}
-			return printLockedPlugins(out, previous.Plugins, result.File.Plugins, result.Changed)
+		if *updateJSON {
+			err = writeJSON(out, update)
+		} else {
+			err = printPluginUpdate(out, update)
 		}
-		plugins.AddCommand(install)
+		if err != nil {
+			return errors.Join(updateErr, fmt.Errorf("write report: %w", err))
+		}
+		return updateErr
 	}
+	plugins.AddCommand(updatePlugins)
 	plugins.AddCommand(publishCommand(out))
 	root.AddCommand(plugins)
 	return root, display.finish
@@ -371,15 +352,15 @@ func publishCommand(out io.Writer) *cobra.Command {
 		}
 		done := plugin.Stage(cmd.Context(), "Publishing plugin", plugin.Detail(args[0]))
 		bundles, err := pluginstore.GoReleaserBundles(dist, archiveID)
-		var entry pluginstore.Entry
+		var digest string
 		if err == nil {
-			entry, err = pluginstore.Publish(cmd.Context(), args[0], bundles, values)
+			digest, err = pluginstore.Publish(cmd.Context(), args[0], bundles, values)
 		}
 		done(err)
 		if err != nil {
 			return err
 		}
-		published := publishedPlugin{Entry: entry}
+		published := publishedPlugin{Image: args[0], Digest: digest}
 		for _, bundle := range bundles {
 			published.Platforms = append(published.Platforms, bundle.Platform.OS+"/"+bundle.Platform.Architecture)
 		}

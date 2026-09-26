@@ -27,9 +27,10 @@ and the resources they consume are checked against their operation contracts, so
 an unrelated document that fails its own validation does not block the run. Use
 `stemma validate` to check the whole catalog, including suspended resources.
 
-`update` writes the input locks. Every other command uses the reviewed lockfile
-as it is: an input without a current entry fails that resource until
-`stemma update` records it, and plugins must match their entries.
+`update` writes the input locks and locks plugin tags and local paths. Every
+other command uses the reviewed lockfile as it is: an input without a current
+entry fails that resource until `stemma update` records it, and a plugin whose
+entry is missing or stale does not load.
 
 `prepare --changed-since REV` prepares only the resources whose preparation
 differs from the catalog at the commit where `REV` and `HEAD` meet: their source
@@ -117,12 +118,17 @@ not share it without reviewing it.
 
 ```sh
 stemma plugins list
-stemma plugins install
-stemma plugins update
+stemma plugins update [NAME...]
 stemma plugins publish IMAGE --goreleaser dist
 stemma cache path
 stemma cache prune
 ```
+
+`plugins list` loads each plugin from its lock entry and describes what it runs
+and offers. `plugins update` locks the named plugins, or all of them, to what their
+declarations select now: it resolves a tag again and snapshots local files.
+`update` locks the plugins whose entries are missing or stale; no other command
+changes plugin entries. See [using plugins](plugins.md).
 
 `plugins publish` pushes a GoReleaser release of plugin bundles as an OCI platform
 index; see [writing plugins](writing-plugins.md#distribute-a-bundle).
