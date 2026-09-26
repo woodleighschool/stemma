@@ -67,8 +67,8 @@ func MetadataSchema() *jsonschema.Schema {
 	mac := common()
 	mac["type"] = &jsonschema.Schema{Enum: []any{"pkg", "dmg"}, Description: "A Mac app follows its installer: pkg for a PKG and dmg for a disk image."}
 	mac["ignore_version_detection"] = &jsonschema.Schema{Type: "boolean", Description: "Ignore installed app versions during detection. Explicit false is managed."}
-	mac["included_apps"] = &jsonschema.Schema{Type: "array", MinItems: new(uint64(1)), MaxItems: new(uint64(500)), Description: "Identifiers and versions that detect the installation; the first identifies the app. Derived from applications, selected first, or receipts for an unmanaged PKG without applications, including payloadless packages. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique.", Items: objectSchema(map[string]*jsonschema.Schema{
-		"id":      {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application bundle identifier or unmanaged PKG receipt identifier."},
+	mac["included_apps"] = &jsonschema.Schema{Type: "array", MinItems: new(uint64(1)), MaxItems: new(uint64(500)), Description: "Identifiers and versions that detect the installation; the first identifies the app. A PKG app accepts package receipts as well as applications. Derived from applications, selected first, or from receipts when a PKG installs no applications, as a payloadless package does. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique.", Items: objectSchema(map[string]*jsonschema.Schema{
+		"id":      {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application bundle identifier, or package receipt identifier for a PKG app."},
 		"version": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleShortVersionString or package receipt version."},
 	}, "id", "version")}
 	lob := common()

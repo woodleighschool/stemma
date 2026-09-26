@@ -170,13 +170,14 @@ assignments:
 ```
 
 Detection uses application bundle identifiers and versions, with the selected
-application first. Unmanaged PKGs can detect applications outside `/Applications`
-and use package receipt identifiers and versions when no applications are present,
-including payloadless packages. Line-of-business apps require applications under
-`/Applications`. Set `included_apps` to replace the derived list when static
-inspection cannot determine the installed applications or an installer chooses
-them conditionally. `display_name`, `description` and `publisher` are always set;
-the artifact never supplies them.
+application first. PKG apps can detect applications outside `/Applications`, and
+use package receipt identifiers and versions when a package installs no
+applications, as a payloadless package does. Line-of-business apps require
+applications under `/Applications`. Set `included_apps` to replace the derived list
+when static inspection cannot determine the installed applications or an installer
+chooses them conditionally. A PKG app accepts receipts there too, so it can be
+detected by its package even when it installs an application. `display_name`,
+`description` and `publisher` are always set; the artifact never supplies them.
 
 A PKG can also publish as a line-of-business app, so that is the one `type` to
 declare. Stemma checks what Intune requires before uploading it: a flat PKG with

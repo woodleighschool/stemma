@@ -4090,7 +4090,7 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Application bundle identifier or unmanaged PKG receipt identifier."
+                            "description": "Application bundle identifier, or package receipt identifier for a PKG app."
                           },
                           "version": {
                             "anyOf": [
@@ -4133,7 +4133,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Identifiers and versions that detect the installation; the first identifies the app. Derived from applications, selected first, or receipts for an unmanaged PKG without applications, including payloadless packages. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
+              "description": "Identifiers and versions that detect the installation; the first identifies the app. A PKG app accepts package receipts as well as applications. Derived from applications, selected first, or from receipts when a PKG installs no applications, as a payloadless package does. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
             },
             "information_url": {
               "anyOf": [
@@ -4597,7 +4597,7 @@
                                 "type": "string"
                               }
                             ],
-                            "description": "Application bundle identifier or unmanaged PKG receipt identifier."
+                            "description": "Application bundle identifier, or package receipt identifier for a PKG app."
                           },
                           "version": {
                             "anyOf": [
@@ -4640,7 +4640,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Identifiers and versions that detect the installation; the first identifies the app. Derived from applications, selected first, or receipts for an unmanaged PKG without applications, including payloadless packages. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
+              "description": "Identifiers and versions that detect the installation; the first identifies the app. A PKG app accepts package receipts as well as applications. Derived from applications, selected first, or from receipts when a PKG installs no applications, as a payloadless package does. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
             },
             "information_url": {
               "anyOf": [
