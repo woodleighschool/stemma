@@ -92,3 +92,28 @@ func GoReleaserBundles(dist, id string) ([]PlatformBundle, error) {
 	}
 	return bundles, nil
 }
+
+// GoReleaserAnnotations labels a release with the version and commit
+// GoReleaser recorded in dist/metadata.json, as the standard OCI version and
+// revision annotations.
+func GoReleaserAnnotations(dist string) (map[string]string, error) {
+	data, err := os.ReadFile(filepath.Join(dist, "metadata.json"))
+	if err != nil {
+		return nil, fmt.Errorf("goreleaser: %w", err)
+	}
+	var metadata struct {
+		Version string `json:"version"`
+		Commit  string `json:"commit"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("goreleaser: metadata.json: %w", err)
+	}
+	annotations := map[string]string{}
+	if metadata.Version != "" {
+		annotations[ocispec.AnnotationVersion] = metadata.Version
+	}
+	if metadata.Commit != "" {
+		annotations[ocispec.AnnotationRevision] = metadata.Commit
+	}
+	return annotations, nil
+}

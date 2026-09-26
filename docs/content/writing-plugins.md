@@ -392,7 +392,9 @@ more than one archive id builds tar.zst, name the plugin's with `--goreleaser-id
 platform and tags their index last, so a failed run tags nothing. A published tag
 keeps its release: publishing the same bundles again changes nothing, and
 different bundles need a new tag. Registry credentials come from `docker login`.
-Add index annotations with `--annotation KEY=VALUE`, such as
+The index carries the version and commit GoReleaser recorded as
+`org.opencontainers.image.version` and `org.opencontainers.image.revision`. Add
+other annotations with `--annotation KEY=VALUE`, such as
 `org.opencontainers.image.source` for the repository URL. In GitHub Actions, the
 [publish-plugin action](https://github.com/woodleighschool/stemma/tree/main/actions/publish-plugin)
 runs this step after GoReleaser.

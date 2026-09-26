@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -339,7 +340,7 @@ func publishCommand(out io.Writer) *cobra.Command {
 	publishJSON := jsonFlag(cmd)
 	cmd.Flags().StringVar(&dist, "goreleaser", "", "GoReleaser dist directory whose artifacts.json lists the bundles; run in the directory GoReleaser ran in")
 	cmd.Flags().StringVar(&archiveID, "goreleaser-id", "", "GoReleaser archive id of the bundles, when more than one archive id builds tar.zst")
-	cmd.Flags().StringArrayVar(&annotations, "annotation", nil, "Index annotation as KEY=VALUE; repeat for more")
+	cmd.Flags().StringArrayVar(&annotations, "annotation", nil, "Index annotation as KEY=VALUE, beside the version and revision GoReleaser recorded; repeat for more")
 	_ = cmd.MarkFlagRequired("goreleaser")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		values := map[string]string{}
@@ -352,9 +353,14 @@ func publishCommand(out io.Writer) *cobra.Command {
 		}
 		done := plugin.Stage(cmd.Context(), "Publishing plugin", plugin.Detail(args[0]))
 		bundles, err := pluginstore.GoReleaserBundles(dist, archiveID)
+		var labels map[string]string
+		if err == nil {
+			labels, err = pluginstore.GoReleaserAnnotations(dist)
+		}
 		var digest string
 		if err == nil {
-			digest, err = pluginstore.Publish(cmd.Context(), args[0], bundles, values)
+			maps.Copy(labels, values)
+			digest, err = pluginstore.Publish(cmd.Context(), args[0], bundles, labels)
 		}
 		done(err)
 		if err != nil {

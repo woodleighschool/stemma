@@ -126,3 +126,13 @@ func TestGoReleaserBundlesRejectUnusableReleases(t *testing.T) {
 		}
 	})
 }
+
+func TestGoReleaserAnnotationsNameTheBuild(t *testing.T) {
+	metadata := []byte(`{"project_name":"tools","tag":"1.2.0","version":"1.2.0","commit":"58d5d19c08d2cbf5cdca2bfd2e658e5f29a130e5","date":"2026-09-26T17:45:36+10:00"}`)
+	goreleaserProject(t, nil, map[string][]byte{"metadata.json": metadata})
+	annotations, err := GoReleaserAnnotations("dist")
+	want := map[string]string{ocispec.AnnotationVersion: "1.2.0", ocispec.AnnotationRevision: "58d5d19c08d2cbf5cdca2bfd2e658e5f29a130e5"}
+	if err != nil || !reflect.DeepEqual(annotations, want) {
+		t.Fatalf("annotations = %v, %v", annotations, err)
+	}
+}

@@ -64,7 +64,7 @@ zizmor's `unpinned-uses` audit in the calling repository.
 - Registry credentials come from the Docker credential store, so the action works with any
   registry a login step has signed in to.
 - The index carries `org.opencontainers.image.source` for the calling repository, which links a
-  GHCR package to it.
+  GHCR package to it, and the version and commit GoReleaser recorded.
 - Stemma comes from its GitHub release through Mise's `github:` backend, so the job needs no Go
   toolchain for this step. The default version is the Stemma release the pinned commit belongs
   to, and moving the pin moves Stemma with it.
