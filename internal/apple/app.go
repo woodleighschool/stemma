@@ -2,6 +2,7 @@ package apple
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -84,6 +85,31 @@ func VerifyAppFS(ctx context.Context, fsys fs.ReadLinkFS, appPath string, want s
 	}
 	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10)}
 	return v.verifyApp(bundle, path.Base(appPath), want)
+}
+
+// VerifyAppsFS verifies each application where it lies in a filesystem. They
+// must share one signer, and the result names every target.
+func VerifyAppsFS(ctx context.Context, fsys fs.ReadLinkFS, apps []string, want signature.Signer) (signature.Result, error) {
+	if len(apps) == 0 {
+		return signature.Result{}, errors.New("no application to verify")
+	}
+	var result signature.Result
+	var targets []string
+	for _, app := range apps {
+		observed, err := VerifyAppFS(ctx, fsys, app, want)
+		if err != nil {
+			return signature.Result{}, fmt.Errorf("%s: %w", app, err)
+		}
+		if len(targets) == 0 {
+			result = observed
+			if want, err = signature.Parse(observed.Signer); err != nil {
+				return signature.Result{}, err
+			}
+		}
+		targets = append(targets, observed.Target)
+	}
+	result.Target = strings.Join(targets, ", ")
+	return result, nil
 }
 
 func (v *bundleVerifier) verifyApp(bundle fs.ReadLinkFS, name string, want signature.Signer) (signature.Result, error) {

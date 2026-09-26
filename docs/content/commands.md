@@ -60,8 +60,10 @@ destinations. Commit the icons so publication sends the same bytes on every host
 `signature` acquires and prepares inputs like `prepare`, verifies each published
 artifact against the signer it observes and prints the `signature` fragment to
 add. It never writes documents, and a document that already names a different
-signer fails. See [macOS](mac-software.md#signature) and
-[Windows](windows-software.md#signature) signature policy.
+signer fails. A `BuildMacPkg` package is unsigned, so the command reports only the
+input its `signature` names, labelled as that input. See
+[macOS](mac-software.md#signature), [Windows](windows-software.md#signature) and
+[builder](building-packages.md#verify-the-wrapped-input) signature policy.
 
 `artifact` prepares one resource and prints only the absolute path of its
 `installer` output, or of the output `--output` names. `--no-input-lock` instead

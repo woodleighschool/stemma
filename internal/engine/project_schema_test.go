@@ -111,3 +111,23 @@ func TestDiscoveryValidatesResolverConfigBeforeAcquisition(t *testing.T) {
 		}
 	}
 }
+
+func TestBuilderSignatureNamesADeclaredInput(t *testing.T) {
+	ops, err := builtins(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for input, message := range map[string]string{"vendor": "", "vendr": `signature.input "vendr" is not a declared input`} {
+		spec := map[string]any{
+			"inputs":    map[string]any{"vendor": map[string]any{"url": "https://downloads.example.invalid/vendor.dmg"}},
+			"package":   map[string]any{"identifier": "org.example.wrapper", "version": "1.0"},
+			"scripts":   map[string]any{"postinstall": "#!/bin/sh\nexit 0\n"},
+			"signature": map[string]any{"input": input, "signer": "apple:developer-id:SMLKBTR495"},
+		}
+		project := config.Project{Resources: map[string]config.Resource{"wrapper": {APIVersion: "stemma/v1alpha1", Kind: "BuildMacPkg", Metadata: config.Metadata{Name: "wrapper"}, Spec: spec}}}
+		_, _, err := discoverClosure(t.Context(), project, ops, sortedKeys(project.Resources), false, true)
+		if message == "" && err != nil || message != "" && (err == nil || !strings.Contains(err.Error(), message)) {
+			t.Fatalf("signature.input %q: %v", input, err)
+		}
+	}
+}

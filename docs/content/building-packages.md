@@ -195,3 +195,23 @@ package:
 An input is inspected only when an expression reads its facts. Vendor-specific
 discovery and other metadata extraction belong in a resolver or resource plugin.
 Set `package.filename` only when the default output name needs to be overridden.
+
+## Verify the wrapped input
+
+`signature` requires one input to carry a complete Developer ID signature from an
+expected team before the package is built:
+
+```yaml
+signature:
+  input: vendor
+  signer: apple:developer-id:JQ525L2MZD # Adobe Inc.
+```
+
+A PKG input is verified by its package signature. A disk image, archive or folder
+has every application verified, except those inside another application, with the
+checks [MacSoftware](mac-software.md#signature) uses. Declare `input` alone and run
+`stemma signature BuildMacPkg/<name>` to print the fragment with the observed signer.
+
+The result describes the input, not the built package, which stays unsigned.
+Destinations that require a signed package, such as Intune line-of-business apps,
+still reject it.

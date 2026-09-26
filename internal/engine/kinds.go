@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/artifactname"
@@ -45,6 +46,15 @@ func buildMacPkg(ctx context.Context, request plugin.ResourceRequest[json.RawMes
 		if data, ok := spec["inputs"]; ok {
 			if err := json.Unmarshal(data, &declarations); err != nil {
 				return plugin.ResourceResult{}, err
+			}
+		}
+		if data, ok := spec["signature"]; ok {
+			var policy macpkg.InputSignature
+			if err := json.Unmarshal(data, &policy); err != nil {
+				return plugin.ResourceResult{}, fmt.Errorf("signature: %w", err)
+			}
+			if _, declared := declarations[policy.Input]; !declared {
+				return plugin.ResourceResult{}, fmt.Errorf("signature.input %q is not a declared input", policy.Input)
 			}
 		}
 		delete(spec, "inputs")

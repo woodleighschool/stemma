@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/reconcile"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -343,5 +344,25 @@ spec:
 		if !strings.Contains(stderr.String(), want) {
 			t.Fatalf("unpublished error lost %q: %s", want, stderr.String())
 		}
+	}
+}
+
+func TestSignatureDetailsKeepInputsApartFromPublishedSignatures(t *testing.T) {
+	published, err := json.Marshal(signature.Result{Signer: "apple:developer-id:UBF8T346G9", Name: "Microsoft Corporation", Authority: "Developer ID Installer", Target: "installer.pkg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := json.Marshal(signature.InputResult{Input: "vendor", Signer: "apple:developer-id:JQ525L2MZD", Name: "Adobe Inc.", Authority: "Developer ID Application", Target: "Install.app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := func(evidence map[string]json.RawMessage) engine.ResourceReport {
+		return engine.ResourceReport{Artifacts: map[string]engine.Prepared{"installer": {Evidence: evidence}}}
+	}
+	if got := signatureDetails(report(map[string]json.RawMessage{"signature": published})); got != "  Signer: Microsoft Corporation (Developer ID Installer)\n  Target: installer.pkg\n  signature:\n    signer: apple:developer-id:UBF8T346G9 # Microsoft Corporation\n" {
+		t.Fatalf("published signature: %q", got)
+	}
+	if got := signatureDetails(report(map[string]json.RawMessage{"input.signature": input})); got != "  Input: vendor\n  Signer: Adobe Inc. (Developer ID Application)\n  Target: Install.app\n  signature:\n    input: vendor\n    signer: apple:developer-id:JQ525L2MZD # Adobe Inc.\n" {
+		t.Fatalf("input signature: %q", got)
 	}
 }

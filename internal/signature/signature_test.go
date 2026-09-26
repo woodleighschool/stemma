@@ -46,4 +46,8 @@ func TestCheckAndFragment(t *testing.T) {
 	if got := (Result{Signer: observed.String()}).Fragment(); got != "signature:\n  signer: apple:developer-id:UBF8T346G9\n" {
 		t.Fatalf("fragment without name: %q", got)
 	}
+	input := InputResult{Input: "vendor", Result: result}
+	if got := input.Fragment(); got != "signature:\n  input: vendor\n  signer: apple:developer-id:UBF8T346G9 # Microsoft Corporation\n" {
+		t.Fatalf("input fragment: %q", got)
+	}
 }

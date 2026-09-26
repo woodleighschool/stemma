@@ -99,3 +99,16 @@ func (r Result) Fragment() string {
 	}
 	return line + "\n"
 }
+
+// InputResult records the verified signature of an input a build consumed. It
+// describes that input and never the artifact built from it.
+type InputResult struct {
+	Result
+
+	Input string `json:"input"`
+}
+
+// Fragment renders the input policy to paste into a builder document.
+func (r InputResult) Fragment() string {
+	return "signature:\n  input: " + r.Input + "\n" + strings.TrimPrefix(r.Result.Fragment(), "signature:\n")
+}

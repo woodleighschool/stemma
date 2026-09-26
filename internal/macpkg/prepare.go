@@ -3,13 +3,16 @@ package macpkg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 
+	"github.com/woodleighschool/stemma/internal/apple"
 	"github.com/woodleighschool/stemma/internal/artifactname"
+	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/expression"
-	"github.com/woodleighschool/stemma/internal/inspect"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -79,19 +82,90 @@ func Prepare(ctx context.Context, request plugin.ResourceRequest[json.RawMessage
 	if spec.Package.Filename == "" {
 		spec.Package.Filename = artifactname.Filename(request.Identity.Name, spec.Package.Version, "", "pkg")
 	}
-	return build(ctx, spec, sources, request.Workspace)
+	var verified []byte
+	if spec.Signature != nil {
+		result, err := verifyInput(ctx, sources, *spec.Signature, request.Derive == "signature")
+		if err != nil {
+			return plugin.Artifact{}, err
+		}
+		if verified, err = json.Marshal(result); err != nil {
+			return plugin.Artifact{}, err
+		}
+	}
+	artifact, err := build(ctx, spec, sources, request.Workspace)
+	if err != nil || verified == nil {
+		return artifact, err
+	}
+	// Intune and stemma signature read "signature" as proof about the
+	// published package, which the builder never signs.
+	artifact.Evidence = map[string]json.RawMessage{"input.signature": verified}
+	return artifact, nil
+}
+
+// verifyInput checks the publisher signature of the input a build wraps: a
+// PKG's package signature, or every application in a disk image, archive or
+// folder outside another application. Deriving reports the observed signer
+// when none is declared.
+func verifyInput(ctx context.Context, sources *sources, policy InputSignature, derive bool) (signature.InputResult, error) {
+	var want signature.Signer
+	switch {
+	case policy.Signer != "":
+		var err error
+		if want, err = signature.Parse(policy.Signer); err != nil {
+			return signature.InputResult{}, err
+		}
+	case !derive:
+		return signature.InputResult{}, errors.New("signature.signer is required; derive it with stemma signature")
+	}
+	source, err := sources.get(policy.Input)
+	if err != nil {
+		return signature.InputResult{}, err
+	}
+	facts, err := sources.inventory(ctx, policy.Input)
+	if err != nil {
+		return signature.InputResult{}, fmt.Errorf("input %q: %w", policy.Input, err)
+	}
+	done := plugin.Stage(ctx, "Verifying input signature", plugin.Detail(policy.Input))
+	result, err := verifySource(ctx, source, facts, want)
+	done(err, plugin.Detail(result.Name))
+	if err != nil {
+		return signature.InputResult{}, fmt.Errorf("input %q: %w", policy.Input, err)
+	}
+	return signature.InputResult{Input: policy.Input, Result: result}, nil
+}
+
+func verifySource(ctx context.Context, source *contents.Source, facts plugin.Facts, want signature.Signer) (signature.Result, error) {
+	local := source.Artifact().Path
+	if !source.Traversable() {
+		return apple.VerifyPackage(ctx, local, want)
+	}
+	apps := map[string]bool{}
+	for _, subject := range facts.Subjects {
+		if subject.App != nil {
+			apps[subject.ID] = true
+		}
+	}
+	var top []string
+	for _, subject := range facts.Subjects {
+		if subject.App == nil || apps[subject.Parent] {
+			continue
+		}
+		if subject.ID == "." {
+			return apple.VerifyApp(ctx, local, want)
+		}
+		top = append(top, subject.Path)
+	}
+	root, err := source.At(ctx, ".")
+	if err != nil {
+		return signature.Result{}, err
+	}
+	return apple.VerifyAppsFS(ctx, root.FS, top, want)
 }
 
 // inputFacts inventories an input and keys its subjects by ID, as destination
 // facts are.
 func inputFacts(ctx context.Context, sources *sources, name string) (map[string]plugin.Subject, error) {
-	source, err := sources.get(name)
-	if err != nil {
-		return nil, err
-	}
-	done := plugin.Stage(ctx, "Inspecting input", plugin.Detail(name))
-	facts, err := inspect.Source(ctx, source)
-	done(err)
+	facts, err := sources.inventory(ctx, name)
 	if err != nil {
 		return nil, err
 	}
