@@ -26,7 +26,6 @@ import (
 	"oras.land/oras-go/v2/content"
 	"oras.land/oras-go/v2/content/memory"
 	"oras.land/oras-go/v2/errdef"
-	"oras.land/oras-go/v2/registry/remote"
 	"oras.land/oras-go/v2/registry/remote/auth"
 )
 
@@ -95,15 +94,7 @@ func TestRegistryCredentialsPinnedRecoveryAndIntegrity(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	host := strings.TrimPrefix(server.URL, "https://")
-	dockerConfig := t.TempDir()
-	credential, err := json.Marshal(map[string]any{"auths": map[string]any{host: map[string]string{"auth": base64.StdEncoding.EncodeToString([]byte("fixture:synthetic-password"))}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dockerConfig, "config.json"), credential, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("DOCKER_CONFIG", dockerConfig)
+	dockerLogin(t, host)
 	cache, err := cas.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -111,11 +102,10 @@ func TestRegistryCredentialsPinnedRecoveryAndIntegrity(t *testing.T) {
 	s := New(cache, false)
 	s.platform = *selected.Platform
 	s.registry = func(image string) (oras.ReadOnlyTarget, error) {
-		target, err := repository(image)
+		repo, err := repository(image)
 		if err != nil {
 			return nil, err
 		}
-		repo := target.(*remote.Repository)
 		repo.Client.(*auth.Client).Client = server.Client()
 		return repo, nil
 	}
@@ -340,6 +330,21 @@ func (r *recordedTarget) Fetch(ctx context.Context, desc ocispec.Descriptor) (io
 func (r *recordedTarget) Resolve(ctx context.Context, ref string) (ocispec.Descriptor, error) {
 	r.resolves++
 	return r.ReadOnlyTarget.Resolve(ctx, ref)
+}
+
+// dockerLogin stores the fixture registry credentials the way docker login
+// does, for the Docker credential lookup plugins share with ORAS.
+func dockerLogin(t *testing.T, host string) {
+	t.Helper()
+	dir := t.TempDir()
+	config, err := json.Marshal(map[string]any{"auths": map[string]any{host: map[string]string{"auth": base64.StdEncoding.EncodeToString([]byte("fixture:synthetic-password"))}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DOCKER_CONFIG", dir)
 }
 
 func fixtureManifest(t *testing.T, target *memory.Store, goos, goarch string, bundle []byte) (ocispec.Descriptor, ocispec.Descriptor) {

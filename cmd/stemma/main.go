@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -244,7 +245,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		return store.Prune(cmd.Context())
 	}})
 	root.AddCommand(cache)
-	plugins := &cobra.Command{Use: "plugins", Short: "Install and update explicitly trusted executable plugins"}
+	plugins := &cobra.Command{Use: "plugins", Short: "Install, update and publish executable plugins"}
 	list := &cobra.Command{Use: "list", Short: "Show configured plugins", Args: cobra.NoArgs}
 	listJSON := jsonFlag(list)
 	list.RunE = func(_ *cobra.Command, _ []string) error {
@@ -309,8 +310,50 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		}
 		plugins.AddCommand(install)
 	}
+	plugins.AddCommand(publishCommand(out))
 	root.AddCommand(plugins)
 	return root, display.finish
+}
+
+func publishCommand(out io.Writer) *cobra.Command {
+	var dist string
+	var annotations []string
+	cmd := &cobra.Command{Use: "publish IMAGE --goreleaser DIST", Short: "Publish GoReleaser plugin bundles as an OCI platform index", Args: cobra.ExactArgs(1)}
+	publishJSON := jsonFlag(cmd)
+	cmd.Flags().StringVar(&dist, "goreleaser", "", "GoReleaser dist directory whose artifacts.json lists the bundles")
+	cmd.Flags().StringArrayVar(&annotations, "annotation", nil, "Index annotation as KEY=VALUE; repeat for more")
+	_ = cmd.MarkFlagRequired("goreleaser")
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		values := map[string]string{}
+		for _, annotation := range annotations {
+			key, value, ok := strings.Cut(annotation, "=")
+			if !ok || key == "" {
+				return fmt.Errorf("annotation %q must be KEY=VALUE", annotation)
+			}
+			values[key] = value
+		}
+		done := plugin.Stage(cmd.Context(), "Publishing plugin")
+		bundles, err := pluginstore.GoReleaserBundles(dist)
+		var entry pluginstore.Entry
+		if err == nil {
+			entry, err = pluginstore.Publish(cmd.Context(), args[0], bundles, values)
+		}
+		done(err)
+		if err != nil {
+			return err
+		}
+		published := publishedPlugin{Entry: entry}
+		for _, bundle := range bundles {
+			published.Platforms = append(published.Platforms, bundle.Platform.OS+"/"+bundle.Platform.Architecture)
+		}
+		slices.Sort(published.Platforms)
+		if *publishJSON {
+			return writeJSON(out, published)
+		}
+		_, err = fmt.Fprintf(out, "Published %s (%s) for %s.\n", published.Image, published.Digest, strings.Join(published.Platforms, ", "))
+		return err
+	}
+	return cmd
 }
 
 func packageCommand(out io.Writer) *cobra.Command {

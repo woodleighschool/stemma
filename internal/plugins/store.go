@@ -29,6 +29,9 @@ import (
 const ArtifactType = "application/vnd.stemma.plugin.v1"
 const BundleType = "application/vnd.stemma.plugin.bundle.v1.tar+zstd"
 const maxMetadataSize = 1 << 20
+const maxPlatforms = 64
+
+var zstdMagic = [4]byte{0x28, 0xb5, 0x2f, 0xfd}
 
 // Entry records a local content observation or an OCI release index.
 type Entry struct {
@@ -57,10 +60,17 @@ type Store struct {
 }
 
 func New(cache *cas.Store, offline bool) *Store {
-	return &Store{cache: cache, offline: offline, platform: ocispec.Platform{OS: runtime.GOOS, Architecture: runtime.GOARCH}, registry: repository}
+	registry := func(image string) (oras.ReadOnlyTarget, error) {
+		repo, err := repository(image)
+		if err != nil {
+			return nil, err
+		}
+		return repo, nil
+	}
+	return &Store{cache: cache, offline: offline, platform: ocispec.Platform{OS: runtime.GOOS, Architecture: runtime.GOARCH}, registry: registry}
 }
 
-func repository(image string) (oras.ReadOnlyTarget, error) {
+func repository(image string) (*remote.Repository, error) {
 	repo, err := remote.NewRepository(image)
 	if err != nil {
 		return nil, err
@@ -115,7 +125,7 @@ func (s *Store) Acquire(ctx context.Context, image string, entry Entry) (Bundle,
 	if err := fetcher.metadata(ctx, ocispec.Descriptor{MediaType: ocispec.MediaTypeImageIndex, Digest: digest.Digest(entry.Digest), Size: entry.Size}, &index); err != nil {
 		return Bundle{}, err
 	}
-	if index.SchemaVersion != 2 || index.MediaType != ocispec.MediaTypeImageIndex || len(index.Manifests) == 0 || len(index.Manifests) > 64 {
+	if index.SchemaVersion != 2 || index.MediaType != ocispec.MediaTypeImageIndex || len(index.Manifests) == 0 || len(index.Manifests) > maxPlatforms {
 		return Bundle{}, errors.New("invalid plugin platform index")
 	}
 	var selected ocispec.Descriptor
@@ -124,13 +134,15 @@ func (s *Store) Acquire(ctx context.Context, image string, entry Entry) (Bundle,
 		if desc.MediaType != ocispec.MediaTypeImageManifest || desc.Platform == nil {
 			return Bundle{}, errors.New("plugin index requires platform-specific manifests")
 		}
-		p := desc.Platform
-		key := p.OS + "/" + p.Architecture
-		if seen[key] || p.Variant != "" || p.OSVersion != "" || len(p.OSFeatures) != 0 {
-			return Bundle{}, fmt.Errorf("ambiguous or unsupported plugin platform %s", key)
+		key, err := runnerPlatform(*desc.Platform)
+		if err != nil {
+			return Bundle{}, err
+		}
+		if seen[key] {
+			return Bundle{}, fmt.Errorf("plugin index has more than one bundle for %s", key)
 		}
 		seen[key] = true
-		if p.OS == s.platform.OS && p.Architecture == s.platform.Architecture {
+		if desc.Platform.OS == s.platform.OS && desc.Platform.Architecture == s.platform.Architecture {
 			selected = desc
 		}
 	}
@@ -165,7 +177,7 @@ func (s *Store) Acquire(ctx context.Context, image string, entry Entry) (Bundle,
 	}
 	defer func() { _ = blob.Close() }()
 	var magic [4]byte
-	if _, err := io.ReadFull(blob, magic[:]); err != nil || !bytes.Equal(magic[:], []byte{0x28, 0xb5, 0x2f, 0xfd}) {
+	if _, err := io.ReadFull(blob, magic[:]); err != nil || magic != zstdMagic {
 		return Bundle{}, errors.New("plugin bundle is not a Zstandard archive")
 	}
 	return Bundle{Manifest: selected.Digest.String(), Artifact: ref}, nil
@@ -192,25 +204,49 @@ func (s *Store) Materialize(ctx context.Context, bundle Bundle, destination stri
 			_ = os.RemoveAll(destination)
 		}
 	}()
-	name := "plugin"
-	if s.platform.OS == "windows" {
-		name += ".exe"
-	}
+	name := entrypoint(s.platform.OS)
 	if bundle.Entrypoint != "" {
 		name = bundle.Entrypoint
 	}
-	executable = filepath.Join(destination, name)
-	info, err := os.Lstat(executable)
+	executable, err = regularFile(destination, name)
+	if err != nil {
+		return "", err
+	}
+	if err := os.Chmod(executable, 0o700); err != nil {
+		return "", err
+	}
+	return executable, nil
+}
+
+// entrypoint names the executable at the root of a bundle for goos.
+func entrypoint(goos string) string {
+	if goos == "windows" {
+		return "plugin.exe"
+	}
+	return "plugin"
+}
+
+func regularFile(dir, name string) (string, error) {
+	path := filepath.Join(dir, name)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return "", fmt.Errorf("plugin bundle entrypoint: %w", err)
 	}
 	if !info.Mode().IsRegular() {
 		return "", errors.New("plugin entrypoint must be a regular file")
 	}
-	if err := os.Chmod(executable, 0o700); err != nil {
-		return "", err
+	return path, nil
+}
+
+// runnerPlatform names a bundle's platform. Stemma selects a bundle by the
+// runner's OS and architecture alone, so any finer platform field would make
+// that selection ambiguous.
+func runnerPlatform(p ocispec.Platform) (string, error) {
+	key := p.OS + "/" + p.Architecture
+	if p.OS == "" || p.Architecture == "" || p.Variant != "" || p.OSVersion != "" || len(p.OSFeatures) != 0 {
+		return "", fmt.Errorf("unsupported plugin platform %s", key)
 	}
-	return executable, nil
+	return key, nil
 }
 
 type fetcher struct {

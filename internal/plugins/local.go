@@ -44,10 +44,7 @@ func (s *Store) Load(ctx context.Context, root string, declaration config.Plugin
 	}
 	name := declaration.Entrypoint
 	if name == "" {
-		name = "plugin"
-		if s.platform.OS == "windows" {
-			name += ".exe"
-		}
+		name = entrypoint(s.platform.OS)
 		if !current.Content.Tree {
 			name = current.Content.Filename
 		}
