@@ -366,4 +366,6 @@ platform and tags their index last, so a failed run tags nothing. A published ta
 keeps its release: publishing the same bundles again changes nothing, and
 different bundles need a new tag. Registry credentials come from `docker login`.
 Add index annotations with `--annotation KEY=VALUE`, such as
-`org.opencontainers.image.source` for the repository URL.
+`org.opencontainers.image.source` for the repository URL. In GitHub Actions, the
+[publish-plugin action](https://github.com/woodleighschool/stemma/tree/main/actions/publish-plugin)
+runs this step after GoReleaser.
