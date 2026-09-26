@@ -72,7 +72,7 @@ func MetadataSchema() *jsonschema.Schema {
 		"version": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleShortVersionString or package receipt version."},
 	}, "id", "version")}
 	lob := common()
-	lob["type"] = &jsonschema.Schema{Const: "lob", Description: "Publish the signed PKG as a line-of-business app."}
+	lob["type"] = &jsonschema.Schema{Const: "lob", Description: "Publish the signed PKG as a line-of-business app. The PKG must install an application under /Applications."}
 	lob["ignore_version_detection"], lob["included_apps"] = mac["ignore_version_detection"], mac["included_apps"]
 	lob["install_as_managed"] = &jsonschema.Schema{Type: "boolean", Description: "Install the app as managed on macOS 11 or later. The PKG must have one component that installs one application under /Applications."}
 	windows, macOS, lineOfBusiness := objectSchema(win32), objectSchema(mac), objectSchema(lob, "type")

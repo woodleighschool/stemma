@@ -4780,7 +4780,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Publish the signed PKG as a line-of-business app."
+              "description": "Publish the signed PKG as a line-of-business app. The PKG must install an application under /Applications."
             }
           },
           "propertyNames": {

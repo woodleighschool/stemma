@@ -181,9 +181,10 @@ detected by its package even when it installs an application. `display_name`,
 
 A PKG can also publish as a line-of-business app, so that is the one `type` to
 declare. Stemma checks what Intune requires before uploading it: a flat PKG with
-a payload, at most 2 GiB, with a verified Developer ID Installer signature, so
-the software needs `signature.signer`. `install_as_managed` also needs one
-component that installs one application under `/Applications`.
+a payload that installs an application under `/Applications`, at most 2 GiB,
+with a verified Developer ID Installer signature, so the software needs
+`signature.signer`. `install_as_managed` also needs one component that installs
+one application under `/Applications`.
 
 The minimum OS is the setting for the release of the software's effective
 [minimum macOS](mac-software.md#minimum-macos): its major version, or major and

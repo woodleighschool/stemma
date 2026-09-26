@@ -46,7 +46,8 @@ func Derive(req plugin.ReconcileRequest[Config]) (plugin.ReconcileRequest[Config
 func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string]string) (object, error) {
 	lob := m["@odata.type"] == lobType
 	if lob {
-		if err := validateLOB(req.Artifact, m["installAsManaged"] == true); err != nil {
+		declared, _ := m["childApps"].([]any)
+		if err := validateLOB(req.Artifact, declared, m["installAsManaged"] == true); err != nil {
 			return nil, err
 		}
 	}
@@ -157,11 +158,13 @@ func detectedApps(facts plugin.Facts, selected *plugin.Subject, appType string) 
 const lobLimit = 2 << 30
 
 // validateLOB checks what Intune requires of a line-of-business upload that
-// the prepared artifact can show: a flat PKG with a payload, a verified
-// Developer ID Installer signature and a bounded size. Installing as managed
-// needs one component that installs one application under /Applications.
-// Validation without an artifact checks nothing here.
-func validateLOB(artifact plugin.Artifact, managed bool) error {
+// the prepared artifact can show: a flat PKG with a payload that installs an
+// application under /Applications, a verified Developer ID Installer signature
+// and a bounded size. Included apps must be applications there; one the PKG
+// doesn't show passes, since an installer script may install it. Installing as
+// managed needs one component that installs one application under
+// /Applications. Validation without an artifact checks nothing here.
+func validateLOB(artifact plugin.Artifact, declared []any, managed bool) error {
 	if artifact.Path == "" {
 		return nil
 	}
@@ -174,20 +177,40 @@ func validateLOB(artifact plugin.Artifact, managed bool) error {
 	if len(artifact.Evidence["signature"]) == 0 {
 		return errors.New("a line-of-business app requires a verified Developer ID Installer signature; set signature.signer")
 	}
-	components, payload := 0, false
-	apps := map[string]bool{}
+	components, payload, placed := 0, false, false
+	apps, receipts := map[string]bool{}, map[string]bool{}
+	// applications records whether an application with each bundle ID
+	// installs under /Applications.
+	applications := map[string]bool{}
 	var installed []plugin.Subject
 	for _, subject := range artifact.Facts.Subjects {
 		if subject.Package != nil {
 			components++
 			payload = payload || subject.Package.HasPayload
+			receipts[subject.Package.Identifier] = true
 		}
-		if subject.App != nil {
+		if app := subject.App; app != nil {
 			apps[subject.ID] = true
+			under := strings.HasPrefix(subject.InstalledPath, "/Applications/")
+			applications[app.BundleID] = applications[app.BundleID] || under
+			placed = placed || under
 		}
 	}
 	if !payload {
 		return errors.New("a line-of-business PKG requires a payload")
+	}
+	if !placed {
+		return errors.New("a line-of-business PKG requires an application under /Applications; publish it as a PKG app")
+	}
+	for _, item := range declared {
+		id := text(item.(object)["bundleId"])
+		under, app := applications[id]
+		switch {
+		case app && !under:
+			return fmt.Errorf("included_apps: %s is not installed under /Applications", id)
+		case !app && receipts[id]:
+			return fmt.Errorf("included_apps: %s is a package receipt, not an application under /Applications", id)
+		}
 	}
 	for _, subject := range artifact.Facts.Subjects {
 		if subject.App != nil && !apps[subject.Parent] {

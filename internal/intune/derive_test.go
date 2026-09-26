@@ -171,7 +171,7 @@ func TestLineOfBusinessAppListsChildApps(t *testing.T) {
 	if _, exists := m["includedApps"]; exists {
 		t.Fatalf("line-of-business app kept PKG detection: %+v", m)
 	}
-	if derived, _, err = Derive(lobRequest(object{"type": "lob", "included_apps": []any{object{"id": "org.example.declared", "version": "2.0"}}}, root, receipt)); err != nil {
+	if derived, _, err = Derive(lobRequest(object{"type": "lob", "included_apps": []any{object{"id": "org.example.declared", "version": "2.0"}}}, root, receipt, app)); err != nil {
 		t.Fatal(err)
 	}
 	if m, err = decodeObject(derived.Metadata); err != nil {
@@ -180,9 +180,30 @@ func TestLineOfBusinessAppListsChildApps(t *testing.T) {
 	if child := m["childApps"].([]any)[0].(object); len(m["childApps"].([]any)) != 1 || child["bundleId"] != "org.example.declared" || child["buildNumber"] != "2.0" || m["bundleId"] != "org.example.declared" {
 		t.Fatalf("declared child apps: %+v", m)
 	}
-	app.InstalledPath = "/Library/Exporter/Exporter.app"
-	if _, _, err := Derive(lobRequest(object{"type": "lob"}, root, receipt, app)); err == nil || !strings.Contains(err.Error(), "included_apps") {
-		t.Fatalf("LOB detected a receipt or an application outside /Applications: %v", err)
+}
+
+// Intune accepts a line-of-business app whose included apps name a package
+// receipt, and it then fails on devices with "The app state is unknown". An
+// identifier the PKG doesn't show may be an application a script installs.
+func TestLineOfBusinessIncludedAppsAreApplications(t *testing.T) {
+	root := plugin.Subject{ID: ".", Path: ".", Kind: "container"}
+	tools := plugin.Subject{ID: "tools.pkg/PackageInfo", Parent: ".", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.exporter", Version: "1.4.0", HasPayload: true}}
+	helper := plugin.Subject{ID: "tools.pkg/Payload/Helper.app", Parent: "tools.pkg/PackageInfo", Kind: "app", InstalledPath: "/Library/Exporter/Helper.app", App: &plugin.AppFacts{BundleID: "org.example.helper", Version: "1.4"}}
+	bundle := plugin.Subject{ID: "app.pkg/PackageInfo", Parent: ".", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.exporter.app", Version: "1.4", HasPayload: true}}
+	app := plugin.Subject{ID: "app.pkg/Payload/Exporter.app", Parent: "app.pkg/PackageInfo", Kind: "app", InstalledPath: "/Applications/Exporter.app", App: &plugin.AppFacts{BundleID: "org.example.exporter.app", Version: "1.4"}}
+	for _, test := range []struct{ name, id, rejection string }{
+		{"application that is also a receipt", "org.example.exporter.app", ""},
+		{"identifier the PKG doesn't show", "org.example.scripted", ""},
+		{"package receipt", "org.example.exporter", "package receipt"},
+		{"application outside Applications", "org.example.helper", "not installed under /Applications"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := lobRequest(object{"type": "lob", "included_apps": []any{object{"id": test.id, "version": "1.4"}}}, root, tools, helper, bundle, app)
+			_, _, err := Derive(req)
+			if test.rejection == "" && err != nil || test.rejection != "" && (err == nil || !strings.Contains(err.Error(), test.rejection)) {
+				t.Fatalf("included app %s: %v", test.id, err)
+			}
+		})
 	}
 }
 
@@ -230,9 +251,10 @@ func TestLineOfBusinessUploadRequirements(t *testing.T) {
 		{"unsigned", object{"type": "lob"}, []plugin.Subject{root, receipt}, func(req *plugin.ReconcileRequest[Config]) { delete(req.Artifact.Evidence, "signature") }},
 		{"oversized", object{"type": "lob"}, []plugin.Subject{root, receipt}, func(req *plugin.ReconcileRequest[Config]) { req.Artifact.Size = lobLimit + 1 }},
 		{"no payload", object{"type": "lob"}, []plugin.Subject{root, scripts}, nil},
+		{"no application", object{"type": "lob"}, []plugin.Subject{root, receipt}, nil},
+		{"declared detection without an application", object{"type": "lob", "included_apps": []any{object{"id": "org.example.exporter", "version": "1.4.0"}}}, []plugin.Subject{root, receipt}, nil},
+		{"application outside Applications", object{"type": "lob"}, []plugin.Subject{root, receipt, elsewhere}, nil},
 		{"managed with two components", managed, []plugin.Subject{root, receipt, helper, app}, nil},
-		{"managed without an application", managed, []plugin.Subject{root, receipt}, nil},
-		{"managed outside Applications", managed, []plugin.Subject{root, receipt, elsewhere}, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			req := lobRequest(test.metadata, test.subjects...)
