@@ -14,6 +14,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
+	"go.yaml.in/yaml/v4"
 )
 
 func TestHTTPFilenameAndLockedRecovery(t *testing.T) {
@@ -69,6 +70,67 @@ func TestHTTPFilenameAndLockedRecovery(t *testing.T) {
 				t.Fatalf("locked recovery: cached=%v requests=%d error=%v", cached, requests.Load(), err)
 			}
 		})
+	}
+}
+
+func TestDeclaredHTTPURLStaysOutOfTheLock(t *testing.T) {
+	const token = "3f9a0c1e7b5d42a86e1f"
+	var downloads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/download/"+token+"/SophosInstall.zip" {
+			http.NotFound(w, r)
+			return
+		}
+		downloads.Add(1)
+		_, _ = io.WriteString(w, "vendor installer")
+	}))
+	t.Cleanup(server.Close)
+	m := manager(t)
+	input := plugin.Input{Resolver: "http", Config: map[string]any{"url": server.URL + "/api/download/" + token + "/SophosInstall.zip", "filename": "SophosInstall.zip"}}
+	entry, err := m.Resolve(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked, err := yaml.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(entry.Observation) != "{}" || strings.Contains(string(locked), token) {
+		t.Fatalf("lock entry records the declared URL:\n%s", locked)
+	}
+	if err := m.Store.Prune(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if cached, err := m.FetchLocked(t.Context(), input, entry); err != nil || cached || downloads.Load() != 2 {
+		t.Fatalf("cold locked fetch: cached=%v downloads=%d error=%v", cached, downloads.Load(), err)
+	}
+}
+
+func TestMatchedHTTPLockRequiresItsDiscoveredURL(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if r.URL.Path == "/downloads" {
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = io.WriteString(w, `<a href="/downloads/app-1.0.pkg">download</a>`)
+			return
+		}
+		_, _ = io.WriteString(w, "installer "+r.URL.Path)
+	}))
+	t.Cleanup(server.Close)
+	m := manager(t)
+	input := plugin.Input{Resolver: "http", Config: map[string]any{"url": server.URL + "/downloads", "match": `/downloads/app-[0-9.]+\.pkg`}}
+	entry, err := m.Resolve(t.Context(), input)
+	if err != nil || observation(t, entry).URL != server.URL+"/downloads/app-1.0.pkg" {
+		t.Fatalf("discovery: observation=%s error=%v", entry.Observation, err)
+	}
+	if err := m.Store.Prune(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	entry.Observation = json.RawMessage(`{}`)
+	before := requests.Load()
+	if _, err := m.FetchLocked(t.Context(), input, entry); err == nil || requests.Load() != before {
+		t.Fatalf("locked fetch without the discovered URL: requests=%d error=%v", requests.Load()-before, err)
 	}
 }
 

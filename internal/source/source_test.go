@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/cas"
@@ -223,11 +224,13 @@ func TestRedirectFailureDoesNotExposeTemporaryCredentials(t *testing.T) {
 }
 
 func TestStableQueryRetainsOriginalURLAcrossRedirects(t *testing.T) {
+	var links atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/fwlink" {
 			if r.URL.Query().Get("linkid") != "853070" {
 				t.Error("stable link identifier was lost")
 			}
+			links.Add(1)
 			http.Redirect(w, r, "/installer?sig=temporary-signature&expires=123", http.StatusFound)
 			return
 		}
@@ -244,8 +247,14 @@ func TestStableQueryRetainsOriginalURLAcrossRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observation(t, entry).URL != s.Config["url"].(string) || strings.Contains(observation(t, entry).URL, "temporary-signature") {
-		t.Fatalf("lock retained redirected URL: %q", observation(t, entry).URL)
+	if string(entry.Observation) != "{}" {
+		t.Fatalf("lock recorded a URL: %s", entry.Observation)
+	}
+	if err := store.Prune(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.FetchLocked(t.Context(), s, entry); err != nil || links.Load() != 2 {
+		t.Fatalf("locked fetch did not return through the stable link: links=%d error=%v", links.Load(), err)
 	}
 }
 
