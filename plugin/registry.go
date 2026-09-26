@@ -152,7 +152,10 @@ func (registry *Registry) Handle(ctx context.Context, request Request) (Response
 	if !operation.descriptor.SupportsPlatform(runtime.GOOS, runtime.GOARCH) {
 		return Response{}, fmt.Errorf("operation %q does not support runner %s/%s", request.Operation, runtime.GOOS, runtime.GOARCH)
 	}
-	if operation.config != nil && (operation.descriptor.Resource == nil || request.Method == "discover") {
+	// Destination validate requests check desired state without connection
+	// settings; plan and apply carry them.
+	connecting := operation.descriptor.Kind != "reconcile" || request.Method != "validate"
+	if operation.config != nil && connecting && (operation.descriptor.Resource == nil || request.Method == "discover") {
 		var input map[string]json.RawMessage
 		if err := json.Unmarshal(request.Input, &input); err != nil || input == nil {
 			return Response{}, fmt.Errorf("operation %q configuration requires an object input", request.Operation)

@@ -151,3 +151,44 @@ func TestResourceDeclarationValidation(t *testing.T) {
 		t.Fatalf("handler called %d times", calls)
 	}
 }
+
+type connectionConfig struct {
+	URL string `json:"url" jsonschema:"minLength=1"`
+}
+
+func (c connectionConfig) Validate() error {
+	if c.URL == "" {
+		return errors.New("url is required")
+	}
+	return nil
+}
+
+func TestDestinationValidateNeedsNoConnectionSettings(t *testing.T) {
+	registry := plugin.New("fixture", "1")
+	var received []string
+	operation := plugin.Operation{Name: "fixture.destination", Kind: "reconcile", SideEffects: "remote", Methods: []string{"validate", "plan", "apply"}}
+	if err := plugin.Register(registry, operation, func(_ context.Context, request plugin.ReconcileRequest[connectionConfig]) (plugin.ReconcileResponse, error) {
+		received = append(received, request.Method+":"+request.Config.URL)
+		return plugin.ReconcileResponse{}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	call := func(method, input string) error {
+		_, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: method, Input: json.RawMessage(input)})
+		return err
+	}
+	if err := call("validate", `{"identity":{"project":"p","resource":{"kind":"Item","name":"a"},"destination":"d"},"artifact":{"path":"","sha256":"","size":0,"filename":""}}`); err != nil {
+		t.Fatalf("validate required connection settings: %v", err)
+	}
+	for _, method := range []string{"plan", "apply"} {
+		if err := call(method, `{"identity":{"project":"p","resource":{"kind":"Item","name":"a"},"destination":"d"},"artifact":{"path":"","sha256":"","size":0,"filename":""}}`); err == nil || !strings.Contains(err.Error(), "config") {
+			t.Fatalf("%s accepted missing connection settings: %v", method, err)
+		}
+	}
+	if err := call("plan", `{"identity":{"project":"p","resource":{"kind":"Item","name":"a"},"destination":"d"},"config":{"url":"https://example.invalid"},"artifact":{"path":"","sha256":"","size":0,"filename":""}}`); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"validate:", "plan:https://example.invalid"}; !reflect.DeepEqual(received, want) {
+		t.Fatalf("handler saw %v, want %v", received, want)
+	}
+}

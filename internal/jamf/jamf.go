@@ -199,8 +199,11 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 // Jamf names, beside the patch, retention and category declarations.
 func validate(request plugin.ReconcileRequest[Config]) (Config, map[string]json.RawMessage, string, error) {
 	config := request.Config
-	if err := config.Validate(); err != nil {
-		return config, nil, "", err
+	// Validate requests check metadata alone and carry no connection settings.
+	if request.Method != "validate" {
+		if err := config.Validate(); err != nil {
+			return config, nil, "", err
+		}
 	}
 	config.URL = strings.TrimRight(config.URL, "/")
 	declared, err := decodeObject(request.Metadata)

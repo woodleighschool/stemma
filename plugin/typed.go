@@ -23,7 +23,8 @@ func SchemaFor[T any]() *jsonschema.Schema {
 
 // Register derives an operation's input, configuration and output contracts from
 // its handler. The framework applies defaults and validates configuration before
-// calling the handler, including on validate and locked requests.
+// calling the handler, including on locked requests. Destination validate
+// requests carry no connection settings, so their configuration is not checked.
 func Register[I, O any](registry *Registry, operation Operation, handle func(context.Context, I) (O, error)) error {
 	if handle == nil {
 		return fmt.Errorf("operation %q has no handler", operation.Name)

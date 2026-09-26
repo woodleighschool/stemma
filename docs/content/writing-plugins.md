@@ -132,7 +132,8 @@ Import `github.com/invopop/jsonschema` for the enum hook. Registration rejects
 unknown fields, checks required fields and enum values, applies schema defaults,
 then decodes the effective config. An optional `Validate() error` method handles
 semantic rules before a resolver or destination handler runs, including locked
-requests. Resource discovery validates the authored declaration; runtime values
+requests. Destination `validate` requests carry no connection settings and skip
+these checks. Resource discovery validates the authored declaration; runtime values
 must satisfy the concrete preparation contract before use. Expression-bearing
 fields are checked again after evaluation. `run` receives preparation config,
 without source declarations or destination metadata. Resolver `validate` requests
@@ -257,6 +258,10 @@ for macOS software, `MinimumOS`: the latest of the installer's requirement, the
 selected application's and the software's `minimum_os`, with the origin of the
 value that won.
 
+`validate` checks metadata, and the prepared artifact when there is one, without
+connecting: it receives no `Config`. `plan` and `apply` receive the connection
+settings with their environment values evaluated.
+
 `plan` reads the destination and returns semantic `Change` records without
 mutations. `apply` re-observes and performs the necessary changes. Preserve absent,
 null, false and empty collection values when decoding native metadata; they have
@@ -292,12 +297,12 @@ the provider. See [retention](publishing.md#identity-and-retention).
 
 ## Protocol and runtime
 
-The host launches an executable for one request. Protocol version **5** sends one
+The host launches an executable for one request. Protocol version **8** sends one
 JSON object on stdin, ending at EOF:
 
 ```json
 {
-  "protocol": 7,
+  "protocol": 8,
   "method": "describe"
 }
 ```
@@ -307,7 +312,7 @@ The final stdout response has `protocol`, optional `output` and optional `error`
 Other requests add `operation`, `input` and optionally `log_level`.
 
 Before the final response, a plugin may emit newline-delimited envelopes containing
-`protocol: 7` and `log`, a structured record with time, level and message. Messages
+`protocol: 8` and `log`, a structured record with time, level and message. Messages
 are bounded to 4 MiB. No messages may follow the final response. The SDK's `Serve`
 and `Run` handle framing and validation.
 

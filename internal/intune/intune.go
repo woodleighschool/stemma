@@ -85,14 +85,10 @@ func (t *tenantApps) find(ctx context.Context, identity string) (string, error) 
 // Handle validates, plans or applies an Intune destination request. It keeps no
 // state between invocations: a declared app_id or the marker in an app's notes
 // identifies the app, and the tenant supplies its publication state.
-// Connection credentials are supplied through the request Config.
+// Plan and apply connect with the credentials in the request Config; validate
+// requests carry none.
 func Handle(ctx context.Context, req plugin.ReconcileRequest[Config]) (response plugin.ReconcileResponse, err error) {
 	req, response.Origins, err = Derive(req)
-	if err != nil {
-		return response, err
-	}
-	cfg := req.Config
-	err = cfg.Validate()
 	if err != nil {
 		return response, err
 	}
@@ -114,7 +110,10 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest[Config]) (response 
 	if req.Method != "plan" && req.Method != "apply" {
 		return plugin.ReconcileResponse{}, fmt.Errorf("unsupported Intune method %q", req.Method)
 	}
-	c, err := newClient(cfg)
+	if err := req.Config.Validate(); err != nil {
+		return response, err
+	}
+	c, err := newClient(req.Config)
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
 	}
