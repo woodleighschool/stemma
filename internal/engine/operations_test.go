@@ -115,13 +115,20 @@ spec:
 		}
 		return report.Resources[0]
 	}
+	update := func() {
+		t.Helper()
+		if _, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: opts.CacheDir, Method: "update"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	update()
 	first := run()
 	installer := first.Artifacts["installer"]
 	if got := string(installer.Evidence["vendor.release"]); got != `{"version":"1.2"}` {
 		t.Fatalf("MacSoftware dropped resolver evidence: %s", got)
 	}
 	version.Store("2.0")
-	opts.Lock = lockfile.Options{Frozen: true, Offline: true}
+	opts.Lock = lockfile.Options{Offline: true}
 	if warm := run(); !warm.Cached || downloads.Load() != 1 {
 		t.Fatal("warm offline preparation did not reuse reviewed evidence")
 	}
@@ -132,14 +139,15 @@ spec:
 	if cold := run(); cold.Cached || downloads.Load() != 2 || cold.Artifacts["installer"].InputsHash != installer.InputsHash {
 		t.Fatal("cold fetch changed reviewed preparation inputs")
 	}
-	opts.Lock = lockfile.Options{Refresh: true}
 	wantVersion = "2.0"
+	update()
 	refreshed := run()
 	updated := refreshed.Artifacts["installer"]
 	if refreshed.Cached || updated.InputsHash == installer.InputsHash || updated.Payload != installer.Payload {
 		t.Fatal("evidence refresh did not invalidate preparation while retaining byte identity")
 	}
 	revision.Store("second")
+	update()
 	if observed := run(); !observed.Cached || observed.Artifacts["installer"].InputsHash != updated.InputsHash {
 		t.Fatal("private observation change invalidated preparation")
 	}
@@ -249,7 +257,7 @@ spec:
 			}
 
 			install()
-			opts := Options{ConfigPath: filename, CacheDir: store.Dir, Method: "prepare"}
+			opts := Options{ConfigPath: filename, CacheDir: store.Dir, Method: "update"}
 			if _, err := ValidateProject(t.Context(), opts, false); err != nil {
 				t.Fatal(err)
 			}
@@ -274,8 +282,11 @@ spec:
 				t.Fatal("prerequisite failure acquired an input")
 			}
 			t.Setenv("STEMMA_ECHO_REQUIRE_TOOL", "")
-			if _, err := Run(t.Context(), opts); err != nil {
-				t.Fatal(err)
+			for _, method := range []string{"update", "prepare"} {
+				opts.Method = method
+				if _, err := Run(t.Context(), opts); err != nil {
+					t.Fatal(err)
+				}
 			}
 			opts.Method = "apply"
 			first, err := Run(t.Context(), opts)

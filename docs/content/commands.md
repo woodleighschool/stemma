@@ -9,7 +9,7 @@ Run commands from a catalog. Stemma discovers its Git root and `stemma.yaml`.
 | --------------------------------- | ------------------------------------------------------------------------- |
 | `stemma validate`                 | Check the catalog as written, without environment values or acquisition   |
 | `stemma update [Kind/name...]`    | Discover current inputs and update their locks                            |
-| `stemma prepare [Kind/name...]`   | Lock and prepare inputs without publication                               |
+| `stemma prepare [Kind/name...]`   | Prepare resources from the lockfile without publication                   |
 | `stemma signature [Kind/name...]` | Derive the verified signer of each published artifact                     |
 | `stemma artifact Kind/name`       | Prepare one resource from the lockfile and print the path of its artifact |
 | `stemma icon [Kind/name...]`      | Create missing declared icons from the software's own artwork             |
@@ -27,6 +27,10 @@ and the resources they consume are checked against their operation contracts, so
 an unrelated document that fails its own validation does not block the run. Use
 `stemma validate` to check the whole catalog, including suspended resources.
 
+`update` writes the input locks. Every other command uses the reviewed lockfile
+as it is: an input without a current entry fails that resource until
+`stemma update` records it, and plugins must match their entries.
+
 `icon` writes [declared icons](mac-software.md#icons) to `icons/<name>.png` from
 locked software. `--presentation raw` extracts the original artwork;
 `--presentation glassy` uses the macOS renderer at `--size` pixels (512 by default).
@@ -43,12 +47,10 @@ signer fails. See [macOS](mac-software.md#signature) and
 [Windows](windows-software.md#signature) signature policy.
 
 `artifact` prepares one resource and prints only the absolute path of its
-`installer` output, or of the output `--output` names. It uses the reviewed
-lockfile: an input without a reviewed entry fails until `stemma update` records
-it. `--no-input-lock` instead resolves the inputs of the resource and the builds
-it consumes from their sources as they are now, to show what an update would
-prepare. Either way the lockfile stays unchanged and plugins must match it. No
-destination receives the artifact. The path is a copy in the cache that each
+`installer` output, or of the output `--output` names. `--no-input-lock` instead
+resolves the inputs of the resource and the builds it consumes from their sources
+as they are now, to show what an update would prepare. No destination receives
+the artifact. The path is a copy in the cache that each
 run replaces and `stemma cache prune` removes. Progress and errors stay on
 stderr, and the live tree needs only stderr to be a terminal, so the command
 composes with other tools:
@@ -155,10 +157,10 @@ with `blocked_by` resource keys in JSON. The command emits the selected results
 before exiting nonzero. Global configuration or structural failures and context
 cancellation stop the run immediately and can leave a partial report.
 
-Do not infer success solely from an artifact appearing in a report. Successful
-resources can update the lockfile even when the command exits nonzero; failed or
-blocked resources keep their previous reviewed entries. An absent `lock_changed`
-means the lockfile comparison did not complete.
+Do not infer success solely from an artifact appearing in a report. Update records
+the inputs of successful resources even when it exits nonzero; failed or blocked
+resources keep their reviewed entries. An update report without `lock_changed`
+did not complete the lockfile comparison.
 
 ## Standalone packaging
 

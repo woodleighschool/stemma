@@ -72,6 +72,15 @@ spec:
 		}
 		return report.Resources[0]
 	}
+	update := func() {
+		t.Helper()
+		opts.Method = "update"
+		if _, err := Run(t.Context(), opts); err != nil {
+			t.Fatal(err)
+		}
+		opts.Method = "prepare"
+	}
+	update()
 	first := run()
 	if first.Cached || first.Artifacts["installer"].Version == "" {
 		t.Fatalf("first build=%+v", first)
@@ -83,6 +92,7 @@ spec:
 	if err := os.Remove(lockfile.Filename(root)); err != nil {
 		t.Fatal(err)
 	}
+	update()
 	if recreated := run(); !recreated.Cached || recreated.Artifacts["installer"].Payload != first.Artifacts["installer"].Payload {
 		t.Fatal("a recreated lock rebuilt unchanged inputs")
 	}
@@ -100,21 +110,13 @@ spec:
 	if err := os.WriteFile(payload, []byte("changed source bytes"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	opts.Method = "update"
-	if _, err := Run(t.Context(), opts); err != nil {
-		t.Fatal(err)
-	}
-	opts.Method = "prepare"
+	update()
 	bytesChanged := run()
 	if bytesChanged.Cached || bytesChanged.Artifacts["installer"].Payload == envChanged.Artifacts["installer"].Payload || bytesChanged.Artifacts["installer"].Version != envChanged.Artifacts["installer"].Version {
 		t.Fatal("changed source bytes did not rebuild with unchanged receipt version")
 	}
 	t.Setenv("STEMMA_TEST_VERSION", "9.8.7")
-	opts.Method = "update"
-	if _, err := Run(t.Context(), opts); err != nil {
-		t.Fatal(err)
-	}
-	opts.Method = "prepare"
+	update()
 	if result := run(); result.Cached || result.Artifacts["installer"].Version != "9.8.7-1" {
 		t.Fatalf("expression did not refresh version: %+v", result.Artifacts["installer"])
 	}

@@ -35,17 +35,27 @@ type File struct {
 	Plugins map[string]plugins.Entry           `yaml:"plugins,omitempty" json:"plugins,omitempty"`
 }
 
-// Options controls lock consumption independently of cache use.
+// Options controls lock consumption independently of cache use. A run consumes
+// the reviewed lockfile as it is and fails on missing or stale entries; only
+// Refresh and PluginsOnly write it.
 type Options struct {
-	Frozen, Refresh, Offline bool
+	// Refresh resolves inputs from their sources and records what they provide.
+	Refresh bool
+	Offline bool
 	// IgnoreInputs resolves inputs as if the lockfile had no input entries and
 	// saves nothing.
 	IgnoreInputs bool
-	PluginsOnly  bool
+	// PluginsOnly records plugin entries and keeps the input entries.
+	PluginsOnly bool
 	// PreserveUnselected keeps every reviewed resource the run did not select.
 	PreserveUnselected bool
 	// Retain keeps these reviewed resources when the run did not select them.
 	Retain []string
+}
+
+// frozen reports whether the run consumes the reviewed lockfile as it is.
+func (o Options) frozen() bool {
+	return !o.Refresh && !o.IgnoreInputs && !o.PluginsOnly
 }
 
 // Result reports acquisition separately from downstream metadata changes.
@@ -158,19 +168,17 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 	manager := *m
 	manager.Offline = opts.Offline
 	m = &manager
-	if opts.Frozen && (opts.Refresh || opts.IgnoreInputs) {
-		return nil, errors.New("frozen lockfile conflicts with refreshing or ignoring input locks")
-	}
 	if opts.Offline && (opts.Refresh || opts.IgnoreInputs) {
 		return nil, errors.New("offline runs use input locks and cannot refresh or ignore them")
 	}
+	frozen := opts.frozen()
 	filename := Filename(root)
 	requiresLock := len(pluginEntries) != 0
 	for _, named := range inputs {
 		requiresLock = requiresLock || len(named) != 0
 	}
 	old, err := Load(filename)
-	if errors.Is(err, os.ErrNotExist) && requiresLock && (opts.Frozen || opts.Offline) {
+	if errors.Is(err, os.ErrNotExist) && requiresLock && frozen {
 		return nil, errors.New("lockfile: missing; run stemma update")
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -183,12 +191,12 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		if _, selected := inputs[resource]; !selected && !opts.PluginsOnly {
 			if opts.PreserveUnselected || slices.Contains(opts.Retain, resource) {
 				result.File.Inputs[resource] = entries
-			} else if opts.Frozen {
+			} else if frozen {
 				return nil, errors.New("lockfile contains stale entries; run stemma update")
 			}
 		}
 	}
-	if opts.Frozen {
+	if frozen {
 		before, err := json.Marshal(old.Plugins)
 		if err != nil {
 			return nil, err
@@ -225,7 +233,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		}
 		matches := entry.Version == 1 && entry.Resolver == input.Resolver && entry.ResolverVersion == version && entry.Declaration == declaration
 		if m.IsLocal(input.Resolver) {
-			if !matches && (opts.Frozen || opts.Offline) {
+			if !matches && frozen {
 				return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 			}
 			cached := matches && m.Store.Verify(ctx, entry.Content.Artifact) == nil
@@ -234,7 +242,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 				return current, false, err
 			}
 			unchanged := matches && current.Equal(entry)
-			if !unchanged && (opts.Frozen || opts.Offline) {
+			if !unchanged && frozen {
 				return source.Entry{}, false, errors.New("local input content changed; run stemma update")
 			}
 			return current, unchanged && cached, nil
@@ -243,15 +251,15 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 			hit, err := m.FetchLocked(ctx, input, entry)
 			return entry, hit, err
 		}
-		if opts.Frozen || opts.Offline {
+		if frozen {
 			return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 		}
 		current, cached, err := resolve(ctx, input, entry)
 		if err != nil || opts.Refresh {
 			return current, cached, err
 		}
-		// A refresh can name content from the source index without holding
-		// its bytes. Update only records the entry; runs that prepare fetch it.
+		// A resolution can name content from the source index without holding
+		// its bytes, which this run prepares.
 		if _, err := m.FetchLocked(ctx, input, current); err != nil {
 			return source.Entry{}, false, err
 		}
@@ -280,7 +288,7 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 	if !ok || resource == "" {
 		return nil, nil, fmt.Errorf("unknown input resource %q", resource)
 	}
-	if u.opts.Frozen && len(u.old.Inputs[resource]) != len(inputs) {
+	if u.opts.frozen() && len(u.old.Inputs[resource]) != len(inputs) {
 		return nil, nil, fmt.Errorf("%s inputs are missing or stale in the lockfile; run stemma update", resource)
 	}
 	entries := map[string]source.Entry{}
@@ -360,7 +368,7 @@ func (u *Update) Commit(ctx context.Context, rejected ...string) (Result, error)
 		return result, err
 	}
 	result.Changed = !bytes.Equal(before, after)
-	if opts.Frozen && result.Changed {
+	if opts.frozen() && result.Changed {
 		return result, errors.New("lockfile contains stale entries; run stemma update")
 	}
 	if result.Changed && !opts.IgnoreInputs {

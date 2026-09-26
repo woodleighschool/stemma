@@ -253,7 +253,7 @@ func (r *runner) configIn(worktree *git.Worktree) string {
 }
 
 func (r *runner) engineOptions(method, configPath string, resources []string, offline bool) engine.Options {
-	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Method: method, Resources: resources, Lock: lockfile.Options{Frozen: true, Offline: offline}}
+	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Method: method, Resources: resources, Lock: lockfile.Options{Offline: offline}}
 	if r.opts.ResourceDone != nil {
 		opts.ResourceDone = func(resource engine.ResourceReport) error { return r.opts.ResourceDone(method, resource) }
 	}

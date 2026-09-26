@@ -70,6 +70,7 @@ func Unreported(err error) error {
 
 // Report distinguishes source, preparation and each destination's work.
 type Report struct {
+	// LockChanged reports whether update wrote the lockfile.
 	LockChanged *bool `json:"lock_changed,omitempty"`
 	// RemovedInputs are lock entries of resources the catalog no longer declares.
 	RemovedInputs []lockfile.InputChange `json:"removed_inputs,omitempty"`
@@ -143,15 +144,10 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	// signature derives each resource's signer through the preparation path;
 	// icon presents the artwork of prepared software the same way.
 	preparing := opts.Method == "prepare" || opts.Method == "signature" || opts.Method == "icon"
-	switch opts.Method {
-	case "plan", "apply", "icon":
-		opts.Lock.Frozen = true
-	case "artifact":
-		opts.Lock.Frozen = !opts.Lock.IgnoreInputs
-	}
-	// A run that ignores input locks records nothing, so its plugins must still
-	// match the lockfile.
-	s, err := open(ctx, opts, opts.Lock.Frozen || opts.Lock.Offline || opts.Lock.IgnoreInputs)
+	// Update writes the lockfile. Every other run consumes it as reviewed, with
+	// the plugins it pins.
+	opts.Lock.Refresh = opts.Method == "update"
+	s, err := open(ctx, opts, !opts.Lock.Refresh)
 	if err != nil {
 		return report, err
 	}
@@ -533,7 +529,9 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err != nil {
 		return report, errors.Join(append(failures, err)...)
 	}
-	report.LockChanged = &result.Changed
+	if opts.Method == "update" {
+		report.LockChanged = &result.Changed
+	}
 	reported := map[string]bool{}
 	for _, resource := range report.Resources {
 		reported[resource.Key] = true

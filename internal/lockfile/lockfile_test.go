@@ -83,10 +83,10 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	t.Cleanup(server.Close)
 	m := manager(t)
 	inputs := inputset("http", map[string]any{"url": server.URL + "/app.pkg", "token": "first-token"})
-	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil || err.Error() != "lockfile: missing; run stemma update" {
+	if _, err := prepare(t, m, inputs, Options{}); err == nil || err.Error() != "lockfile: missing; run stemma update" {
 		t.Fatalf("missing frozen lock: %v", err)
 	}
-	first, err := prepare(t, m, inputs, Options{})
+	first, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 		t.Fatal("lock retained a credential")
 	}
 	inputs["stemma/v1alpha1/Policy/source-free"] = map[string]plugin.Input{}
-	warm, err := prepare(t, m, inputs, Options{Frozen: true, Offline: true})
+	warm, err := prepare(t, m, inputs, Options{Offline: true})
 	if err != nil || warm.Changed || !warm.CacheHits[resource]["source"] || requests.Load() != 1 {
 		t.Fatalf("warm offline input changed: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	}
 	token.Store("rotated-token")
 	inputs[resource]["source"].Config["token"] = "rotated-token"
-	recovered, err := prepare(t, m, inputs, Options{Frozen: true})
+	recovered, err := prepare(t, m, inputs, Options{})
 	if err != nil || recovered.Changed || recovered.CacheHits[resource]["source"] {
 		t.Fatalf("credential rotation or cold recovery changed lock: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	payload.Store("substituted installer")
-	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil {
+	if _, err := prepare(t, m, inputs, Options{}); err == nil {
 		t.Fatal("cold recovery accepted substituted upstream bytes")
 	}
 	if !bytes.Equal(before, lockedBytes(t, m)) {
@@ -144,9 +144,6 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	updated, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil || !updated.Changed || entry(updated).Content == original.Content {
 		t.Fatalf("refresh failed to record changed input: %v", err)
-	}
-	if _, err := prepare(t, m, inputs, Options{IgnoreInputs: true, Frozen: true}); err == nil {
-		t.Fatal("accepted conflicting lock options")
 	}
 }
 
@@ -177,7 +174,7 @@ func TestReleaseObservationChangesKeepContentIdentity(t *testing.T) {
 	m := manager(t)
 	m.Client.Transport = releaseTransport{server}
 	inputs := inputset("github", map[string]any{"repository": "example/app", "release": "latest", "asset": "App.pkg"})
-	first, err := prepare(t, m, inputs, Options{})
+	first, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,11 +188,11 @@ func TestReleaseObservationChangesKeepContentIdentity(t *testing.T) {
 	if !current.Changed || entry(current).Content != previous.Content || !bytes.Contains(entry(current).Observation, []byte(release)) {
 		t.Fatal("resolver observation changed content identity")
 	}
-	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err != nil {
+	if _, err := prepare(t, m, inputs, Options{}); err != nil {
 		t.Fatal(err)
 	}
 	inputs[resource]["source"].Config["asset"] = "App-*.pkg"
-	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil || !strings.Contains(err.Error(), "stale") {
+	if _, err := prepare(t, m, inputs, Options{}); err == nil || !strings.Contains(err.Error(), "stale") {
 		t.Fatalf("frozen run accepted changed asset pattern: %v", err)
 	}
 	inputs[resource]["source"].Config["asset"] = "App*.pkg"
@@ -206,7 +203,7 @@ func TestReleaseObservationChangesKeepContentIdentity(t *testing.T) {
 	if !updated.Changed || entry(updated).Declaration == entry(current).Declaration || entry(updated).Content != entry(current).Content {
 		t.Fatal("pattern update lost content identity or failed to replace declaration")
 	}
-	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err != nil {
+	if _, err := prepare(t, m, inputs, Options{}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -243,7 +240,7 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 		"script":  {Resolver: "file", Config: map[string]any{"path": "postinstall"}},
 		"payload": {Resolver: "local", Config: map[string]any{"base": "payload", "include": []string{"**"}}},
 	}}
-	first, err := prepare(t, m, inputs, Options{})
+	first, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,13 +256,13 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil {
+	if _, err := prepare(t, m, inputs, Options{}); err == nil {
 		t.Fatal("frozen input ignored file mode change")
 	}
 	if !bytes.Equal(before, lockedBytes(t, m)) {
 		t.Fatal("failed mode check changed lock")
 	}
-	second, err := prepare(t, m, inputs, Options{})
+	second, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,10 +275,10 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 	if err := os.Symlink("two", link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil {
+	if _, err := prepare(t, m, inputs, Options{}); err == nil {
 		t.Fatal("warm cache hid symlink target change")
 	}
-	third, err := prepare(t, m, inputs, Options{})
+	third, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +288,7 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 	if err := os.Chmod(filepath.Join(tree, "one"), 0o444); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := prepare(t, m, inputs, Options{Frozen: true, Offline: true}); err == nil {
+	if _, err := prepare(t, m, inputs, Options{Offline: true}); err == nil {
 		t.Fatal("offline tree ignored child mode change")
 	}
 }
@@ -335,7 +332,7 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 	input.Base = "software/App"
 	inputs[resource]["source"] = input
 	inputs["stemma/v1alpha1/BuildMacPkg/package"] = map[string]plugin.Input{"payload": inputs[resource]["source"]}
-	first, err := prepare(t, m, inputs, Options{})
+	first, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +349,7 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 	if got := string(entry(first).Evidence["vendor.release"]); got != `{"id":9007199254740993,"version":"1.2"}` {
 		t.Fatalf("resolver evidence was not canonicalized: %s", got)
 	}
-	warm, err := prepare(t, m, inputs, Options{Frozen: true, Offline: true})
+	warm, err := prepare(t, m, inputs, Options{Offline: true})
 	if err != nil || warm.Changed || !entry(warm).Equal(entry(first)) || discoveries != 1 || fetches != 1 {
 		t.Fatalf("warm offline resolver evidence changed: %v", err)
 	}
@@ -361,7 +358,7 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 	if err := os.Remove(object); err != nil {
 		t.Fatal(err)
 	}
-	recovered, err := prepare(t, m, inputs, Options{Frozen: true})
+	recovered, err := prepare(t, m, inputs, Options{})
 	if err != nil || recovered.Changed || fetches != 2 || discoveries != 1 || !entry(recovered).Equal(entry(first)) {
 		t.Fatalf("cold fetch rediscovered or changed locked resolver content: %v", err)
 	}
@@ -372,7 +369,7 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 	before = lockedBytes(t, m)
 	resolver.Version = "resolver-2"
 	m.Resolvers["example.release"] = resolver
-	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil {
+	if _, err := prepare(t, m, inputs, Options{}); err == nil {
 		t.Fatal("frozen lock accepted a different resolver version")
 	}
 	if !bytes.Equal(before, lockedBytes(t, m)) {
@@ -386,22 +383,22 @@ func TestInputRemovalAndSourceFreeProjects(t *testing.T) {
 		t.Fatal(err)
 	}
 	inputs := inputset("file", map[string]any{"path": "input"})
-	if _, err := prepare(t, m, inputs, Options{}); err != nil {
+	if _, err := prepare(t, m, inputs, Options{Refresh: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := prepare(t, m, nil, Options{Frozen: true}); err == nil {
+	if _, err := prepare(t, m, nil, Options{}); err == nil {
 		t.Fatal("frozen run removed reviewed input")
 	}
-	if result, err := prepare(t, m, nil, Options{}); err != nil || !result.Changed {
+	if result, err := prepare(t, m, nil, Options{Refresh: true}); err != nil || !result.Changed {
 		t.Fatalf("removed input retained obsolete lock: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(m.Root, "stemma.lock.yaml")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("empty input lock persisted")
 	}
-	if _, err := prepare(t, m, nil, Options{Frozen: true, Offline: true}); err != nil {
+	if _, err := prepare(t, m, nil, Options{Offline: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Prepare(t.Context(), m.Root, nil, map[string]plugins.Entry{"fixture": {Image: "registry.example/plugin:v1"}}, m, Options{Frozen: true}); err == nil {
+	if _, err := Prepare(t.Context(), m.Root, nil, map[string]plugins.Entry{"fixture": {Image: "registry.example/plugin:v1"}}, m, Options{}); err == nil {
 		t.Fatal("source-free project bypassed required plugin lock")
 	}
 }
@@ -416,17 +413,17 @@ func TestSelectedInputsPreserveOtherReviewedResources(t *testing.T) {
 	inputs := inputset("file", map[string]any{"path": "first"})
 	const other = "stemma/v1alpha1/BuildMacPkg/other"
 	inputs[other] = map[string]plugin.Input{"payload": {Resolver: "file", Config: map[string]any{"path": "other"}}}
-	first, err := prepare(t, m, inputs, Options{})
+	first, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	delete(inputs, other)
-	selected, err := prepare(t, m, inputs, Options{Frozen: true, PreserveUnselected: true})
+	selected, err := prepare(t, m, inputs, Options{PreserveUnselected: true})
 	if err != nil || selected.Changed || !selected.File.Inputs[other]["payload"].Equal(first.File.Inputs[other]["payload"]) {
 		t.Fatalf("selected frozen run changed unrelated input: %v", err)
 	}
 	inputs[resource] = map[string]plugin.Input{}
-	removed, err := prepare(t, m, inputs, Options{PreserveUnselected: true})
+	removed, err := prepare(t, m, inputs, Options{Refresh: true, PreserveUnselected: true})
 	if err != nil || !removed.Changed || len(removed.File.Inputs) != 1 || !removed.File.Inputs[other]["payload"].Equal(first.File.Inputs[other]["payload"]) {
 		t.Fatalf("selected input removal lost another reviewed resource: %v", err)
 	}
@@ -463,14 +460,14 @@ func TestIncrementalAcquisitionCommitsOnlyCompleteUncancelledUpdates(t *testing.
 		}
 		inputs[name] = map[string]plugin.Input{"source": {Resolver: "file", Config: map[string]any{"path": name}}}
 	}
-	if _, err := Prepare(t.Context(), m.Root, inputs, nil, m, Options{}); err != nil {
+	if _, err := Prepare(t.Context(), m.Root, inputs, nil, m, Options{Refresh: true}); err != nil {
 		t.Fatal(err)
 	}
 	before := lockedBytes(t, m)
 	if err := os.WriteFile(filepath.Join(m.Root, "a"), []byte("changed"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	update, err := Begin(t.Context(), m.Root, inputs, nil, m, Options{})
+	update, err := Begin(t.Context(), m.Root, inputs, nil, m, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -604,10 +601,7 @@ func TestPreparationFetchesContentTheSourceIndexNamed(t *testing.T) {
 	if updated, err := prepare(t, m, inputs, Options{Refresh: true}); err != nil || updated.Changed || fetches.Load() != 1 {
 		t.Fatalf("update fetched bytes it does not read: %v fetches=%d", err, fetches.Load())
 	}
-	if err := os.Remove(filepath.Join(m.Root, "stemma.lock.yaml")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := prepare(t, m, inputs, Options{}); err != nil || fetches.Load() != 2 || m.Store.Verify(t.Context(), entry(first).Content.Artifact) != nil {
+	if _, err := prepare(t, m, inputs, Options{IgnoreInputs: true}); err != nil || fetches.Load() != 2 || m.Store.Verify(t.Context(), entry(first).Content.Artifact) != nil {
 		t.Fatalf("preparation was left without the bytes the index named: %v fetches=%d", err, fetches.Load())
 	}
 }
@@ -624,17 +618,17 @@ func TestRetainedResourcesKeepReviewedEntries(t *testing.T) {
 	for _, name := range []string{other, gone} {
 		inputs[name] = map[string]plugin.Input{"payload": {Resolver: "file", Config: map[string]any{"path": path.Base(name)}}}
 	}
-	first, err := prepare(t, m, inputs, Options{})
+	first, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	delete(inputs, other)
 	delete(inputs, gone)
-	frozen, err := prepare(t, m, inputs, Options{Frozen: true, Retain: []string{other, gone}})
+	frozen, err := prepare(t, m, inputs, Options{Retain: []string{other, gone}})
 	if err != nil || frozen.Changed || len(frozen.File.Inputs) != 3 {
 		t.Fatalf("retained resources changed a frozen lock: %v %+v", err, frozen.File.Inputs)
 	}
-	retained, err := prepare(t, m, inputs, Options{Retain: []string{other}})
+	retained, err := prepare(t, m, inputs, Options{Refresh: true, Retain: []string{other}})
 	if err != nil || !retained.Changed || len(retained.File.Inputs) != 2 || !retained.File.Inputs[other]["payload"].Equal(first.File.Inputs[other]["payload"]) {
 		t.Fatalf("retention kept the wrong entries: %v %+v", err, retained.File.Inputs)
 	}
@@ -653,7 +647,7 @@ func TestCommitRetainsRejectedResourcesWithoutPartialInputs(t *testing.T) {
 			inputs[resource][name] = plugin.Input{Resolver: "file", Config: map[string]any{"path": filename}}
 		}
 	}
-	before, err := Prepare(t.Context(), m.Root, inputs, nil, m, Options{})
+	before, err := Prepare(t.Context(), m.Root, inputs, nil, m, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -43,6 +43,7 @@ spec:
 ```
 
 ```sh
+stemma update MacSoftware/fonts
 stemma prepare MacSoftware/fonts
 stemma plan MacSoftware/fonts
 ```

@@ -107,7 +107,7 @@ spec:
 			if err != nil || string(before) != string(after) || report.LockChanged != nil && *report.LockChanged {
 				t.Fatalf("failed run changed reviewed entries: %+v, %v", report, err)
 			}
-			if method != "icon" && report.LockChanged == nil {
+			if method == "update" && report.LockChanged == nil {
 				t.Fatal("lock comparison did not complete")
 			}
 			candidate, err := Resolve(t.Context(), opts)
@@ -123,7 +123,7 @@ spec:
 	}
 }
 
-func TestPreparationFailureRetainsReviewedInputs(t *testing.T) {
+func TestPreparationConsumesTheReviewedLockfile(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
 	installer, err := os.ReadFile("../apple/testdata/fixture.pkg")
@@ -155,7 +155,7 @@ spec:
 	if _, err := Run(t.Context(), opts); err != nil {
 		t.Fatal(err)
 	}
-	before, err := lockfile.Load(lockfile.Filename(root))
+	before, err := os.ReadFile(lockfile.Filename(root))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,15 +173,16 @@ spec:
   source: {path: healthy.pkg}
 `
 	testproject.Write(t, filename, manifest)
+	// A changed input and a resource without entries each fail on their own
+	// and leave the lockfile to update.
 	opts.Method = "prepare"
 	report, err := Run(t.Context(), opts)
-	if err == nil || len(report.Resources) != 3 || report.Resources[0].Error == "" || len(report.Resources[1].BlockedBy) != 1 || report.Resources[2].Error != "" || report.LockChanged == nil || !*report.LockChanged {
-		t.Fatalf("preparation failure did not stay local: %+v, %v", report, err)
+	if err == nil || len(report.Resources) != 3 || !strings.Contains(report.Resources[0].Error, "run stemma update") || len(report.Resources[1].BlockedBy) != 1 || !strings.Contains(report.Resources[2].Error, "run stemma update") || report.LockChanged != nil {
+		t.Fatalf("preparation did not fail on unreviewed inputs: %+v, %v", report, err)
 	}
-	after, err := lockfile.Load(lockfile.Filename(root))
-	const broken = "stemma/v1alpha1/MacSoftware/broken"
-	if err != nil || !reflect.DeepEqual(before.Inputs[broken], after.Inputs[broken]) || len(after.Inputs) != 2 {
-		t.Fatalf("failed preparation committed new input bytes: %+v, %v", after, err)
+	after, err := os.ReadFile(lockfile.Filename(root))
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("preparation wrote the lockfile: %v", err)
 	}
 }
 

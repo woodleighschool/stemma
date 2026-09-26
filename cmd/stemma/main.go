@@ -162,7 +162,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		var presentation string
 		cmd := &cobra.Command{Use: method + " [Kind/name...]"}
 		jsonFlag(cmd)
-		cmd.Short = map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "signature": "Derive the verified signer of each published artifact", "icon": "Create declared icon assets from the artwork prepared software carries", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method]
+		cmd.Short = map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Prepare resources from the lockfile without publication", "signature": "Derive the verified signer of each published artifact", "icon": "Create declared icon assets from the artwork prepared software carries", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method]
 		cmd.RunE = func(cmd *cobra.Command, args []string) error {
 			path, err := resolve()
 			if err != nil {
@@ -175,7 +175,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 			}
 			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Method: method, Resources: args, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error {
 				return display.resourceDone(method, resource)
-			}, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply" || method == "icon", Refresh: method == "update", Offline: offline}})
+			}, Lock: lockfile.Options{Offline: offline}})
 			if err := display.report(out, method, report, runErr); err != nil {
 				if runErr != nil {
 					runErr = fmt.Errorf("%s: %w", method, runErr)

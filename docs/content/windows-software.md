@@ -73,6 +73,7 @@ spec:
 
 ```sh
 stemma validate
+stemma update WindowsSoftware/chrome
 stemma prepare WindowsSoftware/chrome
 stemma plan WindowsSoftware/chrome
 ```

@@ -303,7 +303,7 @@ func renderSummary(style textStyle, method string, report engine.Report, runErr 
 		text.WriteString(", " + style.paint(fmt.Sprintf("%d blocked", s.Blocked), color.FgHiYellow))
 	}
 	text.WriteString(".\n")
-	if (method == "update" || method == "prepare") && report.LockChanged != nil {
+	if report.LockChanged != nil {
 		text.WriteString(lockfileStatus(style, *report.LockChanged) + "\n")
 	}
 	return text.String()

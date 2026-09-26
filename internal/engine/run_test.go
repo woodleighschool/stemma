@@ -20,6 +20,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
@@ -244,7 +245,7 @@ spec:
     repo: {pkginfo: {catalogs: [testing]}}
 `, server.URL))
 	cache := t.TempDir()
-	for _, method := range []string{"prepare", "plan"} {
+	for _, method := range []string{"update", "prepare", "plan"} {
 		var logs bytes.Buffer
 		ctx := plugin.WithLogger(t.Context(), slog.New(slog.NewJSONHandler(&logs, nil)))
 		if _, err := Run(ctx, Options{ConfigPath: filename, CacheDir: cache, Method: method}); err != nil {
@@ -295,13 +296,29 @@ func TestPrepareFinishesEachResourceBeforeAcquiringTheNext(t *testing.T) {
 				defer mu.Unlock()
 				events = append(events, event)
 			}
-			installer, err := os.ReadFile("../apple/testdata/fixture.pkg")
-			if err != nil {
-				t.Fatal(err)
+			// Distinct packages, since preparation fetches content it does not hold.
+			packages := map[string][]byte{}
+			for _, name := range []string{"a", "b"} {
+				source := t.TempDir()
+				if err := os.Mkdir(filepath.Join(source, "payload"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(source, "payload", name+".txt"), []byte(name), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				output := filepath.Join(t.TempDir(), name+".pkg")
+				if err := pkgbuild.Build(t.Context(), source, output, pkgbuild.Options{Identifier: "com.example." + name, Version: "1.0", Payload: "payload"}); err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(output)
+				if err != nil {
+					t.Fatal(err)
+				}
+				packages["/"+name+".pkg"] = data
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				record("acquire " + r.URL.Path)
-				_, _ = w.Write(installer)
+				_, _ = w.Write(packages[r.URL.Path])
 			}))
 			defer server.Close()
 			root := t.TempDir()
@@ -326,6 +343,17 @@ spec:
 			}
 			filename := filepath.Join(root, "stemma.yaml")
 			testproject.Write(t, filename, manifest)
+			// Update locks the inputs into another cache, so preparation acquires them.
+			if _, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}); err != nil {
+				t.Fatal(err)
+			}
+			locked, err := os.ReadFile(lockfile.Filename(root))
+			if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			events = nil
+			mu.Unlock()
 			var logs bytes.Buffer
 			ctx = plugin.WithLogger(ctx, slog.New(slog.NewJSONHandler(&logs, nil)))
 			report, err := Run(ctx, Options{
@@ -354,8 +382,8 @@ spec:
 				if strings.Contains(logs.String(), "Preparation failed") || strings.Contains(logs.String(), "Destination failed") {
 					t.Fatalf("cancellation logged ordinary failures: %s", logs.String())
 				}
-				if _, err := os.Stat(filepath.Join(root, "stemma.lock.yaml")); !errors.Is(err, os.ErrNotExist) {
-					t.Fatal("cancelled run wrote a partial lockfile")
+				if after, err := os.ReadFile(lockfile.Filename(root)); err != nil || !bytes.Equal(after, locked) {
+					t.Fatalf("cancelled run changed the lockfile: %v", err)
 				}
 			} else {
 				if err != nil {

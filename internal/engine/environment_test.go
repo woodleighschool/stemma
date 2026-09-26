@@ -126,8 +126,11 @@ func TestCommandsReadEnvironmentValuesWhereTheyUseThem(t *testing.T) {
 	if err := run("update", "STEMMA_TEST_VENDOR"); err == nil || !strings.Contains(err.Error(), "required reference is missing") {
 		t.Fatalf("acquisition without its input value: %v", err)
 	}
-	// Preparation reads neither publication metadata nor connection settings,
-	// and only reconcile reads source control.
+	// Acquisition and preparation read neither publication metadata nor
+	// connection settings, and only reconcile reads source control.
+	if err := run("update", "STEMMA_TEST_DESCRIPTION", "STEMMA_TEST_REPO", "STEMMA_TEST_KEY"); err != nil {
+		t.Fatalf("acquisition read publication values: %v", err)
+	}
 	if err := run("prepare", "STEMMA_TEST_DESCRIPTION", "STEMMA_TEST_REPO", "STEMMA_TEST_KEY"); err != nil {
 		t.Fatalf("preparation read publication values: %v", err)
 	}
