@@ -111,8 +111,10 @@ func ParseAppInfo(data []byte) (AppFacts, error) {
 	if _, err := plist.Unmarshal(data, &facts); err != nil {
 		return facts, fmt.Errorf("app Info.plist: %w", err)
 	}
-	if facts.BundleID == "" || facts.Executable == "" {
-		return facts, fmt.Errorf("app Info.plist lacks CFBundleIdentifier or CFBundleExecutable")
+	// Script applets may omit CFBundleIdentifier. Destinations require one
+	// only of the application they detect.
+	if facts.Executable == "" {
+		return facts, fmt.Errorf("app Info.plist lacks CFBundleExecutable")
 	}
 	if facts.Executable == "." || facts.Executable == ".." || strings.ContainsAny(facts.Executable, "/\\\x00:") {
 		return facts, fmt.Errorf("unsafe CFBundleExecutable %q", facts.Executable)

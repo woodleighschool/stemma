@@ -211,6 +211,27 @@ func TestReadLocalTreeAndVersionlessFile(t *testing.T) {
 	}
 }
 
+func TestContentsListsScriptAppletWithoutBundleIdentifier(t *testing.T) {
+	files := fstest.MapFS{
+		"Installer.pkg":                       &fstest.MapFile{Data: []byte("xar!")},
+		"Uninstall.app/Contents/Info.plist":   &fstest.MapFile{Data: []byte(`<plist version="1.0"><dict><key>CFBundleExecutable</key><string>applet</string><key>CFBundleName</key><string>Uninstall</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`)},
+		"Uninstall.app/Contents/MacOS/applet": &fstest.MapFile{Data: []byte("applet"), Mode: 0o755},
+	}
+	subjects, err := Contents(t.Context(), files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var applet *plugin.Subject
+	for i := range subjects {
+		if subjects[i].Path == "Uninstall.app" {
+			applet = &subjects[i]
+		}
+	}
+	if len(subjects) != 2 || applet == nil || applet.App == nil || applet.App.Executable != "applet" || applet.App.BundleID != "" {
+		t.Fatalf("applet not inventoried beside the package: %+v", subjects)
+	}
+}
+
 func TestContentsBoundsApplicationMetadata(t *testing.T) {
 	metadata := []byte(`<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.app</string><key>CFBundleExecutable</key><string>example</string><key>CFBundleName</key><string>` + strings.Repeat("x", 4<<20-512) + `</string></dict></plist>`)
 	files := fstest.MapFS{}
