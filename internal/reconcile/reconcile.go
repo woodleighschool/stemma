@@ -18,8 +18,8 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/internal/git"
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	"github.com/woodleighschool/stemma/internal/reconcile/git"
 	"github.com/woodleighschool/stemma/internal/reconcile/sourcecontrol"
 	"github.com/woodleighschool/stemma/internal/reconcile/sourcecontrol/github"
 	"github.com/woodleighschool/stemma/internal/source"
@@ -189,6 +189,12 @@ func newRunner(ctx context.Context, opts Options) (*runner, error) {
 	repo, err := git.Open(root)
 	if err != nil {
 		return nil, err
+	}
+	if repo.Shallow {
+		return nil, errors.New("reconcile: the checkout is shallow; clone it with history so proposals can be told apart from reviewed commits")
+	}
+	if repo.Remote == "" {
+		return nil, errors.New("reconcile: the checkout has no origin URL")
 	}
 	host, err := openSourceControl(document.Spec.Reconcile.SourceControl, repo.Remote)
 	if err != nil {

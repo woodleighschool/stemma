@@ -1,4 +1,4 @@
-// Package git drives the checkout holding a project, and its origin.
+// Package git reads and drives the checkout holding a project, and its origin.
 package git
 
 import (
@@ -30,12 +30,14 @@ type Identity struct {
 	Name, Email string
 }
 
-// Repository is the checkout whose origin remote is being reconciled.
+// Repository is the checkout holding a project.
 type Repository struct {
 	// Dir is the top-level directory of the checkout.
 	Dir string
-	// Remote is the origin URL as the checkout configures it.
+	// Remote is the origin URL as the checkout configures it, or "" without one.
 	Remote string
+	// Shallow reports a checkout cloned without its whole history.
+	Shallow bool
 	// Credentials authenticate fetches and pushes to an HTTP origin. An SSH
 	// origin uses the SSH agent instead.
 	Credentials Credentials
@@ -55,7 +57,7 @@ type Commit struct {
 
 const remoteName = "origin"
 
-// Open locates the checkout containing dir and its origin remote.
+// Open locates the checkout containing dir.
 func Open(dir string) (*Repository, error) {
 	repo, err := gogit.PlainOpenWithOptions(dir, &gogit.PlainOpenOptions{DetectDotGit: true})
 	if err != nil {
@@ -65,21 +67,20 @@ func Open(dir string) (*Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("git: %w", err)
 	}
-	if len(shallow) > 0 {
-		return nil, errors.New("git: the checkout is shallow; clone it with history so proposals can be told apart from reviewed commits")
-	}
 	worktree, err := repo.Worktree()
 	if err != nil {
 		return nil, fmt.Errorf("git: %w", err)
 	}
+	r := &Repository{Dir: worktree.Filesystem().Root(), Shallow: len(shallow) > 0, repo: repo}
 	origin, err := repo.Remote(remoteName)
-	if err != nil {
+	switch {
+	case errors.Is(err, gogit.ErrRemoteNotFound):
+	case err != nil:
 		return nil, fmt.Errorf("git: %w", err)
+	case len(origin.Config().URLs) > 0:
+		r.Remote, r.origin = origin.Config().URLs[0], origin
 	}
-	if len(origin.Config().URLs) == 0 {
-		return nil, errors.New("git: origin has no URL")
-	}
-	return &Repository{Dir: worktree.Filesystem().Root(), Remote: origin.Config().URLs[0], repo: repo, origin: origin}, nil
+	return r, nil
 }
 
 // options authenticate one exchange with origin.
@@ -350,7 +351,9 @@ func (w *Worktree) checkout() error {
 		return err
 	}
 	cfg := config.NewConfig()
-	cfg.Remotes[remoteName] = w.repo.origin.Config()
+	if w.repo.origin != nil {
+		cfg.Remotes[remoteName] = w.repo.origin.Config()
+	}
 	if err := store.SetConfig(cfg); err != nil {
 		return err
 	}

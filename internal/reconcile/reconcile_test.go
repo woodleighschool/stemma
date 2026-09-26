@@ -947,6 +947,26 @@ spec:
 	}
 }
 
+func TestRunRejectsShallowCheckouts(t *testing.T) {
+	o := newOrigin(t, map[string]string{
+		"stemma.yaml":           project(filepath.Join(t.TempDir(), "munki")),
+		"fixture.software.yaml": software("https://downloads.example"),
+	})
+	gh := newFakeGitHub(t, o)
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	cloned, err := gogit.PlainCloneContext(t.Context(), checkout, &gogit.CloneOptions{URL: gh.remote(), ClientOptions: []client.Option{gh.auth()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cloned.Storer.SetShallow([]plumbing.Hash{plumbing.NewHash(o.tip("main"))}); err != nil {
+		t.Fatal(err)
+	}
+	// A shallow checkout cannot tell proposals from reviewed commits.
+	if _, err := Run(t.Context(), Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "shallow") {
+		t.Fatalf("shallow checkout accepted: %v", err)
+	}
+}
+
 func TestRunStopsOnceWhenTheReviewedProjectDoesNotLoad(t *testing.T) {
 	t.Setenv("GITHUB_APP_CLIENT_ID", "Iv1.fixture")
 	t.Setenv("GITHUB_APP_INSTALLATION_ID", "7")

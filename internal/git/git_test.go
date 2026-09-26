@@ -4,7 +4,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -187,11 +186,10 @@ func TestOpenBindsTheCheckoutToItsOrigin(t *testing.T) {
 		t.Fatal("worktrees were registered in the checkout")
 	}
 
-	// A shallow checkout cannot tell proposals from reviewed commits.
 	if err := cloned.Storer.SetShallow([]plumbing.Hash{plumbing.NewHash(head)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Open(clone); err == nil || !strings.Contains(err.Error(), "shallow") {
-		t.Fatalf("shallow checkout accepted: %v", err)
+	if shallow, err := Open(clone); err != nil || !shallow.Shallow {
+		t.Fatalf("shallow checkout not reported: %v", err)
 	}
 }
