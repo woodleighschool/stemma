@@ -5839,7 +5839,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Applications that block installation. Empty list disables inferred blocking."
+                  "description": "Applications that block installation or removal while they run. Munki uses the applications in installs when this is absent; an empty list blocks nothing."
                 },
                 "catalogs": {
                   "anyOf": [
