@@ -193,3 +193,59 @@ func TestOpenBindsTheCheckoutToItsOrigin(t *testing.T) {
 		t.Fatalf("shallow checkout not reported: %v", err)
 	}
 }
+
+func TestMergeBaseFindsWhereTheBranchLeftRev(t *testing.T) {
+	dir := t.TempDir()
+	repo, err := gogit.PlainInit(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, "refs/heads/trunk")); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := repo.Worktree()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := func(name string, minute int) string {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tree.Add(name); err != nil {
+			t.Fatal(err)
+		}
+		signature := &object.Signature{Name: "Human", Email: "human@example.com", When: time.Date(2026, 9, 26, 12, minute, 0, 0, time.UTC)}
+		hash, err := tree.Commit(name, &gogit.CommitOptions{Author: signature, Committer: signature})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return hash.String()
+	}
+	checkout := func(branch string, create bool) {
+		t.Helper()
+		if err := tree.Checkout(&gogit.CheckoutOptions{Branch: plumbing.NewBranchReferenceName(branch), Create: create}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	forked := commit("base", 0)
+	checkout("feature", true)
+	commit("feature", 1)
+	checkout("trunk", false)
+	commit("later", 2)
+	checkout("feature", false)
+
+	r, err := Open(dir)
+	if err != nil || r.Remote != "" {
+		t.Fatalf("checkout without origin: %v %q", err, r.Remote)
+	}
+	// Commits trunk gained after the fork are not part of the comparison.
+	for _, rev := range []string{"trunk", "refs/heads/trunk", forked} {
+		if base, err := r.MergeBase(rev); err != nil || base != forked {
+			t.Fatalf("merge base of %s: %s %v", rev, base, err)
+		}
+	}
+	if _, err := r.MergeBase("missing"); err == nil {
+		t.Fatal("an unknown revision had a merge base")
+	}
+}

@@ -31,6 +31,20 @@ an unrelated document that fails its own validation does not block the run. Use
 as it is: an input without a current entry fails that resource until
 `stemma update` records it, and plugins must match their entries.
 
+`prepare --changed-since REV` prepares only the resources whose preparation
+differs from the catalog at the commit where `REV` and `HEAD` meet: their source
+and preparation settings after components merge, and their lock entries, but not
+destination metadata. New resources count as changed, and a changed build selects
+the resources that consume it. Suspended resources stay out. The lockfile must
+hold entries for exactly the declared inputs; entry and environment values are
+read only for the resources the command prepares. Changed plugins, and a catalog
+at `REV` that this Stemma cannot read, fail before any plugin runs: they require
+trusted verification. The checkout needs its history back to that commit.
+
+```sh
+stemma prepare --changed-since origin/main
+```
+
 `icon` writes [declared icons](mac-software.md#icons) to `icons/<name>.png` from
 locked software. `--presentation raw` extracts the original artwork;
 `--presentation glassy` uses the macOS renderer at `--size` pixels (512 by default).

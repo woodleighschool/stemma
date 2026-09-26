@@ -29,8 +29,12 @@ type Options struct {
 	ConfigPath, CacheDir string
 	Method               string
 	Resources            []string
-	Lock                 lockfile.Options
-	Icons                IconOptions
+	// ChangedSince selects, for prepare, the resources whose preparation
+	// differs from the catalog at this Git revision, after checking the whole
+	// lockfile.
+	ChangedSince string
+	Lock         lockfile.Options
+	Icons        IconOptions
 	// Output names the resource output the artifact method materializes;
 	// empty selects installer.
 	Output   string
@@ -133,6 +137,9 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	default:
 		return report, fmt.Errorf("unsupported run method %q", opts.Method)
 	}
+	if opts.ChangedSince != "" && (opts.Method != "prepare" || len(opts.Resources) > 0) {
+		return report, errors.New("changed-since selects the resources prepare runs; remove the selectors")
+	}
 	if opts.Method == "icon" {
 		// A presentation the host cannot draw fails before anything is acquired.
 		presentation, err := opts.Icons.Presentation.Resolve()
@@ -158,6 +165,11 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	roots, err := selectResources(p.Resources, opts.Resources)
 	if err != nil {
 		return report, err
+	}
+	if opts.ChangedSince != "" {
+		if roots, err = changedSince(ctx, s, opts.ChangedSince); err != nil {
+			return report, err
+		}
 	}
 	plans, selected, err := discoverClosure(ctx, p, ops, roots, true)
 	if err != nil {
@@ -197,13 +209,14 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	done(nil)
 	declarations := declarations(plans, selected)
-	opts.Lock.PreserveUnselected = len(opts.Resources) > 0
+	opts.Lock.PreserveUnselected = len(opts.Resources) > 0 || opts.ChangedSince != ""
 	opts.Lock.Retain = suspended(p.Resources)
 	plugin.Logger(ctx).DebugContext(ctx, "Resources selected", "count", len(selected), "suspended", len(opts.Lock.Retain))
 	locked, err := lockfile.Begin(ctx, root, declarations, ops.plugins, manager, opts.Lock)
 	if err != nil {
 		return report, err
 	}
+	report.Resources = []ResourceReport{}
 	preparedItems := map[string]preparedResource{}
 	pending := map[string]int{}
 	if opts.Method != "update" {

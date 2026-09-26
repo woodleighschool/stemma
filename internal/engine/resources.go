@@ -71,12 +71,7 @@ func selectResources(resources map[string]config.Resource, selectors []string) (
 // that acquires it; publication peers only lend metadata, so their
 // declarations always stay as written.
 func discoverClosure(ctx context.Context, p config.Project, ops *operations, roots []string, environment bool) (map[string]resourcePlan, []string, error) {
-	kinds := map[plugin.ResourceKind]plugin.Operation{}
-	for _, op := range ops.registry.Descriptor().Operations {
-		if op.Resource != nil {
-			kinds[*op.Resource] = op
-		}
-	}
+	kinds := resourceKinds(ops)
 	plans := map[string]resourcePlan{}
 	// Callers reach evaluate with declared keys: selection resolves roots
 	// against the project, resource inputs name their producer before the walk
@@ -147,6 +142,17 @@ func discoverClosure(ctx context.Context, p config.Project, ops *operations, roo
 		}
 	}
 	return plans, ordered, nil
+}
+
+// resourceKinds maps each registered resource kind to its operation.
+func resourceKinds(ops *operations) map[plugin.ResourceKind]plugin.Operation {
+	kinds := map[plugin.ResourceKind]plugin.Operation{}
+	for _, op := range ops.registry.Descriptor().Operations {
+		if op.Resource != nil {
+			kinds[*op.Resource] = op
+		}
+	}
+	return kinds
 }
 
 // discoverResource evaluates one resource against its registered kind and

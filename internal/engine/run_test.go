@@ -20,7 +20,6 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
@@ -297,25 +296,7 @@ func TestPrepareFinishesEachResourceBeforeAcquiringTheNext(t *testing.T) {
 				events = append(events, event)
 			}
 			// Distinct packages, since preparation fetches content it does not hold.
-			packages := map[string][]byte{}
-			for _, name := range []string{"a", "b"} {
-				source := t.TempDir()
-				if err := os.Mkdir(filepath.Join(source, "payload"), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(source, "payload", name+".txt"), []byte(name), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				output := filepath.Join(t.TempDir(), name+".pkg")
-				if err := pkgbuild.Build(t.Context(), source, output, pkgbuild.Options{Identifier: "com.example." + name, Version: "1.0", Payload: "payload"}); err != nil {
-					t.Fatal(err)
-				}
-				data, err := os.ReadFile(output)
-				if err != nil {
-					t.Fatal(err)
-				}
-				packages["/"+name+".pkg"] = data
-			}
+			packages := map[string][]byte{"/a.pkg": testPackage(t, "com.example.a"), "/b.pkg": testPackage(t, "com.example.b")}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				record("acquire " + r.URL.Path)
 				_, _ = w.Write(packages[r.URL.Path])

@@ -734,3 +734,39 @@ func TestParseChecksTheVersionBeforeAnyEntry(t *testing.T) {
 		t.Fatalf("run read the lockfile as %v", err)
 	}
 }
+
+func TestCheckComparesTheLockfileShapeWithoutReadingValues(t *testing.T) {
+	m := manager(t)
+	if err := Check(m.Root, inputset("file", map[string]any{"path": "first"}), nil); err == nil || err.Error() != "lockfile: missing; run stemma update" {
+		t.Fatalf("missing lockfile: %v", err)
+	}
+	for _, name := range []string{"first", "other", "paused"} {
+		if err := os.WriteFile(filepath.Join(m.Root, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inputs := inputset("file", map[string]any{"path": "first"})
+	const other, paused = "stemma/v1alpha1/BuildMacPkg/other", "stemma/v1alpha1/BuildMacPkg/paused"
+	inputs[other] = map[string]plugin.Input{"payload": {Resolver: "file", Config: map[string]any{"path": "other"}}}
+	inputs[paused] = map[string]plugin.Input{"payload": {Resolver: "file", Config: map[string]any{"path": "paused"}}}
+	if _, err := prepare(t, m, inputs, Options{Refresh: true}); err != nil {
+		t.Fatal(err)
+	}
+	delete(inputs, paused)
+	// Values are left to the runs that acquire them.
+	inputs[resource]["source"].Config["path"] = "{{ env.STEMMA_TEST_UNSET }}"
+	if err := Check(m.Root, inputs, []string{paused}); err != nil {
+		t.Fatalf("retained resource or declared values failed the check: %v", err)
+	}
+	inputs[other] = map[string]plugin.Input{"script": {Resolver: "file", Config: map[string]any{"path": "first"}}}
+	err := Check(m.Root, inputs, nil)
+	for _, want := range []string{
+		"lockfile: " + paused + " is no longer declared; run stemma update",
+		"lockfile: " + other + " input payload is no longer declared; run stemma update",
+		"lockfile: " + other + " input script is missing; run stemma update",
+	} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("check did not report %q: %v", want, err)
+		}
+	}
+}

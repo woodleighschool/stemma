@@ -16,6 +16,8 @@ import (
 // session holds the project lock and cache lease for one finite execution.
 type session struct {
 	project config.Project
+	// base is the catalog prepare --changed-since compares with.
+	base    catalog
 	root    string
 	store   *cas.Store
 	manager *source.Manager
@@ -40,6 +42,14 @@ func open(ctx context.Context, opts Options, frozen bool) (_ *session, err error
 	s.root, err = filepath.Abs(filepath.Dir(opts.ConfigPath))
 	if err != nil {
 		return nil, err
+	}
+	if opts.ChangedSince != "" {
+		if s.base, err = catalogAt(s.root, filepath.Base(opts.ConfigPath), opts.ChangedSince); err != nil {
+			return nil, err
+		}
+		if err := reviewedPlugins(s.root, p, s.base, opts.ChangedSince); err != nil {
+			return nil, err
+		}
 	}
 	unlock, err := lockfile.Lock(ctx, s.root)
 	if err != nil {

@@ -172,13 +172,8 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		return nil, errors.New("offline runs use input locks and cannot refresh or ignore them")
 	}
 	frozen := opts.frozen()
-	filename := Filename(root)
-	requiresLock := len(pluginEntries) != 0
-	for _, named := range inputs {
-		requiresLock = requiresLock || len(named) != 0
-	}
-	old, err := Load(filename)
-	if errors.Is(err, os.ErrNotExist) && requiresLock && frozen {
+	old, err := Load(Filename(root))
+	if errors.Is(err, os.ErrNotExist) && requiresLock(inputs, pluginEntries) && frozen {
 		return nil, errors.New("lockfile: missing; run stemma update")
 	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -273,6 +268,54 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 	}
 	result.File.Plugins = pluginEntries
 	return &Update{result: result, old: old, root: root, opts: opts, inputs: inputs, acquire: acquire}, nil
+}
+
+// Check verifies the lockfile's shape without reading declared values: it
+// holds entries for exactly the declared inputs, besides whatever retained
+// resources keep. Runs that acquire an input compare its entry with the
+// declaration.
+func Check(root string, inputs map[string]map[string]plugin.Input, retain []string) error {
+	old, err := Load(Filename(root))
+	if errors.Is(err, os.ErrNotExist) {
+		if requiresLock(inputs, nil) {
+			return errors.New("lockfile: missing; run stemma update")
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var stale []error
+	for _, resource := range names(old.Inputs) {
+		if _, declared := inputs[resource]; !declared && !slices.Contains(retain, resource) {
+			stale = append(stale, fmt.Errorf("lockfile: %s is no longer declared; run stemma update", resource))
+		}
+	}
+	for _, resource := range names(inputs) {
+		for _, name := range names(old.Inputs[resource]) {
+			if _, declared := inputs[resource][name]; !declared {
+				stale = append(stale, fmt.Errorf("lockfile: %s input %s is no longer declared; run stemma update", resource, name))
+			}
+		}
+		for _, name := range names(inputs[resource]) {
+			if _, locked := old.Inputs[resource][name]; !locked {
+				stale = append(stale, fmt.Errorf("lockfile: %s input %s is missing; run stemma update", resource, name))
+			}
+		}
+	}
+	return errors.Join(stale...)
+}
+
+func requiresLock(inputs map[string]map[string]plugin.Input, pluginEntries map[string]plugins.Entry) bool {
+	if len(pluginEntries) != 0 {
+		return true
+	}
+	for _, named := range inputs {
+		if len(named) != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Acquire obtains one resource's inputs. Repeated calls reuse the same observation.

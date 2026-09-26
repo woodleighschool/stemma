@@ -231,6 +231,40 @@ func (r *Repository) Count(base, tip string) (int, error) {
 	return count, nil
 }
 
+// MergeBase returns the commit where the histories of rev and HEAD meet, as
+// git merge-base finds it.
+func (r *Repository) MergeBase(rev string) (_ string, err error) {
+	defer func() {
+		if err != nil && r.Shallow {
+			err = fmt.Errorf("%w; the checkout is shallow, so fetch its history", err)
+		}
+	}()
+	hash, err := r.repo.ResolveRevision(plumbing.Revision(rev))
+	if err != nil {
+		return "", fmt.Errorf("git: %s: %w", rev, err)
+	}
+	other, err := r.repo.CommitObject(*hash)
+	if err != nil {
+		return "", fmt.Errorf("git: %s: %w", rev, err)
+	}
+	ref, err := r.repo.Head()
+	if err != nil {
+		return "", fmt.Errorf("git: HEAD: %w", err)
+	}
+	head, err := r.repo.CommitObject(ref.Hash())
+	if err != nil {
+		return "", fmt.Errorf("git: HEAD: %w", err)
+	}
+	bases, err := head.MergeBase(other)
+	if err != nil {
+		return "", fmt.Errorf("git: merge base of %s and HEAD: %w", rev, err)
+	}
+	if len(bases) == 0 {
+		return "", fmt.Errorf("git: %s and HEAD share no history", rev)
+	}
+	return bases[0].Hash.String(), nil
+}
+
 // Commit describes the commit a SHA or ref points at.
 func (r *Repository) Commit(ref string) (Commit, error) {
 	c, err := r.commit(ref)
