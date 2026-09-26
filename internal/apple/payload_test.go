@@ -90,6 +90,22 @@ func TestPackagePayloadCompression(t *testing.T) {
 	}
 }
 
+func TestPackageContentsAcceptsDotSlashRoot(t *testing.T) {
+	// Mozilla's Firefox PKG names its payload root "./" and every other entry
+	// without a leading "./".
+	name := applicationPackage(t, "/Applications", []payloadEntry{
+		directoryEntry("./"), directoryEntry("Example.app"), directoryEntry("Example.app/Contents"),
+		plistEntry(t, "Example.app/Contents/Info.plist", "Example"),
+	})
+	facts, err := InspectPackageContents(t.Context(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts.Applications) != 1 || facts.Applications[0].InstalledPath != "/Applications/Example.app" {
+		t.Fatalf("wrong applications: %+v", facts.Applications)
+	}
+}
+
 func TestPackageContentsRejectsUnsafeAndIncompletePayloads(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -97,6 +113,7 @@ func TestPackageContentsRejectsUnsafeAndIncompletePayloads(t *testing.T) {
 		body   []byte
 	}{
 		{"traversal", cpio.Header{Name: "./../outside", Mode: cpio.ModeRegular | 0o644}, []byte("data")},
+		{"file_root", cpio.Header{Name: "./", Mode: cpio.ModeRegular | 0o644}, []byte("data")},
 		{"absolute", cpio.Header{Name: "/Applications/Example.app/Contents/Info.plist", Mode: cpio.ModeRegular | 0o644}, nil},
 		{"symlink_info", cpio.Header{Name: "./Example.app/Contents/Info.plist", Mode: cpio.ModeSymlink | 0o777}, []byte("/Applications/Example.app/Contents/Info.plist")},
 		{"hardlink_info", cpio.Header{Name: "./Example.app/Contents/Info.plist", Mode: cpio.ModeRegular | 0o644, NLink: 2}, nil},
