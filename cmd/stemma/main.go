@@ -366,7 +366,7 @@ func publishCommand(out io.Writer) *cobra.Command {
 			}
 			values[key] = value
 		}
-		done := plugin.Stage(cmd.Context(), "Publishing plugin")
+		done := plugin.Stage(cmd.Context(), "Publishing plugin", plugin.Detail(args[0]))
 		bundles, err := pluginstore.GoReleaserBundles(dist, archiveID)
 		var entry pluginstore.Entry
 		if err == nil {
