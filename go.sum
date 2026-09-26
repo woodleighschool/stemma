@@ -146,6 +146,8 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef h1:A9HsByNhogrvm9cWb28sjiS3i7tcKCkflWFEkHfuAgM=
 github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef/go.mod h1:lADxMC39cJJqL93Duh1xhAs4I2Zs8mKS89XWXFGp9cs=
+github.com/hydazz/go-bindings-macosplatform v0.20.1-0.20260926034728-fbcb63aab946 h1:7fbRofH1OubkU4JTffo3rPmsxHRHrSzUQgXjwaj5mcU=
+github.com/hydazz/go-bindings-macosplatform v0.20.1-0.20260926034728-fbcb63aab946/go.mod h1:CeYVl8AUDdFN+S6uNXmCCWCnUECkzq07SiPBZlrO8rE=
 github.com/hydazz/lzfse v0.3.1-0.20260925154549-a48bc31a2561 h1:RTkV7YPf3tJfkhscfcRtOTFdSH650Lx0NrfLB2LfZzg=
 github.com/hydazz/lzfse v0.3.1-0.20260925154549-a48bc31a2561/go.mod h1:c8Yl3UXxC+5JgCqXIy/zEOug1KC4vSrwKt4+6/qFgNo=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=

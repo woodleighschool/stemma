@@ -14,10 +14,10 @@ require (
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/deploymenttheory/go-apfs-v2 v0.10.0
+	github.com/deploymenttheory/go-bindings-macosplatform v0.20.0
 	github.com/deploymenttheory/go-macos-pkg v0.7.2
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
 	github.com/dustin/go-humanize v1.1.0
-	github.com/ebitengine/purego v0.11.1
 	github.com/fatih/color v1.19.0
 	github.com/go-git/go-billy/v6 v6.0.0-alpha.2
 	github.com/go-git/go-git/v6 v6.0.0-alpha.5
@@ -83,6 +83,7 @@ require (
 	github.com/cloudflare/circl v1.6.5 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
+	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-compressions/lzfse v0.3.0 // indirect
@@ -137,3 +138,5 @@ require (
 )
 
 replace github.com/go-compressions/lzfse => github.com/hydazz/lzfse v0.3.1-0.20260925154549-a48bc31a2561
+
+replace github.com/deploymenttheory/go-bindings-macosplatform => github.com/hydazz/go-bindings-macosplatform v0.20.1-0.20260926034728-fbcb63aab946
