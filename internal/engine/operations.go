@@ -10,11 +10,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/expression"
 	"github.com/woodleighschool/stemma/internal/intune"
 	"github.com/woodleighschool/stemma/internal/jamf"
 	"github.com/woodleighschool/stemma/internal/lockfile"
@@ -41,9 +44,13 @@ func Catalog(ctx context.Context, opts Options) (result plugin.Descriptor, err e
 	return ops.registry.Descriptor(), nil
 }
 
-// ValidateProject checks declared fields and available operation contracts.
-// Values that depend on artifacts are validated after preparation.
-func ValidateProject(ctx context.Context, opts Options) (result config.Project, err error) {
+// ValidateProject checks the catalog as written: declared fields, expressions,
+// operation contracts and the resource and publication graphs. It reads no
+// environment values. Settings, inputs and metadata that hold expressions are
+// checked by schema, and their values when a command uses them. Resolved
+// validation evaluates everything a run would and returns the project with its
+// connection settings evaluated.
+func ValidateProject(ctx context.Context, opts Options, resolved bool) (result config.Project, err error) {
 	p, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		return p, err
@@ -60,7 +67,7 @@ func ValidateProject(ctx context.Context, opts Options) (result config.Project, 
 	defer cleanup()
 	// Validation answers whether the whole catalog is valid, so every declared
 	// resource is a root, including the suspended resources that runs skip.
-	plans, selected, err := discoverClosure(ctx, p, ops, sortedKeys(p.Resources))
+	plans, selected, err := discoverClosure(ctx, p, ops, sortedKeys(p.Resources), resolved)
 	if err != nil {
 		return p, err
 	}
@@ -71,8 +78,29 @@ func ValidateProject(ctx context.Context, opts Options) (result config.Project, 
 	if err := verifyIcons(root, plans, selected); err != nil {
 		return p, err
 	}
-	_, err = planDestinations(ctx, p, plans, ops, root, selected)
-	return p, err
+	if _, err := planDestinations(ctx, p, plans, ops, root, selected, resolved); err != nil {
+		return p, err
+	}
+	if !resolved {
+		return p, nil
+	}
+	evaluated, err := p.Resolved()
+	if err != nil {
+		return p, err
+	}
+	used := map[string]bool{}
+	for _, plan := range plans {
+		for name := range plan.Destinations {
+			used[name] = true
+		}
+	}
+	for _, name := range sortedKeys(used) {
+		destination := evaluated.Destinations[name]
+		if err := ops.configuration(destination.Operation, destination.Config, true); err != nil {
+			return p, fmt.Errorf("destination %s: %w", name, err)
+		}
+	}
+	return evaluated, nil
 }
 
 func projectOperations(ctx context.Context, p config.Project, opts Options) (*operations, func(), error) {
@@ -107,12 +135,21 @@ func projectOperations(ctx context.Context, p config.Project, opts Options) (*op
 	return ops, cleanup, nil
 }
 
-func (o *operations) configuration(name string, settings map[string]any) error {
+// configuration checks connection settings against the operation's schema.
+// Settings as written may hold expressions in place of values; resolved
+// settings must satisfy the schema itself.
+func (o *operations) configuration(name string, settings map[string]any, resolved bool) error {
 	op, err := o.operation(name)
 	if err != nil {
 		return err
 	}
-	if len(op.ConfigSchema) == 0 {
+	schema := op.ConfigSchema
+	if !resolved {
+		if schema, err = config.ExpressionSchema(schema); err != nil {
+			return err
+		}
+	}
+	if len(schema) == 0 {
 		return nil
 	}
 	if settings == nil {
@@ -122,12 +159,56 @@ func (o *operations) configuration(name string, settings map[string]any) error {
 	if err != nil {
 		return err
 	}
-	if err := plugin.ValidateSchema(op.ConfigSchema, data); err != nil {
+	if err := plugin.ValidateSchema(schema, data); err != nil {
 		return fmt.Errorf("operation %s config: %w", name, err)
 	}
-
 	return nil
 }
+
+// validateInput checks a non-resource input against its resolver. Settings
+// that hold expressions are checked by the resolver's schema, which accepts
+// them, and their values when a run evaluates them.
+func (o *operations) validateInput(ctx context.Context, input plugin.Input) error {
+	written := expression.Has(input.Config)
+	var schema, data json.RawMessage
+	var err error
+	if source.NativeResolver(input.Resolver) {
+		if !written {
+			return source.ValidateInput(input)
+		}
+		if schema, err = nativeInputSchema(); err != nil {
+			return err
+		}
+		data, err = json.Marshal(input)
+	} else {
+		operation, lookupErr := o.operation(input.Resolver)
+		if lookupErr != nil || operation.Resolver == nil {
+			return fmt.Errorf("unknown resolver %q", input.Resolver)
+		}
+		data, err = json.Marshal(input.Config)
+		if err != nil {
+			return err
+		}
+		if !written {
+			return o.call(ctx, input.Resolver, "validate", plugin.ResolveRequest[json.RawMessage]{Config: data, Base: input.Base}, nil)
+		}
+		schema, err = config.ExpressionSchema(operation.ConfigSchema)
+	}
+	if err != nil || len(schema) == 0 {
+		return err
+	}
+	return plugin.ValidateSchema(schema, data)
+}
+
+// nativeInputSchema describes the built-in resolvers' settings, accepting
+// expressions in place of values.
+var nativeInputSchema = sync.OnceValues(func() (json.RawMessage, error) {
+	data, err := json.Marshal(source.InputSchema(reflect.TypeFor[plugin.Input]()))
+	if err != nil {
+		return nil, err
+	}
+	return config.ExpressionSchema(data)
+})
 
 type reconcileHandler func(context.Context, plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error)
 

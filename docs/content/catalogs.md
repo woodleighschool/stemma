@@ -158,8 +158,8 @@ resource's outputs: suspend both and select the consumer.
 
 Use [expressions](expressions.md) for environment values and inspected metadata:
 `client_secret: "{{ env.INTUNE_CLIENT_SECRET }}"`. Stemma reads the process
-environment; it does not source `.env`. Expressions can fill a whole value or
-interpolate into text. Document identities, mapping keys and resource references
+environment when a command uses the value; it does not source `.env`. Expressions
+can fill a whole value or interpolate into text. Document identities, mapping keys and resource references
 remain literal.
 
 The [default schema](https://woodleighschool.github.io/stemma/stemma.schema.json)

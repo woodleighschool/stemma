@@ -17,7 +17,8 @@ import (
 	"go.yaml.in/yaml/v4"
 )
 
-// Project is resolved configuration, rather than a document as written.
+// Project is the composed catalog: imported resources with their components
+// merged. Expressions stay as written until a command evaluates them.
 type Project struct {
 	Project      string                    `json:"project"`
 	Imports      []string                  `json:"imports"`
@@ -61,6 +62,12 @@ type SourceControl struct {
 	Config map[string]any `yaml:"config,omitempty" json:"config,omitempty" jsonschema_description:"Provider-specific connection configuration. Reference credential environment variables instead of embedding secrets."`
 }
 
+// ResolvedConfig evaluates the provider's environment expressions, which
+// loading keeps as written.
+func (s SourceControl) ResolvedConfig() (map[string]any, error) {
+	return resolveSettings(s.Config)
+}
+
 // Resource is one declared contract; the registered kind owns its spec.
 type Resource struct {
 	APIVersion string   `yaml:"apiVersion" json:"apiVersion"`
@@ -81,6 +88,12 @@ func (r Resource) Reference() plugin.ResourceReference {
 type Destination struct {
 	Operation string         `yaml:"operation" json:"operation" jsonschema_description:"Registered destination operation, such as munki, intune or jamf. Trusted executable plugins register their own operation names."`
 	Config    map[string]any `yaml:"config,omitempty" json:"config,omitempty" jsonschema_description:"Destination-specific connection configuration. Reference credential environment variables instead of embedding secrets."`
+}
+
+// ResolvedConfig evaluates the connection's environment expressions. Loading
+// keeps them as written, so only commands that connect need their values.
+func (d Destination) ResolvedConfig() (map[string]any, error) {
+	return resolveSettings(d.Config)
 }
 
 // Plugin selects trusted executable code independently of its distribution.
@@ -254,6 +267,31 @@ func (p Project) Validate() error {
 		}
 	}
 	return nil
+}
+
+// Resolved returns the project with its connection settings evaluated, as the
+// commands that connect see them.
+func (p Project) Resolved() (Project, error) {
+	destinations := make(map[string]Destination, len(p.Destinations))
+	for name, destination := range p.Destinations {
+		settings, err := destination.ResolvedConfig()
+		if err != nil {
+			return p, fmt.Errorf("destination %s: %w", name, err)
+		}
+		destination.Config = settings
+		destinations[name] = destination
+	}
+	p.Destinations = destinations
+	if p.Reconcile != nil {
+		control := p.Reconcile.SourceControl
+		settings, err := control.ResolvedConfig()
+		if err != nil {
+			return p, fmt.Errorf("reconcile source_control: %w", err)
+		}
+		control.Config = settings
+		p.Reconcile = &Reconcile{SourceControl: control}
+	}
+	return p, nil
 }
 
 func validateOperation(operation string) error {

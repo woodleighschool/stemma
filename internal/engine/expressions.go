@@ -8,7 +8,10 @@ import (
 	"github.com/woodleighschool/stemma/internal/expression"
 )
 
-func resourceDeclaration(resource config.Resource) (map[string]any, map[string]string, error) {
+// resourceDeclaration composes the declaration a resource's kind discovers.
+// Evaluate resolves environment expressions for a run that acquires or
+// prepares the resource; otherwise they stay as written and no value is read.
+func resourceDeclaration(resource config.Resource, evaluate bool) (map[string]any, map[string]string, error) {
 	raw := config.Merge(resource.Spec, nil)
 	references := schedulingReferences(resource, raw)
 	if err := literalReferences(references); err != nil {
@@ -21,16 +24,16 @@ func resourceDeclaration(resource config.Resource) (map[string]any, map[string]s
 	delete(raw, "destinations")
 	var bindings map[string]string
 	if deferredPreparation(resource) {
-		for _, key := range []string{"inputs"} {
-			if value, ok := raw[key]; ok {
-				if err := expression.Check(value, "env"); err != nil {
-					return nil, nil, fmt.Errorf("%s: %w", key, err)
-				}
+		if value, ok := raw["inputs"]; ok {
+			if err := expression.Check(value, "env"); err != nil {
+				return nil, nil, fmt.Errorf("inputs: %w", err)
+			}
+			if evaluate {
 				resolved, err := expression.Eval(value, expression.Env())
 				if err != nil {
-					return nil, nil, fmt.Errorf("%s: %w", key, err)
+					return nil, nil, fmt.Errorf("inputs: %w", err)
 				}
-				raw[key] = resolved
+				raw["inputs"] = resolved
 			}
 		}
 		preparation := config.Merge(raw, nil)
@@ -38,20 +41,24 @@ func resourceDeclaration(resource config.Resource) (map[string]any, map[string]s
 		if err := expression.Check(preparation, "env", "inputs"); err != nil {
 			return nil, nil, err
 		}
-		var err error
-		bindings, err = expression.Environment(preparation)
-		if err != nil {
-			return nil, nil, err
+		if evaluate {
+			var err error
+			bindings, err = expression.Environment(preparation)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 	} else {
 		if err := expression.Check(raw, "env"); err != nil {
 			return nil, nil, err
 		}
-		resolved, err := expression.Eval(raw, expression.Env())
-		if err != nil {
-			return nil, nil, err
+		if evaluate {
+			resolved, err := expression.Eval(raw, expression.Env())
+			if err != nil {
+				return nil, nil, err
+			}
+			raw = resolved.(map[string]any)
 		}
-		raw = resolved.(map[string]any)
 	}
 	if hasDestinations {
 		raw["destinations"] = destinations
@@ -78,6 +85,15 @@ func literalReferences(references map[string]any) error {
 
 func schedulingReferences(resource config.Resource, spec map[string]any) map[string]any {
 	references := map[string]any{}
+	// A value standing where references belong could produce them once
+	// evaluated, so it counts as one and must be literal too.
+	object := func(value any, location string) map[string]any {
+		fields, ok := value.(map[string]any)
+		if !ok && value != nil {
+			references[location] = value
+		}
+		return fields
+	}
 	field := func(value any, key, location string) {
 		object, _ := value.(map[string]any)
 		if reference, exists := object[key]; exists {
@@ -85,22 +101,23 @@ func schedulingReferences(resource config.Resource, spec map[string]any) map[str
 		}
 	}
 	input := func(value any, location string) {
-		field(value, "resource", location)
-		field(value, "resolver", location)
+		fields := object(value, location)
+		field(fields, "resource", location)
+		field(fields, "resolver", location)
 	}
 	if resource.APIVersion == "stemma/v1alpha1" {
 		switch resource.Kind {
 		case "MacSoftware", "WindowsSoftware":
 			input(spec["source"], "$[\"source\"]")
 			if resource.Kind == "WindowsSoftware" {
-				content, _ := spec["content"].(map[string]any)
-				files, _ := content["files"].(map[string]any)
+				content := object(spec["content"], "$[\"content\"]")
+				files := object(content["files"], "$[\"content\"][\"files\"]")
 				for name, value := range files {
 					input(value, "$[\"content\"][\"files\"]["+strconv.Quote(name)+"]")
 				}
 			}
 		case "BuildMacPkg":
-			inputs, _ := spec["inputs"].(map[string]any)
+			inputs := object(spec["inputs"], "$[\"inputs\"]")
 			for name, value := range inputs {
 				input(value, "$[\"inputs\"]["+strconv.Quote(name)+"]")
 			}

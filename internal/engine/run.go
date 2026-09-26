@@ -163,7 +163,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err != nil {
 		return report, err
 	}
-	plans, selected, err := discoverClosure(ctx, p, ops, roots)
+	plans, selected, err := discoverClosure(ctx, p, ops, roots, true)
 	if err != nil {
 		return report, err
 	}
@@ -180,9 +180,24 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err := registerResolvers(manager, ops, s.work); err != nil {
 		return report, err
 	}
-	destinations, err := planDestinations(ctx, p, plans, ops, root, selected)
+	publishing := opts.Method == "plan" || opts.Method == "apply"
+	destinations, err := planDestinations(ctx, p, plans, ops, root, selected, publishing)
 	if err != nil {
 		return report, err
+	}
+	// Publication connects with evaluated settings, so a missing value fails
+	// before anything is acquired.
+	connections := map[string]json.RawMessage{}
+	if publishing {
+		for node := range destinations {
+			connections[node.Destination] = nil
+		}
+		for _, name := range sortedKeys(connections) {
+			connections[name], err = connectionSettings(ops, name, p.Destinations[name])
+			if err != nil {
+				return report, err
+			}
+		}
 	}
 	done(nil)
 	declarations := declarations(plans, selected)
@@ -364,7 +379,9 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			}
 		}
 		before := len(item.Destinations)
-		if destinationErr == nil {
+		// Preparation checks metadata against the prepared artifact, except
+		// metadata that reads env values, which only publication evaluates.
+		if destinationErr == nil && (publishing || !destinations[destination].environment) {
 			operation, err := ops.operation(p.Destinations[destination.Destination].Operation)
 			if err != nil {
 				return err
@@ -372,7 +389,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			peers, err := resolvePeerMetadata(ctx, plans, destination.Destination, destinations[destination].peers, preparedItems, operation.MetadataSchema)
 			destinationErr = err
 			if destinationErr == nil {
-				destinationErr = reconcileDestination(ctx, opts, p, plans, ops, store, root, prepared.work, destination.Resource, destination.Destination, prepared.outputs, peers, item)
+				destinationErr = reconcileDestination(ctx, opts, p, plans, ops, store, root, prepared.work, destination.Resource, destination.Destination, connections[destination.Destination], prepared.outputs, peers, item)
 			}
 		}
 		if destinationErr != nil {
@@ -535,7 +552,7 @@ type destinationInput struct {
 	report  DestinationReport
 }
 
-func reconcileDestination(ctx context.Context, opts Options, p config.Project, plans map[string]resourcePlan, ops *operations, store *cas.Store, root, work, name, destination string, outputs map[string]Prepared, peers map[string]json.RawMessage, item *ResourceReport) (runErr error) {
+func reconcileDestination(ctx context.Context, opts Options, p config.Project, plans map[string]resourcePlan, ops *operations, store *cas.Store, root, work, name, destination string, settings json.RawMessage, outputs map[string]Prepared, peers map[string]json.RawMessage, item *ResourceReport) (runErr error) {
 	software := plans[name]
 	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", software.Resource.Kind+"/"+software.Resource.Metadata.Name, "destination", destination))
 	done := plugin.Stage(ctx, "Validating destination")
@@ -620,6 +637,7 @@ func reconcileDestination(ctx context.Context, opts Options, p config.Project, p
 	done(nil)
 	done = plugin.Stage(ctx, "Planning destination")
 	input.request.Method = "plan"
+	input.request.Config = settings
 	var response plugin.ReconcileResponse
 	err = ops.call(ctx, d.Operation, "plan", input.request, &response)
 	input.report.Changes = response.Changes
@@ -645,16 +663,25 @@ func makeDestinationInput(p config.Project, plans map[string]resourcePlan, root,
 	if err != nil {
 		return input, err
 	}
-	configData, err := json.Marshal(p.Destinations[name].Config)
-	if err != nil {
-		return input, err
-	}
 	minimum, err := minimumOS(prepared.artifact(), plans[software].MinimumOS)
 	if err != nil {
 		return input, err
 	}
-	input.request = plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: p.Project, Resource: plans[software].Resource.Reference(), Destination: name}, Config: configData, Metadata: metadataData, Artifact: prepared.artifact(), MinimumOS: minimum, Prepared: true, Root: root, Peers: peers}
+	input.request = plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: p.Project, Resource: plans[software].Resource.Reference(), Destination: name}, Metadata: metadataData, Artifact: prepared.artifact(), MinimumOS: minimum, Prepared: true, Root: root, Peers: peers}
 	return input, nil
+}
+
+// connectionSettings evaluates a destination's settings for publication and
+// checks them against its operation's schema.
+func connectionSettings(ops *operations, name string, destination config.Destination) (json.RawMessage, error) {
+	settings, err := destination.ResolvedConfig()
+	if err == nil {
+		err = ops.configuration(destination.Operation, settings, true)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("destination %s: %w", name, err)
+	}
+	return json.Marshal(settings)
 }
 
 func deliver(ctx context.Context, ops *operations, p config.Project, store *cas.Store, work string, input destinationInput) (result DestinationReport, runErr error) {

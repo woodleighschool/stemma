@@ -1,13 +1,14 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestProjectExpressionsResolveNativeValuesBeforeDecoding(t *testing.T) {
+func TestConnectionExpressionsResolveNativeValuesWhenUsed(t *testing.T) {
 	t.Setenv("STEMMA_TEST_VALUE", "secret: value\nother: true")
 	t.Setenv("STEMMA_TEST_DATA", "{{ facts.unavailable }}")
 	p, err := parseTest(t, []byte(projectFixture+`  plugins:
@@ -28,16 +29,26 @@ func TestProjectExpressionsResolveNativeValuesBeforeDecoding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	settings := p.Destinations["repo"].Config
-	if !p.Plugins["fixture"].Trusted || settings["token"] != "secret: value\nother: true" || settings["enabled"] != true || settings["retries"] != float64(3) || len(settings["options"].([]any)) != 2 {
-		t.Fatalf("project expressions lost native types: %#v", settings)
+	if !p.Plugins["fixture"].Trusted {
+		t.Fatal("plugin declaration did not resolve while loading")
 	}
-	if settings["data"] != "{{ facts.unavailable }}" {
-		t.Fatal("evaluated environment data was interpreted as authored configuration")
+	if p.Destinations["repo"].Config["token"] != "{{ env.STEMMA_TEST_VALUE }}" {
+		t.Fatal("loading evaluated connection settings")
+	}
+	settings, err := p.Destinations["repo"].ResolvedConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"data":"{{ facts.unavailable }}","enabled":true,"options":["one","two"],"retries":3,"token":"secret: value\nother: true"}`; string(got) != want {
+		t.Fatalf("resolved settings lost native types or evaluated environment data again:\n got %s\nwant %s", got, want)
 	}
 }
 
-func TestLoadRetainsResourceExpressionsUntilTheirEvaluationPhase(t *testing.T) {
+func TestLoadKeepsConnectionExpressionsUntilUse(t *testing.T) {
 	root := t.TempDir()
 	writeConfig(t, root, "stemma.yaml", projectFixture+`  components:
     base:
@@ -50,26 +61,47 @@ func TestLoadRetainsResourceExpressionsUntilTheirEvaluationPhase(t *testing.T) {
       operation: fixture.publish
       config:
         token: '{{ env.STEMMA_TEST_SECRET }}'
+  reconcile:
+    source_control:
+      type: github
+      config:
+        private_key: '{{ env.STEMMA_TEST_KEY }}'
 `)
 	writeConfig(t, root, "app.software.yaml", resourceFixture+"  extends: base\n")
-	t.Setenv("STEMMA_TEST_SECRET", "")
-	if err := os.Unsetenv("STEMMA_TEST_SECRET"); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"STEMMA_TEST_SECRET", "STEMMA_TEST_KEY"} {
+		t.Setenv(name, "")
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if found, err := FindRoot(root); err != nil || found != root {
 		t.Fatalf("credential-free root discovery: %q, %v", found, err)
 	}
-	if _, err := Load(filepath.Join(root, "stemma.yaml")); err == nil {
-		t.Fatal("loading accepted a missing connection environment variable")
+	p, err := Load(filepath.Join(root, "stemma.yaml"))
+	if err != nil {
+		t.Fatalf("loading required connection environment values: %v", err)
+	}
+	metadata := p.Resources["stemma/v1alpha1/MacSoftware/app"].Spec["destinations"].(map[string]any)["repo"].(map[string]any)
+	if metadata["title"] != "{{ env.STEMMA_TEST_TITLE }} {{ facts.app.version }}" || metadata["description"] != `\{{ literal }}` || p.Destinations["repo"].Config["token"] != "{{ env.STEMMA_TEST_SECRET }}" || p.Reconcile.SourceControl.Config["private_key"] != "{{ env.STEMMA_TEST_KEY }}" {
+		t.Fatal("loading changed an expression")
+	}
+	if _, err := p.Destinations["repo"].ResolvedConfig(); err == nil || !strings.Contains(err.Error(), "required reference is missing") {
+		t.Fatalf("connecting accepted a missing environment value: %v", err)
+	}
+	if _, err := p.Reconcile.SourceControl.ResolvedConfig(); err == nil {
+		t.Fatal("source control accepted a missing environment value")
+	}
+	if _, err := p.Resolved(); err == nil {
+		t.Fatal("resolved project accepted a missing environment value")
 	}
 	t.Setenv("STEMMA_TEST_SECRET", "test-secret")
-	p, err := Load(filepath.Join(root, "stemma.yaml"))
+	t.Setenv("STEMMA_TEST_KEY", "test-key")
+	resolved, err := p.Resolved()
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata := p.Resources["stemma/v1alpha1/MacSoftware/app"].Spec["destinations"].(map[string]any)["repo"].(map[string]any)
-	if metadata["title"] != "{{ env.STEMMA_TEST_TITLE }} {{ facts.app.version }}" || metadata["description"] != `\{{ literal }}` || p.Destinations["repo"].Config["token"] != "test-secret" {
-		t.Fatal("loading changed an authored resource expression or failed to resolve connection settings")
+	if resolved.Destinations["repo"].Config["token"] != "test-secret" || resolved.Reconcile.SourceControl.Config["private_key"] != "test-key" || p.Destinations["repo"].Config["token"] != "{{ env.STEMMA_TEST_SECRET }}" {
+		t.Fatal("resolving did not evaluate connection settings or changed the loaded project")
 	}
 }
 

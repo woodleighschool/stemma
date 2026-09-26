@@ -31,7 +31,7 @@ func TestDestinationReferencesStayOnTheirConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	destinations, err := planDestinations(t.Context(), project, plans, operations, t.TempDir(), []string{a, b})
+	destinations, err := planDestinations(t.Context(), project, plans, operations, t.TempDir(), []string{a, b}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestDestinationReferencesStayOnTheirConnection(t *testing.T) {
 			t.Fatalf("dependencies for %v: %v", pair[0], destinations[pair[0]].requires)
 		}
 	}
-	destinations, err = planDestinations(t.Context(), project, plans, operations, t.TempDir(), []string{a})
+	destinations, err = planDestinations(t.Context(), project, plans, operations, t.TempDir(), []string{a}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestPublicationReferencesValidateExactResources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			destinations, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer})
+			destinations, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer}, false)
 			if test.want != "" {
 				if err == nil || !strings.Contains(err.Error(), test.want) {
 					t.Fatalf("want %q, got %v", test.want, err)

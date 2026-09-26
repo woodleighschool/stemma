@@ -130,18 +130,22 @@ func TestDestinationPreflightResolvesUnselectedPeersBeforeProviderValidation(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer}); err != nil {
+	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer}, true); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
 		t.Fatalf("provider validations: %d", calls)
 	}
+	calls = 0
+	if destinations, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer}, false); err != nil || calls != 0 || !destinations[destinationRef{consumer, "repo"}].environment {
+		t.Fatalf("environment peer was validated without the environment: calls=%d, %v", calls, err)
+	}
 	plans[peer].Destinations["repo"]["pkginfo"].(map[string]any)["name"] = "{{ facts.application.app.name }}"
-	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer}); err == nil || !strings.Contains(err.Error(), "requires preparation") {
+	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer}, true); err == nil || !strings.Contains(err.Error(), "requires preparation") {
 		t.Fatalf("unselected peer's required facts were deferred: %v", err)
 	}
 	calls = 0
-	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer, peer}); err != nil {
+	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer, peer}, true); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 0 {

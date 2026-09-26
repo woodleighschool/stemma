@@ -38,12 +38,12 @@ substitutions inside script text remain shell syntax.
 
 ## Available data
 
-| Context    | Contents                                                                                     | Available when                                |
-| ---------- | -------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `env`      | Referenced process environment values                                                        | Loading, preparation and destination metadata |
-| `facts`    | Inspected subjects by path or selection name, with their `app`, `package` or other fields    | After software preparation                    |
-| `evidence` | Namespaced metadata supplied with the prepared artifact                                      | Destination metadata                          |
-| `inputs`   | Named builder inputs: `version`, `filename`, `sha256`, `size`, `format`, `evidence`, `facts` | Builder preparation                           |
+| Context    | Contents                                                                                     | Available when                |
+| ---------- | -------------------------------------------------------------------------------------------- | ----------------------------- |
+| `env`      | Referenced process environment values                                                        | When a command uses the value |
+| `facts`    | Inspected subjects by path or selection name, with their `app`, `package` or other fields    | After software preparation    |
+| `evidence` | Namespaced metadata supplied with the prepared artifact                                      | Destination metadata          |
+| `inputs`   | Named builder inputs: `version`, `filename`, `sha256`, `size`, `format`, `evidence`, `facts` | Builder preparation           |
 
 Names containing punctuation use brackets, such as
 `evidence['vendor.release'].version`. Builder inputs expose portable metadata,
@@ -72,16 +72,28 @@ developer: "{{ evidence.vendor.name == null ? 'Unknown' : evidence.vendor.name }
 
 ## Evaluation boundaries
 
-Project settings and source declarations resolve their environment expressions
-while loading. `BuildMacPkg` resolves package fields,
-payload and script entries after acquiring its inputs. Destination metadata
-resolves after software preparation. Facts cannot select what must be
-acquired before those facts exist.
+Plugin declarations resolve while loading, because the plugins define the
+contracts the rest of the catalog is checked against. Every other value resolves
+when a command uses it, so a missing environment variable fails only the
+commands that need it:
+
+- a resource's source and preparation fields when a run acquires or prepares it;
+- destination metadata after preparation, and its environment values only when
+  `plan` or `apply` publishes;
+- destination connection settings when `plan` or `apply` connects;
+- source-control settings when `stemma reconcile` connects.
+
+`BuildMacPkg` resolves package fields, payload and script entries after acquiring
+its inputs. Facts cannot select what must be acquired before those facts exist.
+
+`stemma validate` reads no environment values. It checks declaration structure,
+expression syntax and the literal parts of each field. Once data is available, the
+resolved values must satisfy the field's native schema and semantic validation.
+`stemma validate --resolved` evaluates every environment value, as runs do.
 
 Document identities, object keys, `$input` names, resolver and operation names,
-component references and resource references remain literal. The authored schema
-checks declaration structure and expression syntax. Once data is available, the
-resolved values must satisfy the field's native schema and semantic validation.
+component references and resource references remain literal, as do the source,
+inputs and files that hold them, so no value can change what a resource consumes.
 Destination reports identify expression-supplied fields with origin `expression`.
 
 Expressions apply to authored YAML values, including multiline `content` and

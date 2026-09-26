@@ -213,12 +213,14 @@ func newRunner(ctx context.Context, opts Options) (*runner, error) {
 }
 
 func openSourceControl(spec config.SourceControl, remote string) (sourcecontrol.Provider, error) {
-	switch spec.Type {
-	case "github":
-		return github.New(remote, spec.Config)
-	default:
+	if spec.Type != "github" {
 		return nil, fmt.Errorf("reconcile: unsupported source_control type %q", spec.Type)
 	}
+	settings, err := spec.ResolvedConfig()
+	if err != nil {
+		return nil, fmt.Errorf("reconcile: source_control config: %w", err)
+	}
+	return github.New(remote, settings)
 }
 
 // sync fetches the reviewed branch and every managed branch from origin and
@@ -720,7 +722,7 @@ func (r *runner) verify(ctx context.Context, worktree *git.Worktree, key string,
 	configPath := r.configIn(worktree)
 	if change.removed {
 		done := plugin.Stage(ctx, "Validating catalog")
-		_, result.err = engine.ValidateProject(ctx, engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Lock: lockfile.Options{Offline: true}})
+		_, result.err = engine.ValidateProject(ctx, engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Lock: lockfile.Options{Offline: true}}, true)
 		done(result.err)
 	} else {
 		closure := append([]string{key}, candidate.Dependents(key)...)

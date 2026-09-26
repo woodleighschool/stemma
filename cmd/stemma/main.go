@@ -124,12 +124,12 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	schema.MarkFlagsMutuallyExclusive("builtins", "offline")
 	root.AddCommand(schema)
 	var resolved, validateOffline bool
-	validate := &cobra.Command{Use: "validate", Short: "Validate configuration and operation contracts before software acquisition", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	validate := &cobra.Command{Use: "validate", Short: "Validate the catalog as written, without environment values or software acquisition", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		path, err := resolve()
 		if err != nil {
 			return err
 		}
-		p, err := engine.ValidateProject(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Lock: lockfile.Options{Offline: validateOffline}})
+		p, err := engine.ValidateProject(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Lock: lockfile.Options{Offline: validateOffline}}, resolved)
 		if err != nil {
 			return err
 		}
@@ -139,7 +139,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		_, err = fmt.Fprintln(out, "Configuration is valid.")
 		return err
 	}}
-	validate.Flags().BoolVar(&resolved, "resolved", false, "Print the fully resolved software composition as JSON")
+	validate.Flags().BoolVar(&resolved, "resolved", false, "Evaluate environment values as runs do and print the resolved composition as JSON")
 	validate.Flags().BoolVar(&validateOffline, "offline", false, "Require verified cached plugin bundles")
 	root.AddCommand(validate)
 	var operationsOffline bool

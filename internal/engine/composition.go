@@ -23,10 +23,15 @@ type destinationRef struct {
 type destinationPlan struct {
 	requires []destinationRef
 	peers    map[string]json.RawMessage
+	// environment reports whether the metadata, or a peer's, reads env values,
+	// which only publication needs.
+	environment bool
 }
 
 // Unselected peers contribute metadata without becoming part of the run.
-func planDestinations(ctx context.Context, project config.Project, plans map[string]resourcePlan, ops *operations, root string, selected []string) (map[destinationRef]destinationPlan, error) {
+// Environment evaluates metadata that reads env values now; otherwise its
+// provider validation waits for publication, as metadata reading facts does.
+func planDestinations(ctx context.Context, project config.Project, plans map[string]resourcePlan, ops *operations, root string, selected []string, environment bool) (map[destinationRef]destinationPlan, error) {
 	dests := map[destinationRef]destinationPlan{}
 	// Validate the declared graph, even when only some publications are selected.
 	for _, key := range sortedKeys(plans) {
@@ -116,6 +121,7 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 				return nil, fmt.Errorf("%s/%s metadata: %w", key, destination, err)
 			}
 			deferred := slices.Contains(roots, "facts") || slices.Contains(roots, "evidence")
+			plan.environment = slices.Contains(roots, "env")
 			for _, peer := range sortedKeys(plan.peers) {
 				if len(authoredSchema) > 0 {
 					if err := plugin.ValidateSchema(authoredSchema, plan.peers[peer]); err != nil {
@@ -132,8 +138,9 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 					}
 					deferred = true
 				}
+				plan.environment = plan.environment || slices.Contains(roots, "env")
 			}
-			if deferred {
+			if deferred || plan.environment && !environment {
 				result[node] = plan
 				continue
 			}
@@ -151,15 +158,11 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 			if err != nil {
 				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
 			}
-			settings, err := json.Marshal(connection.Config)
-			if err != nil {
-				return nil, err
-			}
 			minimum, err := minimumOS(plugin.Artifact{}, software.MinimumOS)
 			if err != nil {
 				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
 			}
-			request := plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: project.Project, Resource: software.Resource.Reference(), Destination: destination}, Root: root, Config: settings, Metadata: metadata, MinimumOS: minimum, Peers: peers}
+			request := plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: project.Project, Resource: software.Resource.Reference(), Destination: destination}, Root: root, Metadata: metadata, MinimumOS: minimum, Peers: peers}
 			if err := ops.call(ctx, connection.Operation, "validate", request, nil); err != nil {
 				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
 			}

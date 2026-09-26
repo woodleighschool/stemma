@@ -133,11 +133,15 @@ unknown fields, checks required fields and enum values, applies schema defaults,
 then decodes the effective config. An optional `Validate() error` method handles
 semantic rules before a resolver or destination handler runs, including locked
 requests. Destination `validate` requests carry no connection settings and skip
-these checks. Resource discovery validates the authored declaration; runtime values
-must satisfy the concrete preparation contract before use. Expression-bearing
-fields are checked again after evaluation. `run` receives preparation config,
-without source declarations or destination metadata. Resolver `validate` requests
-stop after configuration checks and perform no acquisition. Direct calls to typed
+these checks.
+
+Resource discovery validates the declaration. `stemma validate` sends it as
+written, so a field may hold an expression instead of its value; runs that acquire
+the resource send environment values evaluated. Route values without interpreting
+them, and check what a value means once it is concrete. Expression-bearing fields
+are checked again after evaluation. `run` receives preparation config, without
+source declarations or destination metadata. Resolver `validate` requests stop
+after configuration checks and perform no acquisition. Direct calls to typed
 resolvers supply effective config values.
 
 Defaults live in tags once; omitted values receive them while explicit zero,
