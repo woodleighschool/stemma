@@ -71,7 +71,7 @@ func ValidateProject(ctx context.Context, opts Options, resolved bool) (result c
 	defer cleanup()
 	// Validation answers whether the whole catalog is valid, so every declared
 	// resource is a root, including the suspended resources that runs skip.
-	plans, selected, err := discoverClosure(ctx, p, ops, sortedKeys(p.Resources), resolved)
+	plans, selected, err := discoverClosure(ctx, p, ops, sortedKeys(p.Resources), resolved, true)
 	if err != nil {
 		return p, err
 	}

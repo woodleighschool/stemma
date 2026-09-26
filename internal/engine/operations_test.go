@@ -412,8 +412,9 @@ func installFixturePlugin(t *testing.T, store *cas.Store, binary, resource strin
 }
 
 // TestStaleInterfaceFailsOnlyWhereUsed loads a plugin whose reconcile
-// interface is another version: its resolver stays usable, while its
-// destination operation fails every command that needs it, with the reason.
+// interface is another version: its resolver stays usable, so runs that never
+// reach a destination succeed, while every command that checks or publishes to
+// its destination fails with the reason.
 func TestStaleInterfaceFailsOnlyWhereUsed(t *testing.T) {
 	root := t.TempDir()
 	binary := filepath.Join(root, "local-plugin", "plugin")
@@ -441,7 +442,6 @@ spec:
   plugins:
     provider: {trusted: true, path: local-plugin}
   destinations:
-    repo: {operation: munki, config: {path: repo}}
     remote: {operation: echo.reconcile}
 ---
 apiVersion: stemma/v1alpha1
@@ -450,25 +450,22 @@ metadata: {name: fetched}
 spec:
   source: {resolver: echo.download, url: %s/vendor.pkg}
   destinations:
-    repo:
-      pkginfo: {description: fetched}
----
-apiVersion: stemma/v1alpha1
-kind: MacSoftware
-metadata: {name: published}
-spec:
-  destinations:
     remote: {}
 `, server.URL))
 	t.Setenv("STEMMA_ECHO_STALE_KIND", "reconcile")
 	const reason = "operation echo.reconcile is unavailable: plugin provider implements reconcile interface 2; this Stemma uses 1"
-	munki := func(context.Context, plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
-		return plugin.ReconcileResponse{}, nil
-	}
-	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update", Resources: []string{"MacSoftware/fetched"}, Handlers: map[string]reconcileHandler{"munki": munki}}
+	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
 	report, err := Run(t.Context(), opts)
 	if err != nil || len(report.Resources) != 1 || len(report.Resources[0].Inputs) != 1 {
-		t.Fatalf("resolver of a partly stale plugin: report=%+v err=%v", report, err)
+		t.Fatalf("update beside a stale destination: report=%+v err=%v", report, err)
+	}
+	opts.Method, opts.Resources = "artifact", []string{"MacSoftware/fetched"}
+	if report, err := Run(t.Context(), opts); err != nil || report.Artifact == "" {
+		t.Fatalf("artifact beside a stale destination: report=%+v err=%v", report, err)
+	}
+	opts.Method, opts.Resources = "prepare", nil
+	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), reason) {
+		t.Fatalf("preparation checked against the stale destination: %v", err)
 	}
 	if _, err := ValidateProject(t.Context(), opts, false); err == nil || !strings.Contains(err.Error(), reason) {
 		t.Fatalf("validation of the stale destination: %v", err)

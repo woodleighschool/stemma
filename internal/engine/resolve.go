@@ -81,11 +81,12 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 	if err != nil {
 		return candidate, err
 	}
-	plans, selected, err := discoverClosure(ctx, s.project, s.ops, roots, true)
+	// Observing inputs publishes nothing, so destinations stay unchecked.
+	plans, selected, err := discoverClosure(ctx, s.project, s.ops, roots, true, false)
 	if err != nil {
 		return candidate, err
 	}
-	if err := preflight(plans, selected, s.project, s.ops); err != nil {
+	if err := preflight(plans, selected, s.project, s.ops, false); err != nil {
 		return candidate, err
 	}
 	if err := registerResolvers(s.manager, s.ops, s.work); err != nil {

@@ -26,6 +26,8 @@ A selector scopes evaluation as well as execution. Only the selected resources
 and the resources they consume are checked against their operation contracts, so
 an unrelated document that fails its own validation does not block the run. Use
 `stemma validate` to check the whole catalog, including suspended resources.
+`update`, `artifact` and `icon` never reach a destination, so they skip the
+destination checks the other commands make.
 
 `update` writes the input locks and locks plugin tags and local paths. Every
 other command uses the reviewed lockfile as it is: an input without a current

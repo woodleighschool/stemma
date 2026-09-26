@@ -78,7 +78,7 @@ func closure(t *testing.T, project config.Project, ops *operations, selectors ..
 	if err != nil {
 		return nil, err
 	}
-	_, selected, err := discoverClosure(t.Context(), project, ops, roots, true)
+	_, selected, err := discoverClosure(t.Context(), project, ops, roots, true, true)
 	return selected, err
 }
 

@@ -173,11 +173,14 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			return report, err
 		}
 	}
-	plans, selected, err := discoverClosure(ctx, p, ops, roots, true)
+	// Updates, artifacts and icons never reach a destination, so only the
+	// other runs check the destinations they publish to.
+	usesDestinations := opts.Method != "update" && opts.Method != "artifact" && opts.Method != "icon"
+	plans, selected, err := discoverClosure(ctx, p, ops, roots, true, usesDestinations)
 	if err != nil {
 		return report, err
 	}
-	if err := preflight(plans, selected, p, ops); err != nil {
+	if err := preflight(plans, selected, p, ops, usesDestinations); err != nil {
 		return report, err
 	}
 	if opts.Method == "plan" || opts.Method == "apply" {
@@ -191,9 +194,12 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		return report, err
 	}
 	publishing := opts.Method == "plan" || opts.Method == "apply"
-	destinations, err := planDestinations(ctx, p, plans, ops, root, selected, publishing)
-	if err != nil {
-		return report, err
+	destinations := map[destinationRef]destinationPlan{}
+	if usesDestinations {
+		destinations, err = planDestinations(ctx, p, plans, ops, root, selected, publishing)
+		if err != nil {
+			return report, err
+		}
 	}
 	// Publication connects with evaluated settings, so a missing value fails
 	// before anything is acquired.

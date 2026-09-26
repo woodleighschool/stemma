@@ -68,9 +68,10 @@ func selectResources(resources map[string]config.Resource, selectors []string) (
 // dependency-first order. Nothing outside the closure is evaluated, so a
 // resource that fails its own operation contract cannot fail a run that does
 // not reach it. Environment reads the closure's environment values for a run
-// that acquires it; publication peers only lend metadata, so their
-// declarations always stay as written.
-func discoverClosure(ctx context.Context, p config.Project, ops *operations, roots []string, environment bool) (map[string]resourcePlan, []string, error) {
+// that acquires it. Destinations checks the destinations the closure publishes
+// to and evaluates their publication peers, for runs that use destinations;
+// peers only lend metadata, so their declarations always stay as written.
+func discoverClosure(ctx context.Context, p config.Project, ops *operations, roots []string, environment, destinations bool) (map[string]resourcePlan, []string, error) {
 	kinds := resourceKinds(ops)
 	plans := map[string]resourcePlan{}
 	// Callers reach evaluate with declared keys: selection resolves roots
@@ -80,7 +81,7 @@ func discoverClosure(ctx context.Context, p config.Project, ops *operations, roo
 		if _, evaluated := plans[key]; evaluated {
 			return nil
 		}
-		plan, err := discoverResource(ctx, p, ops, kinds, key, p.Resources[key], environment)
+		plan, err := discoverResource(ctx, p, ops, kinds, key, p.Resources[key], environment, destinations)
 		if err != nil {
 			return err
 		}
@@ -117,6 +118,9 @@ func discoverClosure(ctx context.Context, p config.Project, ops *operations, roo
 		if err := visit(key); err != nil {
 			return nil, nil, err
 		}
+	}
+	if !destinations {
+		return plans, ordered, nil
 	}
 	// A publication reference contributes peer metadata to a destination in the
 	// closure, so its resource is evaluated without joining the run.
@@ -158,9 +162,10 @@ func resourceKinds(ops *operations) map[plugin.ResourceKind]plugin.Operation {
 // discoverResource evaluates one resource against its registered kind and
 // validates everything the declaration owns: its configuration, the resolvers
 // of its non-resource inputs, the resources it consumes and the destinations it
-// publishes to. Without the environment, the kind discovers the declaration
-// as written and values that hold expressions are checked by schema alone.
-func discoverResource(ctx context.Context, p config.Project, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, key string, r config.Resource, environment bool) (resourcePlan, error) {
+// publishes to, when the run uses them. Without the environment, the kind
+// discovers the declaration as written and values that hold expressions are
+// checked by schema alone.
+func discoverResource(ctx context.Context, p config.Project, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, key string, r config.Resource, environment, destinations bool) (resourcePlan, error) {
 	kind := plugin.ResourceKind{APIVersion: r.APIVersion, Kind: r.Kind}
 	op, ok := kinds[kind]
 	if !ok {
@@ -229,6 +234,9 @@ func discoverResource(ctx context.Context, p config.Project, ops *operations, ki
 		if !ok {
 			return resourcePlan{}, fmt.Errorf("resource %s: unknown destination %s", key, destination)
 		}
+		if !destinations {
+			continue
+		}
 		if err := ops.check(d.Operation, false); err != nil {
 			return resourcePlan{}, err
 		}
@@ -244,7 +252,9 @@ func discoverResource(ctx context.Context, p config.Project, ops *operations, ki
 	return resourcePlan{Resource: r, Operation: op.Name, ResourceResult: result, Environment: bindings}, nil
 }
 
-func preflight(plans map[string]resourcePlan, selected []string, p config.Project, ops *operations) error {
+// preflight checks the runner requirements of what the selected resources
+// use: their kinds and resolvers, and their destinations when the run uses them.
+func preflight(plans map[string]resourcePlan, selected []string, p config.Project, ops *operations, destinations bool) error {
 	for _, key := range selected {
 		plan := plans[key]
 		op, _ := ops.operation(plan.Operation)
@@ -260,6 +270,9 @@ func preflight(plans map[string]resourcePlan, selected []string, p config.Projec
 			}
 		}
 		for destination := range plan.Destinations {
+			if !destinations {
+				break
+			}
 			native, _ := ops.operation(p.Destinations[destination].Operation)
 			requirements = append(requirements, native.Requirements...)
 		}
