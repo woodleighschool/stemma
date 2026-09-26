@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os/exec"
@@ -74,26 +75,23 @@ func TestExecutableProtocol(t *testing.T) {
 		}
 	})
 	t.Run("one executable exposes resource and destination contracts", func(t *testing.T) {
-		response, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"})
+		description, err := plugin.Describe(t.Context(), binary)
 		if err != nil {
 			t.Fatal(err)
 		}
-		var descriptor plugin.Descriptor
-		if err := json.Unmarshal(response.Output, &descriptor); err != nil {
-			t.Fatal(err)
+		descriptor := description.Descriptor
+		if descriptor.Name != "echo" || len(descriptor.Operations) != 3 || descriptor.Operations[0].Name != "echo.build" || descriptor.Operations[2].Name != "echo.reconcile" || len(description.Unavailable) != 0 {
+			t.Fatalf("descriptor = %+v", description)
 		}
-		if err := plugin.ValidateDescriptor(descriptor); err != nil {
-			t.Fatal(err)
-		}
-		if descriptor.Name != "echo" || len(descriptor.Operations) != 3 || descriptor.Operations[0].Name != "echo.build" || descriptor.Operations[2].Name != "echo.reconcile" {
-			t.Fatalf("descriptor = %+v", descriptor)
+		if want := map[string]int{"resolve": plugin.ResolveInterface, "resource": plugin.ResourceInterface, "reconcile": plugin.ReconcileInterface}; !maps.Equal(descriptor.Interfaces, want) {
+			t.Fatalf("interfaces = %v, want %v", descriptor.Interfaces, want)
 		}
 		facts := plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{
 			{ID: "package", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.package", Version: "4.2", HasPayload: true}},
 			{ID: "app", Parent: "package", Kind: "application", Path: "Example.app", InstalledPath: "/Applications/Example.app", App: &plugin.AppFacts{BundleID: "org.example.app", Version: "4.1", Build: "402"}},
 		}}
 		request := plugin.ResourceRequest[json.RawMessage]{Identity: plugin.ResourceReference{APIVersion: "example.test/v1", Kind: "ExternalInstaller", Name: "fixture"}, Workspace: t.TempDir(), Inputs: map[string]plugin.Artifact{"vendor": {Filename: "Example.pkg", Format: "pkg", Facts: facts}}}
-		response, err = plugin.Run(t.Context(), binary, plugin.Request{Operation: "echo.build", Method: "run", Input: raw(t, request)})
+		response, err := plugin.Run(t.Context(), binary, plugin.Request{Operation: "echo.build", Method: "run", Input: raw(t, request)})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -162,10 +160,10 @@ func TestExecutableProtocol(t *testing.T) {
 			<-r.Context().Done()
 		}))
 		defer server.Close()
-		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":8,"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
+		t.Setenv("STEMMA_ECHO_RESPONSE", `{"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
 		t.Setenv("STEMMA_ECHO_WAIT_URL", server.URL)
 		response, err := plugin.Run(ctx, binary, plugin.Request{Method: "describe"})
-		if !errors.Is(err, context.Canceled) || response.Protocol != plugin.ProtocolVersion || string(response.Output) != `{"changes":[{"kind":"content","field":"installer","action":"upload"}]}` {
+		if !errors.Is(err, context.Canceled) || string(response.Output) != `{"changes":[{"kind":"content","field":"installer","action":"upload"}]}` {
 			t.Fatalf("cancellation lost buffered response: response=%+v err=%v", response, err)
 		}
 	})
@@ -182,7 +180,7 @@ func TestExecutableProtocol(t *testing.T) {
 	})
 	t.Run("reject malformed responses", func(t *testing.T) {
 		for _, response := range []string{
-			`{"protocol":1,"output":{}}`, `{"protocol":"2"}`, `{"protocol":8,"unknown":true}`, `{"protocol":8}{}`, `null`, `{"protocol":8`,
+			`{"output":{}}{}`, `null`, `[]`, `{"output":{}`, `{"error":7}`, `{"log":{"time":"2026-01-01T00:00:00Z","msg":"note"},"output":{}}`,
 		} {
 			t.Setenv("STEMMA_ECHO_RESPONSE", response)
 			if _, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"}); err == nil {
@@ -191,11 +189,45 @@ func TestExecutableProtocol(t *testing.T) {
 		}
 	})
 	t.Run("process errors retain partial output without diagnostics", func(t *testing.T) {
-		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":8,"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
+		t.Setenv("STEMMA_ECHO_RESPONSE", `{"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
 		t.Setenv("STEMMA_ECHO_FAIL", "1")
 		response, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"})
 		if err == nil || len(reconcileResponse(t, response).Changes) != 1 || strings.Contains(err.Error(), "credential") {
 			t.Fatalf("partial output=%s error=%v", response.Output, err)
+		}
+	})
+	t.Run("an exit without a response names no diagnostics", func(t *testing.T) {
+		t.Setenv("STEMMA_ECHO_SILENT", "1")
+		_, err := plugin.Describe(t.Context(), binary)
+		if err == nil || !strings.Contains(err.Error(), "exited without a response") || strings.Contains(err.Error(), "credential") {
+			t.Fatalf("silent exit error = %v", err)
+		}
+	})
+	t.Run("operations of another interface version are unavailable, not fatal", func(t *testing.T) {
+		// A plugin built against another SDK: fields this SDK does not know,
+		// a newer reconcile interface, an unknown kind, and a resolver this SDK can use.
+		resolver := echoResolver("other.download")
+		t.Setenv("STEMMA_ECHO_RESPONSE", string(raw(t, map[string]any{
+			"handshake": "future",
+			"output": map[string]any{
+				"name": "other", "version": "2.0.0", "revision": "0123abcd", "channel": "beta",
+				"interfaces": map[string]int{"resolve": plugin.ResolveInterface, "reconcile": plugin.ReconcileInterface + 1, "notify": 1},
+				"operations": []any{
+					resolver,
+					map[string]any{"name": "other.publish", "kind": "reconcile", "methods": []string{"validate", "plan", "apply"}, "novel": map[string]bool{"required": true}},
+					map[string]any{"name": "other.notify", "kind": "notify"},
+				},
+			},
+		})))
+		description, err := plugin.Describe(t.Context(), binary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if description.Name != "other" || description.Version != "2.0.0" || description.Revision != "0123abcd" || len(description.Operations) != 1 || description.Operations[0].Name != "other.download" {
+			t.Fatalf("usable operations = %+v", description)
+		}
+		if len(description.Unavailable) != 2 || description.Unavailable[0].Name != "other.publish" || !strings.Contains(description.Unavailable[0].Reason, "reconcile interface 2; this Stemma uses 1") || description.Unavailable[1].Name != "other.notify" {
+			t.Fatalf("unavailable operations = %+v", description.Unavailable)
 		}
 	})
 }
@@ -237,7 +269,7 @@ func TestRegistryContracts(t *testing.T) {
 	}
 	for _, name := range []string{"fixture.echo", "fixture.other"} {
 		var out bytes.Buffer
-		request := plugin.Request{Protocol: plugin.ProtocolVersion, Operation: name, Method: "run", Input: json.RawMessage(`{"value":7}`)}
+		request := plugin.Request{Operation: name, Method: "run", Input: json.RawMessage(`{"value":7}`)}
 		if err := plugin.Serve(t.Context(), bytes.NewReader(raw(t, request)), &out, registry); err != nil {
 			t.Fatal(err)
 		}
@@ -250,11 +282,10 @@ func TestRegistryContracts(t *testing.T) {
 		t.Fatalf("handler calls = %d", called)
 	}
 	for _, request := range []plugin.Request{
-		{Protocol: 1, Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":7}`)},
-		{Protocol: plugin.ProtocolVersion, Operation: "missing", Method: "run", Input: json.RawMessage(`{"value":7}`)},
-		{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "apply", Input: json.RawMessage(`{"value":7}`)},
-		{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":"7"}`)},
-		{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":7,"extra":true}`)},
+		{Operation: "missing", Method: "run", Input: json.RawMessage(`{"value":7}`)},
+		{Operation: operation.Name, Method: "apply", Input: json.RawMessage(`{"value":7}`)},
+		{Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":"7"}`)},
+		{Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":7,"extra":true}`)},
 	} {
 		if _, err := registry.Handle(t.Context(), request); err == nil {
 			t.Errorf("accepted invalid request %+v", request)
@@ -263,7 +294,7 @@ func TestRegistryContracts(t *testing.T) {
 	if called != 2 {
 		t.Fatalf("invalid request reached handler; calls = %d", called)
 	}
-	if _, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "validate", Input: json.RawMessage(`{"value":7}`)}); err != nil {
+	if _, err := registry.Handle(t.Context(), plugin.Request{Operation: operation.Name, Method: "validate", Input: json.RawMessage(`{"value":7}`)}); err != nil {
 		t.Fatalf("validation required operation output: %v", err)
 	}
 	operation.Platforms = []string{"other/processor"}
@@ -271,7 +302,7 @@ func TestRegistryContracts(t *testing.T) {
 	if err := registry.Register(operation, handler); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":7}`)}); err == nil || !strings.Contains(err.Error(), "runner") {
+	if _, err := registry.Handle(t.Context(), plugin.Request{Operation: operation.Name, Method: "run", Input: json.RawMessage(`{"value":7}`)}); err == nil || !strings.Contains(err.Error(), "runner") {
 		t.Fatalf("unsupported runner error = %v", err)
 	}
 }
@@ -288,7 +319,7 @@ func TestRegistryChecksOutputAndPreservesPartialErrors(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		response, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: "fixture.echo", Method: "run", Input: json.RawMessage(`{"value":7}`)})
+		response, err := registry.Handle(t.Context(), plugin.Request{Operation: "fixture.echo", Method: "run", Input: json.RawMessage(`{"value":7}`)})
 		if err == nil {
 			t.Fatal("accepted output missing a required contract field")
 		}
@@ -315,7 +346,7 @@ func TestRegistryConfigSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, config := range []string{`{}`, `{"enabled":false}`} {
-		request := plugin.Request{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "run", Input: raw(t, struct {
+		request := plugin.Request{Operation: operation.Name, Method: "run", Input: raw(t, struct {
 			Config json.RawMessage `json:"config,omitempty"`
 		}{json.RawMessage(config)})}
 		response, err := registry.Handle(t.Context(), request)
@@ -325,7 +356,7 @@ func TestRegistryConfigSchema(t *testing.T) {
 	}
 	called = false
 	for _, input := range []string{`{"config":null}`, `{"config":{"enabled":"false"}}`, `{"config":{"unknown":true}}`, `{"config":[]}`, `"not an object"`, `null`} {
-		if _, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: "run", Input: json.RawMessage(input)}); err == nil {
+		if _, err := registry.Handle(t.Context(), plugin.Request{Operation: operation.Name, Method: "run", Input: json.RawMessage(input)}); err == nil {
 			t.Errorf("accepted invalid configuration input %s", input)
 		}
 	}
@@ -338,6 +369,8 @@ func TestRejectMalformedDescriptors(t *testing.T) {
 	for _, mutate := range []func(*plugin.Operation){
 		func(op *plugin.Operation) { op.Name = "" },
 		func(op *plugin.Operation) { op.Kind = "" },
+		func(op *plugin.Operation) { op.Kind = "inspect" },
+		func(op *plugin.Operation) { op.Resolver = &plugin.ResolverKind{Version: "1"} },
 		func(op *plugin.Operation) { op.SideEffects = "unknown" },
 		func(op *plugin.Operation) { op.Methods = nil },
 		func(op *plugin.Operation) { op.Methods = []string{"describe"} },
@@ -354,8 +387,15 @@ func TestRejectMalformedDescriptors(t *testing.T) {
 		}
 	}
 	op := echoOperation("fixture.echo")
-	if err := plugin.ValidateDescriptor(plugin.Descriptor{Name: "fixture", Version: "1", Operations: []plugin.Operation{op, op}}); err == nil {
-		t.Fatal("descriptor accepted duplicate operation names")
+	interfaces := map[string]int{"reconcile": plugin.ReconcileInterface}
+	if err := plugin.ValidateDescriptor(plugin.Descriptor{Name: "fixture", Version: "1", Interfaces: interfaces, Operations: []plugin.Operation{op}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.ValidateDescriptor(plugin.Descriptor{Name: "fixture", Version: "1", Interfaces: interfaces, Operations: []plugin.Operation{op, op}}); err == nil || !strings.Contains(err.Error(), "more than once") {
+		t.Fatalf("duplicate operation names: %v", err)
+	}
+	if err := plugin.ValidateDescriptor(plugin.Descriptor{Name: "fixture", Version: "1", Operations: []plugin.Operation{op}}); err == nil || !strings.Contains(err.Error(), "interface version") {
+		t.Fatalf("missing interface version: %v", err)
 	}
 	if err := plugin.ValidateDescriptor(plugin.Descriptor{Name: "fixture"}); err == nil {
 		t.Fatal("descriptor accepted absent provider version")
@@ -380,20 +420,41 @@ func TestSchemaValidation(t *testing.T) {
 	}
 }
 
-func TestServeRejectsMalformedProtocolBeforeHandler(t *testing.T) {
+func TestServeAnswersMalformedRequestsWithAnError(t *testing.T) {
 	for _, input := range []string{
-		`{"protocol":1,"method":"describe"}`, `{"protocol":8,"method":"describe","unknown":true}`,
-		`{"protocol":8,"method":"describe"}{"protocol":8}`, `{"protocol":8`, `{"protocol":8}`,
-		`{"protocol":8,"method":"observe"}`, `{"protocol":"2","method":"describe"}`, `null`, `[]`,
-		`{"protocol":8,"method":"run","operation":"fixture.echo"}`, `{"protocol":8,"method":"describe","input":{}}`,
+		`{"method":"describe"}{"method":"describe"}`, `{"method":"describe"`, `{}`, `{"method":"observe"}`,
+		`{"method":7}`, `null`, `[]`, `{"method":"run","operation":"fixture.echo"}`, `{"method":"run","input":{}}`,
 	} {
 		t.Run(input, func(t *testing.T) {
 			registry := plugin.New("fixture", "1")
-			err := plugin.Serve(t.Context(), strings.NewReader(input), new(bytes.Buffer), registry)
-			if err == nil {
-				t.Fatal("accepted malformed protocol")
+			var out bytes.Buffer
+			err := plugin.Serve(t.Context(), strings.NewReader(input), &out, registry)
+			var response plugin.Response
+			if err == nil || json.Unmarshal(out.Bytes(), &response) != nil || response.Error == "" || len(response.Output) != 0 {
+				t.Fatalf("error=%v response=%s", err, out.Bytes())
 			}
 		})
+	}
+}
+
+func TestServeAnswersDescribeWhateverTheRequestCarries(t *testing.T) {
+	registry := plugin.New("fixture", "1")
+	if err := registry.Register(echoOperation("fixture.echo"), func(context.Context, plugin.Request) (plugin.Response, error) {
+		return plugin.Response{}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []string{`{"method":"describe"}`, `{"protocol":8,"method":"describe","operation":"fixture.echo","input":{},"deadline":"soon"}`} {
+		var out bytes.Buffer
+		if err := plugin.Serve(t.Context(), strings.NewReader(input), &out, registry); err != nil {
+			t.Fatal(err)
+		}
+		var response struct {
+			Output plugin.Descriptor `json:"output"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &response); err != nil || response.Output.Name != "fixture" || response.Output.Interfaces["reconcile"] != plugin.ReconcileInterface {
+			t.Fatalf("%s: describe answered %s (%v)", input, out.Bytes(), err)
+		}
 	}
 }
 
@@ -418,11 +479,12 @@ func TestServeBounds(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	input := `{"protocol":8,"operation":"fixture.echo","method":"run","input":{"padding":"` + strings.Repeat("x", 4<<20) + `"}}`
-	if err := plugin.Serve(t.Context(), strings.NewReader(input), &out, registry); err == nil || !strings.Contains(err.Error(), "size limit") || called {
-		t.Fatalf("oversized request: error=%v handler called=%v", err, called)
+	input := `{"operation":"fixture.echo","method":"run","input":{"padding":"` + strings.Repeat("x", 4<<20) + `"}}`
+	if err := plugin.Serve(t.Context(), strings.NewReader(input), &out, registry); err == nil || !strings.Contains(err.Error(), "size limit") || called || !strings.Contains(out.String(), "size limit") {
+		t.Fatalf("oversized request: error=%v handler called=%v response=%.200s", err, called, out.String())
 	}
-	input = `{"protocol":8,"operation":"fixture.echo","method":"run","input":{"value":7}}`
+	out.Reset()
+	input = `{"operation":"fixture.echo","method":"run","input":{"value":7}}`
 	if err := plugin.Serve(t.Context(), strings.NewReader(input), &out, registry); err == nil || !strings.Contains(err.Error(), "size limit") || !called || out.Len() != 0 {
 		t.Fatalf("oversized response: error=%v handler called=%v output size=%d", err, called, out.Len())
 	}
@@ -436,7 +498,7 @@ func TestOversizedDiagnosticPreservesResponse(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	input := raw(t, plugin.Request{Protocol: plugin.ProtocolVersion, Operation: "fixture.echo", Method: "run", Input: json.RawMessage(`{"value":7}`)})
+	input := raw(t, plugin.Request{Operation: "fixture.echo", Method: "run", Input: json.RawMessage(`{"value":7}`)})
 	var out bytes.Buffer
 	if err := plugin.Serve(t.Context(), bytes.NewReader(input), &out, registry); err != nil {
 		t.Fatal(err)
@@ -456,7 +518,7 @@ func TestRegistryCancellation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	response, err := registry.Handle(ctx, plugin.Request{Protocol: plugin.ProtocolVersion, Operation: "fixture.echo", Method: "run", Input: json.RawMessage(`{"value":7}`)})
+	response, err := registry.Handle(ctx, plugin.Request{Operation: "fixture.echo", Method: "run", Input: json.RawMessage(`{"value":7}`)})
 	if !errors.Is(err, context.Canceled) || len(response.Output) == 0 {
 		t.Fatalf("cancellation lost error or partial output: response=%+v err=%v", response, err)
 	}
@@ -480,7 +542,11 @@ func TestAppVersionKey(t *testing.T) {
 
 func echoOperation(name string) plugin.Operation {
 	schema := json.RawMessage(`{"type":"object","properties":{"value":{"type":"integer"}},"required":["value"],"additionalProperties":false}`)
-	return plugin.Operation{Name: name, Kind: "inspect", InputSchema: schema, OutputSchema: schema, SideEffects: "none", Methods: []string{"validate", "run"}}
+	return plugin.Operation{Name: name, Kind: "reconcile", InputSchema: schema, OutputSchema: schema, SideEffects: "none", Methods: []string{"validate", "run"}}
+}
+
+func echoResolver(name string) plugin.Operation {
+	return plugin.Operation{Name: name, Kind: "resolve", Resolver: &plugin.ResolverKind{Version: "1"}, InputSchema: json.RawMessage(`true`), OutputSchema: json.RawMessage(`true`), SideEffects: "workspace", Methods: []string{"validate", "discover", "run"}}
 }
 
 func reconcileRequest(t *testing.T, request plugin.ReconcileRequest[json.RawMessage]) plugin.Request {

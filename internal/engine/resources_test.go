@@ -28,7 +28,7 @@ func TestPreparationKeepsInputsImmutable(t *testing.T) {
 				t.Fatal(err)
 			}
 			ops := &operations{registry: plugin.New("fixture", "1")}
-			operation := plugin.Operation{Name: "fixture", Kind: "resource", SideEffects: "workspace", Methods: []string{"run"}, InputSchema: json.RawMessage(`{}`), OutputSchema: json.RawMessage(`{}`)}
+			operation := plugin.Operation{Name: "fixture", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "example.test/v1", Kind: "Fixture"}, SideEffects: "workspace", Methods: []string{"discover", "run"}, InputSchema: json.RawMessage(`{}`), OutputSchema: json.RawMessage(`{}`)}
 			err = ops.registry.Register(operation, func(_ context.Context, envelope plugin.Request) (plugin.Response, error) {
 				var request plugin.ResourceRequest[json.RawMessage]
 				if err := json.Unmarshal(envelope.Input, &request); err != nil {

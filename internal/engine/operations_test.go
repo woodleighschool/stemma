@@ -416,3 +416,70 @@ func installFixturePlugin(t *testing.T, store *cas.Store, root, binary, resource
 		t.Fatal(err)
 	}
 }
+
+// TestStaleInterfaceFailsOnlyWhereUsed loads a plugin whose reconcile
+// interface is another version: its resolver stays usable, while its
+// destination operation fails every command that needs it, with the reason.
+func TestStaleInterfaceFailsOnlyWhereUsed(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "local-plugin", "plugin")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../plugin/testdata/echo")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build plugin: %v\n%s", err, output)
+	}
+	payload, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, fmt.Sprintf(`apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: stale}
+spec:
+  imports: ['*.software.yaml']
+  plugins:
+    provider: {trusted: true, path: local-plugin}
+  destinations:
+    repo: {operation: munki, config: {path: repo}}
+    remote: {operation: echo.reconcile}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: fetched}
+spec:
+  source: {resolver: echo.download, url: %s/vendor.pkg}
+  destinations:
+    repo:
+      pkginfo: {description: fetched}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: published}
+spec:
+  destinations:
+    remote: {}
+`, server.URL))
+	t.Setenv("STEMMA_ECHO_STALE_KIND", "reconcile")
+	const reason = "operation echo.reconcile is unavailable: plugin provider implements reconcile interface 2; this Stemma uses 1"
+	munki := func(context.Context, plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
+		return plugin.ReconcileResponse{}, nil
+	}
+	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update", Resources: []string{"MacSoftware/fetched"}, Handlers: map[string]reconcileHandler{"munki": munki}}
+	report, err := Run(t.Context(), opts)
+	if err != nil || len(report.Resources) != 1 || len(report.Resources[0].Inputs) != 1 {
+		t.Fatalf("resolver of a partly stale plugin: report=%+v err=%v", report, err)
+	}
+	if _, err := ValidateProject(t.Context(), opts, false); err == nil || !strings.Contains(err.Error(), reason) {
+		t.Fatalf("validation of the stale destination: %v", err)
+	}
+	if _, err := ProjectSchema(t.Context(), opts); err == nil || !strings.Contains(err.Error(), reason) {
+		t.Fatalf("schema without the stale destination: %v", err)
+	}
+}

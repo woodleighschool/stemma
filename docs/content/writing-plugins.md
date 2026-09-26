@@ -6,8 +6,9 @@ resource kind, source resolver or destination. The public
 registry, request types and protocol framing used by built-ins. Other languages
 can implement the same wire contract.
 
-Pin the SDK revision in your plugin's dependencies and test it with the Stemma
-version your catalog uses. The interface is still under development.
+Pin the SDK in your plugin's dependencies. A plugin works with any Stemma that
+implements its operation kinds at the same interface versions; see
+[protocol and runtime](#protocol-and-runtime).
 
 ## Register a resource kind
 
@@ -302,24 +303,32 @@ the provider. See [retention](publishing.md#identity-and-retention).
 
 ## Protocol and runtime
 
-The host launches an executable for one request. Protocol version **8** sends one
-JSON object on stdin, ending at EOF:
+The host launches an executable for one request: one JSON object on stdin,
+ending at EOF. The last stdout line is the response, with optional `output` and
+optional `error`. Before it, a plugin may emit newline-delimited messages
+containing `log`, a structured record with time, level and message. Messages are
+bounded to 4 MiB, and nothing may follow the response. The SDK's `Serve` and
+`Run` handle framing and validation; a request a plugin cannot handle still gets
+an `error` response.
+
+Stemma describes every plugin it loads. The request carries only the method and
+is always answered:
 
 ```json
-{
-  "protocol": 8,
-  "method": "describe"
-}
+{ "method": "describe" }
 ```
 
-The final stdout response has `protocol`, optional `output` and optional `error`.
-`describe` returns a `Descriptor` containing provider name, version and operations.
-Other requests add `operation`, `input` and optionally `log_level`.
+The output is a `Descriptor`: provider `name` and `version`, the VCS `revision`
+recorded in the executable's build information, `interfaces` and `operations`.
+`interfaces` names the version of each operation kind the plugin implements,
+such as `{"resolve": 1}`; the SDK fills it in. Stemma uses a kind's operations
+only while that version matches its own. Operations of a kind at another version
+are unavailable: commands that do not use them are unaffected, and those that do
+fail naming both versions. The describe exchange, those identity fields and each
+operation's `name`, `kind` and `resource` keep their meaning across versions, so
+any Stemma can report what a plugin built for another one offers.
 
-Before the final response, a plugin may emit newline-delimited envelopes containing
-`protocol: 8` and `log`, a structured record with time, level and message. Messages
-are bounded to 4 MiB. No messages may follow the final response. The SDK's `Serve`
-and `Run` handle framing and validation.
+Other requests add `operation`, `input` and optionally `log_level`.
 
 Reserve stdout for the protocol. Use `plugin.Logger(ctx)` for structured diagnostics
 and `plugin.Stage(ctx, "Downloading installer", plugin.Detail(filename))` for

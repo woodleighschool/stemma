@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,11 @@ import (
 )
 
 func main() {
+	if os.Getenv("STEMMA_ECHO_SILENT") != "" {
+		// A plugin that cannot read the request exits before responding.
+		fmt.Fprint(os.Stderr, "synthetic diagnostic credential")
+		os.Exit(1)
+	}
 	if mode := os.Getenv("STEMMA_ECHO_RESPONSE"); mode != "" {
 		fmt.Fprintln(os.Stdout, mode)
 		fmt.Fprint(os.Stderr, "synthetic diagnostic credential")
@@ -51,7 +57,27 @@ func main() {
 	}, download); err != nil {
 		panic(err)
 	}
-	if plugin.Serve(context.Background(), os.Stdin, os.Stdout, registry) != nil {
+	var in io.Reader = os.Stdin
+	if kind := os.Getenv("STEMMA_ECHO_STALE_KIND"); kind != "" {
+		// A plugin built against another SDK implements kind at another version.
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			os.Exit(1)
+		}
+		var request plugin.Request
+		if json.Unmarshal(data, &request) == nil && request.Method == "describe" {
+			descriptor := registry.Descriptor()
+			descriptor.Interfaces[kind]++
+			output, err := json.Marshal(map[string]any{"output": descriptor})
+			if err != nil {
+				os.Exit(1)
+			}
+			fmt.Println(string(output))
+			return
+		}
+		in = bytes.NewReader(data)
+	}
+	if plugin.Serve(context.Background(), in, os.Stdout, registry) != nil {
 		os.Exit(1)
 	}
 }

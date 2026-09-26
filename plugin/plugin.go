@@ -7,12 +7,23 @@ import (
 	"log/slog"
 )
 
-// ProtocolVersion is the executable protocol understood by this SDK.
-const ProtocolVersion = 8
+// Interface versions of the operation kinds this SDK implements. A kind's
+// version covers its requests and responses, the operation fields it uses and
+// the framing both travel in; it changes whenever a plugin built against the
+// previous version would misread a request or answer in a way the host
+// misreads. Stemma uses a plugin's operations of a kind only while the plugin
+// implements that kind at the host's version.
+const (
+	ResolveInterface   = 1
+	ResourceInterface  = 1
+	ReconcileInterface = 1
+)
 
-// Request invokes one advertised operation. Describe requests omit Operation and Input.
+// interfaces maps each operation kind to the version this SDK implements.
+var interfaces = map[string]int{"resolve": ResolveInterface, "resource": ResourceInterface, "reconcile": ReconcileInterface}
+
+// Request invokes one advertised operation. Describe requests carry only the method.
 type Request struct {
-	Protocol  int             `json:"protocol"`
 	Operation string          `json:"operation,omitempty"`
 	Method    string          `json:"method"`
 	Input     json.RawMessage `json:"input,omitempty"`
@@ -22,9 +33,8 @@ type Request struct {
 // Response retains partial Output when an operation fails, so callers can report
 // the changes it completed.
 type Response struct {
-	Protocol int             `json:"protocol"`
-	Output   json.RawMessage `json:"output,omitempty"`
-	Error    string          `json:"error,omitempty"`
+	Output json.RawMessage `json:"output,omitempty"`
+	Error  string          `json:"error,omitempty"`
 }
 
 // Handler implements an operation and propagates cancellation through its I/O.

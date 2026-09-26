@@ -59,6 +59,16 @@ digest. Private registries use Docker/ORAS registry credentials. Plugin authors
 publish these indexes with `stemma plugins publish`; see
 [writing plugins](writing-plugins.md#distribute-a-bundle).
 
+## Compatibility
+
+Each plugin names the interface version of every operation kind it implements:
+resolvers, resource kinds and destinations. Stemma uses a kind's operations only
+while the plugin's version matches its own, so a plugin built for another Stemma
+keeps the operations whose versions still match. The others fail only the
+commands that use them, naming both versions. A plugin that does not load fails
+the same way. `stemma schema` and `stemma operations` describe every operation,
+so they fail until all of them are usable.
+
 ## Configure an operation
 
 The plugin's descriptor supplies operation names, resource kinds, schemas and

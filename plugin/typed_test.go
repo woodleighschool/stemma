@@ -58,7 +58,7 @@ func TestTypedRegistration(t *testing.T) {
 	}
 	registry := register()
 	call := func(method, config string) error {
-		_, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: "release", Method: method, Input: json.RawMessage(`{"config":` + config + `}`)})
+		_, err := registry.Handle(t.Context(), plugin.Request{Operation: "release", Method: method, Input: json.RawMessage(`{"config":` + config + `}`)})
 		return err
 	}
 	if err := call("run", `{"major":4,"items":[{"name":"one"},{"name":"two","enabled":false}],"nested":{"name":"child"}}`); err != nil {
@@ -139,7 +139,7 @@ func TestResourceDeclarationValidation(t *testing.T) {
 	}
 	for _, method := range []string{"discover", "run"} {
 		data, _ := json.Marshal(plugin.ResourceRequest[checkedConfig]{Identity: plugin.ResourceReference{Kind: "Item", Name: "example"}, Config: checkedConfig{Name: "blocked"}})
-		_, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: method, Input: data})
+		_, err := registry.Handle(t.Context(), plugin.Request{Operation: operation.Name, Method: method, Input: data})
 		if method == "discover" && (err == nil || !strings.Contains(err.Error(), "name is blocked")) {
 			t.Fatalf("semantic validation: %v", err)
 		}
@@ -174,7 +174,7 @@ func TestDestinationValidateNeedsNoConnectionSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	call := func(method, input string) error {
-		_, err := registry.Handle(t.Context(), plugin.Request{Protocol: plugin.ProtocolVersion, Operation: operation.Name, Method: method, Input: json.RawMessage(input)})
+		_, err := registry.Handle(t.Context(), plugin.Request{Operation: operation.Name, Method: method, Input: json.RawMessage(input)})
 		return err
 	}
 	if err := call("validate", `{"identity":{"project":"p","resource":{"kind":"Item","name":"a"},"destination":"d"},"artifact":{"path":"","sha256":"","size":0,"filename":""}}`); err != nil {

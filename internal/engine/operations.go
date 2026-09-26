@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -41,6 +42,9 @@ func Catalog(ctx context.Context, opts Options) (result plugin.Descriptor, err e
 		return plugin.Descriptor{}, err
 	}
 	defer cleanup()
+	if err := ops.complete(); err != nil {
+		return plugin.Descriptor{}, err
+	}
 	return ops.registry.Descriptor(), nil
 }
 
@@ -181,8 +185,11 @@ func (o *operations) validateInput(ctx context.Context, input plugin.Input) erro
 		}
 		data, err = json.Marshal(input)
 	} else {
-		operation, lookupErr := o.operation(input.Resolver)
-		if lookupErr != nil || operation.Resolver == nil {
+		operation, lookupErr := o.lookup(input.Resolver, "resolver")
+		if lookupErr != nil {
+			return lookupErr
+		}
+		if operation.Resolver == nil {
 			return fmt.Errorf("unknown resolver %q", input.Resolver)
 		}
 		data, err = json.Marshal(input.Config)
@@ -216,6 +223,12 @@ type operations struct {
 	registry *plugin.Registry
 	identity map[string]string
 	plugins  map[string]plugins.Entry
+	// unavailable explains each operation a plugin offers at another interface
+	// version, by name and by resource kind.
+	unavailable      map[string]error
+	unavailableKinds map[plugin.ResourceKind]error
+	// failed explains each plugin that did not load.
+	failed map[string]error
 }
 
 func schemaJSON(value any) json.RawMessage {
@@ -224,7 +237,7 @@ func schemaJSON(value any) json.RawMessage {
 }
 
 func builtins(handlers map[string]reconcileHandler) (*operations, error) {
-	ops := &operations{registry: plugin.New("stemma", "operations/4"), identity: map[string]string{}}
+	ops := &operations{registry: plugin.New("stemma", "operations/4"), identity: map[string]string{}, unavailable: map[string]error{}, unavailableKinds: map[plugin.ResourceKind]error{}, failed: map[string]error{}}
 	for _, err := range []error{
 		plugin.Register(ops.registry, plugin.Operation{
 			Name: "munki", Kind: "reconcile", SideEffects: "remote", Methods: []string{"validate", "plan", "apply"},
@@ -294,13 +307,22 @@ func builtins(handlers map[string]reconcileHandler) (*operations, error) {
 	return ops, nil
 }
 
+// operation finds a registered operation. A name a plugin offers at another
+// interface version fails with that reason.
 func (o *operations) operation(name string) (plugin.Operation, error) {
+	return o.lookup(name, "operation")
+}
+
+func (o *operations) lookup(name, noun string) (plugin.Operation, error) {
 	for _, operation := range o.registry.Descriptor().Operations {
 		if operation.Name == name {
 			return operation, nil
 		}
 	}
-	return plugin.Operation{}, fmt.Errorf("unknown operation %q", name)
+	if err, ok := o.unavailable[name]; ok {
+		return plugin.Operation{}, err
+	}
+	return plugin.Operation{}, o.missing(fmt.Sprintf("unknown %s %q", noun, name))
 }
 
 func (o *operations) call(ctx context.Context, name, method string, input, output any) error {
@@ -314,7 +336,7 @@ func (o *operations) call(ctx context.Context, name, method string, input, outpu
 	if err != nil {
 		return err
 	}
-	response, callErr := o.registry.Handle(ctx, plugin.Request{Protocol: plugin.ProtocolVersion, Operation: name, Method: method, Input: data})
+	response, callErr := o.registry.Handle(ctx, plugin.Request{Operation: name, Method: method, Input: data})
 	if output != nil && len(response.Output) > 0 {
 		if err := json.Unmarshal(response.Output, output); err != nil {
 			return errors.Join(callErr, fmt.Errorf("operation %s output: %w", name, err))
@@ -323,7 +345,10 @@ func (o *operations) call(ctx context.Context, name, method string, input, outpu
 	return callErr
 }
 
-func loadOperations(ctx context.Context, p config.Project, manager *source.Manager, work string, handlers map[string]reconcileHandler, frozen bool) (result *operations, runErr error) {
+// loadOperations registers the built-in operations and those each declared
+// plugin offers. A plugin that does not load, or offers operations at another
+// interface version, fails only the runs that use what it would provide.
+func loadOperations(ctx context.Context, p config.Project, manager *source.Manager, work string, handlers map[string]reconcileHandler, frozen bool) (*operations, error) {
 	ops, err := builtins(handlers)
 	if err != nil || len(p.Plugins) == 0 {
 		return ops, err
@@ -333,52 +358,17 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 		return nil, err
 	}
 	ops.plugins = map[string]plugins.Entry{}
-	names := make([]string, 0, len(p.Plugins))
-	for name := range p.Plugins {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	pluginStore := plugins.New(manager.Store, manager.Offline)
-	for _, name := range names {
-		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("plugin", name))
-		done := plugin.Stage(ctx, "Loading plugin")
-		defer func() { done(runErr) }()
-		provider := p.Plugins[name]
-		bundle, entry, err := pluginStore.Load(ctx, manager.Root, provider, locked.Plugins[name], frozen)
-		if err != nil {
-			return nil, fmt.Errorf("plugin %s: %w", name, err)
+	store := plugins.New(manager.Store, manager.Offline)
+	for _, name := range slices.Sorted(maps.Keys(p.Plugins)) {
+		loaded := loadPlugin(ctx, store, manager.Root, work, name, p.Plugins[name], locked.Plugins[name], frozen)
+		entry := loaded.entry
+		if !ops.add(loaded) {
+			// The reviewed entry stays for the runs that do not use the plugin.
+			entry = locked.Plugins[name]
 		}
-		ops.plugins[name] = entry
-		executable, err := pluginStore.Materialize(ctx, bundle, filepath.Join(work, name))
-		if err != nil {
-			return nil, fmt.Errorf("plugin %s: %w", name, err)
+		if entry != (plugins.Entry{}) {
+			ops.plugins[name] = entry
 		}
-		response, err := plugin.Run(ctx, executable, plugin.Request{Method: "describe"})
-		if err != nil {
-			return nil, fmt.Errorf("plugin %s describe: %w", name, err)
-		}
-		var descriptor plugin.Descriptor
-		if err := json.Unmarshal(response.Output, &descriptor); err != nil {
-			return nil, fmt.Errorf("plugin %s descriptor: %w", name, err)
-		}
-		if err := plugin.ValidateDescriptor(descriptor); err != nil {
-			return nil, fmt.Errorf("plugin %s descriptor: %w", name, err)
-		}
-		for _, operation := range descriptor.Operations {
-			if operation.Resolver != nil && source.NativeResolver(operation.Name) {
-				return nil, fmt.Errorf("plugin %s: resolver %q is built in", name, operation.Name)
-			}
-			if err := ops.registry.Register(operation, func(ctx context.Context, request plugin.Request) (plugin.Response, error) {
-				return plugin.Run(ctx, executable, request)
-			}); err != nil {
-				return nil, fmt.Errorf("plugin %s: %w", name, err)
-			}
-			ops.identity[operation.Name] = config.Fingerprint(struct {
-				Manifest   string
-				Descriptor plugin.Descriptor
-			}{bundle.Manifest, descriptor})
-		}
-		done(nil)
 	}
 	return ops, nil
 }

@@ -161,9 +161,13 @@ func resourceKinds(ops *operations) map[plugin.ResourceKind]plugin.Operation {
 // publishes to. Without the environment, the kind discovers the declaration
 // as written and values that hold expressions are checked by schema alone.
 func discoverResource(ctx context.Context, p config.Project, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, key string, r config.Resource, environment bool) (resourcePlan, error) {
-	op, ok := kinds[plugin.ResourceKind{APIVersion: r.APIVersion, Kind: r.Kind}]
+	kind := plugin.ResourceKind{APIVersion: r.APIVersion, Kind: r.Kind}
+	op, ok := kinds[kind]
 	if !ok {
-		return resourcePlan{}, fmt.Errorf("resource %s: no installed operation registers this apiVersion and kind", key)
+		if err, unavailable := ops.unavailableKinds[kind]; unavailable {
+			return resourcePlan{}, fmt.Errorf("resource %s: %w", key, err)
+		}
+		return resourcePlan{}, fmt.Errorf("resource %s: %w", key, ops.missing("no installed operation registers this apiVersion and kind"))
 	}
 	if err := ops.check(op.Name, true); err != nil {
 		return resourcePlan{}, err

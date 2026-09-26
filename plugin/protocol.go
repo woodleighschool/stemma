@@ -18,22 +18,26 @@ import (
 const messageLimit = 4 << 20
 
 // Serve handles one bounded JSON request, streaming log records followed by one
-// response. Handler errors retain partial output. Stdout belongs to the protocol.
+// response. A request it cannot handle is answered with an error response and
+// returned, so the host reads why; describe is answered whatever else its
+// request carries. Handler errors retain partial output. Stdout belongs to the
+// protocol.
 func Serve(ctx context.Context, in io.Reader, out io.Writer, registry *Registry) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	var request Request
-	if err := decode(in, &request); err != nil {
-		return fmt.Errorf("plugin request: %w", err)
-	}
-	if err := validateRequest(request); err != nil {
-		return err
-	}
 	stream := &responseStream{out: out}
+	var request Request
+	err := decodeMessage(in, &request)
+	if err == nil {
+		err = validateRequest(request)
+	}
+	if err != nil {
+		err = fmt.Errorf("plugin request: %w", err)
+		return errors.Join(err, stream.send(wireResponse{Error: err.Error()}))
+	}
 	ctx = WithLogger(ctx, slog.New(slog.NewJSONHandler(stream, &slog.HandlerOptions{Level: request.LogLevel})))
 	response, err := registry.Handle(ctx, request)
-	response.Protocol = ProtocolVersion
 	if err != nil {
 		response.Error = err.Error()
 	}
@@ -41,12 +45,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, registry *Registry)
 }
 
 // Run invokes an explicitly selected trusted executable without a shell or a
-// sandbox. A zero request protocol selects ProtocolVersion; other versions fail.
-// Cancellation ends the process. Partial output survives operation/process errors.
+// sandbox. Cancellation ends the process. Partial output survives
+// operation/process errors.
 func Run(ctx context.Context, executable string, request Request) (Response, error) {
-	if request.Protocol == 0 {
-		request.Protocol = ProtocolVersion
-	}
 	if err := validateRequest(request); err != nil {
 		return Response{}, err
 	}
@@ -86,9 +87,9 @@ func Run(ctx context.Context, executable string, request Request) (Response, err
 			return response, fmt.Errorf("plugin response: %w", stdout.err)
 		}
 		if processErr != nil {
-			return response, fmt.Errorf("plugin process: %w", processErr)
+			return response, fmt.Errorf("plugin exited without a response: %w", processErr)
 		}
-		return response, errors.New("plugin response is missing")
+		return response, errors.New("plugin exited without a response")
 	}
 	if ctx.Err() != nil {
 		return response, ctx.Err()
@@ -102,7 +103,19 @@ func Run(ctx context.Context, executable string, request Request) (Response, err
 	return response, nil
 }
 
+// decode reads one bounded JSON object and rejects fields value does not have.
 func decode(reader io.Reader, value any) error {
+	return readObject(reader, value, true)
+}
+
+// decodeMessage reads one bounded protocol message. Messages ignore fields they
+// do not have, so a host and a plugin built against different SDKs can still
+// read each other's describe exchange.
+func decodeMessage(reader io.Reader, value any) error {
+	return readObject(reader, value, false)
+}
+
+func readObject(reader io.Reader, value any, strict bool) error {
 	data, err := io.ReadAll(io.LimitReader(reader, messageLimit+1))
 	if err != nil {
 		return err
@@ -115,7 +128,9 @@ func decode(reader io.Reader, value any) error {
 		return errors.New("message must contain exactly one JSON object")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
+	if strict {
+		decoder.DisallowUnknownFields()
+	}
 	if err := decoder.Decode(value); err != nil {
 		return err
 	}
@@ -158,7 +173,7 @@ func (s *responseStream) send(response wireResponse) error {
 }
 
 func (s *responseStream) Write(data []byte) (int, error) {
-	err := s.send(wireResponse{Protocol: ProtocolVersion, Log: data})
+	err := s.send(wireResponse{Log: data})
 	if err != nil {
 		return 0, err
 	}
@@ -201,11 +216,8 @@ func (r *responseReader) accept(data []byte) error {
 		return errors.New("message received after final response")
 	}
 	var message wireResponse
-	if err := decode(bytes.NewReader(data), &message); err != nil {
+	if err := decodeMessage(bytes.NewReader(data), &message); err != nil {
 		return err
-	}
-	if message.Protocol != ProtocolVersion {
-		return fmt.Errorf("protocol %d is unsupported", message.Protocol)
 	}
 	if len(message.Log) == 0 {
 		r.response, r.finished = message.Response, true
