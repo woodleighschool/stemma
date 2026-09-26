@@ -13,7 +13,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.1
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/bmatcuk/doublestar/v4 v4.10.2
-	github.com/deploymenttheory/go-apfs-v2 v0.3.0
+	github.com/deploymenttheory/go-apfs-v2 v0.10.0
 	github.com/deploymenttheory/go-macos-pkg v0.7.2
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
 	github.com/dustin/go-humanize v1.1.0
@@ -135,7 +135,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
-
-replace github.com/deploymenttheory/go-apfs-v2 => github.com/hydazz/go-apfs-v2 v0.3.1-0.20260920223323-c66778babab0
 
 replace github.com/go-compressions/lzfse => github.com/hydazz/lzfse v0.3.1-0.20260925154549-a48bc31a2561
