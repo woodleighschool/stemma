@@ -11,7 +11,7 @@ inputs:
     default: dist
   stemma-version:
     description: Stemma release that publishes the plugin
-    default: 0.2.1 # x-release-please-version
+    default: 0.3.0 # x-release-please-version
 
 runs:
   using: composite
