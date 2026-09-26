@@ -12,7 +12,13 @@
       "include-component-in-tag": false,
       "include-v-in-tag": false,
       "include-v-in-release-name": false,
-      "always-update": true
+      "always-update": true,
+      "extra-files": [
+        {
+          "type": "generic",
+          "path": "actions/publish-plugin/action.yaml"
+        }
+      ]
     }
   },
   "changelog-sections": [

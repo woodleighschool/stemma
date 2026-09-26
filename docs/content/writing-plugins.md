@@ -361,4 +361,6 @@ stemma plugins publish ghcr.io/example/catalog-tools:1.0.0 --goreleaser dist
 platform and tags their index last, so a failed run leaves the previous release in
 place. Registry credentials come from `docker login`. Add index annotations with
 `--annotation KEY=VALUE`, such as `org.opencontainers.image.source` for the
-repository URL.
+repository URL. In GitHub Actions, the
+[publish-plugin action](https://github.com/woodleighschool/stemma/tree/main/actions/publish-plugin)
+runs this step after GoReleaser.

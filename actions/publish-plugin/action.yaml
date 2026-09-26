@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-action.json
+name: Publish Stemma Plugin
+description: Publish GoReleaser plugin bundles as a Stemma OCI plugin
+
+inputs:
+  image:
+    description: Plugin image reference with the release tag, such as ghcr.io/example/plugin:1.0.0
+    required: true
+  dist:
+    description: GoReleaser dist directory
+    default: dist
+  stemma-version:
+    description: Stemma release that publishes the plugin
+    default: 0.2.1 # x-release-please-version
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Mise
+      uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+      with:
+        install: false
+        cache: false
+
+    - name: Publish plugin
+      shell: bash
+      env:
+        DIST: ${{ inputs.dist }}
+        IMAGE: ${{ inputs.image }}
+        SOURCE: ${{ github.server_url }}/${{ github.repository }}
+        STEMMA_VERSION: ${{ inputs.stemma-version }}
+      run: >-
+        mise exec "github:woodleighschool/stemma@${STEMMA_VERSION}" --
+        stemma plugins publish "$IMAGE" --goreleaser "$DIST"
+        --annotation "org.opencontainers.image.source=${SOURCE}"
