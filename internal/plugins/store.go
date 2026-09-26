@@ -15,15 +15,16 @@ import (
 
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/oras-project/oras-go/v3"
+	"github.com/oras-project/oras-go/v3/content"
+	"github.com/oras-project/oras-go/v3/registry/remote"
+	"github.com/oras-project/oras-go/v3/registry/remote/auth"
+	"github.com/oras-project/oras-go/v3/registry/remote/credentials"
+	"github.com/oras-project/oras-go/v3/registry/remote/properties"
+	"github.com/oras-project/oras-go/v3/registry/remote/retry"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/source"
-	"oras.land/oras-go/v2"
-	"oras.land/oras-go/v2/content"
-	"oras.land/oras-go/v2/registry/remote"
-	"oras.land/oras-go/v2/registry/remote/auth"
-	"oras.land/oras-go/v2/registry/remote/credentials"
-	"oras.land/oras-go/v2/registry/remote/retry"
 )
 
 const ArtifactType = "application/vnd.stemma.plugin.v1"
@@ -61,7 +62,11 @@ func New(cache *cas.Store, offline bool) *Store {
 }
 
 func repository(image string) (oras.ReadOnlyTarget, error) {
-	repo, err := remote.NewRepository(image)
+	ref, err := properties.NewReference(image)
+	if err != nil {
+		return nil, err
+	}
+	repo, err := remote.NewRepository(ref.Registry + "/" + ref.Repository)
 	if err != nil {
 		return nil, err
 	}
@@ -71,8 +76,16 @@ func repository(image string) (oras.ReadOnlyTarget, error) {
 	}
 	client := *retry.DefaultClient
 	client.Timeout = 15 * time.Minute
-	repo.Client = &auth.Client{Client: &client, Cache: auth.NewCache(), Credential: credentials.Credential(store)}
-	repo.MaxMetadataBytes = maxMetadataSize
+	repo.Registry.Client = &auth.Client{
+		Client:         &client,
+		Cache:          auth.NewCache(),
+		CredentialFunc: remote.NewCredentialFunc(store),
+		// A docker login stores a username and password for the distribution
+		// token flow; ORAS would otherwise send them through an OAuth2
+		// password grant, which not every registry accepts.
+		TokenFetcher: auth.NewCompositeTokenFetcher(&client, nil, "", true),
+	}
+	repo.Registry.MaxMetadataBytes = maxMetadataSize
 	return repo, nil
 }
 

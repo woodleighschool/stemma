@@ -39,6 +39,7 @@ require (
 	github.com/mikelolasagasti/xz v1.0.1
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
+	github.com/oras-project/oras-go/v3 v3.0.0-rc.1.0.20260925203640-cb6d6dc79f83
 	github.com/pb33f/ordered-map/v2 v2.3.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sassoftware/relic/v8 v8.2.0
@@ -52,7 +53,6 @@ require (
 	golang.org/x/term v0.46.0
 	golang.org/x/text v0.42.0
 	howett.net/plist v1.0.1
-	oras.land/oras-go/v2 v2.6.2
 	resty.dev/v3 v3.0.0-rc.4
 )
 
@@ -62,7 +62,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.9.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/ProtonMail/go-crypto v1.4.1 // indirect
+	github.com/ProtonMail/go-crypto v1.5.0 // indirect
 	github.com/STARRY-S/zip v0.2.3 // indirect
 	github.com/andybalholm/brotli v1.2.4 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"oras.land/oras-go/v2/registry"
+	"github.com/oras-project/oras-go/v3/registry/remote/properties"
 )
 
 func (p Plugin) Validate() error {
@@ -13,8 +13,9 @@ func (p Plugin) Validate() error {
 		return errors.New("specify exactly one of image or path")
 	}
 	if p.Image != "" {
-		ref, err := registry.ParseReference(p.Image)
-		if err != nil || ref.Reference == "" {
+		// ORAS parses and drops a URL scheme; plugin images carry none.
+		ref, err := properties.NewReference(p.Image)
+		if err != nil || ref.GetReference() == "" || strings.Contains(p.Image, "://") {
 			return errors.New("image must be an OCI registry reference with a tag or digest")
 		}
 		if p.Entrypoint != "" {
