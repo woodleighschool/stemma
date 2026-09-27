@@ -14,7 +14,7 @@ require (
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/deploymenttheory/go-apfs-v2 v0.11.2
-	github.com/deploymenttheory/go-bindings-macosplatform v0.20.0
+	github.com/deploymenttheory/go-bindings-macosplatform v0.20.1-0.20260927034632-71544a14f48a
 	github.com/deploymenttheory/go-macos-pkg v0.7.2
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
 	github.com/dustin/go-humanize v1.1.0
@@ -142,5 +142,3 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
-
-replace github.com/deploymenttheory/go-bindings-macosplatform => github.com/hydazz/go-bindings-macosplatform v0.20.1-0.20260926034728-fbcb63aab946

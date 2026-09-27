@@ -75,11 +75,6 @@ linters:
         linters: [gosec]
 
   settings:
-    # Temporary for now
-    gomoddirectives:
-      replace-allow-list:
-        - github.com/deploymenttheory/go-bindings-macosplatform
-
     gosec:
       excludes:
         - G304 # User-selected paths are the CLI's file input/output contract.

@@ -85,6 +85,8 @@ github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSs
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/deploymenttheory/go-apfs-v2 v0.11.2 h1:liWoSh8BXnL2qgMm78lvkxNoedopPOxMkK0iQYCNLIc=
 github.com/deploymenttheory/go-apfs-v2 v0.11.2/go.mod h1:jC8HmVg7DcuPg5mjhd5NKfCRvl+7qSS3BQjOYaoPxtE=
+github.com/deploymenttheory/go-bindings-macosplatform v0.20.1-0.20260927034632-71544a14f48a h1:8wHxmbKqW/z3v/DR81xODXlD8pnL8+1y5yXjBjIMXdw=
+github.com/deploymenttheory/go-bindings-macosplatform v0.20.1-0.20260927034632-71544a14f48a/go.mod h1:9nrs7NE5Sr4d5KF+zqWXMR2On1OStd7VpJdiIewBTf0=
 github.com/deploymenttheory/go-macos-pkg v0.7.2 h1:c7Ru3BHtvYou9T7ckAvjFXgNXd9Lkl3WfFK+sLqBW9U=
 github.com/deploymenttheory/go-macos-pkg v0.7.2/go.mod h1:NSDY/D4VN5dLcbr9wsR6MhXOovdXlmer5bF18T6WTe4=
 github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0 h1:4TBnRZdp2xkeQ3VF9whuv1ZCLklNu/3YapO87Q+NtIk=
@@ -150,8 +152,6 @@ github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef h1:A9HsByNhogrvm9cWb28sjiS3i7tcKCkflWFEkHfuAgM=
 github.com/howeyc/gopass v0.0.0-20210920133722-c8aef6fb66ef/go.mod h1:lADxMC39cJJqL93Duh1xhAs4I2Zs8mKS89XWXFGp9cs=
-github.com/hydazz/go-bindings-macosplatform v0.20.1-0.20260926034728-fbcb63aab946 h1:7fbRofH1OubkU4JTffo3rPmsxHRHrSzUQgXjwaj5mcU=
-github.com/hydazz/go-bindings-macosplatform v0.20.1-0.20260926034728-fbcb63aab946/go.mod h1:CeYVl8AUDdFN+S6uNXmCCWCnUECkzq07SiPBZlrO8rE=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/invopop/jsonschema v0.14.0 h1:MHQqLhvpNUZfw+hM3AZDYK7jxO8FZoQeQM77g8iyZjg=
