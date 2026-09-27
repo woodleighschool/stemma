@@ -79,7 +79,6 @@ linters:
     gomoddirectives:
       replace-allow-list:
         - github.com/deploymenttheory/go-bindings-macosplatform
-        - github.com/go-compressions/lzfse
 
     gosec:
       excludes:

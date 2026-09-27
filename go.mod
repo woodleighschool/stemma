@@ -143,6 +143,4 @@ require (
 	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
 
-replace github.com/go-compressions/lzfse => github.com/hydazz/lzfse v0.3.1-0.20260925154549-a48bc31a2561
-
 replace github.com/deploymenttheory/go-bindings-macosplatform => github.com/hydazz/go-bindings-macosplatform v0.20.1-0.20260926034728-fbcb63aab946
