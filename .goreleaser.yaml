@@ -5,7 +5,7 @@ project_name: stemma
 
 before:
   hooks:
-    - mise run tidy-check
+    - go mod tidy
 
 builds:
   - id: stemma
