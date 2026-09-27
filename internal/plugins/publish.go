@@ -31,24 +31,23 @@ type PlatformBundle struct {
 // image, which must name a tag; annotations apply to the index. It checks
 // every bundle against the loader's rules before pushing and tags the index
 // last, so a failed publication names no partial release. A published tag
-// keeps its release: publishing the same bundles again changes nothing, and
-// other bundles need a new tag. Registry credentials come from the Docker
-// credential store. The returned entry is the pin stemma plugins install
-// records for the tag.
-func Publish(ctx context.Context, image string, bundles []PlatformBundle, annotations map[string]string) (Entry, error) {
+// keeps its release: publishing the same bundles and annotations again changes
+// nothing, and changes need a new tag. Registry credentials come from the Docker
+// credential store. It returns the digest of the tagged index.
+func Publish(ctx context.Context, image string, bundles []PlatformBundle, annotations map[string]string) (string, error) {
 	ref, err := properties.NewReference(image)
 	if err != nil || ref.Tag == "" || ref.Digest != "" || strings.Contains(image, "://") {
-		return Entry{}, errors.New("image must be an OCI registry reference with a tag")
+		return "", errors.New("image must be an OCI registry reference with a tag")
 	}
 	repo, err := repository(image)
 	if err != nil {
-		return Entry{}, err
+		return "", err
 	}
 	index, err := publish(ctx, repo, ref.Tag, bundles, annotations)
 	if err != nil {
-		return Entry{}, err
+		return "", err
 	}
-	return Entry{Image: image, Digest: index.Digest.String(), Size: index.Size}, nil
+	return index.Digest.String(), nil
 }
 
 func publish(ctx context.Context, target oras.Target, tag string, bundles []PlatformBundle, annotations map[string]string) (ocispec.Descriptor, error) {
@@ -85,10 +84,12 @@ func publish(ctx context.Context, target oras.Target, tag string, bundles []Plat
 	// digest.
 	manifests := make([]ocispec.Descriptor, len(bundles))
 	for i, bundle := range bundles {
-		layer, err := release.Add(ctx, filepath.Base(bundle.Path), BundleType, bundle.Path)
+		layer, err := release.Add(ctx, bundle.Platform.OS+"/"+bundle.Platform.Architecture, BundleType, bundle.Path)
 		if err != nil {
 			return ocispec.Descriptor{}, err
 		}
+		// Local archive names do not identify the published code.
+		delete(layer.Annotations, ocispec.AnnotationTitle)
 		data, err := json.Marshal(ocispec.Manifest{
 			SchemaVersion: 2,
 			MediaType:     ocispec.MediaTypeImageManifest,

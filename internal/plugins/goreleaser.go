@@ -15,11 +15,13 @@ import (
 // goreleaserArtifact is the part of a GoReleaser artifacts.json entry that
 // identifies a plugin bundle.
 type goreleaserArtifact struct {
-	Path   string `json:"path"`
-	Type   string `json:"type"`
-	GOOS   string `json:"goos"`
-	GOARCH string `json:"goarch"`
-	Extra  struct {
+	Path    string `json:"path"`
+	Type    string `json:"type"`
+	GOOS    string `json:"goos"`
+	GOARCH  string `json:"goarch"`
+	GOAMD64 string `json:"goamd64"`
+	GOARM64 string `json:"goarm64"`
+	Extra   struct {
 		ID     string `json:"ID"`
 		Format string `json:"Format"`
 	} `json:"extra"`
@@ -78,6 +80,10 @@ func GoReleaserBundles(dist, id string) ([]PlatformBundle, error) {
 		if artifact.GOOS == "" || artifact.GOARCH == "" || artifact.GOARCH == "all" {
 			return nil, fmt.Errorf("goreleaser: archive %s has no single target platform", artifact.Path)
 		}
+		// Runner selection uses OS and architecture, without CPU feature detection.
+		if artifact.GOAMD64 != "" && artifact.GOAMD64 != "v1" || artifact.GOARM64 != "" && artifact.GOARM64 != "v8.0" {
+			return nil, fmt.Errorf("goreleaser: archive %s must use baseline CPU targets (goamd64 v1, goarm64 v8.0)", artifact.Path)
+		}
 		path, err := filepath.Abs(artifact.Path)
 		if err != nil {
 			return nil, fmt.Errorf("goreleaser: %w", err)
@@ -91,4 +97,29 @@ func GoReleaserBundles(dist, id string) ([]PlatformBundle, error) {
 		})
 	}
 	return bundles, nil
+}
+
+// GoReleaserAnnotations labels a release with the version and commit
+// GoReleaser recorded in dist/metadata.json, as the standard OCI version and
+// revision annotations.
+func GoReleaserAnnotations(dist string) (map[string]string, error) {
+	data, err := os.ReadFile(filepath.Join(dist, "metadata.json"))
+	if err != nil {
+		return nil, fmt.Errorf("goreleaser: %w", err)
+	}
+	var metadata struct {
+		Version string `json:"version"`
+		Commit  string `json:"commit"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return nil, fmt.Errorf("goreleaser: metadata.json: %w", err)
+	}
+	annotations := map[string]string{}
+	if metadata.Version != "" {
+		annotations[ocispec.AnnotationVersion] = metadata.Version
+	}
+	if metadata.Commit != "" {
+		annotations[ocispec.AnnotationRevision] = metadata.Commit
+	}
+	return annotations, nil
 }

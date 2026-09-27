@@ -78,10 +78,12 @@ type Report struct {
 	LockChanged *bool `json:"lock_changed,omitempty"`
 	// RemovedInputs are lock entries of resources the catalog no longer declares.
 	RemovedInputs []lockfile.InputChange `json:"removed_inputs,omitempty"`
-	Warnings      []string               `json:"warnings,omitempty"`
-	Summary       Summary                `json:"summary"`
-	Error         string                 `json:"error,omitempty"`
-	Resources     []ResourceReport       `json:"resources"`
+	// Plugins are the plugin lock entries an update changed.
+	Plugins   []lockfile.PluginChange `json:"plugins,omitempty"`
+	Warnings  []string                `json:"warnings,omitempty"`
+	Summary   Summary                 `json:"summary"`
+	Error     string                  `json:"error,omitempty"`
+	Resources []ResourceReport        `json:"resources"`
 	// Artifact is where the artifact method materialized the selected output.
 	Artifact string `json:"artifact,omitempty"`
 }
@@ -151,10 +153,10 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	// signature derives each resource's signer through the preparation path;
 	// icon presents the artwork of prepared software the same way.
 	preparing := opts.Method == "prepare" || opts.Method == "signature" || opts.Method == "icon"
-	// Update writes the lockfile. Every other run consumes it as reviewed, with
-	// the plugins it pins.
+	// Update writes the lockfile and resolves plugin declarations. Every other
+	// run consumes it as reviewed.
 	opts.Lock.Refresh = opts.Method == "update"
-	s, err := open(ctx, opts, !opts.Lock.Refresh)
+	s, err := open(ctx, opts, opts.Lock.Refresh)
 	if err != nil {
 		return report, err
 	}
@@ -171,11 +173,14 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			return report, err
 		}
 	}
-	plans, selected, err := discoverClosure(ctx, p, ops, roots, true)
+	// Updates, artifacts and icons never reach a destination, so only the
+	// other runs check the destinations they publish to.
+	usesDestinations := opts.Method != "update" && opts.Method != "artifact" && opts.Method != "icon"
+	plans, selected, err := discoverClosure(ctx, p, ops, roots, true, usesDestinations)
 	if err != nil {
 		return report, err
 	}
-	if err := preflight(plans, selected, p, ops); err != nil {
+	if err := preflight(plans, selected, p, ops, usesDestinations); err != nil {
 		return report, err
 	}
 	if opts.Method == "plan" || opts.Method == "apply" {
@@ -189,9 +194,12 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		return report, err
 	}
 	publishing := opts.Method == "plan" || opts.Method == "apply"
-	destinations, err := planDestinations(ctx, p, plans, ops, root, selected, publishing)
-	if err != nil {
-		return report, err
+	destinations := map[destinationRef]destinationPlan{}
+	if usesDestinations {
+		destinations, err = planDestinations(ctx, p, plans, ops, root, selected, publishing)
+		if err != nil {
+			return report, err
+		}
 	}
 	// Publication connects with evaluated settings, so a missing value fails
 	// before anything is acquired.
@@ -544,6 +552,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	if opts.Method == "update" {
 		report.LockChanged = &result.Changed
+		report.Plugins = result.Plugins
 	}
 	reported := map[string]bool{}
 	for _, resource := range report.Resources {

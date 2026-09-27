@@ -21,12 +21,10 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
-	"go.yaml.in/yaml/v4"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -223,17 +221,14 @@ spec:
 				t.Helper()
 				testproject.Write(t, filename, text)
 			}
-			if transport == "path" {
-				manifest = strings.Replace(manifest, "image: registry.example/plugins/echo:v1", "path: local-plugin", 1)
-			}
-			write(manifest)
 			store, err := cas.Open(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
+			var index string
 			install := func() {
 				if transport == "image" {
-					installFixturePlugin(t, store, root, binary, "original resource")
+					index = installFixturePlugin(t, store, binary, "original resource")
 					return
 				}
 				directory := filepath.Join(root, "local-plugin")
@@ -257,7 +252,18 @@ spec:
 			}
 
 			install()
+			// An image names its digest; a local path is locked by updating plugins.
+			manifest = strings.Replace(manifest, "image: registry.example/plugins/echo:v1", "image: registry.example/plugins/echo:v1@"+index, 1)
+			if transport == "path" {
+				manifest = strings.Replace(manifest, "image: registry.example/plugins/echo:v1@", "path: local-plugin", 1)
+			}
+			write(manifest)
 			opts := Options{ConfigPath: filename, CacheDir: store.Dir, Method: "update"}
+			if transport == "path" {
+				if _, err := UpdatePlugins(t.Context(), opts, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
 			if _, err := ValidateProject(t.Context(), opts, false); err != nil {
 				t.Fatal(err)
 			}
@@ -348,7 +354,8 @@ spec:
 	}
 }
 
-func installFixturePlugin(t *testing.T, store *cas.Store, root, binary, resource string) {
+// installFixturePlugin caches a platform index holding binary and returns its digest.
+func installFixturePlugin(t *testing.T, store *cas.Store, binary, resource string) string {
 	t.Helper()
 	data, err := os.ReadFile(binary)
 	if err != nil {
@@ -401,18 +408,69 @@ func installFixturePlugin(t *testing.T, store *cas.Store, root, binary, resource
 	if err != nil {
 		t.Fatal(err)
 	}
-	index := put(ocispec.MediaTypeImageIndex, data)
-	entry := plugins.Entry{Image: "registry.example/plugins/echo:v1", Digest: index.Digest.String(), Size: index.Size}
-	locked, err := lockfile.Load(filepath.Join(root, "stemma.lock.yaml"))
-	if err != nil {
-		locked = lockfile.File{Version: lockfile.Version, Inputs: map[string]map[string]source.Entry{}}
+	return put(ocispec.MediaTypeImageIndex, data).Digest.String()
+}
+
+// TestStaleInterfaceFailsOnlyWhereUsed loads a plugin whose reconcile
+// interface is another version: its resolver stays usable, so runs that never
+// reach a destination succeed, while every command that checks or publishes to
+// its destination fails with the reason.
+func TestStaleInterfaceFailsOnlyWhereUsed(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "local-plugin", "plugin")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
 	}
-	locked.Plugins = map[string]plugins.Entry{"provider": entry}
-	data, err = yaml.Marshal(locked)
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../plugin/testdata/echo")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build plugin: %v\n%s", err, output)
+	}
+	payload, err := os.ReadFile("../apple/testdata/fixture.pkg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "stemma.lock.yaml"), data, 0o600); err != nil {
-		t.Fatal(err)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(payload)
+	}))
+	t.Cleanup(server.Close)
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, fmt.Sprintf(`apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: stale}
+spec:
+  imports: ['*.software.yaml']
+  plugins:
+    provider: {trusted: true, path: local-plugin}
+  destinations:
+    remote: {operation: echo.reconcile}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: fetched}
+spec:
+  source: {resolver: echo.download, url: %s/vendor.pkg}
+  destinations:
+    remote: {}
+`, server.URL))
+	t.Setenv("STEMMA_ECHO_STALE_KIND", "reconcile")
+	const reason = "operation echo.reconcile is unavailable: plugin provider implements reconcile interface 2; this Stemma uses 1"
+	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	report, err := Run(t.Context(), opts)
+	if err != nil || len(report.Resources) != 1 || len(report.Resources[0].Inputs) != 1 {
+		t.Fatalf("update beside a stale destination: report=%+v err=%v", report, err)
+	}
+	opts.Method, opts.Resources = "artifact", []string{"MacSoftware/fetched"}
+	if report, err := Run(t.Context(), opts); err != nil || report.Artifact == "" {
+		t.Fatalf("artifact beside a stale destination: report=%+v err=%v", report, err)
+	}
+	opts.Method, opts.Resources = "prepare", nil
+	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), reason) {
+		t.Fatalf("preparation checked against the stale destination: %v", err)
+	}
+	if _, err := ValidateProject(t.Context(), opts, false); err == nil || !strings.Contains(err.Error(), reason) {
+		t.Fatalf("validation of the stale destination: %v", err)
+	}
+	if _, err := ProjectSchema(t.Context(), opts); err == nil || !strings.Contains(err.Error(), reason) {
+		t.Fatalf("schema without the stale destination: %v", err)
 	}
 }

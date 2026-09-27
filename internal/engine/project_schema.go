@@ -30,5 +30,9 @@ func ProjectSchema(ctx context.Context, opts Options) (result []byte, err error)
 		return nil, err
 	}
 	defer cleanup()
+	// The schema covers every operation, so it waits for all of them.
+	if err := operations.complete(); err != nil {
+		return nil, err
+	}
 	return config.ProjectSchema(project, operations.registry.Descriptor())
 }

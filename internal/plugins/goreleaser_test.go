@@ -13,20 +13,29 @@ import (
 
 // artifactFixture mirrors the artifacts.json entries GoReleaser writes.
 type artifactFixture struct {
-	Name   string         `json:"name"`
-	Path   string         `json:"path"`
-	GOOS   string         `json:"goos,omitempty"`
-	GOARCH string         `json:"goarch,omitempty"`
-	Target string         `json:"target,omitempty"`
-	Type   string         `json:"type"`
-	Extra  map[string]any `json:"extra,omitempty"`
+	Name    string         `json:"name"`
+	Path    string         `json:"path"`
+	GOOS    string         `json:"goos,omitempty"`
+	GOARCH  string         `json:"goarch,omitempty"`
+	GOAMD64 string         `json:"goamd64,omitempty"`
+	GOARM64 string         `json:"goarm64,omitempty"`
+	Target  string         `json:"target,omitempty"`
+	Type    string         `json:"type"`
+	Extra   map[string]any `json:"extra,omitempty"`
 }
 
 func archiveArtifact(id, name, goos, goarch, format string) artifactFixture {
-	return artifactFixture{
+	artifact := artifactFixture{
 		Name: name, Path: "dist/" + name, GOOS: goos, GOARCH: goarch, Target: goos + "_" + goarch, Type: "Archive",
 		Extra: map[string]any{"Format": format, "ID": id, "WrappedIn": ""},
 	}
+	if goarch == "amd64" {
+		artifact.GOAMD64 = "v1"
+	}
+	if goarch == "arm64" {
+		artifact.GOARM64 = "v8.0"
+	}
+	return artifact
 }
 
 // goreleaserProject writes a project whose dist holds artifacts.json and each
@@ -93,6 +102,10 @@ func TestGoReleaserBundlesTakeTheNamedArchiveID(t *testing.T) {
 
 func TestGoReleaserBundlesRejectUnusableReleases(t *testing.T) {
 	linux := archiveArtifact("plugin", "tools_linux_amd64.tar.zst", "linux", "amd64", "tar.zst")
+	amd64v3 := linux
+	amd64v3.GOAMD64 = "v3"
+	arm64lse := archiveArtifact("plugin", "tools_linux_arm64.tar.zst", "linux", "arm64", "tar.zst")
+	arm64lse.GOARM64 = "v8.0,lse"
 	for _, test := range []struct {
 		name      string
 		artifacts []artifactFixture
@@ -103,6 +116,8 @@ func TestGoReleaserBundlesRejectUnusableReleases(t *testing.T) {
 		{"unknown archive id", []artifactFixture{linux}, "debug", `no archives with id "debug"`},
 		{"format override", []artifactFixture{linux, archiveArtifact("plugin", "tools_windows_amd64.zip", "windows", "amd64", "zip")}, "", "is zip, not tar.zst"},
 		{"universal binary", []artifactFixture{archiveArtifact("plugin", "tools_darwin_all.tar.zst", "darwin", "all", "tar.zst")}, "", "no single target platform"},
+		{"amd64 CPU requirement", []artifactFixture{amd64v3}, "", "baseline CPU"},
+		{"arm64 CPU requirement", []artifactFixture{arm64lse}, "", "baseline CPU"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			goreleaserProject(t, test.artifacts, nil)
@@ -125,4 +140,14 @@ func TestGoReleaserBundlesRejectUnusableReleases(t *testing.T) {
 			t.Fatal("dist without artifacts.json accepted")
 		}
 	})
+}
+
+func TestGoReleaserAnnotationsNameTheBuild(t *testing.T) {
+	metadata := []byte(`{"project_name":"tools","tag":"1.2.0","version":"1.2.0","commit":"58d5d19c08d2cbf5cdca2bfd2e658e5f29a130e5","date":"2026-09-26T17:45:36+10:00"}`)
+	goreleaserProject(t, nil, map[string][]byte{"metadata.json": metadata})
+	annotations, err := GoReleaserAnnotations("dist")
+	want := map[string]string{ocispec.AnnotationVersion: "1.2.0", ocispec.AnnotationRevision: "58d5d19c08d2cbf5cdca2bfd2e658e5f29a130e5"}
+	if err != nil || !reflect.DeepEqual(annotations, want) {
+		t.Fatalf("annotations = %v, %v", annotations, err)
+	}
 }

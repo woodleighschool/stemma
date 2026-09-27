@@ -60,11 +60,11 @@ zizmor's `unpinned-uses` audit in the calling repository.
   one archive id, become the platforms of the index. Set `workdir` to goreleaser-action's
   `workdir` when GoReleaser runs in a subdirectory.
 - Stemma checks every bundle before pushing and tags the index last. A published tag keeps its
-  release: rerunning with the same bundles changes nothing, and different bundles fail.
+  release: rerunning with the same bundles and annotations changes nothing, and changes fail.
 - Registry credentials come from the Docker credential store, so the action works with any
   registry a login step has signed in to.
 - The index carries `org.opencontainers.image.source` for the calling repository, which links a
-  GHCR package to it.
+  GHCR package to it, and the version and commit GoReleaser recorded.
 - Stemma comes from its GitHub release through Mise's `github:` backend, so the job needs no Go
   toolchain for this step. The default version is the Stemma release the pinned commit belongs
   to, and moving the pin moves Stemma with it.

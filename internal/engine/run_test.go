@@ -177,17 +177,20 @@ func TestNativeValidationBeforeAcquisition(t *testing.T) {
 	}
 }
 
-// TestOpenReleasesAPartialSessionOnFailure covers a project whose trusted
-// plugin is missing from the checkout: opening fails before any operation
+// TestOpenReleasesAPartialSessionOnFailure covers a project whose lockfile
+// cannot be read while its plugins load: opening fails before any operation
 // runs and releases what it had acquired instead of panicking.
 func TestOpenReleasesAPartialSessionOnFailure(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
 	manifest := strings.Replace(policyProject, "  imports:\n", "  plugins:\n    missing:\n      path: plugins/missing\n      trusted: true\n  imports:\n", 1)
 	testproject.Write(t, filename, manifest)
+	if err := os.WriteFile(filepath.Join(root, "stemma.lock.yaml"), []byte("version: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	_, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"})
-	if err == nil || !strings.Contains(err.Error(), "plugin missing") {
-		t.Fatalf("missing plugin: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "lockfile") {
+		t.Fatalf("unreadable lockfile: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".stemma", "project.lock")); err != nil {
 		t.Fatalf("project lock was not created: %v", err)

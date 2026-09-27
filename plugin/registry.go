@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -16,15 +17,22 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
-// Descriptor identifies one provider and its advertised operation contracts.
+// Descriptor is a provider's answer to describe. Name, Version, Revision and
+// Interfaces, and each operation's name, kind and resource, keep their meaning
+// across interface versions, so any host can tell what a plugin offers; the
+// rest of an operation belongs to its kind's interface. Revision is the VCS
+// revision recorded in the executable's build information.
 type Descriptor struct {
-	Name       string      `json:"name"`
-	Version    string      `json:"version"`
-	Operations []Operation `json:"operations"`
+	Name       string         `json:"name"`
+	Version    string         `json:"version"`
+	Revision   string         `json:"revision,omitempty"`
+	Interfaces map[string]int `json:"interfaces,omitempty"`
+	Operations []Operation    `json:"operations"`
 }
 
-// Operation advertises a capability. Empty Platforms means portable; otherwise
-// entries are GOOS/GOARCH pairs. SideEffects is none, workspace, or remote.
+// Operation advertises a capability. Kind is resolve, resource or reconcile.
+// Empty Platforms means portable; otherwise entries are GOOS/GOARCH pairs.
+// SideEffects is none, workspace, or remote.
 // Methods contains discover, validate, run, plan, or apply; describe is implicit.
 // ConfigSchema constrains declared configuration independently of runtime inputs;
 // providers must supply it when configuration is constrained.
@@ -110,19 +118,24 @@ func (registry *Registry) Register(operation Operation, handle Handler) error {
 	return nil
 }
 
-// Descriptor returns an independent copy with operations sorted by name.
+// Descriptor returns an independent copy with operations sorted by name,
+// naming this SDK's interface version for each kind they use.
 func (registry *Registry) Descriptor() Descriptor {
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
-	descriptor := Descriptor{Name: registry.name, Version: registry.version, Operations: make([]Operation, 0, len(registry.operations))}
+	descriptor := Descriptor{Name: registry.name, Version: registry.version, Revision: revision(), Operations: make([]Operation, 0, len(registry.operations))}
 	for _, operation := range registry.operations {
+		if descriptor.Interfaces == nil {
+			descriptor.Interfaces = map[string]int{}
+		}
+		descriptor.Interfaces[operation.descriptor.Kind] = interfaces[operation.descriptor.Kind]
 		descriptor.Operations = append(descriptor.Operations, cloneOperation(operation.descriptor))
 	}
 	slices.SortFunc(descriptor.Operations, func(a, b Operation) int { return strings.Compare(a.Name, b.Name) })
 	return descriptor
 }
 
-// Handle checks the protocol, declared method, runner, and input contract before
+// Handle checks the declared method, runner, and input contract before
 // dispatch. Successful output is validated; failed operations retain partial output.
 // Validation may return no output because it has not produced operation results.
 func (registry *Registry) Handle(ctx context.Context, request Request) (Response, error) {
@@ -138,7 +151,7 @@ func (registry *Registry) Handle(ctx context.Context, request Request) (Response
 			return Response{}, err
 		}
 		output, err := json.Marshal(descriptor)
-		return Response{Protocol: ProtocolVersion, Output: output}, err
+		return Response{Output: output}, err
 	}
 	registry.mu.RLock()
 	operation, exists := registry.operations[request.Operation]
@@ -205,7 +218,6 @@ func (registry *Registry) Handle(ctx context.Context, request Request) (Response
 		}
 	}
 	response, err := operation.handle(ctx, request)
-	response.Protocol = ProtocolVersion
 	if err == nil && response.Error != "" {
 		err = errors.New(response.Error)
 	}
@@ -224,7 +236,8 @@ func (registry *Registry) Handle(ctx context.Context, request Request) (Response
 	return response, nil
 }
 
-// ValidateDescriptor checks a provider's identity, operation contracts, and names.
+// ValidateDescriptor checks a provider's identity and operation contracts, and
+// that it names the interface version of each kind its operations use.
 func ValidateDescriptor(descriptor Descriptor) error {
 	if err := validateIdentity(descriptor.Name, descriptor.Version); err != nil {
 		return err
@@ -237,6 +250,9 @@ func ValidateDescriptor(descriptor Descriptor) error {
 		seen[operation.Name] = true
 		if err := ValidateOperation(operation); err != nil {
 			return err
+		}
+		if descriptor.Interfaces[operation.Kind] == 0 {
+			return fmt.Errorf("operation %q: descriptor names no %s interface version", operation.Name, operation.Kind)
 		}
 	}
 	return nil
@@ -268,14 +284,24 @@ func validateIdentity(name, version string) error {
 }
 
 func compileOperation(operation Operation) (registeredOperation, error) {
-	if operation.Resolver != nil && (operation.Kind != "resolve" || operation.Resolver.Version == "" || operation.SideEffects == "remote" || !operation.SupportsMethod("validate") || !operation.SupportsMethod("discover") || !operation.SupportsMethod("run")) {
-		return registeredOperation{}, errors.New("resolver registration requires version and workspace-only validate/discover/run methods")
+	if !ValidOperationName(operation.Name) {
+		return registeredOperation{}, fmt.Errorf("operation %q requires a valid name", operation.Name)
 	}
-	if operation.Resource != nil && (operation.Kind != "resource" || operation.Resource.APIVersion == "" || operation.Resource.Kind == "" || !operation.SupportsMethod("discover") || !operation.SupportsMethod("run") || operation.SideEffects == "remote") {
-		return registeredOperation{}, errors.New("resource registration requires apiVersion, kind and workspace-only discover/run methods")
-	}
-	if !ValidOperationName(operation.Name) || !ValidOperationName(operation.Kind) {
-		return registeredOperation{}, fmt.Errorf("operation %q requires a valid name and kind", operation.Name)
+	switch operation.Kind {
+	case "resolve":
+		if operation.Resolver == nil || operation.Resource != nil || operation.Resolver.Version == "" || operation.SideEffects == "remote" || !operation.SupportsMethod("validate") || !operation.SupportsMethod("discover") || !operation.SupportsMethod("run") {
+			return registeredOperation{}, fmt.Errorf("resolver %q requires a version and workspace-only validate, discover and run methods", operation.Name)
+		}
+	case "resource":
+		if operation.Resource == nil || operation.Resolver != nil || operation.Resource.APIVersion == "" || operation.Resource.Kind == "" || operation.SideEffects == "remote" || !operation.SupportsMethod("discover") || !operation.SupportsMethod("run") {
+			return registeredOperation{}, fmt.Errorf("resource operation %q requires apiVersion, kind and workspace-only discover and run methods", operation.Name)
+		}
+	case "reconcile":
+		if operation.Resolver != nil || operation.Resource != nil {
+			return registeredOperation{}, fmt.Errorf("reconcile operation %q cannot register a resolver or resource kind", operation.Name)
+		}
+	default:
+		return registeredOperation{}, fmt.Errorf("operation %q has unknown kind %q", operation.Name, operation.Kind)
 	}
 	switch operation.SideEffects {
 	case "none", "workspace", "remote":
@@ -368,16 +394,12 @@ func validMethod(method string) bool {
 }
 
 func validateRequest(request Request) error {
-	if request.Protocol != ProtocolVersion {
-		return fmt.Errorf("plugin protocol %d is unsupported", request.Protocol)
-	}
 	if !validMethod(request.Method) {
 		return fmt.Errorf("plugin method %q is unsupported", request.Method)
 	}
+	// Describe establishes compatibility, so nothing else in a request can
+	// prevent its answer.
 	if request.Method == "describe" {
-		if request.Operation != "" || len(request.Input) != 0 {
-			return errors.New("describe must omit operation and input")
-		}
 		return nil
 	}
 	if !ValidOperationName(request.Operation) {
@@ -388,3 +410,26 @@ func validateRequest(request Request) error {
 	}
 	return nil
 }
+
+// revision names the VCS revision the Go toolchain recorded in this
+// executable, marked +dirty when the tree had uncommitted changes.
+var revision = sync.OnceValue(func() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return ""
+	}
+	var revision string
+	var modified bool
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			revision = setting.Value
+		case "vcs.modified":
+			modified = setting.Value == "true"
+		}
+	}
+	if revision != "" && modified {
+		revision += "+dirty"
+	}
+	return revision
+})

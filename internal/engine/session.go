@@ -27,8 +27,9 @@ type session struct {
 }
 
 // open loads the project, serializes it and leases the cache before any
-// operation code runs. Frozen loads reject plugins that differ from the lock.
-func open(ctx context.Context, opts Options, frozen bool) (_ *session, err error) {
+// operation code runs. Plugins load from their lock entries; resolvePlugins
+// locks the tags and local paths whose entries are missing or stale.
+func open(ctx context.Context, opts Options, resolvePlugins bool) (_ *session, err error) {
 	p, err := config.Load(opts.ConfigPath)
 	if err != nil {
 		return nil, err
@@ -72,7 +73,7 @@ func open(ctx context.Context, opts Options, frozen bool) (_ *session, err error
 	}
 	work := s.work
 	s.closers = append(s.closers, func() error { return os.RemoveAll(work) })
-	s.ops, err = loadOperations(ctx, p, s.manager, work, opts.Handlers, frozen)
+	s.ops, err = loadOperations(ctx, p, s.manager, work, opts.Handlers, resolvePlugins)
 	if err != nil {
 		return nil, err
 	}

@@ -3,25 +3,70 @@ package plugins
 import (
 	"context"
 	"errors"
-	"fmt"
-	"maps"
 	"path/filepath"
-	"slices"
+	"strings"
 
+	"github.com/oras-project/oras-go/v3/registry/remote/properties"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// Load snapshots local code or acquires an installed release. Frozen local loads
-// check the observation before any plugin code executes.
-func (s *Store) Load(ctx context.Context, root string, declaration config.Plugin, previous Entry, frozen bool) (Bundle, Entry, error) {
+// Fingerprint identifies the declaration a lock entry answers.
+func Fingerprint(declaration config.Plugin) string {
+	return config.Fingerprint(struct {
+		Image, Path, Entrypoint string
+	}{declaration.Image, declaration.Path, declaration.Entrypoint})
+}
+
+// Pin names the code a declaration selects: the digest an image names, or the
+// digest of the lock entry that answers the declaration. It is empty when the
+// declaration is not locked.
+func Pin(declaration config.Plugin, entry Entry) string {
+	if _, digest, pinned := strings.Cut(declaration.Image, "@"); pinned {
+		return digest
+	}
+	if entry.Declaration == Fingerprint(declaration) {
+		return entry.Digest
+	}
+	return ""
+}
+
+// Load selects a plugin's code and returns the lock entry that selects it. An
+// image that names its digest needs no entry. A tag or local path uses the
+// previous entry for its declaration; with resolve, a missing or stale entry
+// is resolved instead: the tag from the registry, the path from its current
+// files. Local files are checked before any plugin code runs.
+func (s *Store) Load(ctx context.Context, root string, declaration config.Plugin, previous Entry, resolve bool) (Bundle, Entry, error) {
 	if err := declaration.Validate(); err != nil {
 		return Bundle{}, Entry{}, err
 	}
+	fingerprint := Fingerprint(declaration)
+	if previous.Declaration != fingerprint {
+		previous = Entry{}
+	}
 	if declaration.Path == "" {
-		bundle, err := s.Acquire(ctx, declaration.Image, previous)
-		return bundle, previous, err
+		ref, err := properties.NewReference(declaration.Image)
+		if err != nil {
+			return Bundle{}, Entry{}, err
+		}
+		if ref.Digest != "" {
+			bundle, err := s.Acquire(ctx, declaration.Image, ref.Digest)
+			return bundle, Entry{}, err
+		}
+		entry := previous
+		if entry.Digest == "" {
+			if !resolve {
+				return Bundle{}, Entry{}, errors.New("image tag is not locked; run stemma plugins update")
+			}
+			digest, err := s.Resolve(ctx, declaration.Image)
+			if err != nil {
+				return Bundle{}, Entry{}, err
+			}
+			entry = Entry{Declaration: fingerprint, Digest: digest}
+		}
+		bundle, err := s.Acquire(ctx, declaration.Image, entry.Digest)
+		return bundle, entry, err
 	}
 	path := declaration.Path
 	if !filepath.IsAbs(path) {
@@ -35,9 +80,13 @@ func (s *Store) Load(ctx context.Context, root string, declaration config.Plugin
 	if !current.Content.Tree && declaration.Entrypoint != "" {
 		return Bundle{}, Entry{}, errors.New("entrypoint requires a directory; path already selects an executable")
 	}
-	entry := Entry{Path: declaration.Path, Entrypoint: declaration.Entrypoint, Local: &current}
-	if frozen && (previous.Image != "" || previous.Digest != "" || previous.Size != 0 || previous.Path != entry.Path || previous.Entrypoint != entry.Entrypoint || previous.Local == nil || !current.Equal(*previous.Local)) {
-		return Bundle{}, Entry{}, errors.New("local plugin is missing or changed in the lockfile; run stemma plugins update")
+	entry := Entry{Declaration: fingerprint, Digest: "sha256:" + current.Content.Artifact.SHA256}
+	switch {
+	case resolve || entry == previous:
+	case previous.Digest == "":
+		return Bundle{}, Entry{}, errors.New("local files are not locked; run stemma plugins update")
+	default:
+		return Bundle{}, Entry{}, errors.New("local files changed since they were locked; run stemma plugins update")
 	}
 	name := declaration.Entrypoint
 	if name == "" {
@@ -52,30 +101,4 @@ func (s *Store) Load(ctx context.Context, root string, declaration config.Plugin
 	}{current.Content, name})
 	bundle := Bundle{Manifest: identity, Artifact: current.Content.Artifact, Local: &current.Content, Entrypoint: name}
 	return bundle, entry, nil
-}
-
-// Install resolves registry images explicitly; local sources follow their files.
-func (s *Store) Install(ctx context.Context, root string, declarations map[string]config.Plugin, previous map[string]Entry, refresh bool) (result map[string]Entry, runErr error) {
-	entries := make(map[string]Entry, len(declarations))
-	for _, name := range slices.Sorted(maps.Keys(declarations)) {
-		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("plugin", name))
-		done := plugin.Stage(ctx, "Installing plugin")
-		defer func() { done(runErr) }()
-		declaration := declarations[name]
-		entry := previous[name]
-		if declaration.Image != "" && (refresh || entry.Validate(declaration.Image) != nil) {
-			var err error
-			entry, err = s.Resolve(ctx, declaration.Image)
-			if err != nil {
-				return nil, fmt.Errorf("plugin %s: %w", name, err)
-			}
-		}
-		_, entry, err := s.Load(ctx, root, declaration, entry, false)
-		if err != nil {
-			return nil, fmt.Errorf("plugin %s: %w", name, err)
-		}
-		done(nil)
-		entries[name] = entry
-	}
-	return entries, nil
 }

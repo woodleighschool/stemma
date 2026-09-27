@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -163,18 +164,23 @@ spec:
 // TestArtifactWithoutInputLocksKeepsPluginsLocked declares a local plugin the
 // lockfile has not reviewed: ignoring input locks must not run it.
 func TestArtifactWithoutInputLocksKeepsPluginsLocked(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the probe is a shell script")
+	}
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
 	testproject.Write(t, filename, strings.Replace(policyProject, "  imports:\n", "  plugins:\n    probe:\n      path: plugins/probe\n      trusted: true\n  imports:\n", 1))
 	if err := os.MkdirAll(filepath.Join(root, "plugins"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "plugins", "probe"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+	marker := filepath.Join(root, "probe-ran")
+	if err := os.WriteFile(filepath.Join(root, "plugins", "probe"), []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "artifact", Resources: []string{"MacSoftware/policy"}, Lock: lockfile.Options{IgnoreInputs: true}}
-	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "run stemma plugins update") {
-		t.Fatalf("an unreviewed plugin loaded: %v", err)
+	_, _ = Run(t.Context(), options)
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("an unreviewed plugin ran: %v", err)
 	}
 }
 

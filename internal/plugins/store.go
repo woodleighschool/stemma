@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"time"
 
 	"github.com/opencontainers/go-digest"
@@ -34,22 +35,24 @@ const maxPlatforms = 64
 
 var zstdMagic = [4]byte{0x28, 0xb5, 0x2f, 0xfd}
 
-// Entry records a local content observation or an OCI release index.
+// Entry records what locking a plugin learned beyond its declaration: the
+// platform index digest a tag named, or the content digest of local files.
+// Declaration fingerprints the declaration the entry answers, so an edited
+// declaration is never matched with an old answer. An image that names its
+// digest needs no entry.
 type Entry struct {
-	Path       string        `json:"path,omitempty" yaml:"path,omitempty"`
-	Entrypoint string        `json:"entrypoint,omitempty" yaml:"entrypoint,omitempty"`
-	Local      *source.Entry `json:"local,omitempty" yaml:"local,omitempty"`
-	Image      string        `json:"image,omitempty" yaml:"image,omitempty"`
-	Digest     string        `json:"digest,omitempty" yaml:"digest,omitempty"`
-	Size       int64         `json:"size,omitempty" yaml:"size,omitempty"`
+	Declaration string `json:"declaration" yaml:"declaration"`
+	Digest      string `json:"digest" yaml:"digest"`
 }
 
-// Bundle identifies the entire selected package, including executable resources.
+// Bundle identifies the entire selected package, including executable
+// resources. Platforms lists the runners an image has bundles for.
 type Bundle struct {
 	Manifest   string
 	Artifact   cas.Ref
 	Local      *source.Content
 	Entrypoint string
+	Platforms  []string
 }
 
 // Store keeps registry content in the shared disposable cache. Callers hold a lease.
@@ -99,50 +102,47 @@ func repository(image string) (*remote.Repository, error) {
 	return repo, nil
 }
 
-// Resolve contacts the registry only for an explicit installation or update.
-func (s *Store) Resolve(ctx context.Context, image string) (Entry, error) {
+// Resolve names the platform index an image's tag selects now. Only updates
+// contact the registry for it.
+func (s *Store) Resolve(ctx context.Context, image string) (string, error) {
 	if s.offline {
-		return Entry{}, errors.New("cannot resolve a plugin image offline")
+		return "", errors.New("cannot resolve a plugin image offline")
 	}
 	repo, err := s.registry(image)
 	if err != nil {
-		return Entry{}, err
+		return "", err
 	}
 	desc, err := repo.Resolve(ctx, image)
 	if err != nil {
-		return Entry{}, err
+		return "", err
 	}
 	if desc.MediaType != ocispec.MediaTypeImageIndex {
-		return Entry{}, errors.New("plugin image must be an OCI platform index")
+		return "", errors.New("plugin image must be an OCI platform index")
 	}
-	entry := Entry{Image: image, Digest: desc.Digest.String(), Size: desc.Size}
-	return entry, entry.Validate(image)
+	if _, err := reference(desc, maxMetadataSize); err != nil {
+		return "", err
+	}
+	return desc.Digest.String(), nil
 }
 
-func (e Entry) Validate(image string) error {
-	if e.Image != image || e.Image == "" || e.Path != "" || e.Local != nil || e.Entrypoint != "" {
-		return errors.New("plugin image is missing or stale in the lockfile; run stemma plugins install")
-	}
-	_, err := reference(ocispec.Descriptor{Digest: digest.Digest(e.Digest), Size: e.Size}, maxMetadataSize)
-	return err
-}
-
-// Acquire uses the locked index even if the configured tag has moved. It fetches
-// only the runner's manifest, config and bundle; cached bytes are verified first.
-func (s *Store) Acquire(ctx context.Context, image string, entry Entry) (Bundle, error) {
-	if err := entry.Validate(image); err != nil {
+// Acquire uses the platform index indexDigest names, even if the image's tag
+// has moved. It fetches only the runner's manifest, config and bundle; cached
+// bytes are verified first.
+func (s *Store) Acquire(ctx context.Context, image, indexDigest string) (Bundle, error) {
+	fetcher := &fetcher{store: s, image: image}
+	desc, err := fetcher.index(ctx, digest.Digest(indexDigest))
+	if err != nil {
 		return Bundle{}, err
 	}
-	fetcher := &fetcher{store: s, image: image}
 	var index ocispec.Index
-	if err := fetcher.metadata(ctx, ocispec.Descriptor{MediaType: ocispec.MediaTypeImageIndex, Digest: digest.Digest(entry.Digest), Size: entry.Size}, &index); err != nil {
+	if err := fetcher.metadata(ctx, desc, &index); err != nil {
 		return Bundle{}, err
 	}
 	if index.SchemaVersion != 2 || index.MediaType != ocispec.MediaTypeImageIndex || len(index.Manifests) == 0 || len(index.Manifests) > maxPlatforms {
 		return Bundle{}, errors.New("invalid plugin platform index")
 	}
 	var selected ocispec.Descriptor
-	seen := map[string]bool{}
+	var platforms []string
 	for _, desc := range index.Manifests {
 		if desc.MediaType != ocispec.MediaTypeImageManifest || desc.Platform == nil {
 			return Bundle{}, errors.New("plugin index requires platform-specific manifests")
@@ -151,14 +151,15 @@ func (s *Store) Acquire(ctx context.Context, image string, entry Entry) (Bundle,
 		if err != nil {
 			return Bundle{}, err
 		}
-		if seen[key] {
+		if slices.Contains(platforms, key) {
 			return Bundle{}, fmt.Errorf("plugin index has more than one bundle for %s", key)
 		}
-		seen[key] = true
+		platforms = append(platforms, key)
 		if desc.Platform.OS == s.platform.OS && desc.Platform.Architecture == s.platform.Architecture {
 			selected = desc
 		}
 	}
+	slices.Sort(platforms)
 	if selected.Digest == "" {
 		return Bundle{}, fmt.Errorf("plugin has no bundle for %s/%s", s.platform.OS, s.platform.Architecture)
 	}
@@ -193,7 +194,7 @@ func (s *Store) Acquire(ctx context.Context, image string, entry Entry) (Bundle,
 	if _, err := io.ReadFull(blob, magic[:]); err != nil || magic != zstdMagic {
 		return Bundle{}, errors.New("plugin bundle is not a Zstandard archive")
 	}
-	return Bundle{Manifest: selected.Digest.String(), Artifact: ref}, nil
+	return Bundle{Manifest: selected.Digest.String(), Artifact: ref, Platforms: platforms}, nil
 }
 
 // Materialize extracts into a new leased workspace and returns its fixed entrypoint.
@@ -268,6 +269,49 @@ type fetcher struct {
 	repo  oras.ReadOnlyTarget
 }
 
+// index describes the platform index d names. A cached copy supplies its
+// size; otherwise the registry does.
+func (f *fetcher) index(ctx context.Context, d digest.Digest) (ocispec.Descriptor, error) {
+	if err := d.Validate(); err != nil || d.Algorithm() != digest.SHA256 {
+		return ocispec.Descriptor{}, errors.New("invalid plugin index digest")
+	}
+	desc := ocispec.Descriptor{MediaType: ocispec.MediaTypeImageIndex, Digest: d}
+	if path, err := f.store.cache.Path(cas.Ref{SHA256: d.Encoded()}); err == nil {
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && info.Size() <= maxMetadataSize {
+			desc.Size = info.Size()
+			if f.store.cache.Verify(ctx, cas.Ref{SHA256: d.Encoded(), Size: desc.Size}) == nil {
+				return desc, nil
+			}
+		}
+	}
+	if f.store.offline {
+		return ocispec.Descriptor{}, errors.New("plugin cache unavailable offline")
+	}
+	repo, err := f.repository()
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	resolved, err := repo.Resolve(ctx, d.String())
+	if err != nil {
+		return ocispec.Descriptor{}, err
+	}
+	if resolved.Digest != d || resolved.MediaType != ocispec.MediaTypeImageIndex {
+		return ocispec.Descriptor{}, errors.New("plugin image must be an OCI platform index")
+	}
+	return resolved, nil
+}
+
+func (f *fetcher) repository() (oras.ReadOnlyTarget, error) {
+	if f.repo == nil {
+		repo, err := f.store.registry(f.image)
+		if err != nil {
+			return nil, err
+		}
+		f.repo = repo
+	}
+	return f.repo, nil
+}
+
 func (f *fetcher) metadata(ctx context.Context, desc ocispec.Descriptor, value any) error {
 	if _, err := reference(desc, maxMetadataSize); err != nil {
 		return err
@@ -292,13 +336,11 @@ func (f *fetcher) Fetch(ctx context.Context, desc ocispec.Descriptor) (io.ReadCl
 		if len(desc.Data) != 0 {
 			blob = io.NopCloser(bytes.NewReader(desc.Data))
 		} else {
-			if f.repo == nil {
-				f.repo, err = f.store.registry(f.image)
-				if err != nil {
-					return nil, err
-				}
+			repo, err := f.repository()
+			if err != nil {
+				return nil, err
 			}
-			blob, err = f.repo.Fetch(ctx, desc)
+			blob, err = repo.Fetch(ctx, desc)
 			if err != nil {
 				return nil, err
 			}

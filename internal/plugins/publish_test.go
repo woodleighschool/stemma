@@ -80,14 +80,14 @@ func TestPublishedGoReleaserReleaseRunsOnEachPlatform(t *testing.T) {
 				}
 				return repo, nil
 			}
-			entry, err := s.Resolve(t.Context(), image)
+			indexDigest, err := s.Resolve(t.Context(), image)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if entry.Digest != published.Digest.String() {
-				t.Fatalf("installed %s, published %s", entry.Digest, published.Digest)
+			if indexDigest != published.Digest.String() {
+				t.Fatalf("resolved %s, published %s", indexDigest, published.Digest)
 			}
-			bundle, err := s.Acquire(t.Context(), image, entry)
+			bundle, err := s.Acquire(t.Context(), image, indexDigest)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -162,6 +162,33 @@ func TestPublishedTagKeepsItsRelease(t *testing.T) {
 	tagged, err := target.Resolve(t.Context(), "1.0.0")
 	if err != nil || tagged.Digest != released.Digest {
 		t.Fatalf("tag = %s, %v; want %s", tagged.Digest, err, released.Digest)
+	}
+}
+
+func TestPublicationIdentityIgnoresArchivePaths(t *testing.T) {
+	var bundles []PlatformBundle
+	for _, platform := range []ocispec.Platform{{OS: "linux", Architecture: "amd64"}, {OS: "darwin", Architecture: "arm64"}} {
+		path := filepath.Join(t.TempDir(), "plugin.tar.zst")
+		if err := os.WriteFile(path, fixtureArchive(t, "plugin", platform.OS, false), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		bundles = append(bundles, PlatformBundle{Platform: platform, Path: path})
+	}
+	target := memory.New()
+	published, err := publish(t.Context(), target, "1.0.0", bundles, nil)
+	if err != nil {
+		t.Fatalf("publish archives with the same basename: %v", err)
+	}
+	for i := range bundles {
+		path := filepath.Join(t.TempDir(), "renamed.tar.zst")
+		if err := os.Rename(bundles[i].Path, path); err != nil {
+			t.Fatal(err)
+		}
+		bundles[i].Path = path
+	}
+	again, err := publish(t.Context(), target, "1.0.0", bundles, nil)
+	if err != nil || again.Digest != published.Digest {
+		t.Fatalf("renamed bundles changed release %s: %s, %v", published.Digest, again.Digest, err)
 	}
 }
 

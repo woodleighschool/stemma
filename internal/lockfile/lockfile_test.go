@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/cas"
-	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 	"go.yaml.in/yaml/v4"
@@ -398,9 +397,6 @@ func TestInputRemovalAndSourceFreeProjects(t *testing.T) {
 	if _, err := prepare(t, m, nil, Options{Offline: true}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Prepare(t.Context(), m.Root, nil, map[string]plugins.Entry{"fixture": {Image: "registry.example/plugin:v1"}}, m, Options{}); err == nil {
-		t.Fatal("source-free project bypassed required plugin lock")
-	}
 }
 
 func TestSelectedInputsPreserveOtherReviewedResources(t *testing.T) {
@@ -732,6 +728,32 @@ func TestParseChecksTheVersionBeforeAnyEntry(t *testing.T) {
 	}
 	if _, err := prepare(t, m, map[string]map[string]plugin.Input{}, Options{}); err == nil || err.Error() != unsupported {
 		t.Fatalf("run read the lockfile as %v", err)
+	}
+}
+
+func TestParseReportsMissingObservation(t *testing.T) {
+	data := []byte(`version: 3
+inputs:
+  fixture:
+    source:
+      version: 1
+      resolver: file
+      resolver_version: "1"
+      declaration: ` + strings.Repeat("a", 64) + `
+      content:
+        artifact:
+          sha256: ` + strings.Repeat("b", 64) + `
+          size: 1
+        filename: input.pkg
+        mode: 420
+`)
+	want := "lockfile: fixture input source: missing resolver observation"
+	if _, err := Parse(data); err == nil || err.Error() != want {
+		t.Fatalf("missing observation: %v, want %q", err, want)
+	}
+	data = append(data, []byte("      observation: {}\n")...)
+	if _, err := Parse(data); err != nil {
+		t.Fatalf("explicit empty observation: %v", err)
 	}
 }
 
