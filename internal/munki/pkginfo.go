@@ -90,7 +90,7 @@ type Metadata struct {
 	MaximumOSVersion       *string                    `json:"maximum_os_version,omitempty" jsonschema:"description=Highest macOS version eligible for this package."`
 	MinimumMunkiVersion    *string                    `json:"minimum_munki_version,omitempty" jsonschema:"description=Lowest Munki client version eligible for this package."`
 	SupportedArchitectures *[]string                  `json:"supported_architectures,omitempty" jsonschema:"description=Complete architecture list using arm64 or x86_64."`
-	BlockingApplications   *[]string                  `json:"blocking_applications,omitempty" jsonschema:"description=Applications that block installation. Empty list disables inferred blocking."`
+	BlockingApplications   *[]string                  `json:"blocking_applications,omitempty" jsonschema:"description=Applications that block installation or removal while they run. Munki uses the applications in installs when this is absent; an empty list blocks nothing."`
 	InstallableCondition   *string                    `json:"installable_condition,omitempty" jsonschema:"description=Munki predicate controlling installation eligibility."`
 	InstalledSize          *int64                     `json:"installed_size,omitempty" jsonschema:"description=Installed size in KiB; independent of downloaded installer size."`
 	OnDemand               *bool                      `json:"OnDemand,omitempty" jsonschema:"description=Allow repeated optional installation even when the item is already installed."`

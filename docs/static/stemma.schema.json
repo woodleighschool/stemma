@@ -4746,7 +4746,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Publish the signed PKG as a line-of-business app."
+              "description": "Publish the signed PKG as a line-of-business app. The PKG must install an application under /Applications."
             }
           },
           "propertyNames": {
@@ -5805,7 +5805,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Applications that block installation. Empty list disables inferred blocking."
+                  "description": "Applications that block installation or removal while they run. Munki uses the applications in installs when this is absent; an empty list blocks nothing."
                 },
                 "catalogs": {
                   "anyOf": [

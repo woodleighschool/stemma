@@ -159,7 +159,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		}
 	}
 	if c.appType == lobType && desired["installAsManaged"] == nil && current["installAsManaged"] == true {
-		if err := validateLOB(req.Artifact, true); err != nil {
+		if err := validateLOB(req.Artifact, nil, true); err != nil {
 			return response, err
 		}
 	}

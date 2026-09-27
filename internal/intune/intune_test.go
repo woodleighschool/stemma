@@ -876,8 +876,9 @@ func TestMacLOBPreservesManagedInstallRequirements(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	fake.app = object{"@odata.type": lobType, "id": "app-1", "installAsManaged": true}
 	receipt := plugin.Subject{ID: "PackageInfo", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.package", Version: "2.0", HasPayload: true}}
-	app := plugin.Subject{ID: "Payload/Example.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Library/Example.app", App: &plugin.AppFacts{BundleID: "org.example.app", Version: "2.0"}}
-	req := lobRequest(object{"type": "lob", "app_id": "app-1", "included_apps": []any{object{"id": "org.example.app", "version": "2.0"}}}, receipt, app)
+	app := plugin.Subject{ID: "Payload/Example.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Applications/Example.app", App: &plugin.AppFacts{BundleID: "org.example.app", Version: "2.0"}}
+	other := plugin.Subject{ID: "Payload/Other.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Applications/Other.app", App: &plugin.AppFacts{BundleID: "org.example.other", Version: "2.0"}}
+	req := lobRequest(object{"type": "lob", "app_id": "app-1", "included_apps": []any{object{"id": "org.example.app", "version": "2.0"}}}, receipt, app, other)
 	req.Method = "plan"
 	req.Artifact.SHA256 = strings.Repeat("a", 64)
 	derived, _, err := Derive(req)

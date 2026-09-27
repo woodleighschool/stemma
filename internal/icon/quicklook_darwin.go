@@ -3,89 +3,70 @@ package icon
 import (
 	"context"
 	"errors"
-	"runtime"
-	"sync"
 
-	"github.com/ebitengine/purego"
+	"github.com/deploymenttheory/go-bindings-macosplatform/bindings/frameworks/corefoundation"
+	"github.com/deploymenttheory/go-bindings-macosplatform/bindings/frameworks/imageio"
+	ql "github.com/deploymenttheory/go-bindings-macosplatform/bindings/frameworks/quicklookthumbnailing"
+	"github.com/deploymenttheory/go-bindings-macosplatform/bindings/runtime/obj"
+	"github.com/deploymenttheory/go-bindings-macosplatform/bindings/runtime/purego"
 	"github.com/ebitengine/purego/objc"
 )
 
-var loadQuickLook = sync.OnceValue(func() error {
-	for _, name := range []string{"Foundation", "QuickLookThumbnailing"} {
-		if _, err := purego.Dlopen("/System/Library/Frameworks/"+name+".framework/"+name, purego.RTLD_NOW|purego.RTLD_GLOBAL); err != nil {
-			return err
-		}
-	}
-	return nil
-})
-
-func message(object objc.ID, selector string, arguments ...any) objc.ID {
-	return object.Send(objc.RegisterName(selector), arguments...)
-}
-
-func nativeClass(name string) objc.ID { return objc.ID(objc.GetClass(name)) }
-
+// quickLookPNG has Quick Look draw the icon of source at size pixels and
+// returns it as PNG.
 func quickLookPNG(ctx context.Context, source string, size int) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if err := loadQuickLook(); err != nil {
-		return nil, err
-	}
-	api, err := loadImageIO()
-	if err != nil {
-		return nil, err
-	}
-	// Autorelease pools belong to an OS thread, including across the asynchronous wait.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-	pool := message(nativeClass("NSAutoreleasePool"), "new")
-	defer message(pool, "drain")
-
-	path := message(nativeClass("NSString"), "stringWithUTF8String:", source)
-	url := message(nativeClass("NSURL"), "fileURLWithPath:", path)
-	dimensions := struct{ Width, Height float64 }{float64(size), float64(size)}
-	request := message(message(nativeClass("QLThumbnailGenerationRequest"), "alloc"), "initWithFileAtURL:size:scale:representationTypes:", url, dimensions, float64(1), uintptr(1))
-	if request == 0 {
-		return nil, errors.New("cannot create Quick Look request")
-	}
-	defer message(request, "release")
-	message(request, "setIconMode:", true)
-	generator := message(nativeClass("QLThumbnailGenerator"), "sharedGenerator")
-	if generator == 0 {
-		return nil, errors.New("cannot create Quick Look generator")
-	}
+	request := ql.NewThumbnailGenerationRequestWithFileAtURLSizeScaleRepresentationTypes(
+		source, corefoundation.CGSize{Width: float64(size), Height: float64(size)}, 1,
+		ql.ThumbnailGenerationRequestRepresentationTypeIcon,
+	).WithIconMode(true)
+	generator := ql.SharedGenerator()
+	// Stops the work a cancelled context abandons; a no-op once Quick Look is done.
+	defer generator.CancelRequest(request)
 	type result struct {
-		data []byte
-		err  error
+		thumbnail *ql.ThumbnailRepresentation
+		err       error
 	}
 	completed := make(chan result, 1)
-	block := objc.NewBlock(func(_ objc.Block, thumbnail objc.ID, failure objc.ID) {
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-		pool := message(nativeClass("NSAutoreleasePool"), "new")
-		defer message(pool, "drain")
-		var output result
-		if failure != 0 {
-			description := message(failure, "localizedDescription")
-			output.err = errors.New(objc.Send[string](description, objc.RegisterName("UTF8String")))
-		} else {
-			output.data, output.err = api.png(uintptr(message(thumbnail, "CGImage")))
-		}
-		// A late callback can finish after context cancellation without blocking.
-		select {
-		case completed <- output:
-		default:
-		}
+	block := objc.NewBlock(func(_ objc.Block, thumbnail, failure objc.ID) {
+		completed <- result{ql.ThumbnailRepresentationFromID(thumbnail), purego.NSErrorToError(failure)}
 	})
-	// Quick Look owns its copy; releasing ours also permits late completion after cancellation.
+	// The binding's async wrapper does not release its block. Own this one;
+	// Quick Look retains its copy until any late completion after cancellation.
 	defer block.Release()
-	message(generator, "generateBestRepresentationForRequest:completionHandler:", request, block)
-	defer message(generator, "cancelRequest:", request)
+	objc.Send[objc.ID](obj.ID(generator), objc.RegisterName("generateBestRepresentationForRequest:completionHandler:"), obj.ID(request), block)
+	var thumbnail *ql.ThumbnailRepresentation
 	select {
-	case output := <-completed:
-		return output.data, output.err
+	case result := <-completed:
+		if result.err != nil {
+			return nil, result.err
+		}
+		thumbnail = result.thumbnail
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	if thumbnail == nil {
+		return nil, errors.New("quick look returned no icon")
+	}
+	bitmap := thumbnail.CGImage()
+	if bitmap.IsNil() {
+		return nil, errors.New("quick look returned no bitmap")
+	}
+	buffer := corefoundation.CFDataCreateMutable(corefoundation.CFAllocatorRef{}, 0)
+	format := corefoundation.CFStringCreateWithCString(corefoundation.CFAllocatorRef{}, "public.png", int(corefoundation.KCFStringEncodingUTF8))
+	destination := imageio.CGImageDestinationCreateWithData(buffer, format, 1, corefoundation.CFDictionaryRef{})
+	if destination.IsNil() {
+		return nil, errors.New("cannot create PNG destination")
+	}
+	imageio.CGImageDestinationAddImage(destination, bitmap, corefoundation.CFDictionaryRef{})
+	if !imageio.CGImageDestinationFinalize(destination) {
+		return nil, errors.New("cannot encode Quick Look PNG")
+	}
+	data := obj.Bytes(buffer)
+	if len(data) == 0 {
+		return nil, errors.New("quick look returned no PNG data")
+	}
+	return data, nil
 }
