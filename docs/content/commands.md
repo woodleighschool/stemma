@@ -36,8 +36,12 @@ entry is missing or stale does not load.
 
 `prepare --changed-since REV` prepares only the resources whose preparation
 differs from the catalog at the commit where `REV` and `HEAD` meet: their source
-and preparation settings after components merge, and their lock entries, but not
-destination metadata. New resources count as changed, and a changed build selects
+and preparation settings after components merge, their lock entries, and Git
+changes under declared local input paths. Destination metadata does not select
+resources. Local paths containing environment expressions or outside the Git
+root are selected only by declaration and lock changes. Plugin resolvers with
+local inputs are selected for any changed project file because they do not
+declare which files they read. New resources count as changed, and a changed build selects
 the resources that consume it. Suspended resources stay out. The lockfile must
 hold entries for exactly the declared inputs; entry and environment values are
 read only for the resources the command prepares. Changed plugins, and a catalog
@@ -95,6 +99,19 @@ proposes lock updates as pull requests in one finite run. The Project's
 `spec.reconcile.source_control` names the provider; see
 [automating updates](reconcile.md).
 
+## Agents
+
+```sh
+stemma mcp
+```
+
+`mcp` serves the catalog's tools to an agent over the Model Context Protocol on
+standard input and output. `describe` answers what documents can declare, from
+the built-in operations and the catalog's plugins; `prepare` tries documents
+against their current sources without the lockfile and reports the inspected
+artifact and its signer; `update`, `icon` and `check` match the commands. No
+tool contacts a destination.
+
 ## Inspection and configuration
 
 ```sh
@@ -102,11 +119,10 @@ stemma inspect installer.pkg
 stemma validate --resolved
 stemma schema --output-file stemma.schema.json
 stemma schema --offline --output-file -
-stemma operations
 stemma version
 ```
 
-`validate --resolved`, `schema --output-file -` and `operations` print JSON documents.
+`validate --resolved` and `schema --output-file -` print JSON documents.
 `schema` requires an explicit output file and includes the locally loaded plugins.
 `--builtins` generates the default schema without loading a catalog; it uses the
 same registry and schema composition as project generation.

@@ -19,7 +19,7 @@ func BuiltinSchema() ([]byte, error) {
 // ProjectSchema describes trusted operations without acquiring software inputs
 // or contacting destinations. Offline requires verified cached plugin bundles.
 func ProjectSchema(ctx context.Context, opts Options) (result []byte, err error) {
-	project, err := config.LoadSchemaProject(opts.ConfigPath)
+	project, err := config.LoadProjectDocument(opts.ConfigPath)
 	if err != nil {
 		return nil, err
 	}

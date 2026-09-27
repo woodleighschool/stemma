@@ -28,24 +28,40 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// Catalog describes built-in and installed plugin operations without acquiring
-// software inputs or contacting destinations. Trusted plugin discovery executes code.
-func Catalog(ctx context.Context, opts Options) (result plugin.Descriptor, err error) {
-	p, err := config.Load(opts.ConfigPath)
+// Contracts are what a project can declare: its components and destination
+// connections, and the operations Stemma and its trusted plugins provide.
+type Contracts struct {
+	Project    string
+	Components map[string]map[string]any
+	// Destinations name the operation behind each destination connection.
+	Destinations map[string]string
+	Operations   []plugin.Operation
+	// Unavailable explains each plugin that did not load and each operation
+	// offered at another interface version.
+	Unavailable []string
+}
+
+// ProjectContracts describes what a project can declare from its project
+// document alone, so resource documents that do not load yet leave it
+// describable. A plugin that does not load is reported beside the operations
+// that did. Trusted plugin discovery executes code.
+func ProjectContracts(ctx context.Context, opts Options) (result Contracts, err error) {
+	p, err := config.LoadProjectDocument(opts.ConfigPath)
 	if err != nil {
-		return plugin.Descriptor{}, err
+		return Contracts{}, err
 	}
 	done := plugin.Stage(ctx, "Loading operation contracts")
 	defer func() { done(err) }()
 	ops, cleanup, err := projectOperations(ctx, p, opts)
 	if err != nil {
-		return plugin.Descriptor{}, err
+		return Contracts{}, err
 	}
 	defer cleanup()
-	if err := ops.complete(); err != nil {
-		return plugin.Descriptor{}, err
+	result = Contracts{Project: p.Project, Components: p.Components, Destinations: map[string]string{}, Operations: ops.registry.Descriptor().Operations, Unavailable: ops.problems()}
+	for name, destination := range p.Destinations {
+		result.Destinations[name] = destination.Operation
 	}
-	return ops.registry.Descriptor(), nil
+	return result, nil
 }
 
 // ValidateProject checks the catalog as written: declared fields, expressions,

@@ -9,6 +9,53 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
+// Resolvers names the built-in resolvers. A url alone selects http and a path
+// alone selects file.
+func Resolvers() []string { return []string{"http", "github", "file", "local"} }
+
+// ResolverSchema describes a built-in resolver's settings beside the resolver
+// field, or returns nil for a name that is not built in.
+func ResolverSchema(resolver string) *jsonschema.Schema {
+	fields, ok := nativeFields[resolver]
+	if !ok {
+		return nil
+	}
+	config := (&jsonschema.Reflector{DoNotReference: true}).Reflect(nativeConfig{})
+	config.Version, config.ID = "", ""
+	var remove []string
+	for name := range config.Properties.FromOldest() {
+		if !slices.Contains(fields, name) {
+			remove = append(remove, name)
+		}
+	}
+	for _, name := range remove {
+		config.Properties.Delete(name)
+	}
+	switch resolver {
+	case "http":
+		config.Required = []string{"url"}
+	case "github":
+		config.Required = []string{"repository", "asset"}
+	case "file":
+		config.Required = []string{"path"}
+	case "local":
+		config.Required = []string{"include"}
+	}
+	for _, name := range config.Required {
+		property, _ := config.Properties.Get(name)
+		if property.Type == "string" {
+			property.MinLength = new(uint64(1))
+		}
+		if property.Type == "array" {
+			property.MinItems = new(uint64(1))
+		}
+	}
+	if token, ok := config.Properties.Get("token"); ok {
+		token.WriteOnly = true
+	}
+	return config
+}
+
 // InputSchema describes native inputs. The catalog composer adds installed resolvers.
 func InputSchema(t reflect.Type) *jsonschema.Schema {
 	if t != reflect.TypeFor[plugin.Input]() {
@@ -17,40 +64,8 @@ func InputSchema(t reflect.Type) *jsonschema.Schema {
 	schema := (plugin.Input{}).JSONSchema()
 	schema.OneOf = schema.OneOf[:1]
 	schema.Extras = nil
-	for _, resolver := range []string{"http", "github", "file", "local"} {
-		config := (&jsonschema.Reflector{DoNotReference: true}).Reflect(nativeConfig{})
-		config.Version, config.ID = "", ""
-		var remove []string
-		for name := range config.Properties.FromOldest() {
-			if !slices.Contains(nativeFields[resolver], name) {
-				remove = append(remove, name)
-			}
-		}
-		for _, name := range remove {
-			config.Properties.Delete(name)
-		}
-		switch resolver {
-		case "http":
-			config.Required = []string{"url"}
-		case "github":
-			config.Required = []string{"repository", "asset"}
-		case "file":
-			config.Required = []string{"path"}
-		case "local":
-			config.Required = []string{"include"}
-		}
-		for _, name := range config.Required {
-			property, _ := config.Properties.Get(name)
-			if property.Type == "string" {
-				property.MinLength = new(uint64(1))
-			}
-			if property.Type == "array" {
-				property.MinItems = new(uint64(1))
-			}
-		}
-		if token, ok := config.Properties.Get("token"); ok {
-			token.WriteOnly = true
-		}
+	for _, resolver := range Resolvers() {
+		config := ResolverSchema(resolver)
 		if resolver == "http" || resolver == "file" {
 			schema.OneOf = append(schema.OneOf, config)
 		}

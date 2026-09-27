@@ -63,7 +63,7 @@ type PluginUpdate struct {
 // and reports each one. It returns ErrPluginsFailed when a report holds a
 // failure.
 func ListPlugins(ctx context.Context, opts Options) ([]PluginReport, error) {
-	p, err := config.Load(opts.ConfigPath)
+	p, err := config.LoadProjectDocument(opts.ConfigPath)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +93,7 @@ func ListPlugins(ctx context.Context, opts Options) ([]PluginReport, error) {
 // its entry. Entries of plugins no longer declared are removed. It returns
 // ErrPluginsFailed when a report holds a failure.
 func UpdatePlugins(ctx context.Context, opts Options, names []string) (update PluginUpdate, err error) {
-	p, err := config.Load(opts.ConfigPath)
+	p, err := config.LoadProjectDocument(opts.ConfigPath)
 	if err != nil {
 		return update, err
 	}
@@ -229,12 +229,12 @@ type loadedPlugin struct {
 }
 
 // loadPlugin selects a plugin's code, materializes it in work and describes it.
-func loadPlugin(ctx context.Context, store *plugins.Store, root, work, name string, declaration config.Plugin, previous plugins.Entry, frozen bool) (loaded loadedPlugin) {
+func loadPlugin(ctx context.Context, store *plugins.Store, root, work, name string, declaration config.Plugin, previous plugins.Entry, resolve bool) (loaded loadedPlugin) {
 	loaded.name = name
 	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("plugin", name))
 	done := plugin.Stage(ctx, "Loading plugin")
 	defer func() { done(loaded.err, plugin.Detail(loaded.description.Version)) }()
-	loaded.bundle, loaded.entry, loaded.err = store.Load(ctx, root, declaration, previous, frozen)
+	loaded.bundle, loaded.entry, loaded.err = store.Load(ctx, root, declaration, previous, resolve)
 	if loaded.err != nil {
 		return loaded
 	}
@@ -281,6 +281,9 @@ func (o *operations) register(loaded loadedPlugin) error {
 	for name := range o.unavailable {
 		names[name] = true
 	}
+	for kind := range o.unavailableKinds {
+		kinds[kind] = true
+	}
 	for _, operation := range loaded.description.Operations {
 		switch {
 		case operation.Resolver != nil && source.NativeResolver(operation.Name):
@@ -296,8 +299,18 @@ func (o *operations) register(loaded loadedPlugin) error {
 		}
 	}
 	for _, operation := range loaded.description.Unavailable {
+		if operation.Kind == "resolve" && source.NativeResolver(operation.Name) {
+			return fmt.Errorf("resolver %q is built in", operation.Name)
+		}
 		if names[operation.Name] {
 			return fmt.Errorf("operation %q is already provided", operation.Name)
+		}
+		if operation.Resource != nil && kinds[*operation.Resource] {
+			return fmt.Errorf("resource kind %s/%s is already registered", operation.Resource.APIVersion, operation.Resource.Kind)
+		}
+		names[operation.Name] = true
+		if operation.Resource != nil {
+			kinds[*operation.Resource] = true
 		}
 	}
 	identity := config.Fingerprint(struct {
@@ -338,6 +351,16 @@ func (o *operations) missing(message string) error {
 // complete reports every plugin that did not load and every operation offered
 // at another interface version, for commands that describe all operations.
 func (o *operations) complete() error {
+	problems := o.problems()
+	if len(problems) == 0 {
+		return nil
+	}
+	return errors.New(strings.Join(problems, "\n"))
+}
+
+// problems explains each plugin that did not load and each operation offered
+// at another interface version.
+func (o *operations) problems() []string {
 	var problems []string
 	for _, name := range slices.Sorted(maps.Keys(o.failed)) {
 		problems = append(problems, fmt.Sprintf("plugin %s: %v", name, o.failed[name]))
@@ -345,8 +368,5 @@ func (o *operations) complete() error {
 	for _, name := range slices.Sorted(maps.Keys(o.unavailable)) {
 		problems = append(problems, o.unavailable[name].Error())
 	}
-	if len(problems) == 0 {
-		return nil
-	}
-	return errors.New(strings.Join(problems, "\n"))
+	return problems
 }

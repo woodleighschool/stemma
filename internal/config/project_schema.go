@@ -14,9 +14,10 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// LoadSchemaProject reads connection and plugin declarations without resolving
-// credentials or loading the software documents the editor is about to write.
-func LoadSchemaProject(filename string) (Project, error) {
+// LoadProjectDocument reads the project document alone: its components,
+// connections and plugins, without resolving credentials or loading the
+// resource documents, which may be drafts an editor or agent is writing.
+func LoadProjectDocument(filename string) (Project, error) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		return Project{}, err
@@ -42,7 +43,7 @@ func LoadSchemaProject(filename string) (Project, error) {
 	if err := validateHeader(document.APIVersion, document.Kind, "Project", document.Metadata); err != nil {
 		return Project{}, err
 	}
-	p := Project{Project: document.Metadata.Name, Destinations: document.Spec.Destinations, Plugins: document.Spec.Plugins}
+	p := Project{Project: document.Metadata.Name, Components: document.Spec.Components, Destinations: document.Spec.Destinations, Plugins: document.Spec.Plugins}
 	for name, destination := range p.Destinations {
 		if !namePattern.MatchString(name) {
 			return p, fmt.Errorf("invalid destination name %q", name)

@@ -79,7 +79,7 @@ catalog-tools
   Resource kinds:  example.org/v1/VendorPackage
 ```
 
-`stemma operations` prints the complete contracts of every operation.
+`stemma schema --output-file -` includes the schemas of every operation.
 
 ## Updates
 
@@ -113,8 +113,9 @@ resolvers, resource kinds and destinations. Stemma uses a kind's operations only
 while the plugin's version matches its own, so a plugin built for another Stemma
 keeps the operations whose versions still match. The others fail only the
 commands that use them, naming both versions. A plugin that does not load fails
-the same way. `stemma schema` and `stemma operations` describe every operation,
-so they fail until all of them are usable.
+the same way. `stemma schema` describes every operation, so it fails until all of
+them are usable; the `describe` tool of [`stemma mcp`](commands.md#agents) lists
+the unusable ones beside the others.
 
 ## Configure an operation
 
@@ -123,8 +124,8 @@ runner requirements. Installing a plugin does not automatically configure a
 destination. Add a named connection using the advertised operation, then put its
 native metadata in the software document.
 
-`stemma operations` shows the installed contracts.
-`stemma schema --offline --output-file stemma.schema.json` includes their schemas for your editor.
+`stemma schema --offline --output-file stemma.schema.json` includes their schemas
+for your editor, and the `describe` tool of `stemma mcp` outlines them for agents.
 
 Woodstar's experimental plugin is an external consumer of this interface. Its
 Munki-compatible publishing belongs to that plugin; Stemma does not register it as

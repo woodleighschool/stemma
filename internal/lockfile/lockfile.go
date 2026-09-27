@@ -151,12 +151,15 @@ func Parse(data []byte) (f File, err error) {
 // Update stages input observations until Commit replaces the lockfile atomically.
 // Callers hold the project lock for its lifetime.
 type Update struct {
-	result  Result
-	old     File
-	root    string
-	opts    Options
-	inputs  map[string]map[string]plugin.Input
-	acquire func(ctx context.Context, input plugin.Input, entry source.Entry) (source.Entry, bool, error)
+	result Result
+	old    File
+	// reviewed holds the lockfile's input entries, which a run that ignores
+	// them still reports its observations against.
+	reviewed map[string]map[string]source.Entry
+	root     string
+	opts     Options
+	inputs   map[string]map[string]plugin.Input
+	acquire  func(ctx context.Context, input plugin.Input, entry source.Entry) (source.Entry, bool, error)
 }
 
 // Begin loads reviewed inputs without acquiring resource content.
@@ -180,6 +183,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	reviewed := old.Inputs
 	if opts.IgnoreInputs {
 		old.Inputs = nil
 	}
@@ -255,7 +259,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		}
 	}
 	result.File.Plugins = pluginEntries
-	return &Update{result: result, old: old, root: root, opts: opts, inputs: inputs, acquire: acquire}, nil
+	return &Update{result: result, old: old, reviewed: reviewed, root: root, opts: opts, inputs: inputs, acquire: acquire}, nil
 }
 
 // Check verifies the lockfile's shape without reading declared values: it
@@ -349,12 +353,13 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 }
 
 // Changes compares one acquired resource's inputs with its reviewed entries,
-// as Commit records them unless the resource is rejected.
+// as Commit records them unless the resource is rejected. A run that ignores
+// input locks records nothing and reports what an update would record.
 func (u *Update) Changes(resource string) []InputChange {
-	if u.opts.IgnoreInputs || u.opts.PluginsOnly {
+	if u.opts.PluginsOnly {
 		return nil
 	}
-	return DiffInputs(map[string]map[string]source.Entry{resource: u.old.Inputs[resource]}, map[string]map[string]source.Entry{resource: u.result.File.Inputs[resource]})
+	return DiffInputs(map[string]map[string]source.Entry{resource: u.reviewed[resource]}, map[string]map[string]source.Entry{resource: u.result.File.Inputs[resource]})
 }
 
 // Commit replaces the lockfile after every selected resource was acquired or

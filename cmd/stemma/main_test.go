@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/intunewin"
 	"github.com/woodleighschool/stemma/internal/lockfile"
@@ -185,22 +186,21 @@ spec:
 		}
 	}
 	invoke(true, "validate", "--resolved", "--offline")
-	var descriptor plugin.Descriptor
-	if err := json.Unmarshal(invoke(true, "operations", "--offline"), &descriptor); err != nil {
-		t.Fatal(err)
+	session := serveProject(t, binary, "--root", project, "--cache-dir", cache)
+	var described struct {
+		Kinds        []struct{ Kind string }
+		Destinations []struct{ Name, Operation string }
 	}
-	if err := plugin.ValidateDescriptor(descriptor); err != nil {
-		t.Fatal(err)
+	callTool(t, session, "describe", map[string]any{}, &described)
+	kinds := map[string]bool{}
+	for _, kind := range described.Kinds {
+		kinds[kind.Kind] = true
 	}
-	operations := map[string]string{}
-	for _, operation := range descriptor.Operations {
-		operations[operation.Name] = operation.Kind
-	}
-	if operations["software.mac"] != "resource" || operations["build.mac.pkg"] != "resource" || operations["munki"] != "reconcile" {
-		t.Fatalf("missing operation roles: %v", operations)
+	if !kinds["MacSoftware"] || !kinds["BuildMacPkg"] || len(described.Destinations) != 2 || described.Destinations[0].Operation != "munki" {
+		t.Fatalf("describe: %+v", described)
 	}
 	if downloads.Load() != 0 {
-		t.Fatal("validation or catalog acquired software input")
+		t.Fatal("validation or describing contracts acquired software input")
 	}
 	var inspected engine.Inspection
 	fixture, err := filepath.Abs("../../internal/apple/testdata/fixture.pkg")
@@ -320,6 +320,50 @@ spec:
 	invoke(true, "cache", "prune")
 	if _, err := os.Stat(materialized); !os.IsNotExist(err) {
 		t.Fatalf("cache prune kept %s: %v", materialized, err)
+	}
+	// The source serves the reviewed bytes, so trying the document reports no
+	// input change and the signer it already declares.
+	var tried struct {
+		Resources []struct {
+			Inputs    []any
+			Artifacts []struct{ Version, Signature string }
+		}
+	}
+	callTool(t, session, "prepare", map[string]any{"resources": []string{"MacSoftware/fixture"}}, &tried)
+	if len(tried.Resources) != 1 || len(tried.Resources[0].Inputs) != 0 || len(tried.Resources[0].Artifacts) != 1 || !strings.Contains(tried.Resources[0].Artifacts[0].Signature, "signer: apple:developer-id:SMLKBTR495") {
+		t.Fatalf("prepare: %+v", tried)
+	}
+	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
+		t.Fatalf("prepare changed the lockfile: %v", err)
+	}
+}
+
+// serveProject starts stemma mcp and connects to it as a client.
+func serveProject(t *testing.T, binary string, args ...string) *mcp.ClientSession {
+	t.Helper()
+	command := exec.CommandContext(t.Context(), binary, append(args, "mcp")...)
+	command.Stderr = os.Stderr
+	session, err := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil).Connect(t.Context(), &mcp.CommandTransport{Command: command}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = session.Close() })
+	return session
+}
+
+// callTool calls a tool that must succeed and decodes its structured result.
+func callTool(t *testing.T, session *mcp.ClientSession, name string, arguments, result any) {
+	t.Helper()
+	response, err := session.CallTool(t.Context(), &mcp.CallToolParams{Name: name, Arguments: arguments})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(response.StructuredContent)
+	if err != nil || response.IsError {
+		t.Fatalf("%s: %v %s", name, err, data)
+	}
+	if err := json.Unmarshal(data, result); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"os"
 	"os/signal"
@@ -25,6 +26,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/intunewin"
 	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/mcpserver"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/reconcile"
@@ -142,20 +144,15 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	validate.Flags().BoolVar(&resolved, "resolved", false, "Evaluate environment values as runs do and print the resolved composition as JSON")
 	validate.Flags().BoolVar(&validateOffline, "offline", false, "Require verified cached plugin bundles")
 	root.AddCommand(validate)
-	var operationsOffline bool
-	operations := &cobra.Command{Use: "operations", Short: "Print built-in and trusted plugin operation contracts as JSON", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	root.AddCommand(&cobra.Command{Use: "mcp", Short: "Serve this project's tools to agents over MCP on standard input and output", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		path, err := resolve()
 		if err != nil {
 			return err
 		}
-		descriptor, err := engine.Catalog(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Lock: lockfile.Options{Offline: operationsOffline}})
-		if err != nil {
-			return err
-		}
-		return writeJSON(out, descriptor)
-	}}
-	operations.Flags().BoolVar(&operationsOffline, "offline", false, "Require verified cached plugin bundles")
-	root.AddCommand(operations)
+		// Standard output carries the protocol, so diagnostics go to stderr.
+		logger := slog.New(slog.NewTextHandler(errOut, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		return mcpserver.Run(plugin.WithLogger(cmd.Context(), logger), mcpserver.Options{ConfigPath: path, CacheDir: cacheDir, Version: version})
+	}})
 	for _, method := range []string{"update", "prepare", "signature", "icon", "plan", "apply"} {
 		var offline bool
 		var icons engine.IconOptions

@@ -13,6 +13,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 // TestOnlyUpdatesLockPlugins declares a local plugin: consumers load it from
@@ -110,5 +111,40 @@ spec:
 	}
 	if _, err := UpdatePlugins(t.Context(), opts, []string{"missing"}); err == nil || !strings.Contains(err.Error(), "not declared") {
 		t.Fatalf("update of an undeclared plugin: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "broken.software.yaml"), []byte("invalid: ["), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, run := range []func() error{
+		func() error { _, err := ListPlugins(t.Context(), opts); return err },
+		func() error { _, err := UpdatePlugins(t.Context(), opts, nil); return err },
+	} {
+		if err := run(); !errors.Is(err, ErrPluginsFailed) {
+			t.Fatalf("resource parse error hid the plugin report: %v", err)
+		}
+	}
+}
+
+func TestPluginKindsCannotCollideAcrossInterfaceVersions(t *testing.T) {
+	kind := plugin.ResourceKind{APIVersion: "example.test/v1", Kind: "Installer"}
+	available := loadedPlugin{name: "current", description: plugin.Description{Descriptor: plugin.Descriptor{Operations: []plugin.Operation{
+		{Name: "current.prepare", Kind: "resource", Resource: &kind, SideEffects: "workspace", Methods: []string{"discover", "run"}, InputSchema: []byte(`{}`), OutputSchema: []byte(`{}`)},
+	}}}}
+	unavailable := loadedPlugin{name: "future", description: plugin.Description{Unavailable: []plugin.Unavailable{
+		{Name: "future.prepare", Kind: "resource", Resource: &kind, Reason: "incompatible interface"},
+	}}}
+	for _, order := range [][]loadedPlugin{{available, unavailable}, {unavailable, available}} {
+		t.Run(order[0].name, func(t *testing.T) {
+			ops, err := builtins(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ops.add(order[0]) {
+				t.Fatal(ops.failed[order[0].name])
+			}
+			if ops.add(order[1]) || !strings.Contains(ops.failed[order[1].name].Error(), "resource kind example.test/v1/Installer is already registered") {
+				t.Fatalf("colliding kind loaded: %v", ops.failed)
+			}
+		})
 	}
 }

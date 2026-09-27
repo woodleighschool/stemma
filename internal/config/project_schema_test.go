@@ -105,7 +105,7 @@ spec:
       trusted: true
       image: '{{ env.STEMMA_SCHEMA_TEST_IMAGE }}'
 `)
-	project, err := LoadSchemaProject(filepath.Join(root, "stemma.yaml"))
+	project, err := LoadProjectDocument(filepath.Join(root, "stemma.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

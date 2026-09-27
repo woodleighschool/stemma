@@ -267,12 +267,12 @@ spec:
 			if _, err := ValidateProject(t.Context(), opts, false); err != nil {
 				t.Fatal(err)
 			}
-			descriptor, err := Catalog(t.Context(), opts)
-			if err != nil || downloads.Load() != 0 {
-				t.Fatalf("catalog acquired inputs: %v", err)
+			contracts, err := ProjectContracts(t.Context(), opts)
+			if err != nil || downloads.Load() != 0 || len(contracts.Unavailable) != 0 {
+				t.Fatalf("describing contracts acquired inputs: %v %v", err, contracts.Unavailable)
 			}
 			found := false
-			for _, operation := range descriptor.Operations {
+			for _, operation := range contracts.Operations {
 				if operation.Resource != nil && operation.Resource.Kind == "ExternalInstaller" {
 					found = true
 				}
@@ -472,5 +472,44 @@ spec:
 	}
 	if _, err := ProjectSchema(t.Context(), opts); err == nil || !strings.Contains(err.Error(), reason) {
 		t.Fatalf("schema without the stale destination: %v", err)
+	}
+}
+
+// TestProjectContractsDescribeAroundDraftsAndPluginFailures reads contracts
+// while a resource document is a broken draft and a plugin does not load.
+func TestProjectContractsDescribeAroundDraftsAndPluginFailures(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: contracts}
+spec:
+  imports: ['*.software.yaml']
+  components:
+    app: {destinations: {repo: {pkginfo: {catalogs: [testing]}}}}
+  plugins:
+    vendor: {path: plugins/vendor, trusted: true}
+  destinations:
+    repo: {operation: munki, config: {path: repo}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: draft
+`)
+	contracts, err := ProjectContracts(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]bool{}
+	for _, operation := range contracts.Operations {
+		if operation.Resource != nil {
+			kinds[operation.Resource.Kind] = true
+		}
+	}
+	if !kinds["MacSoftware"] || contracts.Destinations["repo"] != "munki" || contracts.Components["app"] == nil {
+		t.Fatalf("contracts = %+v", contracts)
+	}
+	if len(contracts.Unavailable) != 1 || !strings.Contains(contracts.Unavailable[0], "plugin vendor") {
+		t.Fatalf("unavailable = %q", contracts.Unavailable)
 	}
 }

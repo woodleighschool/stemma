@@ -94,7 +94,8 @@ type ResourceReport struct {
 	Kind           string          `json:"kind"`
 	Key            string          `json:"key"`
 	InputCacheHits map[string]bool `json:"input_cache_hits,omitempty"`
-	// Inputs are the lock changes this run commits for the resource.
+	// Inputs are the lock changes this run commits for the resource, or would
+	// commit when it ignores input locks.
 	Inputs       []lockfile.InputChange `json:"inputs,omitempty"`
 	Artifacts    map[string]Prepared    `json:"artifacts,omitempty"`
 	Cached       bool                   `json:"cached"`
