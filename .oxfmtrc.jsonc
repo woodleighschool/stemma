@@ -1,4 +1,10 @@
 {
-  "ignorePatterns": ["docs/static/stemma.schema.json", "internal/intune/graph/*/kiota-lock.json"],
+  "ignorePatterns": [
+    "CHANGELOG.md",
+    ".release-please-manifest.json",
+    ".mise/locks/",
+    "docs/static/stemma.schema.json",
+    "internal/intune/graph/*/kiota-lock.json",
+  ],
   "printWidth": 100,
 }
