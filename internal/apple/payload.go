@@ -509,7 +509,11 @@ func (c *cpioReader) next() (cpioEntry, error) {
 		return cpioEntry{}, io.EOF
 	}
 	name = strings.TrimPrefix(name, "./")
-	if name == "" || path.IsAbs(name) || strings.ContainsAny(name, "\\\x00") || path.Clean(name) != name || name == ".." || strings.HasPrefix(name, "../") {
+	// Some packagers, Mozilla's among them, name the payload root "./".
+	if name == "" {
+		name = "."
+	}
+	if path.IsAbs(name) || strings.ContainsAny(name, "\\\x00") || path.Clean(name) != name || name == ".." || strings.HasPrefix(name, "../") {
 		return cpioEntry{}, fmt.Errorf("unsafe CPIO path %q", name)
 	}
 	if _, exists := c.seen[name]; exists {

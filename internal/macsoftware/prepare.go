@@ -6,9 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"io/fs"
 	"maps"
 	"os"
 	"path"
@@ -121,7 +119,11 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 		var err error
 		verified, err = verify(ctx, spec, func(want signature.Signer) (signature.Result, error) {
 			if source.IsImage() {
-				return verifyApplications(ctx, node.FS, topLevel(inventory), want)
+				var apps []string
+				for _, app := range topLevel(inventory) {
+					apps = append(apps, app.Path)
+				}
+				return apple.VerifyAppsFS(ctx, node.FS, apps, want)
 			}
 			return apple.VerifyApp(ctx, local, want)
 		})
@@ -201,29 +203,6 @@ func publishPackage(ctx context.Context, spec Spec, request Request, source *con
 	}
 	installer.Format, installer.Facts = "pkg", facts
 	return installer, app, verified, nil
-}
-
-// verifyApplications verifies every application of a vendor disk image
-// outside another application, which must share one signer. The result names
-// them all.
-func verifyApplications(ctx context.Context, fsys fs.ReadLinkFS, apps []plugin.Subject, want signature.Signer) (signature.Result, error) {
-	var result signature.Result
-	var targets []string
-	for _, app := range apps {
-		observed, err := apple.VerifyAppFS(ctx, fsys, app.Path, want)
-		if err != nil {
-			return signature.Result{}, fmt.Errorf("%s: %w", app.Path, err)
-		}
-		if len(targets) == 0 {
-			result = observed
-			if want, err = signature.Parse(observed.Signer); err != nil {
-				return signature.Result{}, err
-			}
-		}
-		targets = append(targets, observed.Target)
-	}
-	result.Target = strings.Join(targets, ", ")
-	return result, nil
 }
 
 // verify checks a signature against the declared signer, or derives the

@@ -15,6 +15,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -142,15 +143,35 @@ func (stage *layout) input(ctx context.Context, name, inputName, selection strin
 	return nil
 }
 
-// sources opens each leased input once, for inspection and composition.
+// sources opens and inspects each leased input once, for expressions,
+// verification and composition.
 type sources struct {
 	inputs    map[string]plugin.Artifact
 	workspace string
 	open      map[string]*contents.Source
+	facts     map[string]plugin.Facts
 }
 
 func newSources(inputs map[string]plugin.Artifact, workspace string) *sources {
-	return &sources{inputs: inputs, workspace: workspace, open: map[string]*contents.Source{}}
+	return &sources{inputs: inputs, workspace: workspace, open: map[string]*contents.Source{}, facts: map[string]plugin.Facts{}}
+}
+
+func (s *sources) inventory(ctx context.Context, name string) (plugin.Facts, error) {
+	if facts, ok := s.facts[name]; ok {
+		return facts, nil
+	}
+	source, err := s.get(name)
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	done := plugin.Stage(ctx, "Inspecting input", plugin.Detail(name))
+	facts, err := inspect.Source(ctx, source)
+	done(err)
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	s.facts[name] = facts
+	return facts, nil
 }
 
 func (s *sources) get(name string) (*contents.Source, error) {

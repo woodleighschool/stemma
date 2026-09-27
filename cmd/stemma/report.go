@@ -204,23 +204,30 @@ func writeError(text *strings.Builder, style textStyle, indent, message string) 
 	}
 }
 
+// signatureDetails shows the signature each artifact carries and, separately,
+// the verified input a build consumed; a built package carries no signature.
 func signatureDetails(resource engine.ResourceReport) string {
 	var text strings.Builder
 	for _, name := range slices.Sorted(maps.Keys(resource.Artifacts)) {
-		data, ok := resource.Artifacts[name].Evidence["signature"]
-		if !ok {
-			continue
-		}
+		evidence := resource.Artifacts[name].Evidence
 		var result signature.Result
-		if err := json.Unmarshal(data, &result); err != nil {
-			continue
+		if err := json.Unmarshal(evidence["signature"], &result); err == nil {
+			writeSignature(&text, result, result.Fragment())
 		}
-		fmt.Fprintf(&text, "  Signer: %s (%s)\n  Target: %s\n", changes.Text(result.Name), changes.Text(result.Authority), changes.Text(result.Target))
-		for line := range strings.SplitSeq(strings.TrimSuffix(result.Fragment(), "\n"), "\n") {
-			fmt.Fprintf(&text, "  %s\n", changes.Text(line))
+		var input signature.InputResult
+		if err := json.Unmarshal(evidence["input.signature"], &input); err == nil {
+			fmt.Fprintf(&text, "  Input: %s\n", changes.Text(input.Input))
+			writeSignature(&text, input.Result, input.Fragment())
 		}
 	}
 	return text.String()
+}
+
+func writeSignature(text *strings.Builder, result signature.Result, fragment string) {
+	fmt.Fprintf(text, "  Signer: %s (%s)\n  Target: %s\n", changes.Text(result.Name), changes.Text(result.Authority), changes.Text(result.Target))
+	for line := range strings.SplitSeq(strings.TrimSuffix(fragment, "\n"), "\n") {
+		fmt.Fprintf(text, "  %s\n", changes.Text(line))
+	}
 }
 
 // printReportEnd ends a human report below the resources that streamed: the

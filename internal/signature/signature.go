@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -98,4 +99,17 @@ func (r Result) Fragment() string {
 		line += " # " + strings.NewReplacer("\n", " ", "\r", " ").Replace(r.Name)
 	}
 	return line + "\n"
+}
+
+// InputResult records the verified signature of an input a build consumed. It
+// describes that input and never the artifact built from it.
+type InputResult struct {
+	Result
+
+	Input string `json:"input"`
+}
+
+// Fragment renders the input policy to paste into a builder document.
+func (r InputResult) Fragment() string {
+	return "signature:\n  input: " + strconv.Quote(r.Input) + "\n" + strings.TrimPrefix(r.Result.Fragment(), "signature:\n")
 }

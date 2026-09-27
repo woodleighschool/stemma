@@ -280,6 +280,54 @@
                     }
                   ],
                   "description": "Literal script text or input selections in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma."
+                },
+                "signature": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "input": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                              "type": "string"
+                            }
+                          ],
+                          "description": "Declared input to verify: a PKG by its package signature, or every application in a disk image, archive or folder outside another application."
+                        },
+                        "signer": {
+                          "anyOf": [
+                            {
+                              "pattern": "^apple:developer-id:[A-Z0-9]{10}$",
+                              "type": "string"
+                            },
+                            {
+                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                              "type": "string"
+                            }
+                          ],
+                          "description": "Expected publisher identity: apple:developer-id:\u003cTEAMID\u003e. Omit it only to derive the value with stemma signature."
+                        }
+                      },
+                      "propertyNames": {
+                        "not": {
+                          "pattern": "\\{\\{"
+                        }
+                      },
+                      "required": [
+                        "input"
+                      ],
+                      "type": "object"
+                    },
+                    {
+                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Require one input to carry a complete Developer ID signature from an expected team before building. The built package itself is unsigned."
                 }
               },
               "propertyNames": {
@@ -551,6 +599,51 @@
                         }
                       ],
                       "description": "Literal script text or input selections in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma."
+                    },
+                    "signature": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "input": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                  "type": "string"
+                                }
+                              ],
+                              "description": "Declared input to verify: a PKG by its package signature, or every application in a disk image, archive or folder outside another application."
+                            },
+                            "signer": {
+                              "anyOf": [
+                                {
+                                  "pattern": "^apple:developer-id:[A-Z0-9]{10}$",
+                                  "type": "string"
+                                },
+                                {
+                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                  "type": "string"
+                                }
+                              ],
+                              "description": "Expected publisher identity: apple:developer-id:\u003cTEAMID\u003e. Omit it only to derive the value with stemma signature."
+                            }
+                          },
+                          "propertyNames": {
+                            "not": {
+                              "pattern": "\\{\\{"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        {
+                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                          "type": "string"
+                        }
+                      ],
+                      "description": "Require one input to carry a complete Developer ID signature from an expected team before building. The built package itself is unsigned."
                     }
                   },
                   "propertyNames": {

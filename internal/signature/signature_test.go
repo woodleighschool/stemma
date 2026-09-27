@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v4"
 )
 
 func TestParseAcceptsCanonicalSigners(t *testing.T) {
@@ -45,5 +47,24 @@ func TestCheckAndFragment(t *testing.T) {
 	}
 	if got := (Result{Signer: observed.String()}).Fragment(); got != "signature:\n  signer: apple:developer-id:UBF8T346G9\n" {
 		t.Fatalf("fragment without name: %q", got)
+	}
+	input := InputResult{Input: "vendor", Result: result}
+	if got := input.Fragment(); got != "signature:\n  input: \"vendor\"\n  signer: apple:developer-id:UBF8T346G9 # Microsoft Corporation\n" {
+		t.Fatalf("input fragment: %q", got)
+	}
+}
+
+func TestInputFragmentPreservesTheInputName(t *testing.T) {
+	for _, name := range []string{"true", "vendor: release", "line\nbreak", `a"b`} {
+		t.Run(name, func(t *testing.T) {
+			input := InputResult{Input: name, Signer: "apple:developer-id:UBF8T346G9"}
+			var parsed map[string]map[string]any
+			if err := yaml.Unmarshal([]byte(input.Fragment()), &parsed); err != nil {
+				t.Fatal(err)
+			}
+			if got := parsed["signature"]["input"]; got != name {
+				t.Fatalf("input = %#v; want %q", got, name)
+			}
+		})
 	}
 }

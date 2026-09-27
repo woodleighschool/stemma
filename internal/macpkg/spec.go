@@ -18,10 +18,17 @@ import (
 const Version = "stemma.macpkg/4"
 
 type Spec struct {
-	Inputs  map[string]plugin.Input `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema_description:"Named source artifacts leased into the build. Refer to them with $input in payload and scripts."`
-	Payload map[string]Entry        `json:"payload,omitempty" yaml:"payload,omitempty" jsonschema_description:"Installed absolute paths mapped to files, trees, literal text or directory declarations."`
-	Package Package                 `json:"package" yaml:"package" jsonschema_description:"Component package identity and version recorded in macOS receipts."`
-	Scripts map[string]Script       `json:"scripts,omitempty" yaml:"scripts,omitempty" jsonschema_description:"Literal script text or input selections in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma."`
+	Inputs    map[string]plugin.Input `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema_description:"Named source artifacts leased into the build. Refer to them with $input in payload and scripts."`
+	Payload   map[string]Entry        `json:"payload,omitempty" yaml:"payload,omitempty" jsonschema_description:"Installed absolute paths mapped to files, trees, literal text or directory declarations."`
+	Package   Package                 `json:"package" yaml:"package" jsonschema_description:"Component package identity and version recorded in macOS receipts."`
+	Scripts   map[string]Script       `json:"scripts,omitempty" yaml:"scripts,omitempty" jsonschema_description:"Literal script text or input selections in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma."`
+	Signature *InputSignature         `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require one input to carry a complete Developer ID signature from an expected team before building. The built package itself is unsigned."`
+}
+
+// InputSignature names the input whose publisher signature a build requires.
+type InputSignature struct {
+	Input  string `json:"input" yaml:"input" jsonschema:"required" jsonschema_description:"Declared input to verify: a PKG by its package signature, or every application in a disk image, archive or folder outside another application."`
+	Signer string `json:"signer,omitempty" yaml:"signer,omitempty" jsonschema:"pattern=^apple:developer-id:[A-Z0-9]{10}$" jsonschema_description:"Expected publisher identity: apple:developer-id:<TEAMID>. Omit it only to derive the value with stemma signature."`
 }
 
 type Package struct {
