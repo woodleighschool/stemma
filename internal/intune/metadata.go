@@ -4,9 +4,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io/fs"
+	"maps"
 	"math"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -47,7 +48,7 @@ var win32Fields = map[string]field{
 	"uninstall_command":       {"uninstallCommandLine", text10k},
 	"install_experience":      {"installExperience", installExperience},
 	"minimum_windows_release": {"minimumSupportedWindowsRelease", text10k},
-	"architecture":            {"allowedArchitectures", architecture},
+	"architectures":           {"allowedArchitectures", architectures},
 	"minimum_disk_space_mb":   {"minimumFreeDiskSpaceInMB", int32Value},
 	"minimum_memory_mb":       {"minimumMemoryInMB", int32Value},
 	"minimum_processors":      {"minimumNumberOfProcessors", int32Value},
@@ -66,7 +67,7 @@ var derivedNames = map[string]string{
 	"versionNumber":                   "primary_bundle_build",
 	"childApps":                       "included_apps",
 	"minimumSupportedOperatingSystem": "minimum_os",
-	"setupFilePath":                   "content.setup_file",
+	"setupFilePath":                   "setup_file",
 }
 
 var msiFields = map[string]string{
@@ -82,8 +83,8 @@ var appTypes = map[string]string{"win32": win32Type, "pkg": pkgType, "dmg": dmgT
 // name concepts in snake_case, while Graph property names, OData types and enum
 // casing stay inside the destination. Omitted fields stay omitted and supported
 // nulls clear, so the object keeps the declaration's presence. app_id,
-// retention, content, dependencies and supersedes belong to the destination and
-// pass through unchanged.
+// retention, dependencies, supersedes and msi_properties belong to the
+// destination and pass through unchanged.
 func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 	declared, err := decodeObject(req.Metadata)
 	if err != nil {
@@ -111,14 +112,21 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 			}
 			m[key] = value
 			continue
-		case "content", "dependencies", "supersedes":
+		case "dependencies", "supersedes":
 			if appType != win32Type {
 				return nil, fmt.Errorf("%s requires a Win32 app", key)
 			}
-			if key == "content" {
-				if err := validateContent(value); err != nil {
-					return nil, err
-				}
+			m[key] = value
+			continue
+		case "msi_properties":
+			if appType != win32Type {
+				return nil, errors.New("msi_properties requires a Win32 app")
+			}
+			if _, commanded := declared["install_command"]; commanded {
+				return nil, errors.New("set msi_properties or install_command, not both")
+			}
+			if err := validateMSIProperties(value); err != nil {
+				return nil, fmt.Errorf("msi_properties: %w", err)
 			}
 			m[key] = value
 			continue
@@ -138,6 +146,13 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 			return nil, fmt.Errorf("%s: %w", key, err)
 		}
 		m[spec.graph] = converted
+	}
+	if list, declared := m["assignments"].([]any); declared && appType != win32Type {
+		for _, item := range list {
+			if _, set := item.(object)["settings"]; set {
+				return nil, errors.New("assignment notifications require a Win32 app")
+			}
+		}
 	}
 	// A line-of-business app lists its included apps as child apps, which
 	// record the version twice.
@@ -192,21 +207,6 @@ func resolveType(req plugin.ReconcileRequest[Config], m object) (string, error) 
 	return "", errors.New("intune type is required")
 }
 
-func validateContent(value any) error {
-	content, ok := value.(object)
-	if !ok {
-		return errors.New("content must be an object")
-	}
-	if err := fields(content, "setup_file"); err != nil {
-		return err
-	}
-	setup := strings.ReplaceAll(text(content["setup_file"]), `\`, "/")
-	if !fs.ValidPath(setup) || setup == "." || strings.Contains(setup, ":") {
-		return errors.New("content.setup_file must be a relative Windows payload path")
-	}
-	return nil
-}
-
 func text10k(value any) (any, error) {
 	s, ok := value.(string)
 	if !ok || len(s) > 10000 {
@@ -240,11 +240,35 @@ func int32Value(value any) (any, error) {
 	return value, nil
 }
 
-func architecture(value any) (any, error) {
-	if value != nil && !enum(value, "x86", "x64", "arm64") {
-		return nil, errors.New("must be x86, x64, arm64 or null")
+// windowsArchitectures lists Graph's architecture flags in the order Graph
+// writes them, so a declared set compares equal to its readback.
+var windowsArchitectures = []string{"x86", "x64", "arm64"}
+
+// architectures translates a set of processor architectures into Graph's
+// comma-separated flags; null clears the restriction.
+func architectures(value any) (any, error) {
+	if value == nil {
+		return nil, nil
 	}
-	return value, nil
+	list, ok := value.([]any)
+	if !ok || len(list) == 0 {
+		return nil, errors.New("must be a nonempty list of x86, x64 and arm64, or null")
+	}
+	declared := map[string]bool{}
+	for _, item := range list {
+		name := text(item)
+		if !slices.Contains(windowsArchitectures, name) || declared[name] {
+			return nil, errors.New("must list each of x86, x64 and arm64 at most once")
+		}
+		declared[name] = true
+	}
+	var flags []string
+	for _, name := range windowsArchitectures {
+		if declared[name] {
+			flags = append(flags, name)
+		}
+	}
+	return strings.Join(flags, ","), nil
 }
 
 // choice translates a declared enum value into its Graph spelling.
@@ -261,10 +285,16 @@ func choice(value any, values map[string]string) (string, error) {
 	return native, nil
 }
 
-var intents = map[string]string{"required": "required", "available": "available", "uninstall": "uninstall", "available_without_enrollment": "availableWithoutEnrollment"}
+var (
+	intents       = map[string]string{"required": "required", "available": "available", "uninstall": "uninstall", "available_without_enrollment": "availableWithoutEnrollment"}
+	filterModes   = map[string]string{"include": "include", "exclude": "exclude"}
+	notifications = map[string]string{"show_all": "showAll", "show_reboot": "showReboot", "hide_all": "hideAll"}
+)
 
 // assignments translates each deployment intent and its one target: an Entra
-// group, an excluded group, all devices or all users.
+// group, an excluded group, all devices or all users. An included target may
+// carry an assignment filter and a notification setting, properties of that
+// assignment as in Graph; omitting them keeps what the assignment has.
 func assignments(value any) (any, error) {
 	list, ok := value.([]any)
 	if !ok || len(list) > 1000 {
@@ -277,7 +307,7 @@ func assignments(value any) (any, error) {
 		if !ok {
 			return nil, errors.New("assignment must be an object")
 		}
-		if err := fields(assignment, "intent", "group", "exclude_group", "all_devices", "all_users"); err != nil {
+		if err := fields(assignment, "intent", "group", "exclude_group", "all_devices", "all_users", "filter", "notifications"); err != nil {
 			return nil, err
 		}
 		intent, err := choice(assignment["intent"], intents)
@@ -305,6 +335,27 @@ func assignments(value any) (any, error) {
 			return nil, errors.New("assignment requires exactly one of group, exclude_group, all_devices or all_users")
 		}
 		native := object{"intent": intent, "target": targets[0]}
+		_, excluded := assignment["exclude_group"]
+		if value, exists := assignment["filter"]; exists {
+			if excluded {
+				return nil, errors.New("an excluded group takes no filter")
+			}
+			filter, err := assignmentFilter(value)
+			if err != nil {
+				return nil, fmt.Errorf("filter %w", err)
+			}
+			maps.Copy(targets[0], filter)
+		}
+		if value, exists := assignment["notifications"]; exists {
+			if excluded {
+				return nil, errors.New("an excluded group takes no notifications")
+			}
+			setting, err := choice(value, notifications)
+			if err != nil {
+				return nil, fmt.Errorf("notifications %w", err)
+			}
+			native["settings"] = object{"@odata.type": "#microsoft.graph.win32LobAppAssignmentSettings", "notifications": setting}
+		}
 		key := assignmentKey(native)
 		if seen[key] {
 			return nil, errors.New("duplicate assignment target and intent")
@@ -313,6 +364,51 @@ func assignments(value any) (any, error) {
 		result = append(result, native)
 	}
 	return result, nil
+}
+
+// msiProperty matches a Windows Installer property name.
+var msiProperty = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.]*$`)
+
+// validateMSIProperties checks the public properties a derived msiexec
+// command passes, as property names and single-line text values.
+func validateMSIProperties(value any) error {
+	properties, ok := value.(object)
+	if !ok || len(properties) == 0 {
+		return errors.New("must map at least one property name to a text value")
+	}
+	for name, value := range properties {
+		if !msiProperty.MatchString(name) {
+			return fmt.Errorf("%q is not a Windows Installer property name", name)
+		}
+		text, ok := value.(string)
+		if !ok || strings.ContainsAny(text, "\r\n\x00") {
+			return fmt.Errorf("%s must be a single-line text value", name)
+		}
+	}
+	return nil
+}
+
+// assignmentFilter translates a filter reference into its target properties;
+// null removes the filter.
+func assignmentFilter(value any) (object, error) {
+	if value == nil {
+		return object{"deviceAndAppManagementAssignmentFilterId": nil, "deviceAndAppManagementAssignmentFilterType": "none"}, nil
+	}
+	filter, ok := value.(object)
+	if !ok {
+		return nil, errors.New("must be an object with id and mode, or null")
+	}
+	if err := fields(filter, "id", "mode"); err != nil {
+		return nil, err
+	}
+	if text(filter["id"]) == "" {
+		return nil, errors.New("id must be an Intune assignment filter ID")
+	}
+	mode, err := choice(filter["mode"], filterModes)
+	if err != nil {
+		return nil, fmt.Errorf("mode %w", err)
+	}
+	return object{"deviceAndAppManagementAssignmentFilterId": filter["id"], "deviceAndAppManagementAssignmentFilterType": mode}, nil
 }
 
 // includedApps translates the application or package identities that detect a Mac installation.
@@ -526,7 +622,9 @@ func msiRule(rule object) (object, error) {
 }
 
 // propertyRule translates a file or registry rule. An existence check takes
-// no operator; every other property compares against a value.
+// no operator; every other property compares against a value. A version
+// comparison defaults to greater than or equal to the managed version, which
+// derivation supplies.
 func propertyRule(rule object, properties, locations map[string]string, existence ...string) (object, error) {
 	allowed := []string{"type", "check_32bit", "property", "operator", "value"}
 	for key := range locations {
@@ -570,15 +668,22 @@ func propertyRule(rule object, properties, locations map[string]string, existenc
 		}
 		return native, nil
 	}
-	operator, err := choice(rule["operator"], operators)
-	if err != nil {
-		return nil, fmt.Errorf("operator %w", err)
+	version := rule["property"] == "version"
+	operator := "greaterThanOrEqual"
+	if hasOperator || !version {
+		if operator, err = choice(rule["operator"], operators); err != nil {
+			return nil, fmt.Errorf("operator %w", err)
+		}
+	}
+	native["operator"] = operator
+	if !hasValue && version {
+		return native, nil
 	}
 	comparison, ok := value.(string)
 	if !hasValue || !ok || (comparison == "" && rule["property"] != "string") {
 		return nil, fmt.Errorf("a %s comparison requires a value", rule["property"])
 	}
-	native["operator"], native["comparisonValue"] = operator, comparison
+	native["comparisonValue"] = comparison
 	return native, nil
 }
 

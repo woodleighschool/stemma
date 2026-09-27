@@ -27,7 +27,7 @@ spec:
     windows-win32:
       destinations:
         intune:
-          architecture: x64
+          architectures: [x64]
           minimum_windows_release: Windows11_24H2
           install_experience:
             run_as: system
@@ -47,8 +47,9 @@ spec:
 
 Supply credentials through your shell or runner's secret management. The Entra app
 needs Graph application permissions appropriate to app management; see
-[publishing](publishing.md#intune). Change architecture, minimum release and
-installation context to match the vendor and your devices.
+[publishing](publishing.md#intune). Change architectures, minimum release and
+installation context to match the vendor and your devices; an x64 app that should
+also install on Arm devices lists `[x64, arm64]`.
 
 ## Publish an enterprise MSI
 
@@ -81,6 +82,19 @@ and uninstall commands, and ProductCode/version detection. Explicit destination
 values override these defaults. The display name, description and publisher are
 always set. `apply` publishes when you are ready.
 
+Windows Installer properties extend the standard install command:
+
+```yaml
+destinations:
+  intune:
+    msi_properties:
+      PORTAL: vpn.example.com
+      CONNECTMETHOD: on-demand
+```
+
+Values are quoted in name order, with a quote inside a value doubled. Set
+`msi_properties` or a complete `install_command`, not both.
+
 ## Publish an EXE
 
 EXE switches are vendor-specific. This uses VS Code's **system** installer, its
@@ -112,9 +126,24 @@ spec:
 ```
 
 This rule detects presence. It intentionally does not enforce a particular VS Code
-version. To manage a minimum version, use `property: version`,
-`operator: greater_than_or_equal` and a `value` matching the installed file's
-version. EXE version and detection values are not automatically inferred.
+version. To manage a minimum version, use `property: version` with a `value`
+matching the installed file's version, or omit `value` when the source reports the
+installer's version. Stemma does not infer EXE commands or detection.
+
+## Publish a setup directory
+
+A committed directory or a vendor ZIP or TAR archive is the setup directory, and
+Intune receives every file in it. The only MSI or EXE inside is the setup file.
+When there are several, select one by its setup-relative path, or by a glob that
+matches exactly one file:
+
+```yaml
+source:
+  url: https://example.com/downloads/VendorSetup_4.2.zip
+setup_file: VendorSetup.exe
+```
+
+An ambiguous directory fails with the installers it found.
 
 ## Include a transform or wrapper
 
@@ -129,22 +158,15 @@ content:
       path: Assets/Organisation.mst
 destinations:
   intune:
-    install_command: 'msiexec /i "Vendor.msi" TRANSFORMS="Organisation.mst" /qn /norestart'
+    msi_properties:
+      TRANSFORMS: Organisation.mst
 ```
 
 This is a spec excerpt using the shared Win32 defaults. Intune includes the whole
-assembled setup directory. A directory source instead names its entry point:
-
-```yaml
-source:
-  path: Assets/Setup
-content:
-  setup_file: VendorSetup.exe
-```
-
-Files may use any shared input resolver. A wrapper can be the setup entry point,
-but commands and detection must describe the actual installed product; MSI
-defaults apply when the selected entry point is an MSI. See Microsoft's
+assembled setup directory, and the vendor installer stays the setup file. Files may
+use any shared input resolver. `setup_file` can select any file instead, such as a
+wrapper script, but commands and detection must describe the actual installed
+product; MSI defaults apply when the setup file is an MSI. See Microsoft's
 [setup-folder model](https://learn.microsoft.com/en-us/intune/app-management/deployment/create-win32-package).
 
 ## Choose installed-product evidence
@@ -154,7 +176,8 @@ Intune app. A major upgrade may change ProductCode while publication still updat
 the same bound app ID. A ProductCode rule cannot detect a different ProductCode.
 
 Use file, registry or script detection when you need evidence spanning those
-upgrades. A registry version rule, for example:
+upgrades. A file or registry version rule without `operator` and `value` accepts
+the managed version or newer:
 
 ```yaml
 detection:
@@ -162,12 +185,28 @@ detection:
     key: 'HKEY_LOCAL_MACHINE\SOFTWARE\Example\Client'
     value_name: Version
     property: version
-    operator: greater_than_or_equal
-    value: "2.0.0"
 ```
 
-Use a real vendor key and version. `greater_than_or_equal` accepts an already-newer
-installation; equality alone does not. File and registry rules can be combined, and
+Use a real vendor key. The managed version is the setup MSI's ProductVersion, or
+the version the source reports for its own installer. When the installed product
+uses another version scheme, `version_file` takes the version the MSI's File table
+records for one versioned file it installs:
+
+```yaml
+version_file: Zoom.exe
+destinations:
+  intune:
+    detection:
+      - type: file
+        path: 'C:\Program Files\Zoom\bin'
+        name: Zoom.exe
+        property: version
+```
+
+MSI information and the default ProductCode rule keep the ProductVersion. An
+explicit `operator` or `value` replaces its default; `greater_than_or_equal`
+accepts an already-newer installation, while equality alone does not. File and
+registry rules can be combined, and
 `check_32bit` selects the 32-bit view on 64-bit Windows. A script rule must be the
 only rule, with `run_as_32bit` and `enforce_signature_check` where needed.
 

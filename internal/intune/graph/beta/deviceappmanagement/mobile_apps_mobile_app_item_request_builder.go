@@ -83,6 +83,12 @@ func (m *MobileAppsMobileAppItemRequestBuilder) GraphMacOSPkgApp() *MobileAppsIt
 	return NewMobileAppsItemGraphMacOSPkgAppRequestBuilderInternal(m.BaseRequestBuilder.PathParameters, m.BaseRequestBuilder.RequestAdapter)
 }
 
+// GraphWin32LobApp the graphWin32LobApp property
+// returns a *MobileAppsItemGraphWin32LobAppRequestBuilder when successful
+func (m *MobileAppsMobileAppItemRequestBuilder) GraphWin32LobApp() *MobileAppsItemGraphWin32LobAppRequestBuilder {
+	return NewMobileAppsItemGraphWin32LobAppRequestBuilderInternal(m.BaseRequestBuilder.PathParameters, m.BaseRequestBuilder.RequestAdapter)
+}
+
 // Patch update the navigation property mobileApps in deviceAppManagement
 // returns a []byte when successful
 func (m *MobileAppsMobileAppItemRequestBuilder) Patch(ctx context.Context, body []byte, requestConfiguration *i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.RequestConfiguration[i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.DefaultQueryParameters]) ([]byte, error) {

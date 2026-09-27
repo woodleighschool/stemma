@@ -32,14 +32,22 @@ func MetadataSchema() *jsonschema.Schema {
 	}
 	win32 := common()
 	win32["type"] = &jsonschema.Schema{Const: "win32", Description: "Windows software publishes a Win32 app, so this is the default."}
-	win32["content"] = objectSchema(map[string]*jsonschema.Schema{"setup_file": {Type: "string", MinLength: new(uint64(1)), Description: "Relative entrypoint inside the immutable setup tree. Defaults to the artifact entrypoint, or the filename for a single file; conflicting entries are rejected. All tree members are included in the provider-prepared Intune envelope."}}, "setup_file")
+	win32["assignments"].Items.Properties.Set("notifications", enumSchema("Win32 end-user notifications for an included target. Omit to keep the assignment's setting.", "show_all", "show_reboot", "hide_all"))
 	win32["msi"] = msiSchema()
 	win32["dependencies"] = referencesSchema("auto_install", 99)
 	win32["supersedes"] = referencesSchema("uninstall_previous", 9)
+	win32["msi_properties"] = &jsonschema.Schema{
+		Type: "object", MinProperties: new(uint64(1)), PropertyNames: &jsonschema.Schema{Pattern: "^[A-Za-z_][A-Za-z0-9_.]*$"},
+		AdditionalProperties: &jsonschema.Schema{Type: "string", Pattern: "^[^\\r\\n\\x00]*$"},
+		Description:          "Windows Installer properties the derived install command passes to the selected setup MSI, such as PORTAL for GlobalProtect. Values are quoted in name order. Use instead of install_command.",
+	}
 	win32["install_command"] = textSchema("Silent Windows install command. Selected MSI content defaults to msiexec /i with /qn /norestart; EXE switches and architecture-specific executable paths are explicit. Payloads and hooks are never executed during preparation.")
 	win32["uninstall_command"] = textSchema("Windows uninstall command. Selected MSI content defaults to msiexec /x ProductCode /qn /norestart; EXE uninstall behavior is explicit.")
 	win32["minimum_windows_release"] = textSchema("Minimum Windows release, such as Windows11_23H2. Required for creation.")
-	win32["architecture"] = &jsonschema.Schema{Enum: []any{"x86", "x64", "arm64", nil}, Description: "Supported processor architecture; null clears it on an existing app. A non-null value is required for creation."}
+	win32["architectures"] = &jsonschema.Schema{
+		AnyOf:       []*jsonschema.Schema{{Type: "array", MinItems: new(uint64(1)), UniqueItems: true, Items: &jsonschema.Schema{Enum: []any{"x86", "x64", "arm64"}}}, {Type: "null"}},
+		Description: "Processor architectures the app installs on, such as [x64, arm64] for an x64 app that also runs emulated on Arm. Null clears the restriction on an existing app; a list is required for creation.",
+	}
 	for key, description := range map[string]string{
 		"minimum_disk_space_mb": "Minimum free disk space in MB.",
 		"minimum_memory_mb":     "Minimum memory in MB.",
@@ -60,8 +68,8 @@ func MetadataSchema() *jsonschema.Schema {
 	mac := common()
 	mac["type"] = &jsonschema.Schema{Enum: []any{"pkg", "dmg"}, Description: "A Mac app follows its installer: pkg for a PKG and dmg for a disk image."}
 	mac["ignore_version_detection"] = &jsonschema.Schema{Type: "boolean", Description: "Ignore installed app versions during detection. Explicit false is managed."}
-	mac["included_apps"] = &jsonschema.Schema{Type: "array", MinItems: new(uint64(1)), MaxItems: new(uint64(500)), Description: "Identifiers and versions that detect the installation; the first identifies the app. Derived from applications, selected first, or receipts for an unmanaged PKG without applications, including payloadless packages. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique.", Items: objectSchema(map[string]*jsonschema.Schema{
-		"id":      {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application bundle identifier or unmanaged PKG receipt identifier."},
+	mac["included_apps"] = &jsonschema.Schema{Type: "array", MinItems: new(uint64(1)), MaxItems: new(uint64(500)), Description: "Identifiers and versions that detect the installation; the first identifies the app. A PKG app accepts package receipts as well as applications. Derived from applications, selected first, or from receipts when a PKG installs no applications, as a payloadless package does. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique.", Items: objectSchema(map[string]*jsonschema.Schema{
+		"id":      {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application bundle identifier, or package receipt identifier for a PKG app."},
 		"version": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleShortVersionString or package receipt version."},
 	}, "id", "version")}
 	lob := common()
@@ -69,6 +77,7 @@ func MetadataSchema() *jsonschema.Schema {
 	lob["ignore_version_detection"], lob["included_apps"] = mac["ignore_version_detection"], mac["included_apps"]
 	lob["install_as_managed"] = &jsonschema.Schema{Type: "boolean", Description: "Install the app as managed on macOS 11 or later. The PKG must have one component that installs one application under /Applications."}
 	windows, macOS, lineOfBusiness := objectSchema(win32), objectSchema(mac), objectSchema(lob, "type")
+	windows.Not = &jsonschema.Schema{Required: []string{"install_command", "msi_properties"}}
 	windows.Title, macOS.Title, lineOfBusiness.Title = "Win32 app", "Mac app", "Mac line-of-business app"
 	return &jsonschema.Schema{AnyOf: []*jsonschema.Schema{windows, macOS, lineOfBusiness}, Description: "Intune app metadata. Windows software publishes a Win32 envelope; Mac software publishes its PKG or DMG, or a signed PKG as a line-of-business app. The minimum macOS derives from the software's minimum_os and its installer."}
 }
@@ -133,21 +142,32 @@ func assignmentSchema() *jsonschema.Schema {
 		"exclude_group": {Type: "string", MinLength: new(uint64(1)), Description: "Entra group object ID to exclude."},
 		"all_devices":   {Const: true, Description: "Target all devices."},
 		"all_users":     {Const: true, Description: "Target all licensed users."},
+		"filter": {AnyOf: []*jsonschema.Schema{objectSchema(map[string]*jsonschema.Schema{
+			"id":   {Type: "string", MinLength: new(uint64(1)), Description: "Intune assignment filter ID."},
+			"mode": enumSchema("Include or exclude the devices the filter matches.", "include", "exclude"),
+		}, "id", "mode"), {Type: "null"}}, Description: "Assignment filter for an included target; null removes it. Omit to keep the assignment's filter."},
 	}, "intent")
 	item.OneOf = []*jsonschema.Schema{{Required: []string{"group"}}, {Required: []string{"exclude_group"}}, {Required: []string{"all_devices"}}, {Required: []string{"all_users"}}}
-	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(1000)), Description: "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target. Existing settings on matching targets are preserved. Filters and custom assignment settings cannot be configured.", Items: item}
+	item.If = &jsonschema.Schema{Required: []string{"exclude_group"}}
+	item.Then = &jsonschema.Schema{Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Required: []string{"filter"}}, {Required: []string{"notifications"}}}}}
+	return &jsonschema.Schema{Type: "array", MaxItems: new(uint64(1000)), Description: "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target, and settings it omits keep their values on a matching target.", Items: item}
 }
 
 func detectionSchema() *jsonschema.Schema {
-	operator := func() *jsonschema.Schema {
-		return enumSchema("Comparison operator.", "equal", "not_equal", "greater_than", "greater_than_or_equal", "less_than", "less_than_or_equal")
+	operator := func(description string) *jsonschema.Schema {
+		return enumSchema(description, "equal", "not_equal", "greater_than", "greater_than_or_equal", "less_than", "less_than_or_equal")
 	}
 	absent := &jsonschema.Schema{Not: &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Required: []string{"operator"}}, {Required: []string{"value"}}}}}
+	// A version comparison defaults to greater_than_or_equal the managed version.
+	compared := &jsonschema.Schema{
+		If:   &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"property": {Const: "version"}}).Properties},
+		Else: &jsonschema.Schema{Required: []string{"operator", "value"}},
+	}
 	msi := objectSchema(map[string]*jsonschema.Schema{
 		"type":            {Const: "msi"},
 		"product_code":    {Type: "string", MinLength: new(uint64(1)), Description: "Exact MSI ProductCode GUID. Major MSI upgrades can change it; a version comparison only detects installations with this code. Declared detection overrides selected MSI defaults."},
 		"product_version": textSchema("Version compared with the operator."),
-		"operator":        operator(),
+		"operator":        operator("Comparison operator."),
 	}, "type", "product_code")
 	msi.If = &jsonschema.Schema{Required: []string{"operator"}}
 	msi.Then = &jsonschema.Schema{Required: []string{"product_version"}}
@@ -157,24 +177,24 @@ func detectionSchema() *jsonschema.Schema {
 		"name":        {Type: "string", MinLength: new(uint64(1)), Description: "File or folder name."},
 		"check_32bit": {Type: "boolean", Description: "Check the 32-bit location on 64-bit Windows."},
 		"property":    enumSchema("Detected file property.", "exists", "version", "size_mb", "modified", "created"),
-		"operator":    operator(),
-		"value":       {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(10000)), Description: "Compared value. A stable file path with version greater_than_or_equal detects already-newer installations; equal intentionally does not."},
+		"operator":    operator("Comparison operator. A version comparison defaults to greater_than_or_equal."),
+		"value":       {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(10000)), Description: "Compared value. A version comparison defaults to the managed version. A stable file path with version greater_than_or_equal detects already-newer installations; equal intentionally does not."},
 	}, "type", "path", "name", "property")
 	file.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"property": {Const: "exists"}}).Properties}
 	file.Then = absent
-	file.Else = &jsonschema.Schema{Required: []string{"operator", "value"}}
+	file.Else = compared
 	registry := objectSchema(map[string]*jsonschema.Schema{
 		"type":        {Const: "registry"},
 		"key":         {Type: "string", MinLength: new(uint64(1)), Description: "Registry key path."},
 		"value_name":  {Type: "string"},
 		"check_32bit": {Type: "boolean", Description: "Check the 32-bit view on 64-bit Windows."},
 		"property":    enumSchema("Registry comparison.", "exists", "does_not_exist", "string", "integer", "version"),
-		"operator":    operator(),
-		"value":       {Type: "string", Description: "Compared value. Version greater_than_or_equal can detect already-newer installations at a stable vendor registry value."},
+		"operator":    operator("Comparison operator. A version comparison defaults to greater_than_or_equal."),
+		"value":       {Type: "string", Description: "Compared value. A version comparison defaults to the managed version. Version greater_than_or_equal can detect already-newer installations at a stable vendor registry value."},
 	}, "type", "key", "property")
 	registry.If = &jsonschema.Schema{Properties: objectSchema(map[string]*jsonschema.Schema{"property": {Enum: []any{"exists", "does_not_exist"}}}).Properties}
 	registry.Then = absent
-	registry.Else = &jsonschema.Schema{Required: []string{"operator", "value"}}
+	registry.Else = compared
 	script := objectSchema(map[string]*jsonschema.Schema{
 		"type":                    {Const: "script"},
 		"script":                  {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(200000)), Description: "PowerShell detection script. Detection requires exit code 0, nonempty STDOUT and empty STDERR. Runs in the app install context. This is an alternative to other rules; preparation never executes it."},

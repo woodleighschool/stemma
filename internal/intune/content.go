@@ -48,7 +48,9 @@ func (p *preparedArtifact) close() {
 	}
 }
 
-func identifyArtifact(ctx context.Context, artifact plugin.Artifact, appType, setup string) (artifactIdentity, error) {
+// identifyArtifact derives the publication identity of an artifact. A Win32
+// setup tree runs its prepared entry point; an existing envelope keeps its own.
+func identifyArtifact(ctx context.Context, artifact plugin.Artifact, appType string) (artifactIdentity, error) {
 	if artifact.Path == "" || (!artifact.Tree && (artifact.Filename == "" || filepath.Base(artifact.Filename) != artifact.Filename || strings.ContainsAny(artifact.Filename, `\:`))) {
 		return artifactIdentity{}, errors.New("intune requires immutable content; file artifacts need a simple filename")
 	}
@@ -69,20 +71,13 @@ func identifyArtifact(ctx context.Context, artifact plugin.Artifact, appType, se
 		}
 		return artifactIdentity{identity: artifact.SHA256, raw: true}, nil
 	}
-	setup = strings.ReplaceAll(setup, `\`, "/")
-	entrypoint := strings.ReplaceAll(artifact.EntryPoint, `\`, "/")
-	if setup != "" && entrypoint != "" && setup != entrypoint {
-		return artifactIdentity{}, errors.New("content.setup_file conflicts with the artifact entrypoint")
-	}
-	if setup == "" {
-		setup = entrypoint
-	}
+	setup := strings.ReplaceAll(artifact.EntryPoint, `\`, "/")
 	if setup != "" && (!fs.ValidPath(setup) || setup == "." || strings.Contains(setup, ":")) {
-		return artifactIdentity{}, errors.New("content.setup_file must be a relative Windows payload path")
+		return artifactIdentity{}, errors.New("the artifact entry point must be a relative Windows payload path")
 	}
 	if artifact.Tree {
 		if setup == "" {
-			return artifactIdentity{}, errors.New("Win32 setup trees require content.setup_file or an artifact entrypoint")
+			return artifactIdentity{}, errors.New("Win32 setup trees require an artifact entry point")
 		}
 		if err := intunewin.ValidateSource(ctx, artifact.Path, setup); err != nil {
 			return artifactIdentity{}, fmt.Errorf("intune setup tree: %w", err)
@@ -96,12 +91,12 @@ func identifyArtifact(ctx context.Context, artifact plugin.Artifact, appType, se
 			return artifactIdentity{}, err
 		}
 		if setup != "" && setup != strings.ReplaceAll(metadata.SetupFile, `\`, "/") {
-			return artifactIdentity{}, errors.New("content.setup_file conflicts with the existing Intune envelope")
+			return artifactIdentity{}, errors.New("the artifact entry point conflicts with the existing Intune envelope")
 		}
 		return artifactIdentity{identity: metadata.PayloadSHA256, setup: metadata.SetupFile, envelope: true, metadata: metadata}, nil
 	}
 	if setup != "" && setup != artifact.Filename {
-		return artifactIdentity{}, errors.New("content.setup_file must name the single-file artifact")
+		return artifactIdentity{}, errors.New("the artifact entry point must name the single-file artifact")
 	}
 	// The setup name is part of the one-file derivation; renaming identical bytes
 	// must not leave Graph pointing at a name absent from the uploaded payload.

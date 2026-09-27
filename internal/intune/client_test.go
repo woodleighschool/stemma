@@ -28,7 +28,7 @@ func sdkFixture(t *testing.T, handler http.HandlerFunc) (*client, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := newSDKClient(server.URL+"/v1.0", auth, server.Client().Transport)
+	c, err := newSDKClient(server.URL, auth, server.Client().Transport)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestSDKPagingAndResponseBound(t *testing.T) {
 				}
 				next := "https://" + r.Host + r.URL.Path + "?$skiptoken=next"
 				if scenario == "escaped page" {
-					next = "https://example.invalid/v1.0/apps"
+					next = "https://example.invalid/beta/apps"
 				}
 				_ = json.NewEncoder(w).Encode(object{"value": []object{{"id": "first"}}, "@odata.nextLink": next})
 			})
@@ -196,33 +196,23 @@ func TestAzureSDKMultipartRetry(t *testing.T) {
 
 func TestOpaqueClientsPreserveWireJSON(t *testing.T) {
 	body := []byte(`{"unknown":null,"enabled":false,"count":0,"assignments":[],"installExperience":{"futureField":"kept"}}`)
-	for _, version := range []string{"v1.0", "beta"} {
-		t.Run(version, func(t *testing.T) {
-			c, _ := sdkFixture(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodPost || r.URL.Path != "/"+version+"/deviceAppManagement/mobileApps" {
-					t.Errorf("request: %s %s", r.Method, r.URL.Path)
-				}
-				if r.Header.Get("Content-Type") != "application/json" {
-					t.Errorf("content type: %s", r.Header.Get("Content-Type"))
-				}
-				got, err := io.ReadAll(r.Body)
-				if err != nil || !bytes.Equal(got, body) {
-					t.Errorf("body changed: %s; %v", got, err)
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write(body)
-			})
-			var got []byte
-			var err error
-			if version == "v1.0" {
-				got, err = c.stable.MobileApps().Post(t.Context(), body, nil)
-			} else {
-				got, err = c.beta.MobileApps().Post(t.Context(), body, nil)
-			}
-			if err != nil || !bytes.Equal(got, body) {
-				t.Fatalf("response changed: %s; %v", got, err)
-			}
-		})
+	c, _ := sdkFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/beta/deviceAppManagement/mobileApps" {
+			t.Errorf("request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("content type: %s", r.Header.Get("Content-Type"))
+		}
+		got, err := io.ReadAll(r.Body)
+		if err != nil || !bytes.Equal(got, body) {
+			t.Errorf("body changed: %s; %v", got, err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	})
+	got, err := c.beta.MobileApps().Post(t.Context(), body, nil)
+	if err != nil || !bytes.Equal(got, body) {
+		t.Fatalf("response changed: %s; %v", got, err)
 	}
 }
 
@@ -232,7 +222,7 @@ func TestOpaqueClientKeepsStatusWithoutLeakingBody(t *testing.T) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = io.WriteString(w, `{"error":{"code":"Unavailable","message":"secret-token"}}`)
 	})
-	_, err := c.stable.MobileApps().Post(t.Context(), []byte(`{}`), nil)
+	_, err := c.beta.MobileApps().Post(t.Context(), []byte(`{}`), nil)
 	if err == nil {
 		t.Fatal("accepted failed request")
 	}

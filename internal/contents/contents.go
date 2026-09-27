@@ -110,7 +110,7 @@ func (s *Source) At(ctx context.Context, name string) (Node, error) {
 func (s *Source) Artifact() plugin.Artifact { return s.input }
 
 func (s *Source) IsImage() bool     { return s.image != nil }
-func (s *Source) Traversable() bool { return s.input.Tree || s.isImage() || isArchive(s.input) }
+func (s *Source) Traversable() bool { return s.input.Tree || s.isImage() || IsArchive(s.input) }
 
 func (s *Source) isImage() bool {
 	name := s.input.Filename
@@ -137,7 +137,7 @@ func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
 	}
 	local := s.input.Path
 	if !s.input.Tree {
-		if !isArchive(s.input) {
+		if !IsArchive(s.input) {
 			return nil, "", nil
 		}
 		work, err := os.MkdirTemp(s.workspace, ".contents-*")
@@ -161,7 +161,8 @@ func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
 	return localFS{s.tree.FS().(fs.ReadLinkFS)}, local, nil
 }
 
-func isArchive(input plugin.Artifact) bool {
+// IsArchive reports whether input is a ZIP or TAR archive by its format or filename.
+func IsArchive(input plugin.Artifact) bool {
 	name := strings.ToLower(input.Filename)
 	if name == "" {
 		name = strings.ToLower(filepath.Base(input.Path))

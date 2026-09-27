@@ -16,16 +16,22 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/authenticode"
+	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/icon"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
+	"github.com/woodleighschool/stemma/internal/msi"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
 type Spec struct {
-	Source  plugin.Input `json:"source,omitzero" yaml:"source" jsonschema:"required" jsonschema_description:"Vendor installer or a resource output. A WindowsSoftware document requires a source."`
-	Content *Content     `json:"content,omitempty" yaml:"content,omitempty" jsonschema_description:"Assemble a setup tree from the vendor installer and optional supporting files."`
+	Source plugin.Input `json:"source,omitzero" yaml:"source" jsonschema:"required" jsonschema_description:"Vendor installer, setup directory or ZIP or TAR archive holding a setup directory, or a resource output. A WindowsSoftware document requires a source."`
+	// SetupFile selects the setup entry point within the setup directory.
+	SetupFile string `json:"setup_file,omitempty" yaml:"setup_file,omitempty" jsonschema_description:"Setup-relative path or glob selecting the file Intune records as the setup entry point. It may name any file, such as a wrapper script. Omit to use the installer of a single-file source, the entry point of a resource output, or the only MSI or EXE in a setup directory or archive."`
+	// VersionFile selects the managed version from the setup MSI's File table.
+	VersionFile string   `json:"version_file,omitempty" yaml:"version_file,omitempty" jsonschema_description:"Name of the file the setup MSI installs whose File table version is the managed version, such as Zoom.exe. It must name one versioned file. Omit to use the MSI ProductVersion."`
+	Content     *Content `json:"content,omitempty" yaml:"content,omitempty" jsonschema_description:"Supporting files added to the setup directory beside the vendor installer."`
 	// Signature requires the setup file to carry a complete Authenticode
 	// signature from the expected publisher.
 	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require a complete Authenticode signature from the configured publisher on the setup file."`
@@ -37,13 +43,18 @@ type Spec struct {
 }
 
 type Content struct {
-	SetupFile string                  `json:"setup_file,omitempty" yaml:"setup_file,omitempty" jsonschema_description:"Relative Windows payload path of the executable to run. Required when the source tree has no selected entrypoint."`
-	Files     map[string]plugin.Input `json:"files,omitempty" yaml:"files,omitempty" jsonschema_description:"Additional files keyed by their relative paths in the setup tree. Each value selects its own input."`
+	Files map[string]plugin.Input `json:"files,omitempty" yaml:"files,omitempty" jsonschema_description:"Additional files keyed by their relative paths in the setup tree. Each value selects its own input."`
 }
 
 func (s Spec) Validate() error {
 	if s.Source.Resolver == "" && s.Source.Resource == nil {
 		return errors.New("WindowsSoftware requires one vendor source")
+	}
+	if s.SetupFile != "" && !validPattern(s.SetupFile) {
+		return errors.New("setup_file must be a setup-relative path or glob")
+	}
+	if s.VersionFile != "" && (!relative(s.VersionFile) || strings.Contains(s.VersionFile, "/")) {
+		return errors.New("version_file must be a file name")
 	}
 	if err := validateContent(s.Content); err != nil {
 		return err
@@ -99,48 +110,46 @@ func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, 
 	if !filepath.IsAbs(workspace) || !filepath.IsAbs(source.Path) {
 		return nil, errors.New("preparation requires absolute workspace and leased source paths")
 	}
+	if spec.SetupFile != "" && !validPattern(spec.SetupFile) {
+		return nil, errors.New("setup_file must be a setup-relative path or glob")
+	}
 	if err := validateContent(spec.Content); err != nil {
 		return nil, err
 	}
-	setup := source.Filename
-	if source.Tree {
-		setup = source.EntryPoint
-	} else if !relative(source.Filename) || path.Base(source.Filename) != source.Filename {
+	// An archive holds a setup directory, never an installer to run as is.
+	archived := !source.Tree && contents.IsArchive(source)
+	if !source.Tree && !archived && (!relative(source.Filename) || path.Base(source.Filename) != source.Filename) {
 		return nil, errors.New("vendor installer requires a safe base filename")
 	}
-	originalSetup := setup
-	if spec.Content != nil && spec.Content.SetupFile != "" {
-		setup = spec.Content.SetupFile
-	}
-	if !relative(setup) {
-		return nil, errors.New("a setup directory requires a safe relative setup_file")
-	}
-	if !source.Tree && (spec.Content == nil || len(spec.Content.Files) == 0) && setup != source.Filename {
-		return nil, errors.New("single-installer setup_file must match its filename")
-	}
 	artifact := source
-	if setup != originalSetup {
-		artifact.Version = ""
-	}
 	cleanup := func() {}
-	if source.Tree || spec.Content != nil && len(spec.Content.Files) > 0 {
-		if err := validateLayout(ctx, source, spec.Content, inputs); err != nil {
-			return nil, err
-		}
+	if source.Tree || archived || spec.Content != nil && len(spec.Content.Files) > 0 {
 		stage, err := os.MkdirTemp(workspace, ".windows-")
 		if err != nil {
 			return nil, err
 		}
 		cleanup = func() { _ = os.RemoveAll(stage) }
 		root := filepath.Join(stage, "setup")
-		if err := assemble(ctx, root, stage, source, spec.Content, inputs); err != nil {
+		if err := assemble(ctx, root, stage, source, archived, spec.Content, inputs); err != nil {
 			cleanup()
 			return nil, err
 		}
 		artifact.Path, artifact.Filename, artifact.Tree, artifact.Format = root, "setup", true, "directory"
 		artifact.Size, artifact.SHA256, artifact.Mode = 0, "", 0
 	}
-	result, err := describe(ctx, artifact, setup)
+	setup, err := selectSetup(ctx, spec.SetupFile, source, archived, artifact)
+	if err == nil && !relative(setup) {
+		err = errors.New("the setup entry point must be a safe relative Windows path")
+	}
+	if err != nil {
+		cleanup()
+		return nil, err
+	}
+	// An input's version describes its own installer, not another entry point.
+	if selected := sourceSetup(source, archived); setup != selected {
+		artifact.Version = ""
+	}
+	result, err := describe(ctx, artifact, setup, spec.VersionFile)
 	if err == nil && (spec.Signature != nil || deriveSignature) {
 		err = verifySignature(ctx, spec, &result)
 	}
@@ -176,12 +185,29 @@ func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact) 
 	return err
 }
 
-func assemble(ctx context.Context, root, workspace string, source plugin.Artifact, content *Content, inputs map[string]plugin.Artifact) error {
-	if source.Tree {
+// assemble writes the setup tree at root. An archive source is extracted in
+// place, so its members are validated together with the content files.
+func assemble(ctx context.Context, root, workspace string, source plugin.Artifact, archived bool, content *Content, inputs map[string]plugin.Artifact) error {
+	tree := source
+	if archived {
+		done := plugin.Stage(ctx, "Extracting archive", plugin.Detail(source.Filename))
+		err := archive.Extract(ctx, source.Path, root)
+		done(err)
+		if err != nil {
+			return err
+		}
+		tree = plugin.Artifact{Path: root, Tree: true}
+	}
+	if err := validateLayout(ctx, tree, content, inputs); err != nil {
+		return err
+	}
+	switch {
+	case archived:
+	case source.Tree:
 		if err := copyTree(ctx, source.Path, root, workspace); err != nil {
 			return err
 		}
-	} else {
+	default:
 		if err := copyFile(ctx, source.Path, filepath.Join(root, source.Filename)); err != nil {
 			return err
 		}
@@ -206,7 +232,9 @@ func assemble(ctx context.Context, root, workspace string, source plugin.Artifac
 	return nil
 }
 
-func describe(ctx context.Context, artifact plugin.Artifact, setup string) (plugin.Artifact, error) {
+// describe inspects the setup file. A setup MSI supplies the managed version:
+// its ProductVersion, or the File table version of versionFile.
+func describe(ctx context.Context, artifact plugin.Artifact, setup, versionFile string) (plugin.Artifact, error) {
 	installer := artifact.Path
 	if artifact.Tree {
 		installer = filepath.Join(artifact.Path, filepath.FromSlash(setup))
@@ -238,6 +266,14 @@ func describe(ctx context.Context, artifact plugin.Artifact, setup string) (plug
 			return artifact, err
 		}
 		artifact.Version = subject.MSI.ProductVersion
+	}
+	if versionFile != "" {
+		if len(artifact.Evidence["windows.installer"]) == 0 {
+			return artifact, errors.New("version_file requires an MSI setup file")
+		}
+		if artifact.Version, err = msi.FileVersion(installer, versionFile); err != nil {
+			return artifact, fmt.Errorf("version_file: %w", err)
+		}
 	}
 	artifact.EntryPoint = setup
 	return artifact, nil

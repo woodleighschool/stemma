@@ -82,7 +82,7 @@ func TestApplicationDiskImageDerivesADmgApp(t *testing.T) {
 	if _, named := m["displayName"]; named {
 		t.Fatalf("display name was derived from the application: %+v", m)
 	}
-	if identity, err := identifyArtifact(t.Context(), req.Artifact, dmgType, ""); err != nil || !identity.raw {
+	if identity, err := identifyArtifact(t.Context(), req.Artifact, dmgType); err != nil || !identity.raw {
 		t.Fatalf("disk image was not published as it is: %+v: %v", identity, err)
 	}
 }
@@ -251,7 +251,7 @@ func TestLineOfBusinessUploadRequirements(t *testing.T) {
 }
 
 func TestStaticValidationAcceptsReferencesWithoutContent(t *testing.T) {
-	req := plugin.ReconcileRequest[Config]{Method: "validate", Config: Config{GraphURL: "https://graph.microsoft.com/v1.0", Token: "synthetic"},
+	req := plugin.ReconcileRequest[Config]{Method: "validate", Config: Config{GraphURL: "https://graph.microsoft.com", Token: "synthetic"},
 		Metadata: raw(object{
 			"type":         "win32",
 			"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": true}},
@@ -262,6 +262,16 @@ func TestStaticValidationAcceptsReferencesWithoutContent(t *testing.T) {
 	response, err := Handle(t.Context(), req)
 	if err != nil {
 		t.Fatalf("static relationship validation: %+v, %v", response, err)
+	}
+}
+
+// Graph returns architecture flags in its own order; a declared set in any
+// order must compile to that spelling or every plan would report a change.
+func TestArchitecturesCompileToGraphFlags(t *testing.T) {
+	req := plugin.ReconcileRequest[Config]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "example"}}, Metadata: raw(object{"architectures": []any{"arm64", "x64"}})}
+	m, err := compile(req)
+	if err != nil || m["allowedArchitectures"] != "x64,arm64" {
+		t.Fatalf("allowedArchitectures = %#v, %v", m["allowedArchitectures"], err)
 	}
 }
 
@@ -276,14 +286,14 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 		{"type defaults from the kind", "WindowsSoftware", object{"display_name": "Example"}, true},
 		{"null type", "WindowsSoftware", object{"type": nil}, false},
 		{"MSI information", "WindowsSoftware", object{"msi": object{"product_version": "2.0", "package_type": "per_machine"}}, true},
-		{"setup entrypoint", "WindowsSoftware", object{"content": object{"setup_file": "bin/setup.exe"}}, true},
-		{"unknown content option", "WindowsSoftware", object{"content": object{"setup_file": "setup.exe", "run": true}}, false},
-		{"missing setup entrypoint", "WindowsSoftware", object{"content": object{}}, false},
-		{"mac setup tree", "MacSoftware", object{"type": "pkg", "content": object{"setup_file": "setup.exe"}}, false},
+		{"setup entrypoint", "WindowsSoftware", object{"content": object{"setup_file": "bin/setup.exe"}}, false},
 		{"registry", "WindowsSoftware", object{"detection": []any{registry}}, true},
 		{"script", "WindowsSoftware", object{"detection": []any{object{"type": "script", "script": "Write-Output 'installed'\nexit 0\n", "run_as_32bit": false}}}, true},
 		{"assignment", "WindowsSoftware", object{"assignments": []any{object{"intent": "required", "group": "88208ef5-07a0-4627-ad8f-e9c1c0ff5f15"}, object{"intent": "available", "all_users": true}}}, true},
 		{"assignment with two targets", "WindowsSoftware", object{"assignments": []any{object{"intent": "required", "group": "group-1", "all_devices": true}}}, false},
+		{"Windows assignment notifications", "WindowsSoftware", object{"type": "win32", "assignments": []any{object{"intent": "required", "all_devices": true, "notifications": "hide_all"}}}, true},
+		{"Mac assignment notifications", "MacSoftware", object{"type": "pkg", "assignments": []any{object{"intent": "required", "all_devices": true, "notifications": "hide_all"}}}, false},
+		{"Mac LOB assignment notifications", "MacSoftware", object{"type": "lob", "assignments": []any{object{"intent": "required", "all_devices": true, "notifications": "hide_all"}}}, false},
 		{"references", "WindowsSoftware", object{"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": true}}, "retention": object{"keep": 1}}, true},
 		{"external relationship", "WindowsSoftware", object{"dependencies": []any{object{"app_id": "existing-app", "auto_install": true}}}, true},
 		{"ambiguous relationship", "WindowsSoftware", object{"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "app_id": "existing-app", "auto_install": true}}}, false},
@@ -298,6 +308,17 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 		{"named subject derivation", "WindowsSoftware", object{"derive": object{"msi": "installer"}}, false},
 		{"declared minimum OS", "MacSoftware", object{"minimum_os": "14.0"}, false},
 		{"line-of-business app", "MacSoftware", object{"type": "lob", "install_as_managed": true}, true},
+		{"architectures", "WindowsSoftware", object{"architectures": []any{"x64", "arm64"}}, true},
+		{"cleared architectures", "WindowsSoftware", object{"architectures": nil}, true},
+		{"single architecture", "WindowsSoftware", object{"architecture": "x64"}, false},
+		{"empty architectures", "WindowsSoftware", object{"architectures": []any{}}, false},
+		{"repeated architecture", "WindowsSoftware", object{"architectures": []any{"x64", "x64"}}, false},
+		{"MSI properties", "WindowsSoftware", object{"msi_properties": object{"PORTAL": "vpn.example.com", "zConfig": "AU2_EnableAutoUpdate=true"}}, true},
+		{"MSI properties and install command", "WindowsSoftware", object{"msi_properties": object{"PORTAL": "vpn"}, "install_command": "setup.exe /S"}, false},
+		{"MSI property name", "WindowsSoftware", object{"msi_properties": object{"1PORTAL": "vpn"}}, false},
+		{"MSI property name with NUL", "WindowsSoftware", object{"msi_properties": object{"POR\x00TAL": "vpn"}}, false},
+		{"MSI property value line break", "WindowsSoftware", object{"msi_properties": object{"PORTAL": "vpn\r\nother"}}, false},
+		{"Mac MSI properties", "MacSoftware", object{"type": "pkg", "msi_properties": object{"PORTAL": "vpn"}}, false},
 		{"managed PKG app", "MacSoftware", object{"type": "pkg", "install_as_managed": true}, false},
 		{"Windows line-of-business app", "WindowsSoftware", object{"type": "lob", "install_command": "setup.exe"}, false},
 	} {
@@ -307,7 +328,7 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 				t.Fatalf("schema validity differs: %v", err)
 			}
 			identity := plugin.Identity{Resource: plugin.ResourceReference{Kind: test.kind, Name: "example"}}
-			_, err := Handle(t.Context(), plugin.ReconcileRequest[Config]{Method: "validate", Identity: identity, Config: Config{GraphURL: "https://graph.microsoft.com/v1.0", Token: "synthetic"}, Metadata: metadata})
+			_, err := Handle(t.Context(), plugin.ReconcileRequest[Config]{Method: "validate", Identity: identity, Config: Config{GraphURL: "https://graph.microsoft.com", Token: "synthetic"}, Metadata: metadata})
 			if (err == nil) != test.valid {
 				t.Fatalf("provider validity differs: %v", err)
 			}

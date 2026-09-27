@@ -19,9 +19,6 @@ func validateContent(content *Content) error {
 	if content == nil {
 		return nil
 	}
-	if content.SetupFile != "" && !relative(content.SetupFile) {
-		return errors.New("content.setup_file must be a relative Windows path")
-	}
 	names := slices.Sorted(maps.Keys(content.Files))
 	for i, name := range names {
 		if !relative(name) {
