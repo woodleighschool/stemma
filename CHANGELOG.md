@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.4.0](https://github.com/woodleighschool/stemma/compare/0.3.0...0.4.0) (2026-09-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* **plugin:** version operations and publish portable bundles
+* record input locks in update and compare catalog changes
+* evaluate settings only where commands use them
+* **windows:** prepare setup directories and derive Intune apps
+* **cli:** stream preparation progress and artifact reports
+* **source:** separate fetch state from reviewed inputs
+
+### Features
+
+* **cli:** stream preparation progress and artifact reports ([d6ddf1c](https://github.com/woodleighschool/stemma/commit/d6ddf1c97608f6e5d542dc186985e7729a268d90))
+* evaluate settings only where commands use them ([412ba59](https://github.com/woodleighschool/stemma/commit/412ba596ccaca681468c65184bf7bf137cfbad1f))
+* **go:** update module github.com/deploymenttheory/go-apfs-v2 (v0.10.0 → v0.11.2) ([#50](https://github.com/woodleighschool/stemma/issues/50)) ([4aaff3b](https://github.com/woodleighschool/stemma/commit/4aaff3badfe5313d544391828e1b973a2e310e9e))
+* **macpkg:** verify wrapped installer signatures ([3f5f158](https://github.com/woodleighschool/stemma/commit/3f5f1583089f2463801e578669f535965b6e1a46))
+* **mcp:** expose catalog discovery and preparation tools ([f029a47](https://github.com/woodleighschool/stemma/commit/f029a477be924802ff5688963d2d9f4f5575a4d0))
+* **plugin:** version operations and publish portable bundles ([a833986](https://github.com/woodleighschool/stemma/commit/a833986f109d411ff350bf3be3b98ceab2705b97))
+* record input locks in update and compare catalog changes ([1a8db25](https://github.com/woodleighschool/stemma/commit/1a8db254d1bac9f1ab7c95d33361fc29d5c4a6f5))
+* **source:** separate fetch state from reviewed inputs ([40709bc](https://github.com/woodleighschool/stemma/commit/40709bcba9ceaeb6156a3dbd60542675f4839786))
+* **windows:** prepare setup directories and derive Intune apps ([58567bf](https://github.com/woodleighschool/stemma/commit/58567bfbeb8a8f3e8bd37cc2e2cbc2a8bba94985))
+
+
+### Bug Fixes
+
+* **mac:** inspect applets and render native icons ([cd34f7a](https://github.com/woodleighschool/stemma/commit/cd34f7a1e9b7fabfb0b18916b84fb9948c4f8765))
+
+
+### Miscellaneous Chores
+
+* **deps:** drop the lzfse fork replace ([dc41e5c](https://github.com/woodleighschool/stemma/commit/dc41e5cbe49dcbebe5e123c8677b7d76bd8ecbf8))
+
 ## [0.3.0](https://github.com/woodleighschool/stemma/compare/0.2.1...0.3.0) (2026-09-26)
 
 
