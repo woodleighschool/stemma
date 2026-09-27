@@ -679,7 +679,7 @@ func (c *client) merge(ctx context.Context, current *observed, desired map[strin
 }
 
 func (c *client) upload(ctx context.Context, id, file string, content payload) (err error) {
-	done := plugin.Stage(ctx, "Uploading Jamf package")
+	done := plugin.Stage(ctx, "Uploading Jamf package", plugin.Detail(content.filename))
 	defer func() { done(err) }()
 	f, err := os.Open(file)
 	if err != nil {

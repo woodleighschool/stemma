@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -82,8 +83,8 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	t.Cleanup(server.Close)
 	m := manager(t)
 	inputs := inputset("http", map[string]any{"url": server.URL + "/app.pkg", "token": "first-token"})
-	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil {
-		t.Fatal("accepted missing frozen lock")
+	if _, err := prepare(t, m, inputs, Options{Frozen: true}); err == nil || err.Error() != "lockfile: missing; run stemma update" {
+		t.Fatalf("missing frozen lock: %v", err)
 	}
 	first, err := prepare(t, m, inputs, Options{})
 	if err != nil {
@@ -136,12 +137,28 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	if !bytes.Equal(before, lockedBytes(t, m)) {
 		t.Fatal("failed recovery rewrote lock")
 	}
+	current, err := prepare(t, m, inputs, Options{IgnoreInputs: true})
+	if err != nil || entry(current).Content == original.Content || !bytes.Equal(before, lockedBytes(t, m)) {
+		t.Fatalf("ignoring input locks did not resolve the source without saving: %v", err)
+	}
 	updated, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil || !updated.Changed || entry(updated).Content == original.Content {
 		t.Fatalf("refresh failed to record changed input: %v", err)
 	}
-	if _, err := prepare(t, m, inputs, Options{Ignore: true, Frozen: true}); err == nil {
+	if _, err := prepare(t, m, inputs, Options{IgnoreInputs: true, Frozen: true}); err == nil {
 		t.Fatal("accepted conflicting lock options")
+	}
+}
+
+// TestIgnoringInputLocksStillReadsTheLockfile keeps "no input lock" apart from
+// "no lockfile": the file still has to load.
+func TestIgnoringInputLocksStillReadsTheLockfile(t *testing.T) {
+	m := manager(t)
+	if err := os.WriteFile(Filename(m.Root), []byte("inputs: [\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepare(t, m, inputset("file", map[string]any{"path": "app.pkg"}), Options{IgnoreInputs: true}); err == nil || !strings.HasPrefix(err.Error(), "lockfile: ") {
+		t.Fatalf("an unreadable lockfile was ignored: %v", err)
 	}
 }
 
@@ -663,9 +680,23 @@ func TestCommitRetainsRejectedResourcesWithoutPartialInputs(t *testing.T) {
 			t.Fatalf("acquire %s: %v", resource, err)
 		}
 	}
+	// Each acquired resource's changes are known before the commit, so a run
+	// can report them as resources finish.
+	healthy := update.Changes("healthy")
+	if prepared := update.Changes("preparation"); len(prepared) != 2 || prepared[0].Input != "a" || !prepared[0].ContentChanged || prepared[1].Input != "b" || prepared[1].After != nil {
+		t.Fatalf("acquired resource changes: %+v", prepared)
+	}
 	result, err := update.Commit(t.Context(), "acquisition", "preparation", "new")
+	if !slices.EqualFunc(healthy, result.Changes, func(a, b InputChange) bool {
+		return a.Resource == b.Resource && a.Input == b.Input && a.After.Equal(*b.After)
+	}) {
+		t.Fatalf("changes before the commit %+v differ from the commit %+v", healthy, result.Changes)
+	}
 	if err != nil || !result.Changed {
 		t.Fatalf("successful resource could not update the lock: %+v, %v", result, err)
+	}
+	if len(result.Changes) != 1 || result.Changes[0].Resource != "healthy" || result.Changes[0].Input != "a" || result.Changes[0].Before == nil || result.Changes[0].After == nil {
+		t.Fatalf("report included uncommitted inputs: %+v", result.Changes)
 	}
 	after, err := Load(Filename(m.Root))
 	if err != nil {
@@ -687,16 +718,25 @@ func TestCommitRetainsRejectedResourcesWithoutPartialInputs(t *testing.T) {
 func TestParseChecksTheVersionBeforeAnyEntry(t *testing.T) {
 	// Version 2 entries carried resolved_at, which version 3 entries reject.
 	older := "version: 2\ninputs:\n  app:\n    source:\n      version: 1\n      resolved_at: \"2026-09-23T03:32:34Z\"\n"
+	const unsupported = "lockfile: version 2 is not supported; delete it and run stemma update"
 	for data, want := range map[string]string{
-		older:                      "lockfile version 2 is not supported",
-		"version: 4\ninputs: {}\n": "needs a newer stemma",
-		"version: 3\n":             "incomplete lockfile",
+		older:                      unsupported,
+		"version: 4\ninputs: {}\n": "lockfile: version 4 needs a newer stemma",
+		"version: 3\n":             "lockfile: incomplete; run stemma update",
 	} {
-		if _, err := Parse([]byte(data)); err == nil || !strings.Contains(err.Error(), want) {
+		if _, err := Parse([]byte(data)); err == nil || err.Error() != want {
 			t.Errorf("Parse(%q) = %v, want %q", data, err, want)
 		}
 	}
 	if _, err := Parse([]byte("version: 3\ninputs: {}\n")); err != nil {
 		t.Fatal(err)
+	}
+	// A run names the lockfile once too.
+	m := manager(t)
+	if err := os.WriteFile(Filename(m.Root), []byte(older), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepare(t, m, map[string]map[string]plugin.Input{}, Options{}); err == nil || err.Error() != unsupported {
+		t.Fatalf("run read the lockfile as %v", err)
 	}
 }

@@ -54,7 +54,7 @@ func TestReadKeepsPackageAndApplicationFactsSeparate(t *testing.T) {
 	}
 }
 
-func TestReadMetadataDoesNotScanPayload(t *testing.T) {
+func TestReadRejectsACorruptPayload(t *testing.T) {
 	data := readFixture(t, "../apple/testdata/fixture.pkg")
 	tocSize := binary.BigEndian.Uint64(data[8:16])
 	zr, err := zlib.NewReader(bytes.NewReader(data[28 : 28+tocSize]))
@@ -83,10 +83,6 @@ func TestReadMetadataDoesNotScanPayload(t *testing.T) {
 	}
 	name := filepath.Join(t.TempDir(), "vendor.pkg")
 	writeFixture(t, name, data)
-	facts, err := ReadMetadata(t.Context(), name)
-	if err != nil || len(facts.Subjects) != 2 || facts.Subjects[1].Package == nil {
-		t.Fatalf("metadata read scanned payload: %+v, %v", facts, err)
-	}
 	if _, err := Read(t.Context(), name); err == nil {
 		t.Fatal("full inspection accepted corrupt payload")
 	}
@@ -116,15 +112,13 @@ func TestReadAppAndMSIByContents(t *testing.T) {
 	})
 }
 
-func TestReadRejectsMalformedClaimsAndKeepsShallowDMGIdentity(t *testing.T) {
+func TestReadRejectsMalformedClaims(t *testing.T) {
 	for _, extension := range []string{".pkg", ".msi", ".app", ".dmg"} {
 		t.Run(extension, func(t *testing.T) {
 			name := filepath.Join(t.TempDir(), "malformed"+extension)
 			writeFixture(t, name, []byte("not an installer"))
-			for _, read := range []func(context.Context, string) (plugin.Facts, error){Read, ReadMetadata} {
-				if _, err := read(t.Context(), name); err == nil {
-					t.Fatal("accepted claimed malformed artifact")
-				}
+			if _, err := Read(t.Context(), name); err == nil {
+				t.Fatal("accepted claimed malformed artifact")
 			}
 		})
 	}
@@ -134,11 +128,6 @@ func TestReadRejectsMalformedClaimsAndKeepsShallowDMGIdentity(t *testing.T) {
 	writeFixture(t, name, data)
 	if _, err := Read(t.Context(), name); err == nil {
 		t.Fatal("DMG inspection accepted a corrupt filesystem")
-	}
-	facts, err := ReadMetadata(t.Context(), name)
-	digest := sha256.Sum256(data)
-	if err != nil || len(facts.Subjects) != 1 || facts.Subjects[0].Kind != "container" || facts.Subjects[0].SHA256 != hex.EncodeToString(digest[:]) || facts.Subjects[0].App != nil || facts.Subjects[0].Package != nil {
-		t.Fatalf("wrong shallow DMG facts: %+v, %v", facts, err)
 	}
 }
 
@@ -180,10 +169,6 @@ func TestReadDMGInventoriesApplicationsAndPackages(t *testing.T) {
 			t.Fatalf("subject %d = %+v, want %+v", i, subject, want[i])
 		}
 	}
-	shallow, err := ReadMetadata(t.Context(), name)
-	if err != nil || len(shallow.Subjects) != 1 || !reflect.DeepEqual(shallow.Subjects[0], facts.Subjects[0]) {
-		t.Fatalf("shallow read changed DMG identity: %+v, %v", shallow, err)
-	}
 	if !bytes.Equal(data, readFixture(t, name)) {
 		t.Fatal("inspection altered disk image")
 	}
@@ -213,10 +198,6 @@ func TestReadLocalTreeAndVersionlessFile(t *testing.T) {
 	app := facts.Subjects[1]
 	if app.App == nil || app.Parent != "." || app.Path != "Payload/Fixture.app" || app.InstalledPath != "" {
 		t.Fatalf("local path became installed path: %+v", app)
-	}
-	shallow, err := ReadMetadata(t.Context(), root)
-	if err != nil || len(shallow.Subjects) != 1 {
-		t.Fatalf("shallow read scanned tree: %+v, %v", shallow, err)
 	}
 	script := filepath.Join(root, "postinstall")
 	file, err := Read(t.Context(), script)

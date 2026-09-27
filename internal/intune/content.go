@@ -225,7 +225,7 @@ func snapshotFile(ctx context.Context, artifact plugin.Artifact, source string) 
 
 // upload commits a new content version; the caller activates it.
 func (c *client) upload(ctx context.Context, appID string, prepared *preparedArtifact) (version string, err error) {
-	done := plugin.Stage(ctx, "Publishing Intune content")
+	done := plugin.Stage(ctx, "Publishing Intune content", plugin.Detail(prepared.name))
 	defer func() { done(err) }()
 	var created object
 	if err := c.request(ctx, abs.POST, c.content(appID, "", "", ""), object{"@odata.type": "#microsoft.graph.mobileAppContent"}, &created); err != nil {
@@ -295,7 +295,7 @@ func (c *client) waitFile(ctx context.Context, builder *abs.BaseRequestBuilder, 
 }
 
 func (c *client) uploadBlob(ctx context.Context, sas string, prepared *preparedArtifact) (err error) {
-	done := plugin.Stage(ctx, "Uploading Intune content")
+	done := plugin.Stage(ctx, "Uploading Intune content", plugin.Detail(prepared.name))
 	defer func() { done(err) }()
 	endpoint, err := url.Parse(sas)
 	if err != nil || endpoint.Host == "" || endpoint.User != nil || (endpoint.Scheme != "https" && (endpoint.Scheme != "http" || (endpoint.Hostname() != "localhost" && endpoint.Hostname() != "127.0.0.1"))) {

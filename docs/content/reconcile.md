@@ -50,14 +50,19 @@ command.
    lock entries changed. The resource and every resource consuming its outputs
    are prepared online from the exact locked observations, then planned offline:
    proof that the cache already holds every byte a merge will need. The commit
-   is pushed with a lease, the pull request is opened or updated with the
-   before-and-after inputs and the plan, and the verification becomes the
-   `stemma/plan` commit status.
+   is pushed with a lease, the pull request is opened or updated with a summary
+   of the lock change and what merging does to each destination, and the
+   verification becomes the `stemma/plan` commit status.
 
-The phases fail independently. A stale lock on the reviewed branch fails apply
+Both phases start from the reviewed commit's project and lockfile. When either
+does not load, neither phase runs: the run fails with that one error, and the
+commit's `stemma/apply` status fails unless the commit was already applied. A
+missing lockfile loads; the update phase proposes one. Past that point the
+phases fail independently. A stale lock on the reviewed branch fails apply
 loudly while the update phase still proposes the fix; the exit status is nonzero
-when either phase failed. Commit statuses are summaries; the pull request holds
-the plan and the run's logs hold the apply detail.
+when either phase failed. Pull requests and commit statuses name resources,
+destinations and fields without values or error text; the run's report holds
+the detail.
 
 Further behaviour of the update phase:
 

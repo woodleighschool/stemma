@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,70 +16,39 @@ import (
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/engine"
 	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
+	"github.com/woodleighschool/stemma/internal/reconcile"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func TestOutputLevelsAndReports(t *testing.T) {
-	for _, test := range []struct {
-		name                 string
-		flags                []string
-		info, debug, warning bool
-	}{
-		{name: "default", info: true, warning: true},
-		{name: "verbose", flags: []string{"-v"}, info: true, debug: true, warning: true},
-		{name: "debug", flags: []string{"--debug"}, info: true, debug: true, warning: true},
-		{name: "explicit debug", flags: []string{"--log-level", "debug"}, info: true, debug: true, warning: true},
-		{name: "quiet", flags: []string{"-q"}, warning: true},
-		{name: "errors", flags: []string{"--log-level", "error"}},
-		{name: "plain", flags: []string{"--no-progress"}, info: true, warning: true},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var out, logs bytes.Buffer
-			cmd, finish := command(&out, &logs)
-			cmd.AddCommand(&cobra.Command{Use: "probe", RunE: func(cmd *cobra.Command, _ []string) error {
-				plugin.Stage(cmd.Context(), "Acquiring input")
-				plugin.Logger(cmd.Context()).DebugContext(cmd.Context(), "Cache lookup")
-				plugin.Logger(cmd.Context()).WarnContext(cmd.Context(), "Verification disabled")
-				_, err := io.WriteString(cmd.OutOrStdout(), "report\n")
-				return err
-			}})
-			cmd.SetArgs(append(test.flags, "probe"))
-			err := cmd.ExecuteContext(t.Context())
-			finish(err)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if out.String() != "report\n" {
-				t.Fatalf("logs contaminated stdout: %q", out.String())
-			}
-			for message, want := range map[string]bool{"Acquiring input": test.info, "Cache lookup": test.debug, "Verification disabled": test.warning} {
-				if strings.Contains(logs.String(), message) != want {
-					t.Errorf("%q enabled=%t: %s", message, want, logs.String())
-				}
-			}
-			if strings.ContainsAny(logs.String(), "\x1b\r") {
-				t.Fatalf("non-terminal received control codes: %q", logs.String())
-			}
-		})
+func TestFiniteOutputContainsReportsAndWarningsOnly(t *testing.T) {
+	var out, logs bytes.Buffer
+	cmd, finish := command(&out, &logs)
+	cmd.AddCommand(&cobra.Command{Use: "probe", RunE: func(cmd *cobra.Command, _ []string) error {
+		plugin.Stage(cmd.Context(), "Acquiring input")(errors.New("failure detail"))
+		plugin.Logger(cmd.Context()).DebugContext(cmd.Context(), "Cache lookup")
+		plugin.Logger(cmd.Context()).WarnContext(cmd.Context(), "Verification disabled")
+		_, err := io.WriteString(cmd.OutOrStdout(), "report\n")
+		return err
+	}})
+	cmd.SetArgs([]string{"probe"})
+	err := cmd.ExecuteContext(t.Context())
+	finish(err)
+	if err != nil || out.String() != "report\n" || logs.String() != "Warning: Verification disabled\n" {
+		t.Fatalf("error=%v stdout=%q stderr=%q", err, out.String(), logs.String())
 	}
 }
 
-func TestInvalidOutputOptionsDoNotRun(t *testing.T) {
-	for _, flags := range [][]string{
-		{"--log-level", "trace"}, {"--log-format", "yaml"},
-		{"--quiet", "--verbose"}, {"--log-level", "info", "--debug"},
-	} {
+func TestFiniteCommandsRejectLoggingFlags(t *testing.T) {
+	for _, flag := range []string{"--log-level", "--log-format", "--quiet", "--verbose", "--debug", "--no-progress"} {
 		var out, logs bytes.Buffer
 		cmd, finish := command(&out, &logs)
-		called := false
-		cmd.AddCommand(&cobra.Command{Use: "probe", RunE: func(*cobra.Command, []string) error { called = true; return nil }})
-		cmd.SetArgs(append(flags, "probe"))
+		cmd.SetArgs([]string{"plan", flag})
 		err := cmd.ExecuteContext(t.Context())
 		finish(err)
-		if err == nil || called || out.Len() != 0 {
-			t.Fatalf("flags=%v error=%v called=%t stdout=%q", flags, err, called, out.String())
+		if err == nil || !strings.Contains(err.Error(), "unknown flag") || out.Len() != 0 {
+			t.Fatalf("%s: %v, stdout=%q", flag, err, out.String())
 		}
 	}
 }
@@ -99,34 +69,25 @@ spec:
 `)
 	var out, logs bytes.Buffer
 	cmd, finish := command(&out, &logs)
-	cmd.SetArgs([]string{"prepare", "--root", project, "--cache-dir", t.TempDir(), "--json", "--log-format", "json"})
+	cmd.SetArgs([]string{"prepare", "--root", project, "--cache-dir", t.TempDir(), "--json"})
 	err := cmd.ExecuteContext(t.Context())
 	finish(err)
 	if err == nil {
 		t.Fatal("missing input succeeded")
 	}
 	var report engine.Report
-	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+	decoder := json.NewDecoder(&out)
+	if err := decoder.Decode(&report); err != nil {
 		t.Fatal(err)
 	}
-	if report.LockChanged == nil || *report.LockChanged || report.Error == "" || len(report.Resources) != 1 || report.Resources[0].Error == "" {
-		t.Fatalf("failure did not report the resource and retained lock: %+v", report)
+	if report.LockChanged == nil || *report.LockChanged || report.Error == "" || len(report.Resources) != 1 || report.Resources[0].Error == "" || report.Summary.Failed != 1 {
+		t.Fatalf("failure did not report retained lock and failed resource: %+v", report)
 	}
-	decoder := json.NewDecoder(&logs)
-	var messages []string
-	for {
-		var record struct {
-			Message string `json:"msg"`
-		}
-		if err := decoder.Decode(&record); errors.Is(err, io.EOF) {
-			break
-		} else if err != nil {
-			t.Fatal(err)
-		}
-		messages = append(messages, record.Message)
+	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
+		t.Fatalf("extra stdout: %v", err)
 	}
-	if !strings.Contains(strings.Join(messages, "\n"), "Acquiring input") || messages[len(messages)-1] != "Command failed" {
-		t.Fatalf("missing stage or failure log: %v (error: %s)", messages, report.Error)
+	if logs.Len() != 0 {
+		t.Fatalf("stderr=%q", logs.String())
 	}
 }
 
@@ -187,166 +148,184 @@ func TestLockedPluginsNameWhatChanged(t *testing.T) {
 	}
 }
 
-func TestTextLogsNameEachStageOnce(t *testing.T) {
-	for _, test := range []struct {
-		name, format string
-		level        slog.Level
-		want         int
-	}{
-		{name: "text", format: "text", level: slog.LevelInfo, want: 1},
-		{name: "debug text", format: "text", level: slog.LevelDebug, want: 2},
-		{name: "json", format: "json", level: slog.LevelInfo, want: 2},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			var logs bytes.Buffer
-			output := &commandOutput{out: io.Discard, format: test.format}
-			logger := slog.New(&stageHandler{Handler: slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: test.level}), output: output})
-			ctx := plugin.WithLogger(t.Context(), logger)
-			plugin.Stage(ctx, "Acquiring input")(nil)
-			plugin.Stage(ctx, "Preparing outputs")(errors.New("invalid signature"))
-			for _, stage := range []string{"Acquiring input", "Preparing outputs"} {
-				if got := strings.Count(logs.String(), stage); got != test.want {
-					t.Fatalf("%q logged %d times, want %d: %s", stage, got, test.want, logs.String())
-				}
+func TestHumanReportsStreamSelectedResourcesAndTotalTheRun(t *testing.T) {
+	report := engine.Report{Resources: []engine.ResourceReport{
+		{Kind: "MacSoftware", Name: "unchanged", Destinations: []engine.DestinationReport{{Name: "repo"}}},
+		{Kind: "MacSoftware", Name: "changed", Destinations: []engine.DestinationReport{{Name: "repo", Changes: []plugin.Change{{Action: "set", Field: "package.version", Before: json.RawMessage(`"1"`), After: json.RawMessage(`"2"`)}}}}},
+		{Kind: "MacSoftware", Name: "broken", Error: "invalid signature"},
+	}}
+	report.Summarize("plan")
+	for _, all := range []bool{false, true} {
+		var human, machine bytes.Buffer
+		o := newCommandOutput(&human, io.Discard)
+		o.all = all
+		for _, resource := range report.Resources {
+			if err := o.resourceDone("plan", resource); err != nil {
+				t.Fatal(err)
 			}
-		})
+		}
+		streamed := human.String()
+		for _, want := range []string{"MacSoftware/changed: 1 planned change\n  repo: 1 planned change\n    package.version: 1 -> 2\n", "MacSoftware/broken: failed\n  error: invalid signature\n"} {
+			if !strings.Contains(streamed, want) {
+				t.Fatalf("all=%v: block %q did not stream: %s", all, want, streamed)
+			}
+		}
+		if strings.Contains(streamed, "MacSoftware/unchanged") != all {
+			t.Fatalf("all=%v: unchanged resource: %s", all, streamed)
+		}
+		if err := o.report(&human, "plan", report, nil); err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.TrimPrefix(human.String(), streamed); got != "Plan: 1 resource with changes across 1 destination, 1 unchanged, 1 failed.\n" {
+			t.Fatalf("all=%v: summary %q", all, got)
+		}
+		o = newCommandOutput(&machine, io.Discard)
+		o.asJSON, o.all = true, all
+		for _, resource := range report.Resources {
+			if err := o.resourceDone("plan", resource); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := o.report(&machine, "plan", report, nil); err != nil {
+			t.Fatal(err)
+		}
+		var decoded engine.Report
+		if err := json.Unmarshal(machine.Bytes(), &decoded); err != nil {
+			t.Fatal(err)
+		}
+		want := 2
+		if all {
+			want = 3
+		}
+		if len(decoded.Resources) != want || decoded.Summary.Resources != 3 || decoded.Summary.Unchanged != 1 || decoded.Summary.Failed != 1 {
+			t.Fatalf("all=%v: %+v", all, decoded)
+		}
 	}
 }
 
-func TestFinalErrorIsRenderedOnceForPeople(t *testing.T) {
-	failure := errors.Join(
-		engine.ReportedError{Err: errors.New("MacSoftware/example: invalid signature")},
-		errors.New("lockfile: schema violations:\n\tspec.source: required\n\tspec.icon: unknown"),
-	)
-	var logs bytes.Buffer
-	output := &commandOutput{out: &logs, format: "text", failed: 1}
-	output.finish(failure)
-	want := "Error: lockfile: schema violations:\n    spec.source: required\n    spec.icon: unknown\nError: 1 resource failed\n"
-	if logs.String() != want {
-		t.Fatalf("final error:\n%s", logs.String())
+func TestApplyReportDoesNotConfirmFailedDestinationChanges(t *testing.T) {
+	report := engine.Report{Error: "upload failed", Resources: []engine.ResourceReport{{Kind: "MacSoftware", Name: "example", Error: "upload failed", Destinations: []engine.DestinationReport{
+		{Name: "first", Applied: true, Changes: []plugin.Change{{Action: "set", Field: "description", Before: json.RawMessage(`"old"`), After: json.RawMessage(`"new"`)}}},
+		{Name: "second", Error: "upload failed", Changes: []plugin.Change{{Action: "upload", Field: "installer", After: json.RawMessage(`"payload"`)}}},
+	}}}}
+	report.Summarize("apply")
+	text := renderResource(textStyle{}, "apply", report.Resources[0]) + renderSummary(textStyle{}, "apply", report, errors.New("upload failed"))
+	for _, want := range []string{"MacSoftware/example: failed\n", "  first: 1 change applied\n    description: old -> new\n", "  second: failed (changes not confirmed)\n", "    error: upload failed\n", "Apply incomplete: 1 destination applied", "1 failed"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q: %s", want, text)
+		}
 	}
-	logs.Reset()
-	output = &commandOutput{out: &logs, format: "json"}
-	output.finish(failure)
-	var record struct {
-		Message string `json:"msg"`
-		Error   string `json:"error"`
-	}
-	if err := json.Unmarshal(logs.Bytes(), &record); err != nil || record.Message != "Command failed" || record.Error != failure.Error() {
-		t.Fatalf("JSON logs lost the raw error: %s (%v)", logs.String(), err)
+	if strings.Count(text, "upload failed") != 1 {
+		t.Fatalf("repeated failure: %s", text)
 	}
 }
 
-func TestFinalErrorKeepsNestedFailuresAndContext(t *testing.T) {
+func TestInterruptedRunKeepsStreamedResultsAndSaysSo(t *testing.T) {
+	var out, logs bytes.Buffer
+	o := newCommandOutput(&out, &logs)
+	applied := engine.ResourceReport{Kind: "MacSoftware", Name: "done", Destinations: []engine.DestinationReport{{Name: "repo", Applied: true, Changes: []plugin.Change{{Action: "set", Field: "description"}}}}}
+	if err := o.resourceDone("apply", applied); err != nil {
+		t.Fatal(err)
+	}
+	report := engine.Report{Error: context.Canceled.Error(), Resources: []engine.ResourceReport{applied}}
+	report.Summarize("apply")
+	if err := o.report(&out, "apply", report, context.Canceled); err != nil {
+		t.Fatal(err)
+	}
+	o.finish(context.Canceled)
+	if !strings.HasPrefix(out.String(), "MacSoftware/done: 1 change applied\n") || !strings.HasSuffix(out.String(), "Apply interrupted: 1 destination applied, 0 resources unchanged.\n") || logs.String() != "Interrupted.\n" {
+		t.Fatalf("stdout=%q stderr=%q", out.String(), logs.String())
+	}
+}
+
+func TestFinalErrorShowsOnlyWhatNoReportShowed(t *testing.T) {
+	resource := engine.ResourceError{Resource: "MacSoftware/example", Err: errors.New("upload failed")}
 	for _, test := range []struct {
-		name string
 		err  error
 		want string
 	}{
-		{
-			name: "joined failures",
-			err: errors.Join(errors.Join(
-				engine.ReportedError{Err: errors.New("upload failed")},
-				errors.New("report write failed"),
-			), errors.New("lock write failed")),
-			want: "Error: report write failed\nError: lock write failed\nError: 1 resource failed\n",
-		},
-		{
-			name: "wrapped failures",
-			err:  fmt.Errorf("project: %w", errors.Join(errors.New("source missing"), errors.New("icon missing"))),
-			want: "Error: project: source missing\n  icon missing\nError: 1 resource failed\n",
-		},
+		{errors.Join(resource, errors.New("lockfile: schema violations:\n\tspec.source: required")), "Error: lockfile: schema violations:\n    spec.source: required\n"},
+		{resource, ""},
+		{reconcile.ErrFailed, ""},
+		// A report that could not be written showed nothing.
+		{errors.Join(reconcile.ErrFailed, errors.New("write stdout: broken pipe")), "Error: reconcile: a phase failed\n  write stdout: broken pipe\n"},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			output := &commandOutput{failed: 1}
-			if got := output.failure(test.err); got != test.want {
-				t.Fatalf("final error = %q, want %q", got, test.want)
-			}
-		})
-	}
-}
-
-func TestOnlyAStageOpensTheLiveTree(t *testing.T) {
-	var logs bytes.Buffer
-	output := &commandOutput{out: io.Discard, interactive: true}
-	logger := slog.New(&stageHandler{Handler: slog.NewTextHandler(&logs, nil), output: output})
-	ctx := plugin.WithLogger(t.Context(), logger.With("resource", "MacSoftware/example"))
-	plugin.Logger(ctx).WarnContext(ctx, "Verification disabled")
-	plugin.Logger(ctx).InfoContext(ctx, "Transfer progress", "progress", true, "current", 1, "unit", "bytes", "progress_final", true)
-	if output.progress != nil || !strings.Contains(logs.String(), "Verification disabled") {
-		t.Fatalf("a record without a stage opened the live tree: %s", logs.String())
-	}
-	plugin.Stage(ctx, "Acquiring input")
-	if output.progress == nil {
-		t.Fatal("a stage did not open the live tree")
-	}
-	output.stop()
-}
-
-func TestInteractiveStagesDoNotBecomePermanentLogs(t *testing.T) {
-	var logs bytes.Buffer
-	output := &commandOutput{out: io.Discard, interactive: true}
-	logger := slog.New(&stageHandler{Handler: slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}), output: output})
-	ctx := plugin.WithLogger(t.Context(), logger.With("resource", "MacSoftware/example"))
-	plugin.Stage(ctx, "Inspecting application")
-	plugin.Stage(ctx, "Verifying installer")
-	plugin.Logger(ctx).InfoContext(ctx, "Resource prepared", "stage_result", true, "cached", false)
-	plugin.Logger(ctx).InfoContext(ctx, "Provider notice")
-	plugin.Logger(ctx).DebugContext(ctx, "Cache lookup")
-	plugin.Logger(ctx).WarnContext(ctx, "Verification disabled")
-	if err := output.resourceDone(io.Discard, false, "prepare", engine.ResourceReport{Kind: "MacSoftware", Name: "example"}); err != nil {
-		t.Fatal(err)
-	}
-	output.stop()
-	for _, unwanted := range []string{"Inspecting application", "Verifying installer", "Resource prepared"} {
-		if strings.Contains(logs.String(), unwanted) {
-			t.Fatalf("live activity leaked into permanent logs: %s", logs.String())
+		var logs bytes.Buffer
+		newCommandOutput(io.Discard, &logs).finish(test.err)
+		if logs.String() != test.want {
+			t.Errorf("finish(%q) printed %q, want %q", test.err, logs.String(), test.want)
 		}
 	}
-	for _, want := range []string{"Cache lookup", "Provider notice"} {
-		if !strings.Contains(logs.String(), want) {
-			t.Fatalf("diagnostic missing: %s", logs.String())
-		}
+	wrapped := fmt.Errorf("project: %w", errors.Join(errors.New("source missing"), errors.New("icon missing")))
+	if got := commandError(wrapped); got != "project: source missing\nicon missing" {
+		t.Fatalf("lost enclosing context: %s", got)
+	}
+	// A command that prints only a path shows no report of its resource.
+	var logs bytes.Buffer
+	o := newCommandOutput(io.Discard, &logs)
+	o.pathOnly = true
+	o.finish(errors.Join(engine.ResourceError{Resource: "stemma/v1alpha1/MacSoftware/example", Err: errors.New("upload failed")}))
+	if want := "Error: MacSoftware/example: upload failed\n"; logs.String() != want {
+		t.Fatalf("path-only failure printed %q, want %q", logs.String(), want)
 	}
 }
 
-func TestPreparationReportIsASummary(t *testing.T) {
-	report := engine.Report{LockChanged: new(false), Resources: []engine.ResourceReport{
-		{Kind: "MacSoftware", Name: "example", Artifacts: map[string]engine.Prepared{"installer": {Filename: "example.pkg", Version: "1.0"}}},
-		{Kind: "MacSoftware", Name: "cached", Cached: true},
-	}}
-	var out bytes.Buffer
-	if err := printSummary(&out, "prepare", report); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := out.String(), "Preparation: 1 prepared, 1 cached, 0 failed.\nLockfile unchanged.\n"; got != want {
-		t.Fatalf("prepare repeated resource details: %q", got)
-	}
-	out.Reset()
-	if err := writeJSON(&out, report); err != nil {
-		t.Fatal(err)
-	}
-	var decoded engine.Report
-	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil || decoded.Resources[0].Artifacts["installer"].Filename != "example.pkg" {
-		t.Fatalf("JSON lost artifact details: %s (%v)", out.String(), err)
+func TestStartupFailureDoesNotFabricateReport(t *testing.T) {
+	var out, logs bytes.Buffer
+	cmd, finish := command(&out, &logs)
+	cmd.SetArgs([]string{"plan", "--json", "--root", t.TempDir()})
+	err := cmd.ExecuteContext(t.Context())
+	finish(err)
+	if err == nil || out.Len() != 0 || !strings.HasPrefix(logs.String(), "Error: ") {
+		t.Fatalf("error=%v stdout=%q stderr=%q", err, out.String(), logs.String())
 	}
 }
 
-func TestApplyReportCountsOnlySuccessfulDestinations(t *testing.T) {
-	report := engine.Report{Resources: []engine.ResourceReport{{Kind: "MacSoftware", Name: "example", Error: "one destination failed", Destinations: []engine.DestinationReport{
-		{Name: "first", Applied: true, Changes: []plugin.Change{{Action: "update", Field: "description"}}},
-		{Name: "second", Error: "upload failed", Changes: []plugin.Change{{Action: "create", Field: "installer"}}},
-	}}}}
-	var out bytes.Buffer
-	if err := printResource(&out, "apply", report.Resources[0]); err != nil {
+func TestWarningsAreInsideMachineReport(t *testing.T) {
+	var out, logs bytes.Buffer
+	o := newCommandOutput(&out, &logs)
+	o.asJSON = true
+	logger := slog.New(&activityHandler{output: o})
+	logger.Warn("Provider warning", "resource", "MacSoftware/example")
+	if err := o.report(&out, "plan", engine.Report{Resources: []engine.ResourceReport{}}, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := printSummary(&out, "apply", report); err != nil {
+	o.finish(nil)
+	var report engine.Report
+	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"first: 1 changes applied", "update description", "second: failed: upload failed", "Apply: 1 changes applied, 1 failed resources."} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("missing %q: %s", want, out.String())
+	if len(report.Warnings) != 1 || logs.Len() != 0 {
+		t.Fatalf("report=%+v stderr=%q", report, logs.String())
+	}
+}
+
+type failingReportWriter struct{}
+
+func (failingReportWriter) Write([]byte) (int, error) { return 0, errors.New("output unavailable") }
+
+func TestReportWriteFailureRetainsUnpublishedResourceError(t *testing.T) {
+	project := t.TempDir()
+	testproject.Write(t, filepath.Join(project, "stemma.yaml"), `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: fixture}
+spec: {imports: ['*.software.yaml']}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: missing-installer}
+spec:
+  source: {path: missing.pkg}
+  signature: {signer: apple:developer-id:SMLKBTR495}
+`)
+	var stderr bytes.Buffer
+	cmd, finish := command(failingReportWriter{}, &stderr)
+	cmd.SetArgs([]string{"prepare", "--root", project, "--cache-dir", t.TempDir(), "--json"})
+	err := cmd.ExecuteContext(t.Context())
+	finish(err)
+	for _, want := range []string{"output unavailable", "missing-installer", "missing.pkg"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("unpublished error lost %q: %s", want, stderr.String())
 		}
 	}
 }

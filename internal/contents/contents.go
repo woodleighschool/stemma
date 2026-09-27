@@ -146,7 +146,7 @@ func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
 		}
 		s.expanded = work
 		local = filepath.Join(work, "tree")
-		done := plugin.Stage(ctx, "Extracting archive")
+		done := plugin.Stage(ctx, "Extracting archive", plugin.Detail(filepath.Base(s.input.Path)))
 		err = archive.Extract(ctx, s.input.Path, local)
 		done(err)
 		if err != nil {

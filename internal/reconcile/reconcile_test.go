@@ -35,6 +35,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/source"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 // botEmail is the identity GitHub attributes the fixture App's commits to.
@@ -517,14 +518,16 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	}
 	opts := Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()}
 	const branch = "stemma/MacSoftware/fixture"
+	// run expects the apply to fail with wantErr while the update phase
+	// succeeds, or the whole run to succeed.
 	run := func(wantErr string) Report {
 		t.Helper()
 		report, err := Run(t.Context(), opts)
 		if wantErr == "" && err != nil {
 			t.Fatalf("run failed: %v\n%+v", err, report)
 		}
-		if wantErr != "" && (err == nil || !strings.Contains(err.Error(), wantErr)) {
-			t.Fatalf("run error %v, want %q\n%+v", err, wantErr, report)
+		if wantErr != "" && (!errors.Is(err, ErrFailed) || report.Error != "" || !strings.Contains(report.Apply.Error, wantErr) || report.Update.Failed()) {
+			t.Fatalf("run error %v, want an apply failing with %q\n%+v", err, wantErr, report)
 		}
 		return report
 	}
@@ -535,8 +538,8 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	if first.Branch != "main" || first.Head != head || first.Apply == nil || first.Apply.Error == "" || gh.status(head, applyContext)["state"] != "failure" {
 		t.Fatalf("apply failure not reported: %+v", first)
 	}
-	if len(first.Updates) != 1 || first.Updates[0].Action != "created" || first.Updates[0].Branch != branch {
-		t.Fatalf("proposal: %+v", first.Updates)
+	if len(first.Update.Proposals) != 1 || first.Update.Proposals[0].Action != "created" || first.Update.Proposals[0].Branch != branch {
+		t.Fatalf("proposal: %+v", first.Update.Proposals)
 	}
 	if gh.tokens.Load() != 1 {
 		t.Fatalf("minted %d installation tokens in one run", gh.tokens.Load())
@@ -565,7 +568,7 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 		t.Fatalf("proposed lock: %v %+v", err, locked)
 	}
 	pulls := gh.open()
-	if len(pulls) != 1 || pulls[0].Head.Ref != branch || pulls[0].Title != "Update MacSoftware/fixture to 1.0" || !strings.Contains(pulls[0].Body, "| source |") || !strings.Contains(pulls[0].Body, "repo: ") {
+	if len(pulls) != 1 || pulls[0].Head.Ref != branch || pulls[0].Title != "Update MacSoftware/fixture to 1.0" || !strings.Contains(pulls[0].Body, "| Source | `source` added: `fixture.pkg` |") || !strings.Contains(pulls[0].Body, "| repo | Upload ") {
 		t.Fatalf("pull request: %+v", pulls)
 	}
 	if status := gh.status(tip, planContext); status["state"] != "success" || !strings.Contains(status["description"], "MacSoftware/fixture 1.0") {
@@ -578,8 +581,8 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 
 	// Nothing changed: the proposal stays exactly as pushed.
 	second := run("lockfile")
-	if second.Updates[0].Action != "unchanged" || o.tip(branch) != tip || len(gh.open()) != 1 {
-		t.Fatalf("idempotent run rewrote the proposal: %+v", second.Updates)
+	if second.Update.Proposals[0].Action != "unchanged" || o.tip(branch) != tip || len(gh.open()) != 1 {
+		t.Fatalf("idempotent run rewrote the proposal: %+v", second.Update.Proposals)
 	}
 
 	// A squash merge applies offline from the warmed cache and retires the
@@ -590,40 +593,40 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	if third.Apply.Error != "" || third.Apply.Skipped || gh.status(merged, applyContext)["state"] != "success" {
 		t.Fatalf("merged lock was not applied: %+v", third.Apply)
 	}
-	if len(third.Updates) != 1 || third.Updates[0].Action != "retired" || third.Updates[0].Summary != "merged into the reviewed branch" || o.tip(branch) != "" || len(gh.open()) != 0 {
-		t.Fatalf("merged proposal not retired: %+v", third.Updates)
+	if len(third.Update.Proposals) != 1 || third.Update.Proposals[0].Action != "retired" || third.Update.Proposals[0].Summary != "merged into the reviewed branch" || o.tip(branch) != "" || len(gh.open()) != 0 {
+		t.Fatalf("merged proposal not retired: %+v", third.Update.Proposals)
 	}
 	if _, err := os.Stat(filepath.Join(munki, "pkgsinfo")); err != nil {
 		t.Fatal("apply did not publish into the repository destination")
 	}
 	fourth := run("")
-	if !fourth.Apply.Skipped || len(fourth.Updates) != 0 {
+	if !fourth.Apply.Skipped || len(fourth.Update.Proposals) != 0 {
 		t.Fatalf("applied commit was reconciled again: %+v", fourth)
 	}
 
 	// A new upstream release becomes a fresh proposal with its version.
 	payload.Store(buildPackage(t, "2.0"))
 	fifth := run("")
-	if len(fifth.Updates) != 1 || fifth.Updates[0].Action != "created" || gh.open()[0].Title != "Update MacSoftware/fixture to 2.0" {
-		t.Fatalf("release proposal: %+v %+v", fifth.Updates, gh.open())
+	if len(fifth.Update.Proposals) != 1 || fifth.Update.Proposals[0].Action != "created" || gh.open()[0].Title != "Update MacSoftware/fixture to 2.0" {
+		t.Fatalf("release proposal: %+v %+v", fifth.Update.Proposals, gh.open())
 	}
-	if pull := gh.open()[0]; !strings.Contains(pull.Body, "`fixture.pkg`") || !strings.Contains(pull.Body, "prepares `fixture-2.0.pkg` (2.0)") {
+	if pull := gh.open()[0]; !strings.Contains(pull.Body, "| Source | `source`: new content for `fixture.pkg` |") || !strings.Contains(pull.Body, "| Prepared | `fixture-2.0.pkg` (2.0) |") {
 		t.Fatalf("release body: %s", pull.Body)
 	}
 
 	// While the release awaits review, its proposal's observation confirms
 	// the bytes conditionally instead of downloading them again.
 	served := downloads.Load()
-	if again := run(""); again.Updates[0].Action != "unchanged" || downloads.Load() != served {
-		t.Fatalf("pending release downloaded again: %+v downloads=%d", again.Updates, downloads.Load()-served)
+	if again := run(""); again.Update.Proposals[0].Action != "unchanged" || downloads.Load() != served {
+		t.Fatalf("pending release downloaded again: %+v downloads=%d", again.Update.Proposals, downloads.Load()-served)
 	}
 
 	// A person's commit on the branch ends the reconciler's ownership.
 	o.commitBranch(t, branch, map[string]string{"NOTES.md": "reviewing"})
 	reviewed := o.tip(branch)
 	sixth := run("")
-	if sixth.Updates[0].Action != "skipped" || o.tip(branch) != reviewed || len(gh.open()) != 1 {
-		t.Fatalf("touched branch was changed: %+v", sixth.Updates)
+	if sixth.Update.Proposals[0].Action != "skipped" || o.tip(branch) != reviewed || len(gh.open()) != 1 {
+		t.Fatalf("touched branch was changed: %+v", sixth.Update.Proposals)
 	}
 	if err := o.bare(t).Storer.RemoveReference(plumbing.NewBranchReferenceName(branch)); err != nil {
 		t.Fatal(err)
@@ -633,11 +636,11 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	// Removing a document leaves stale entries: apply fails and cleanup is proposed.
 	o.commit(t, "retire fixture", map[string]string{"fixture.software.yaml": ""})
 	seventh := run("stale")
-	if seventh.Apply.Error == "" || len(seventh.Updates) != 1 || seventh.Updates[0].Action != "created" {
+	if seventh.Apply.Error == "" || len(seventh.Update.Proposals) != 1 || seventh.Update.Proposals[0].Action != "created" {
 		t.Fatalf("cleanup proposal: %+v", seventh)
 	}
 	cleanup := o.tip(branch)
-	if _, err := o.commitObject(t, cleanup).File("stemma.lock.yaml"); !errors.Is(err, object.ErrFileNotFound) || gh.open()[0].Title != "Remove MacSoftware/fixture from the lockfile" {
+	if _, err := o.commitObject(t, cleanup).File("stemma.lock.yaml"); !errors.Is(err, object.ErrFileNotFound) || gh.open()[0].Title != "Remove MacSoftware/fixture" {
 		t.Fatalf("cleanup branch: %v %+v", err, gh.open())
 	}
 	if status := gh.status(cleanup, planContext); status["state"] != "success" || status["description"] != "lock maintenance: removed MacSoftware/fixture" {
@@ -647,15 +650,15 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	// Closing the proposal without merging declines it until it changes.
 	gh.closeAll()
 	eighth := run("stale")
-	if eighth.Updates[0].Action != "declined" || len(gh.open()) != 0 || o.tip(branch) != cleanup {
-		t.Fatalf("declined proposal was reopened: %+v", eighth.Updates)
+	if eighth.Update.Proposals[0].Action != "declined" || len(gh.open()) != 0 || o.tip(branch) != cleanup {
+		t.Fatalf("declined proposal was reopened: %+v", eighth.Update.Proposals)
 	}
 
 	// An unrelated change to the reviewed branch does not revive it.
 	o.commit(t, "unrelated change", map[string]string{"README.md": "catalog\n"})
 	ninth := run("stale")
-	if ninth.Updates[0].Action != "declined" || len(gh.open()) != 0 || o.tip(branch) != cleanup {
-		t.Fatalf("declined proposal was revived by a base move: %+v", ninth.Updates)
+	if ninth.Update.Proposals[0].Action != "declined" || len(gh.open()) != 0 || o.tip(branch) != cleanup {
+		t.Fatalf("declined proposal was revived by a base move: %+v", ninth.Update.Proposals)
 	}
 	assertUndisturbed(t, cloned, checkout, head)
 }
@@ -699,9 +702,9 @@ func TestRunRequiresSourceControl(t *testing.T) {
 	}
 }
 
-// TestRenderDistinguishesRefreshes covers a proposal that resolved the locked
-// bytes again with new metadata, and the rendering of absent observations.
-func TestRenderDistinguishesRefreshes(t *testing.T) {
+// TestProposalTitlesDescribeMerging covers titles for each kind of proposal:
+// a refresh is only called one when merging changes no destination.
+func TestProposalTitlesDescribeMerging(t *testing.T) {
 	artifact := cas.Ref{SHA256: "8ccdfd126c8e80411108c8ec45cbc610779a08c54285d02d48681e8d8afed529", Size: 3}
 	before := map[string]source.Entry{"source": {Version: 1, Observation: []byte(`{"url":"https://example.test/app.pkg"}`), Content: source.Content{Artifact: artifact, Filename: "app.pkg"}}}
 	after := map[string]source.Entry{"source": {Version: 1, Observation: []byte(`{"url":"https://example.test/app.pkg","etag":"\"x\""}`), Content: source.Content{Artifact: artifact, Filename: "app-2.pkg"}}}
@@ -709,20 +712,82 @@ func TestRenderDistinguishesRefreshes(t *testing.T) {
 		t.Fatal("artifact comparison")
 	}
 	refresh := change{kind: "MacSoftware", name: "app", entries: after, refresh: true}
-	if got := title(refresh, verification{version: "2"}); got != "Refresh MacSoftware/app lock metadata" {
-		t.Fatalf("title %q", got)
+	publishing := verification{version: "2", planned: engine.Report{Resources: []engine.ResourceReport{{Kind: "MacSoftware", Name: "app", Destinations: []engine.DestinationReport{{Name: "repo", Changes: []plugin.Change{{Kind: "metadata", Field: "description", Action: "set"}}}}}}}}
+	for _, test := range []struct {
+		change change
+		v      verification
+		want   string
+	}{
+		{refresh, verification{version: "2"}, "Refresh MacSoftware/app lock metadata"},
+		{refresh, publishing, "Update MacSoftware/app"},
+		{refresh, verification{err: errors.New("offline")}, "Update MacSoftware/app"},
+		{change{kind: "MacSoftware", name: "app", entries: after}, publishing, "Update MacSoftware/app to 2"},
+		{change{kind: "MacSoftware", name: "app", entries: after}, verification{}, "Update MacSoftware/app"},
+		{change{kind: "MacSoftware", name: "app", removed: true}, verification{}, "Remove MacSoftware/app"},
+	} {
+		if got := title(test.change, test.v); got != test.want {
+			t.Errorf("title %q, want %q", got, test.want)
+		}
 	}
 	if got := commitMessage(refresh); got != "chore(stemma): refresh MacSoftware/app lock metadata" {
 		t.Fatalf("commit message %q", got)
 	}
-	text := body(refresh, before, after, verification{})
-	for _, want := range []string{"resolved the bytes already locked", "`source` observation: etag — → `\"x\"`"} {
+	if text := body(refresh, before, after, verification{}); !strings.Contains(text, "| Source | Lock metadata refreshed; content unchanged |") {
+		t.Fatalf("refresh body:\n%s", text)
+	}
+}
+
+// TestProposalBodySummarisesWithoutValues covers the durable description:
+// destination effects by field name, and failures without their error text.
+func TestProposalBodySummarisesWithoutValues(t *testing.T) {
+	secret := `"#!/bin/sh\ncurl -H 'Authorization: s3cr3t' https://example.test\n"`
+	before := map[string]source.Entry{"source": {Version: 1, Content: source.Content{Artifact: cas.Ref{SHA256: strings.Repeat("a", 64), Size: 1}, Filename: "App 1.pkg"}}}
+	after := map[string]source.Entry{"source": {Version: 1, Content: source.Content{Artifact: cas.Ref{SHA256: strings.Repeat("b", 64), Size: 1}, Filename: "App 2.pkg"}}}
+	update := change{kind: "MacSoftware", name: "app", entries: after}
+	planned := engine.Report{Resources: []engine.ResourceReport{
+		{Kind: "MacSoftware", Name: "consumer", Destinations: []engine.DestinationReport{{Name: "woodstar"}}},
+		{Kind: "MacSoftware", Name: "app", Artifacts: map[string]engine.Prepared{"installer": {Filename: "App-2.pkg", Version: "2"}}, Destinations: []engine.DestinationReport{
+			{Name: "woodstar", Changes: []plugin.Change{
+				{Kind: "content", Field: "package.installer", Action: "upload"},
+				{Kind: "metadata", Field: "package.postinstall_script", Action: "set", Before: json.RawMessage(`"exit 0\n"`), After: json.RawMessage(secret)},
+				{Kind: "metadata", Field: "package.version", Action: "set", Before: json.RawMessage(`"1"`), After: json.RawMessage(`"2"`)},
+				{Kind: "retention", Field: "package", Action: "delete", Before: json.RawMessage(`"0.9"`)},
+			}},
+			{Name: "munki", Error: "upload rejected: Authorization: s3cr3t"},
+		}},
+	}}
+	text := body(update, before, after, verification{version: "2", planned: planned})
+	for _, want := range []string{
+		"Stemma found an update for `MacSoftware/app`.",
+		"| Source | `source`: `App 1.pkg` → `App 2.pkg` |",
+		"| Prepared | `App-2.pkg` (2) |",
+		"| woodstar | Upload `package.installer`; update `package.postinstall_script`, `package.version`; delete `package` (0.9) |",
+		"| munki | Planning failed |",
+		"| woodstar (`MacSoftware/consumer`) | No changes |",
+		"Passed.",
+	} {
 		if !strings.Contains(text, want) {
-			t.Fatalf("body lacks %q:\n%s", want, text)
+			t.Errorf("body lacks %q:\n%s", want, text)
 		}
 	}
-	if got := title(change{kind: "MacSoftware", name: "app", entries: after}, verification{version: "2"}); got != "Update MacSoftware/app to 2" {
-		t.Fatalf("update title %q", got)
+	if strings.Index(text, "| woodstar |") > strings.Index(text, "`MacSoftware/consumer`") {
+		t.Errorf("dependent listed before the proposal's own destinations:\n%s", text)
+	}
+	failed := verification{err: errors.New("prepare: upload rejected: Authorization: s3cr3t"), prepared: engine.Report{Resources: []engine.ResourceReport{
+		{Kind: "MacSoftware", Name: "app", Error: "download: Authorization: s3cr3t"},
+		{Kind: "MacSoftware", Name: "consumer", Error: "blocked", BlockedBy: []string{"stemma/v1alpha1/MacSoftware/app"}},
+	}}}
+	text = body(update, before, after, failed)
+	if !strings.Contains(text, "Failed: `MacSoftware/app` could not be prepared; `MacSoftware/consumer` is blocked by `MacSoftware/app`.") {
+		t.Errorf("failure summary:\n%s", text)
+	}
+	if summary := planSummary(update, failed); summary != "failure: MacSoftware/app could not be prepared; MacSoftware/consumer is blocked by MacSoftware/app" {
+		t.Errorf("status %q", summary)
+	}
+	for _, text := range []string{text, body(update, before, after, verification{version: "2", planned: planned})} {
+		if strings.Contains(text, "s3cr3t") {
+			t.Fatalf("durable description repeats a value:\n%s", text)
+		}
 	}
 }
 
@@ -795,7 +860,7 @@ func TestRunLeavesSuspendedResourcesAlone(t *testing.T) {
 	}
 	opts := Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()}
 	report, err := Run(t.Context(), opts)
-	if err != nil || report.Apply.Skipped || report.Apply.Error != "" || len(report.Updates) != 0 || len(gh.open()) != 0 {
+	if err != nil || report.Apply.Skipped || report.Apply.Error != "" || len(report.Update.Proposals) != 0 || len(gh.open()) != 0 {
 		t.Fatalf("suspended resource disturbed the run: %v\n%+v\n%+v", err, report, report.Apply)
 	}
 	if status := gh.status(o.tip("main"), applyContext); status["state"] != "success" {
@@ -840,11 +905,11 @@ spec:
 		t.Fatal(err)
 	}
 	report, err := Run(t.Context(), Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()})
-	if err == nil || !strings.Contains(err.Error(), "update: 1 resource failed") || len(report.Updates) != 3 {
+	if !errors.Is(err, ErrFailed) || report.Update.Error != "" || !report.Update.Failed() || len(report.Update.Proposals) != 3 {
 		t.Fatalf("resolution failures were not reported independently: %+v, %v", report, err)
 	}
-	updates := map[string]Update{}
-	for _, update := range report.Updates {
+	updates := map[string]Proposal{}
+	for _, update := range report.Update.Proposals {
 		updates[update.Resource] = update
 	}
 	if updates["MacSoftware/broken"].Action != "failed" || !strings.Contains(updates["MacSoftware/broken"].Error, "HTTP 404") {
@@ -855,6 +920,35 @@ spec:
 	}
 	if updates["MacSoftware/fixture"].Action != "created" || len(gh.open()) != 1 || gh.status(o.tip("stemma/MacSoftware/fixture"), planContext)["state"] != "success" {
 		t.Fatalf("independent proposal failed: %+v", updates)
+	}
+}
+
+func TestRunStopsOnceWhenTheReviewedProjectDoesNotLoad(t *testing.T) {
+	t.Setenv("GITHUB_APP_CLIENT_ID", "Iv1.fixture")
+	t.Setenv("GITHUB_APP_INSTALLATION_ID", "7")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY", testKey(t))
+	o := newOrigin(t, map[string]string{
+		"stemma.yaml":           project(filepath.Join(t.TempDir(), "munki")),
+		"fixture.software.yaml": software("https://downloads.example"),
+		"stemma.lock.yaml":      "version: 2\ninputs: {}\n",
+	})
+	gh := newFakeGitHub(t, o)
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	if _, err := gogit.PlainCloneContext(t.Context(), checkout, &gogit.CloneOptions{URL: gh.remote(), ClientOptions: []client.Option{gh.auth()}}); err != nil {
+		t.Fatal(err)
+	}
+	head := o.tip("main")
+	report, err := Run(t.Context(), Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()})
+	want := "main@" + short(head) + ": lockfile: version 2 is not supported; delete it and run stemma update"
+	if err == nil || errors.Is(err, ErrFailed) || err.Error() != want || report.Error != want {
+		t.Fatalf("run error %v, want %q", err, want)
+	}
+	// Neither phase ran, so neither reports the same failure again.
+	if report.Apply != nil || report.Update != nil || len(gh.open()) != 0 || o.tip("stemma/MacSoftware/fixture") != "" {
+		t.Fatalf("a phase ran: %+v", report)
+	}
+	if status := gh.status(head, applyContext); status["state"] != "failure" || status["description"] != failedDescription {
+		t.Fatalf("apply status: %v", status)
 	}
 }
 

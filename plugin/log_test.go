@@ -10,12 +10,12 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func TestStagesFinishIndependentlyAndOnlyOnce(t *testing.T) {
+func TestStagesCarryDetailAndFinishIndependentlyOnce(t *testing.T) {
 	var out bytes.Buffer
 	ctx := plugin.WithLogger(t.Context(), slog.New(slog.NewJSONHandler(&out, nil)).With("resource", "example"))
 	parent := plugin.Stage(ctx, "Prepare outputs")
-	child := plugin.Stage(ctx, "Inspect application")
-	child(nil)
+	child := plugin.Stage(ctx, "Inspect application", plugin.Detail("Example.app"))
+	child(nil, plugin.Detail("1.2.3"))
 	parent(errors.New("package verification failed"))
 	parent(nil)
 	decoder := json.NewDecoder(&out)
@@ -25,6 +25,7 @@ func TestStagesFinishIndependentlyAndOnlyOnce(t *testing.T) {
 		Start    bool   `json:"stage"`
 		End      bool   `json:"stage_result"`
 		Error    string `json:"error"`
+		Detail   string `json:"detail"`
 	}
 	var records []record
 	for decoder.More() {
@@ -34,7 +35,7 @@ func TestStagesFinishIndependentlyAndOnlyOnce(t *testing.T) {
 		}
 		records = append(records, record)
 	}
-	if len(records) != 4 || !records[0].Start || !records[1].Start || !records[2].End || records[2].Message != "Inspect application" || records[2].Error != "" || !records[3].End || records[3].Message != "Prepare outputs" || records[3].Error == "" {
+	if len(records) != 4 || !records[0].Start || !records[1].Start || records[1].Detail != "Example.app" || !records[2].End || records[2].Message != "Inspect application" || records[2].Detail != "1.2.3" || records[2].Error != "" || !records[3].End || records[3].Message != "Prepare outputs" || records[3].Error == "" {
 		t.Fatalf("operation events: %+v", records)
 	}
 	for _, record := range records {

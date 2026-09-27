@@ -1,12 +1,10 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -20,11 +18,21 @@ import (
 )
 
 type activity struct {
-	stage, progress, status, final bool
-	label, scope, detail, unit     string
-	current, total                 int64
-	elapsed                        time.Duration
-	err                            string
+	stage, progress, status bool
+	// label is the stage message; qualifier names the input, destination or
+	// plugin it works for.
+	label, qualifier, scope, detail, unit string
+	current, total                        int64
+	elapsed                               time.Duration
+	err                                   string
+}
+
+// name is the stage message with what it works for.
+func (a activity) name() string {
+	if a.qualifier == "" {
+		return a.label
+	}
+	return a.label + " (" + a.qualifier + ")"
 }
 
 func readActivity(record slog.Record, attrs []slog.Attr) activity {
@@ -38,8 +46,6 @@ func readActivity(record slog.Record, attrs []slog.Attr) activity {
 			a.progress = attr.Value.Kind() == slog.KindBool && attr.Value.Bool()
 		case "stage_result":
 			a.status = attr.Value.Kind() == slog.KindBool && attr.Value.Bool()
-		case "progress_final":
-			a.final = attr.Value.Kind() == slog.KindBool && attr.Value.Bool()
 		case "current":
 			a.current = activityCount(attr.Value)
 		case "total":
@@ -48,11 +54,13 @@ func readActivity(record slog.Record, attrs []slog.Attr) activity {
 			a.elapsed = time.Duration(activityCount(attr.Value))
 		case "unit":
 			a.unit = attr.Value.String()
+		case "detail":
+			a.detail = attr.Value.String()
 		case "error":
 			if attr.Value.Any() != nil {
 				a.err = attr.Value.String()
 			}
-		case "resource", "input", "destination", "plugin", "cached":
+		case "resource", "input", "destination", "plugin":
 			values[attr.Key] = attr.Value.String()
 		}
 		return true
@@ -62,14 +70,13 @@ func readActivity(record slog.Record, attrs []slog.Attr) activity {
 	}
 	record.Attrs(read)
 	a.scope = values["resource"]
+	var qualifiers []string
 	for _, key := range []string{"input", "destination", "plugin"} {
 		if values[key] != "" {
-			a.label += " (" + values[key] + ")"
+			qualifiers = append(qualifiers, values[key])
 		}
 	}
-	if values["cached"] == "true" {
-		a.detail = "cached"
-	}
+	a.qualifier = strings.Join(qualifiers, ", ")
 	return a
 }
 
@@ -86,64 +93,69 @@ func activityCount(value slog.Value) int64 {
 type progressLine struct {
 	activity
 
+	// parent is the row of the enclosing stage; 0 is the group's heading.
+	parent, depth  int
 	started, ended time.Time
 	outcome        string
 	heading        bool
-	// Stages that start while this operation is open are its steps, innermost
-	// last. The row shows the current step until the operation finishes.
-	steps []progressStep
 }
 
-type progressStep struct {
-	label   string
-	started time.Time
-}
-
-// finish ends the innermost step or the operation named by a stage result.
-func (row *progressLine) finish(a activity) bool {
-	for index, step := range slices.Backward(row.steps) {
-		if step.label == a.label {
-			row.steps = slices.Delete(row.steps, index, index+1)
-			return true
-		}
-	}
-	if row.label != a.label {
-		return false
-	}
-	row.ended, row.outcome, row.detail, row.steps = time.Now(), "done", a.detail, nil
-	if a.elapsed > 0 {
-		row.ended = row.started.Add(a.elapsed)
-	}
-	if a.err != "" {
-		row.outcome, row.err = "failed", a.err
-	}
-	return true
-}
+func (row *progressLine) open() bool { return !row.heading && row.ended.IsZero() }
 
 type progressGroup struct {
 	scope string
 	rows  []*progressLine
 }
 
-// open returns the unfinished operation. Nested stages become its steps, so a
-// group has at most one.
-func (g *progressGroup) open() *progressLine {
-	for _, row := range slices.Backward(g.rows[1:]) {
-		if row.ended.IsZero() {
-			return row
+// innermost returns the latest unfinished stage, or 0 when none is open.
+// Stages nest, so it encloses whatever starts next.
+func (g *progressGroup) innermost() int {
+	for index := len(g.rows) - 1; index > 0; index-- {
+		if g.rows[index].open() {
+			return index
 		}
 	}
-	return nil
+	return 0
 }
 
-// Completed groups become ordinary scrollback. Only unfinished groups remain
-// under terminal control, including their finished operation rows.
+// finish ends the innermost open stage the result names, and any stage still
+// open inside it. A result's detail replaces the stage's subject.
+func (g *progressGroup) finish(a activity) bool {
+	for index := len(g.rows) - 1; index > 0; index-- {
+		row := g.rows[index]
+		if !row.open() || row.label != a.label || row.qualifier != a.qualifier {
+			continue
+		}
+		now := time.Now()
+		row.ended, row.outcome = now, "done"
+		if a.elapsed > 0 {
+			row.ended = row.started.Add(a.elapsed)
+		}
+		if a.detail != "" {
+			row.detail = a.detail
+		}
+		if a.err != "" {
+			row.outcome, row.err = "failed", a.err
+		}
+		for _, inner := range g.rows[index+1:] {
+			if inner.open() {
+				inner.ended, inner.outcome = now, row.outcome
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// terminalProgress keeps a live tree of unfinished work below persistent
+// output: one group of stage rows per resource, and one for project work. A
+// finished resource leaves the tree; its report takes its place above.
 type terminalProgress struct {
-	progress *tea.Program
-	out      io.Writer
-	style    textStyle
-	groups   []*progressGroup
-	recent   string
+	program *tea.Program
+	out     io.Writer
+	style   textStyle
+	groups  []*progressGroup
+	recent  string
 }
 
 func newTerminalProgress(out io.Writer) *terminalProgress {
@@ -181,22 +193,23 @@ func (p *terminalProgress) update(a activity) {
 		return
 	}
 	p.recent = a.scope
-	row := group.open()
 	switch {
-	case a.stage && row != nil:
-		row.steps = append(row.steps, progressStep{label: a.label, started: time.Now()})
-		row.current, row.total, row.unit = a.current, a.total, a.unit
 	case a.stage:
-		group.rows = append(group.rows, &progressLine{activity: a, started: time.Now()})
-	case row == nil:
-		return
+		parent := group.innermost()
+		group.rows = append(group.rows, &progressLine{activity: a, parent: parent, depth: group.rows[parent].depth + 1, started: time.Now()})
 	case a.progress:
-		row.current, row.total, row.unit = a.current, a.total, a.unit
-	case a.status:
-		if !row.finish(a) {
+		index := group.innermost()
+		if index == 0 {
 			return
 		}
-		// Successful project setup disappears; resource trees keep their results.
+		row := group.rows[index]
+		row.current, row.total, row.unit = a.current, a.total, a.unit
+	case a.status:
+		if !group.finish(a) {
+			return
+		}
+		// Successful project work leaves the tree; a failed stage stays until
+		// the command reports its error.
 		if a.scope == "" && !slices.ContainsFunc(group.rows[1:], func(row *progressLine) bool { return row.outcome != "done" }) {
 			p.groups = slices.DeleteFunc(p.groups, func(other *progressGroup) bool { return other == group })
 		}
@@ -206,83 +219,29 @@ func (p *terminalProgress) update(a activity) {
 	p.show()
 }
 
-func (p *terminalProgress) note(scope, message, outcome string) {
-	group := p.group(scope)
-	now := time.Now()
-	group.rows = append(group.rows, &progressLine{label: message, started: now, ended: now, outcome: outcome})
-	p.recent = scope
+// complete removes a finished resource from the tree.
+func (p *terminalProgress) complete(scope string) {
+	p.groups = slices.DeleteFunc(p.groups, func(group *progressGroup) bool { return group.scope == scope })
 	p.show()
 }
 
-// complete moves a group to scrollback and reports whether it had one. Rows
-// mark the stage that failed; the failure text belongs to the group.
-func (p *terminalProgress) complete(scope, status string, failed bool, failure []string) bool {
-	for index, group := range p.groups {
-		if group.scope != scope {
-			continue
-		}
-		var result strings.Builder
-		now := time.Now()
-		width, _ := p.size()
-		collapse := !failed && !slices.ContainsFunc(group.rows[1:], func(line *progressLine) bool {
-			return line.ended.IsZero() || line.outcome == "failed" || line.outcome == "warning"
-		})
-		// Groups can wait between phases, so headings report time spent working.
-		var active time.Duration
-		for _, row := range group.rows[1:] {
-			end := row.ended
-			if end.IsZero() {
-				end = now
-			}
-			active += end.Sub(row.started)
-		}
-		for _, row := range group.rows {
-			line := *row
-			if line.heading {
-				line.detail, line.outcome, line.started, line.ended = status, "done", now.Add(-active), now
-				if failed {
-					line.outcome = "failed"
-				}
-			} else if line.ended.IsZero() {
-				line.ended, line.outcome, line.steps = now, "unfinished", nil
-			}
-			if collapse && !line.heading && line.outcome != "detail" {
-				continue
-			}
-			_, _ = fmt.Fprintln(&result, progressText(p.style, &line, width, now, ""))
-		}
-		for _, line := range failure {
-			_, _ = fmt.Fprintln(&result, "      "+line)
-		}
-		p.groups = slices.Delete(p.groups, index, index+1)
-		p.show()
-		_, _ = p.Write([]byte(result.String()))
-		return true
-	}
-	return false
+// running reports whether the tree is on screen, so persistent output must
+// be printed above it.
+func (p *terminalProgress) running() bool { return p.program != nil }
+
+// print writes persistent output above the tree.
+func (p *terminalProgress) print(text string) {
+	p.program.Send(tea.Println(strings.TrimSuffix(text, "\n"))())
 }
 
-func (p *terminalProgress) stop(outcome string) {
-	for len(p.groups) > 0 {
-		status := outcome
-		if status == "" {
-			status = "finished"
-		}
-		p.complete(p.groups[0].scope, status, outcome != "", nil)
+// stop clears the tree and waits for the renderer to release the terminal.
+func (p *terminalProgress) stop() {
+	p.groups = nil
+	if p.program != nil {
+		p.program.Send(stopProgress{})
+		p.program.Wait()
+		p.program = nil
 	}
-	if p.progress != nil {
-		p.progress.Quit()
-		p.progress.Wait()
-		p.progress = nil
-	}
-}
-
-func (p *terminalProgress) Write(data []byte) (int, error) {
-	if p.progress != nil {
-		p.progress.Send(tea.Println(strings.TrimSuffix(string(data), "\n"))())
-		return len(data), nil
-	}
-	return p.out.Write(data)
 }
 
 func (p *terminalProgress) size() (int, int) {
@@ -299,29 +258,38 @@ func (p *terminalProgress) show() {
 	if !terminalOutput(p.out) {
 		return
 	}
-	if p.progress == nil {
+	if p.program == nil {
 		width, height := p.size()
 		model := progressModel{style: p.style, width: width, height: height, spinner: spinner.New(spinner.WithSpinner(spinner.MiniDot))}
 		program := tea.NewProgram(model, tea.WithOutput(p.out), tea.WithInput(nil), tea.WithoutSignalHandler(), tea.WithWindowSize(width, height))
-		p.progress = program
+		p.program = program
 		go func() { _, _ = program.Run() }()
 	}
-	p.progress.Send(p.snapshot())
+	p.program.Send(p.snapshot())
 }
 
-// snapshot copies groups with an open operation. Idle groups wait off screen
-// until they complete, except the latest one, so gaps between stages do not
-// blank the display.
+// snapshot copies the visible rows of groups with unfinished work, and of the
+// latest group so gaps between stages do not blank the display. A finished
+// stage folds the steps it enclosed into its own row, and a step names what it
+// works for only when its stage does not.
 func (p *terminalProgress) snapshot() progressSnapshot {
 	var groups progressSnapshot
 	for _, group := range p.groups {
-		if group.open() == nil && group.scope != p.recent {
+		if group.innermost() == 0 && group.scope != p.recent {
 			continue
 		}
-		rows := make([]progressLine, 0, len(group.rows))
-		for _, row := range group.rows {
+		visible := make([]bool, len(group.rows))
+		var rows []progressLine
+		for index, row := range group.rows {
+			parent := group.rows[row.parent]
+			visible[index] = index == 0 || visible[row.parent] && (row.parent == 0 || parent.open())
+			if !visible[index] {
+				continue
+			}
 			line := *row
-			line.steps = slices.Clone(row.steps)
+			if row.parent != 0 && line.qualifier == parent.qualifier {
+				line.qualifier = ""
+			}
 			rows = append(rows, line)
 		}
 		groups = append(groups, rows)
@@ -331,11 +299,14 @@ func (p *terminalProgress) snapshot() progressSnapshot {
 
 type progressSnapshot [][]progressLine
 
+type stopProgress struct{}
+
 type progressModel struct {
 	groups        progressSnapshot
 	style         textStyle
 	width, height int
 	spinner       spinner.Model
+	stopped       bool
 }
 
 func (m progressModel) Init() tea.Cmd { return m.spinner.Tick }
@@ -344,6 +315,9 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case progressSnapshot:
 		m.groups = msg
+	case stopProgress:
+		m.groups, m.stopped = nil, true
+		return m, tea.Quit
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	}
@@ -353,104 +327,147 @@ func (m progressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m progressModel) View() tea.View {
+	if m.stopped {
+		return tea.NewView("")
+	}
 	var lines []string
 	remaining := max(1, m.height-1)
+	now := time.Now()
 	for index, group := range m.groups {
 		if remaining == 0 {
 			break
 		}
-		// Share the available rows between active groups, preserving their
-		// headings and latest operations. Final results retain every failure.
+		// Share the rows between groups, so each keeps its heading and its
+		// unfinished stages.
 		budget := max(1, remaining/(len(m.groups)-index))
-		for row, line := range group {
-			if row != 0 && row <= len(group)-budget {
-				continue
-			}
-			lines = append(lines, progressText(m.style, &line, m.width, time.Now(), m.spinner.View()))
+		for _, line := range fit(group, budget) {
+			lines = append(lines, progressText(m.style, &line, m.width, now, m.spinner.View()))
 			remaining--
 		}
 	}
 	return tea.NewView(strings.Join(lines, "\n"))
 }
 
+// fit keeps a group's heading and latest rows within budget, dropping
+// finished stages before unfinished ones.
+func fit(group []progressLine, budget int) []progressLine {
+	if len(group) <= budget {
+		return group
+	}
+	rows := slices.Clone(group)
+	for index := 1; len(rows) > budget && index < len(rows); {
+		if rows[index].open() {
+			index++
+			continue
+		}
+		rows = slices.Delete(rows, index, index+1)
+	}
+	if len(rows) > budget {
+		rows = append(rows[:1], rows[len(rows)-budget+1:]...)
+	}
+	return rows
+}
+
+// barWidth is the width of a transfer's bar, which is dropped first when a
+// row does not fit.
+const barWidth = 20
+
+// segment is rendered text with the plain text that sets its width.
+type segment struct{ plain, painted string }
+
 func progressText(style textStyle, line *progressLine, width int, now time.Time, frame string) string {
-	prefix := "    "
+	if line.heading {
+		return style.paint(runewidth.Truncate(cleanLine(line.label), max(0, width-1), "..."), color.Bold)
+	}
 	var mark string
 	var attribute color.Attribute
 	switch line.outcome {
 	case "done":
-		mark, attribute = "✓ ", color.FgHiGreen
+		mark, attribute = "✓", color.FgHiGreen
 	case "failed":
-		mark, attribute = "✗ ", color.FgHiRed
-	case "detail":
-		mark, attribute = "- ", color.Faint
-	case "warning", "unfinished":
-		mark, attribute = "! ", color.FgHiYellow
+		mark, attribute = "✗", color.FgHiRed
 	default:
-		mark, attribute = frame+" ", color.FgHiCyan
+		mark, attribute = frame, color.FgHiCyan
 	}
-	if line.heading {
-		prefix = ""
-		if line.outcome == "" {
-			mark = ""
-		}
-	}
-	label, started := line.label, line.started
-	if len(line.steps) > 0 {
-		step := line.steps[len(line.steps)-1]
-		label, started = step.label, step.started
-	}
-	detail := line.detail
+	// A step's mark sits under its stage's label.
+	indent := strings.Repeat(" ", 2+2*line.depth)
+	faint := func(text string) segment { return segment{text, style.paint(text, color.Faint)} }
+	var bar, counts segment
 	if line.unit != "" {
-		count := strconv.FormatInt(line.current, 10)
-		if line.unit == "bytes" {
-			count = humanize.IBytes(uint64(max(0, line.current)))
+		counts = faint(amount(line.current, line.unit))
+		if line.open() && line.total > 0 {
+			counts = faint(amounts(line.current, line.total, line.unit))
+			filled := int(min(barWidth, max(0, barWidth*line.current/line.total)))
+			done, left := strings.Repeat("━", filled), strings.Repeat("─", barWidth-filled)
+			bar = segment{done + left, style.paint(done, color.FgHiCyan) + style.paint(left, color.Faint)}
 		}
-		if line.total > 0 {
-			if line.unit == "bytes" {
-				count += " / " + humanize.IBytes(uint64(line.total))
-			} else {
-				count += fmt.Sprintf("/%d", line.total)
+	}
+	end := line.ended
+	if end.IsZero() {
+		end = now
+	}
+	var elapsed segment
+	if duration := end.Sub(line.started).Round(time.Second); duration > 0 || line.open() {
+		elapsed = faint("(" + duration.String() + ")")
+	}
+	label, detail := cleanLine(line.name()), cleanLine(line.detail)
+	available := max(0, width-runewidth.StringWidth(indent+mark)-2)
+	measure := func(parts ...segment) int {
+		total := 0
+		for _, part := range parts {
+			if part.plain != "" {
+				total += 2 + runewidth.StringWidth(part.plain)
 			}
 		}
-		if line.unit != "bytes" {
-			count += " " + line.unit
-		}
-		if line.total > 0 {
-			count += fmt.Sprintf(" %.0f%%", 100*float64(line.current)/float64(line.total))
-		}
-		detail = strings.TrimSpace(detail + " " + count)
+		return total
 	}
-	// Live headings only name their group; operation rows carry the timing.
-	if !line.heading || !line.ended.IsZero() {
-		end := line.ended
-		if end.IsZero() {
-			end = now
-		}
-		elapsed := end.Sub(started).Round(time.Second)
-		if elapsed > 0 || line.ended.IsZero() {
-			detail = strings.TrimSpace(detail + " (" + elapsed.String() + ")")
+	// Drop the bar, then shorten the detail, then drop the counts and the
+	// time; the label is shortened last.
+	room := available - runewidth.StringWidth(label)
+	if measure(faint(detail), bar, counts, elapsed) > room {
+		bar = segment{}
+	}
+	if over := measure(faint(detail), counts, elapsed) - room; over > 0 && detail != "" {
+		detail = runewidth.Truncate(detail, max(0, runewidth.StringWidth(detail)-over), "…")
+		if runewidth.StringWidth(detail) < 8 {
+			detail = ""
 		}
 	}
-	if line.outcome == "unfinished" {
-		detail = strings.TrimSpace(detail + " not completed")
+	if measure(faint(detail), counts, elapsed) > room {
+		counts = segment{}
 	}
-	suffix := ""
-	if detail != "" {
-		suffix = "  " + detail
+	if measure(faint(detail), elapsed) > room {
+		elapsed = segment{}
 	}
-	available := max(0, width-runewidth.StringWidth(prefix+mark)-1)
-	suffix = runewidth.Truncate(cleanLine(suffix), available, "")
-	labelWidth := max(0, available-runewidth.StringWidth(suffix))
+	parts := []segment{faint(detail), bar, counts, elapsed}
 	tail := "..."
-	if labelWidth < len(tail) {
+	if available-measure(parts...) < len(tail) {
 		tail = ""
 	}
-	label = runewidth.Truncate(cleanLine(label), labelWidth, tail)
-	if line.heading {
-		label = style.paint(label, color.Bold)
+	var text strings.Builder
+	text.WriteString(indent + style.paint(mark, attribute) + " " + runewidth.Truncate(label, max(0, available-measure(parts...)), tail))
+	for _, part := range parts {
+		if part.plain != "" {
+			text.WriteString("  " + part.painted)
+		}
 	}
-	return prefix + style.paint(mark, attribute) + label + style.paint(suffix, color.Faint)
+	return text.String()
+}
+
+// amount formats a transfer count in its unit.
+func amount(count int64, unit string) string {
+	if unit == "bytes" {
+		return humanize.IBytes(uint64(max(0, count)))
+	}
+	return humanize.Comma(count) + " " + unit
+}
+
+// amounts formats progress toward a known total.
+func amounts(current, total int64, unit string) string {
+	if unit == "bytes" {
+		return amount(current, unit) + " / " + amount(total, unit)
+	}
+	return humanize.Comma(current) + " / " + amount(total, unit)
 }
 
 func cleanLine(value string) string {

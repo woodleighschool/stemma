@@ -303,7 +303,7 @@ func validateHTTPURL(address string) error {
 func (m *Manager) readLocal(ctx context.Context, s nativeConfig) (content Content, err error) {
 	content.Filename = s.Filename
 	if s.Type == "local" {
-		done := plugin.Stage(ctx, "Reading local inputs")
+		done := plugin.Stage(ctx, "Reading local inputs", plugin.Detail(s.Base))
 		defer func() { done(err) }()
 		project, err := os.OpenRoot(m.Root)
 		if err != nil {
@@ -361,7 +361,7 @@ func (m *Manager) readLocal(ctx context.Context, s nativeConfig) (content Conten
 		content.Artifact, err = m.importTree(ctx, root, names, s.SHA256)
 		return content, err
 	}
-	done := plugin.Stage(ctx, "Reading local input")
+	done := plugin.Stage(ctx, "Reading local input", plugin.Detail(filepath.Base(s.Path)))
 	defer func() { done(err) }()
 	name := s.hostPath(m.Root)
 	f, err := os.Open(name)
@@ -409,13 +409,17 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, address string, 
 	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
 		return record{}, false, errors.New("observed asset does not belong to the configured GitHub repository")
 	}
-	done := plugin.Stage(ctx, "Downloading input")
+	name := s.Filename
+	if name == "" {
+		name = urlName(u)
+	}
+	done := plugin.Stage(ctx, "Downloading input", plugin.Detail(name))
 	defer func() {
 		if reused {
-			done(nil, "unchanged", true)
+			done(nil, plugin.Detail("unchanged"))
 			return
 		}
-		done(err)
+		done(err, plugin.Detail(result.Content.Filename))
 	}()
 	req, err := m.request(ctx, address, s)
 	if err != nil {
@@ -519,6 +523,18 @@ func responseFilename(response *http.Response, original string) string {
 	return ""
 }
 
+// urlName names a URL for progress displays by its final path segment, or its
+// host. Queries may carry credentials, so they are never shown.
+func urlName(u *url.URL) string {
+	if u == nil {
+		return ""
+	}
+	if name := path.Base(u.Path); name != "." && name != "/" {
+		return name
+	}
+	return u.Hostname()
+}
+
 func sameOrigin(a, b *url.URL) bool {
 	return a.Scheme == b.Scheme && strings.EqualFold(a.Host, b.Host)
 }
@@ -535,8 +551,15 @@ func stripPrivateHeaders(headers http.Header) {
 
 // discoverLink finds the one download URL a page's match selects.
 func (m *Manager) discoverLink(ctx context.Context, s nativeConfig) (link string, err error) {
-	done := plugin.Stage(ctx, "Discovering source release")
-	defer func() { done(err) }()
+	var host string
+	if page, err := url.Parse(s.URL); err == nil {
+		host = page.Hostname()
+	}
+	done := plugin.Stage(ctx, "Discovering source release", plugin.Detail(host))
+	defer func() {
+		found, _ := url.Parse(link)
+		done(err, plugin.Detail(urlName(found)))
+	}()
 	req, err := m.request(ctx, s.URL, s)
 	if err != nil {
 		return "", err
@@ -640,8 +663,8 @@ func attributes(page string, base *url.URL) ([]string, *url.URL) {
 }
 
 func (m *Manager) github(ctx context.Context, s nativeConfig, observed *nativeObservation) (err error) {
-	done := plugin.Stage(ctx, "Discovering GitHub release")
-	defer func() { done(err) }()
+	done := plugin.Stage(ctx, "Discovering GitHub release", plugin.Detail(s.Repository))
+	defer func() { done(err, plugin.Detail(observed.Release)) }()
 	endpoint := "https://api.github.com/repos/" + s.Repository + "/releases/latest"
 	if s.Release != "" && s.Release != "latest" {
 		endpoint = "https://api.github.com/repos/" + s.Repository + "/releases/tags/" + url.PathEscape(s.Release)

@@ -115,7 +115,11 @@ spec:
         catalogs: [testing]
 `
 	testproject.Write(t, filename, manifest)
-	options := Options{ConfigPath: filename, CacheDir: t.TempDir()}
+	reported := map[string]ResourceReport{}
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), ResourceDone: func(resource ResourceReport) error {
+		reported[resource.Key] = resource
+		return nil
+	}}
 	candidate, err := Resolve(t.Context(), options)
 	if err != nil {
 		t.Fatal(err)
@@ -143,6 +147,10 @@ spec:
 	if resource := candidate.Resources[private]; !resource.Suspended || resource.Inputs != nil || resource.Error != "" || len(resource.Producers) != 0 {
 		t.Fatalf("suspended resource was evaluated or resolved: %+v", resource)
 	}
+	// Each resource reports its lock changes as the lookup finishes it.
+	if len(reported) != 4 || len(reported[alpha].Inputs) != 1 || len(reported[build].Inputs) != 1 || len(reported[consumer].Inputs) != 0 || !strings.Contains(reported[broken].Error, "HTTP 404") {
+		t.Fatalf("resolution reports: %+v", reported)
+	}
 	if dependents := candidate.Dependents(build); len(dependents) != 1 || dependents[0] != consumer {
 		t.Fatalf("dependents of the build: %v", dependents)
 	}
@@ -151,6 +159,7 @@ spec:
 	}
 	options.Method = "update"
 	options.Resources = []string{"MacSoftware/alpha"}
+	options.ResourceDone = nil
 	if _, err := Run(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}
@@ -158,11 +167,15 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := Resolve(t.Context(), Options{ConfigPath: filename, CacheDir: options.CacheDir})
+	clear(reported)
+	again, err := Resolve(t.Context(), Options{ConfigPath: filename, CacheDir: options.CacheDir, ResourceDone: func(resource ResourceReport) error {
+		reported[resource.Key] = resource
+		return nil
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.Lock.Version != lockfile.Version || !again.Resources[alpha].Inputs["source"].Equal(reviewed.Inputs[alpha]["source"]) {
+	if again.Lock.Version != lockfile.Version || !again.Resources[alpha].Inputs["source"].Equal(reviewed.Inputs[alpha]["source"]) || len(reported[alpha].Inputs) != 0 {
 		t.Fatalf("unchanged bytes changed the candidate entry: %+v", again.Resources[alpha].Inputs["source"])
 	}
 }

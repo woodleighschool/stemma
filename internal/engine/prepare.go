@@ -2,6 +2,7 @@
 package engine
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"os"
@@ -52,45 +53,62 @@ func materialize(ctx context.Context, store *cas.Store, p Prepared, work string)
 	return p, os.Chmod(p.Path, os.FileMode(p.Mode))
 }
 
-// Inspect reads complete supported artifact facts without acquisition or publication.
-func Inspect(ctx context.Context, path string) (result Prepared, err error) {
-	done := plugin.Stage(ctx, "Inspecting artifact")
+// expose replaces the operator's writable copy from the verified cache object.
+func expose(ctx context.Context, store *cas.Store, p Prepared, work string) (path string, err error) {
+	done := plugin.Stage(ctx, "Materializing artifact", plugin.Detail(p.Filename))
 	defer func() { done(err) }()
-	p, err := inspect(ctx, path)
+	p, err = materialize(ctx, store, p, work)
 	if err != nil {
-		return p, err
+		return "", err
 	}
-	p.Facts, err = inspection.Read(ctx, path)
-	return p, err
+	dir := filepath.Join(store.Dir, "materialized", p.Payload.SHA256)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path = filepath.Join(dir, p.Filename)
+	if err := os.RemoveAll(path); err != nil {
+		return "", err
+	}
+	if err := os.Rename(p.Path, path); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
-func inspect(ctx context.Context, path string) (Prepared, error) {
-	info, err := os.Stat(path)
+// Inspection describes a local file or directory by its own metadata.
+type Inspection struct {
+	Filename string       `json:"filename"`
+	Format   string       `json:"format"`
+	Version  string       `json:"version,omitempty"`
+	Facts    plugin.Facts `json:"facts"`
+}
+
+// Inspect reads a local artifact's complete facts without executing it.
+func Inspect(ctx context.Context, path string) (result Inspection, err error) {
+	done := plugin.Stage(ctx, "Inspecting artifact", plugin.Detail(filepath.Base(path)))
+	defer func() { done(err) }()
+	facts, err := inspection.Read(ctx, path)
 	if err != nil {
-		return Prepared{}, err
+		return Inspection{}, err
 	}
-	facts, err := inspection.ReadMetadata(ctx, path)
-	if err != nil {
-		return Prepared{}, err
+	return Inspection{Filename: filepath.Base(path), Format: artifactFormat(path, facts), Version: artifactVersion(facts), Facts: facts}, nil
+}
+
+// artifactFormat names what the facts show an artifact is, falling back to its
+// extension.
+func artifactFormat(path string, facts plugin.Facts) string {
+	for _, subject := range facts.Subjects {
+		if subject.Package != nil {
+			return "pkg"
+		}
 	}
-	p := Prepared{Filename: filepath.Base(path), Format: strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."), Tree: info.IsDir(), Path: path, Facts: facts}
 	if len(facts.Subjects) > 0 {
-		switch facts.Subjects[0].Kind {
+		switch kind := facts.Subjects[0].Kind; kind {
 		case "app", "msi", "directory":
-			p.Format = facts.Subjects[0].Kind
-		}
-		for _, subject := range facts.Subjects {
-			if subject.Package != nil {
-				p.Format = "pkg"
-				break
-			}
+			return kind
 		}
 	}
-	if p.Format == "" {
-		p.Format = "binary"
-	}
-	p.Version = artifactVersion(facts)
-	return p, nil
+	return cmp.Or(strings.TrimPrefix(strings.ToLower(filepath.Ext(path)), "."), "binary")
 }
 
 func artifactVersion(facts plugin.Facts) string {

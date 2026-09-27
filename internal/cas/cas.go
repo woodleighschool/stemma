@@ -37,6 +37,10 @@ type Ref struct {
 // derivation indexes.
 type Store struct{ Dir string }
 
+// dirs are the cache's disposable directories. Materialized copies of prepared
+// artifacts are for the operator; no run reads them back.
+var dirs = []string{"objects", "work", "sources", "derivations", "materialized"}
+
 // Open creates the cache directories. Call Lease while using cache objects.
 func Open(dir string) (*Store, error) {
 	if dir == "" {
@@ -50,7 +54,7 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, sub := range []string{"objects", "work", "sources", "derivations"} {
+	for _, sub := range dirs {
 		if err := os.MkdirAll(filepath.Join(dir, sub), 0o700); err != nil {
 			return nil, err
 		}
@@ -271,7 +275,7 @@ func (s *Store) Prune(ctx context.Context) error {
 		return ctx.Err()
 	}
 	defer func() { _ = l.Close() }()
-	for _, sub := range []string{"objects", "work", "sources", "derivations"} {
+	for _, sub := range dirs {
 		path := filepath.Join(s.Dir, sub)
 		if err := os.RemoveAll(path); err != nil {
 			return err
