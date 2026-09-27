@@ -1,6 +1,6 @@
 module github.com/woodleighschool/stemma
 
-go 1.27.0
+go 1.27.1
 
 ignore node_modules/
 
@@ -13,7 +13,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.1
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/bmatcuk/doublestar/v4 v4.10.2
-	github.com/deploymenttheory/go-apfs-v2 v0.10.0
+	github.com/deploymenttheory/go-apfs-v2 v0.11.2
 	github.com/deploymenttheory/go-bindings-macosplatform v0.20.0
 	github.com/deploymenttheory/go-macos-pkg v0.7.2
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
