@@ -3,7 +3,6 @@ package pkgbuild
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -22,13 +21,14 @@ import (
 	"github.com/deploymenttheory/go-macos-pkg/pkg/bom"
 	"github.com/deploymenttheory/go-macos-pkg/pkg/cpio"
 	"github.com/deploymenttheory/go-macos-pkg/pkg/flatpkg"
+	"github.com/klauspost/compress/gzip"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
 // Version identifies the package derivation, including its format and metadata policy.
-const Version = "stemma.pkgbuild/0.1.6"
+const Version = "stemma.pkgbuild/0.1.7"
 
 // BOM's 32-bit size field is narrower than ODC's 33-bit file length.
 const maxFileSize int64 = math.MaxUint32
