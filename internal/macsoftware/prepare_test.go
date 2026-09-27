@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/deploymenttheory/go-apfs-v2/pkg/disk"
 	"github.com/woodleighschool/stemma/internal/apple"
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/inspect"
@@ -76,6 +77,60 @@ func TestZIPApplicationIsPublishedInADiskImage(t *testing.T) {
 	again, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()})
 	if err != nil || again["installer"].SHA256 != installer.SHA256 {
 		t.Fatalf("nondeterministic image: %v", err)
+	}
+}
+
+func TestCreatedDiskImageUsesDeclaredCompression(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "Example.zip")
+	testarchive.Zip(t, filename, applicationFixture(t))
+	input := plugin.Artifact{Path: filename, Filename: "Example.zip", Format: "zip"}
+	// UDIF chunk types, as hdiutil's ULFO, UDZO and ULMO images use them.
+	const lzfse, zlib, lzma = 0x80000007, 0x80000005, 0x80000008
+	for _, test := range []struct {
+		name  string
+		image *DiskImage
+		chunk uint32
+	}{
+		{"default", nil, lzfse},
+		{"zlib", &DiskImage{Compression: diskimage.Zlib}, zlib},
+		{"lzma", &DiskImage{Compression: diskimage.LZMA}, lzma},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			outputs, err := Prepare(t.Context(), Spec{DiskImage: test.image}, Request{Input: input, Workspace: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			image, err := disk.OpenDMG(outputs["installer"].Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = image.Close() }()
+			compressed := map[uint32]bool{}
+			for _, partition := range image.Partitions() {
+				for _, chunk := range partition.Chunks {
+					// Compressed types set the high bit; 0xffffffff ends a table.
+					if chunk.Type&0x80000000 != 0 && chunk.Type != 0xffffffff {
+						compressed[chunk.Type] = true
+					}
+				}
+			}
+			if len(compressed) != 1 || !compressed[test.chunk] {
+				t.Fatalf("chunk types %v, want %#x", compressed, test.chunk)
+			}
+		})
+	}
+}
+
+func TestDiskImageRequiresAnApplicationFromAnArchive(t *testing.T) {
+	spec := Spec{DiskImage: &DiskImage{Compression: diskimage.LZMA}}
+	for _, input := range bundleInputs(t, applicationFixture(t)) {
+		_, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()})
+		if created := input.Tree; (err == nil) != created {
+			t.Fatalf("%s: %v", input.Filename, err)
+		}
+	}
+	if err := (Spec{DiskImage: &DiskImage{Compression: "bzip2"}}).Validate(); err == nil {
+		t.Fatal("unknown compression accepted")
 	}
 }
 
@@ -160,7 +215,7 @@ func TestPackageWithMultipleApplicationsRetainsInstallerEvidence(t *testing.T) {
 		}
 	}
 	filename := filepath.Join(t.TempDir(), "Suite.pkg")
-	if err := pkgbuild.Build(t.Context(), root, filename, pkgbuild.Options{Identifier: "org.example.suite", Version: "2.0", Payload: "Payload"}); err != nil {
+	if err := pkgbuild.Build(t.Context(), root, filename, pkgbuild.Options{Identifier: "org.example.suite", Version: "2.0", Payload: "Payload", Compression: pkgbuild.Gzip}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filename)

@@ -407,6 +407,7 @@ func packageCommand(out io.Writer) *cobra.Command {
 	pkg.Flags().StringVar(&options.Identifier, "identifier", "", "Package receipt identifier")
 	pkg.Flags().StringVar(&options.Version, "version", "", "Package receipt version")
 	pkg.Flags().StringVar(&options.Payload, "payload", "", "Payload directory relative to the source; omit for scripts-only")
+	pkg.Flags().StringVar((*string)(&options.Compression), "compression", string(pkgbuild.Gzip), "Payload compression: gzip or xz")
 	pkg.Flags().StringVar(&options.InstallLocation, "install-location", "/", "Absolute target installation location")
 	pkg.Flags().StringVar(&options.Scripts, "scripts", "", "Directory of installer hooks and resources relative to the source")
 	cmd.AddCommand(pkg)

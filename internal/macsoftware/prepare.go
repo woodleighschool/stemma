@@ -64,6 +64,9 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	if err != nil {
 		return nil, err
 	}
+	if spec.DiskImage != nil && (app == nil || source.IsImage()) {
+		return nil, errors.New("disk_image requires an application from an archive or tree")
+	}
 	var installer plugin.Artifact
 	var verified []signature.Observation
 	if app != nil {
@@ -155,7 +158,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 			}
 		}
 	} else {
-		if installer, err = writeImage(ctx, local, request.Workspace); err != nil {
+		if installer, err = writeImage(ctx, local, request.Workspace, spec.DiskImage.compression()); err != nil {
 			return plugin.Artifact{}, nil, nil, err
 		}
 		app.ID, app.Path, app.Parent = name, name, "."
@@ -216,10 +219,10 @@ func publishPackage(ctx context.Context, spec Spec, request Request, source *con
 // writeImage places the selected application alone at the root of a new disk
 // image. The image is our container around the publisher's software and carries
 // no signature of its own. A fixed date keeps the image a function of the
-// application alone.
-func writeImage(ctx context.Context, app, workspace string) (plugin.Artifact, error) {
+// application and compression alone.
+func writeImage(ctx context.Context, app, workspace string, compression diskimage.Compression) (plugin.Artifact, error) {
 	output := filepath.Join(workspace, strings.TrimSuffix(filepath.Base(app), filepath.Ext(app))+".dmg")
-	if err := diskimage.WriteApplication(ctx, app, output, time.Unix(0, 0).UTC()); err != nil {
+	if err := diskimage.WriteApplication(ctx, app, output, compression, time.Unix(0, 0).UTC()); err != nil {
 		return plugin.Artifact{}, err
 	}
 	return describeArtifact(ctx, output, "dmg")

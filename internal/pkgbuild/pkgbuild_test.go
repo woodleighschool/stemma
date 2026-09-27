@@ -29,7 +29,7 @@ func fixture(t *testing.T) (string, Options) {
 	writeFile(t, filepath.Join(root, "Payload/Library/Application Support/Fixture/message.txt"), []byte("original payload\n"), 0o640)
 	writeFile(t, filepath.Join(root, "Scripts/preinstall"), []byte("#!/bin/sh\n# Original fixture: must never run during build.\nexit 93\n"), 0o644)
 	writeFile(t, filepath.Join(root, "Scripts/postinstall"), []byte("#!/bin/sh\nexit 94\n"), 0o755)
-	return root, Options{Identifier: "au.edu.vic.woodleigh.stemma.local-fixture", Version: "1.2.3", Timestamp: time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC), Payload: "Payload", Scripts: "Scripts"}
+	return root, Options{Identifier: "au.edu.vic.woodleigh.stemma.local-fixture", Version: "1.2.3", Timestamp: time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC), Payload: "Payload", Compression: Gzip, Scripts: "Scripts"}
 }
 func writeFile(t *testing.T, name string, contents []byte, mode os.FileMode) {
 	t.Helper()
@@ -94,7 +94,7 @@ func TestBuildIntegrityReproducibilityAndInputChanges(t *testing.T) {
 	}
 }
 func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
-	for _, name := range []string{"empty", "traversal", "scripts-file", "no-hooks", "nested-hook", "symlink-hook", "directory-hook", "oversize-hook", "script-symlink", "script-metadata", "symlink", "oversize", "total-size", "output-in-root", "output-via-symlink", "script-ancestor", "existing-output", "cancelled"} {
+	for _, name := range []string{"empty", "traversal", "scripts-file", "no-hooks", "nested-hook", "symlink-hook", "directory-hook", "oversize-hook", "script-symlink", "script-metadata", "symlink", "oversize", "total-size", "output-in-root", "output-via-symlink", "script-ancestor", "existing-output", "cancelled", "compression"} {
 		t.Run(name, func(t *testing.T) {
 			root, opts := fixture(t)
 			output := filepath.Join(t.TempDir(), "out.pkg")
@@ -169,6 +169,8 @@ func TestBuildRejectsUnsupportedOrUnsafeInputs(t *testing.T) {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
+			case "compression":
+				opts.Compression = "zstd"
 			}
 			if err := Build(ctx, root, output, opts); err == nil {
 				t.Fatal("invalid build succeeded")
@@ -250,7 +252,7 @@ func largeFixture(t *testing.T) (string, Options) {
 	if _, err := f.WriteAt([]byte("preserve every trailing byte"), size-28); err != nil {
 		t.Fatal(err)
 	}
-	return root, Options{Identifier: "org.example.large", Version: "1.2", Payload: "Fixture.app", InstallLocation: "/Applications/Fixture.app", Timestamp: time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)}
+	return root, Options{Identifier: "org.example.large", Version: "1.2", Payload: "Fixture.app", Compression: Gzip, InstallLocation: "/Applications/Fixture.app", Timestamp: time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)}
 }
 
 func fileDigest(t *testing.T, filename string) [sha256.Size]byte {
@@ -296,6 +298,52 @@ func TestBuildLargeAppStreamsAndRemainsReproducible(t *testing.T) {
 	}
 	if fileDigest(t, first) != fileDigest(t, second) {
 		t.Fatal("large package is not reproducible")
+	}
+}
+
+func TestBuildCompressesThePayloadAsDeclared(t *testing.T) {
+	for _, test := range []struct {
+		compression Compression
+		magic       string
+	}{
+		{Gzip, "\x1f\x8b"},
+		{XZ, "pbzx"},
+	} {
+		t.Run(string(test.compression), func(t *testing.T) {
+			root, opts := fixture(t)
+			opts.Compression = test.compression
+			output := filepath.Join(t.TempDir(), "fixture.pkg")
+			if err := Build(t.Context(), root, output, opts); err != nil {
+				t.Fatal(err)
+			}
+			if payload := packageMember(t, output, "Payload"); !bytes.HasPrefix(payload, []byte(test.magic)) {
+				t.Fatalf("payload begins %q", payload[:min(len(payload), 4)])
+			}
+			// pkgbuild keeps Scripts as gzip whatever the payload uses.
+			if scripts := packageMember(t, output, "Scripts"); !bytes.HasPrefix(scripts, []byte("\x1f\x8b")) {
+				t.Fatalf("scripts begin %q", scripts[:min(len(scripts), 4)])
+			}
+
+			// A 65 MiB executable spans several 16 MiB PBZX blocks.
+			root, opts = largeFixture(t)
+			opts.Compression = test.compression
+			first, second := filepath.Join(t.TempDir(), "first.pkg"), filepath.Join(t.TempDir(), "second.pkg")
+			for _, output := range []string{first, second} {
+				if err := Build(t.Context(), root, output, opts); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if fileDigest(t, first) != fileDigest(t, second) {
+				t.Fatal("package is not reproducible")
+			}
+			extracted, err := apple.ExtractApplication(t.Context(), first, "Payload", "/Applications/Fixture.app", t.TempDir(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fileDigest(t, filepath.Join(extracted, "Contents/MacOS/large")) != fileDigest(t, filepath.Join(root, "Fixture.app/Contents/MacOS/large")) {
+				t.Fatal("payload bytes changed")
+			}
+		})
 	}
 }
 

@@ -54,6 +54,22 @@
                     {
                       "additionalProperties": false,
                       "properties": {
+                        "compression": {
+                          "anyOf": [
+                            {
+                              "enum": [
+                                "gzip",
+                                "xz"
+                              ],
+                              "type": "string"
+                            },
+                            {
+                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                              "type": "string"
+                            }
+                          ],
+                          "description": "Payload compression: gzip or xz. Omit for gzip. xz builds a smaller package, costs far more CPU to build and read, and installs on macOS 10.10 or later."
+                        },
                         "filename": {
                           "anyOf": [
                             {
@@ -107,7 +123,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Component package identity and version recorded in macOS receipts."
+                  "description": "Component package identity and version recorded in macOS receipts, with the published filename and payload compression."
                 },
                 "payload": {
                   "anyOf": [
@@ -486,6 +502,22 @@
                         {
                           "additionalProperties": false,
                           "properties": {
+                            "compression": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "gzip",
+                                    "xz"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                  "type": "string"
+                                }
+                              ],
+                              "description": "Payload compression: gzip or xz. Omit for gzip. xz builds a smaller package, costs far more CPU to build and read, and installs on macOS 10.10 or later."
+                            },
                             "filename": {
                               "anyOf": [
                                 {
@@ -535,7 +567,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Component package identity and version recorded in macOS receipts."
+                      "description": "Component package identity and version recorded in macOS receipts, with the published filename and payload compression."
                     },
                     "payload": {
                       "anyOf": [
@@ -1600,6 +1632,43 @@
                   },
                   "type": "object"
                 },
+                "disk_image": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "compression": {
+                          "anyOf": [
+                            {
+                              "enum": [
+                                "lzfse",
+                                "zlib",
+                                "lzma"
+                              ],
+                              "type": "string"
+                            },
+                            {
+                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                              "type": "string"
+                            }
+                          ],
+                          "description": "Chunk compression: lzfse, zlib or lzma. Omit for lzfse. lzma builds the smallest image and costs the most CPU to build and read."
+                        }
+                      },
+                      "propertyNames": {
+                        "not": {
+                          "pattern": "\\{\\{"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "How preparation encodes the disk image it creates for an application from an archive or tree."
+                },
                 "icon": {
                   "anyOf": [
                     {
@@ -1977,6 +2046,43 @@
                         "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
                       },
                       "type": "object"
+                    },
+                    "disk_image": {
+                      "anyOf": [
+                        {
+                          "additionalProperties": false,
+                          "properties": {
+                            "compression": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "lzfse",
+                                    "zlib",
+                                    "lzma"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                  "type": "string"
+                                }
+                              ],
+                              "description": "Chunk compression: lzfse, zlib or lzma. Omit for lzfse. lzma builds the smallest image and costs the most CPU to build and read."
+                            }
+                          },
+                          "propertyNames": {
+                            "not": {
+                              "pattern": "\\{\\{"
+                            }
+                          },
+                          "type": "object"
+                        },
+                        {
+                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                          "type": "string"
+                        }
+                      ],
+                      "description": "How preparation encodes the disk image it creates for an application from an archive or tree."
                     },
                     "extends": {
                       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",

@@ -473,7 +473,7 @@ func buildPackage(t *testing.T, version string) []byte {
 		t.Fatal(err)
 	}
 	output := filepath.Join(t.TempDir(), "fixture.pkg")
-	if err := pkgbuild.Build(t.Context(), source, output, pkgbuild.Options{Identifier: "edu.example.fixture", Version: version, Payload: "payload", InstallLocation: "/Library/Example", Timestamp: time.Unix(0, 0).UTC()}); err != nil {
+	if err := pkgbuild.Build(t.Context(), source, output, pkgbuild.Options{Identifier: "edu.example.fixture", Version: version, Payload: "payload", Compression: pkgbuild.Gzip, InstallLocation: "/Library/Example", Timestamp: time.Unix(0, 0).UTC()}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(output)

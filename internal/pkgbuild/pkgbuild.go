@@ -21,6 +21,7 @@ import (
 	"github.com/deploymenttheory/go-macos-pkg/pkg/bom"
 	"github.com/deploymenttheory/go-macos-pkg/pkg/cpio"
 	"github.com/deploymenttheory/go-macos-pkg/pkg/flatpkg"
+	"github.com/deploymenttheory/go-macos-pkg/pkg/pbzx"
 	"github.com/klauspost/compress/gzip"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/fileio"
@@ -42,9 +43,22 @@ const MaxEntries = 100000
 // MaxScriptSize bounds each packaged endpoint hook.
 const MaxScriptSize = 1 << 20
 
+// Compression names how a package payload is compressed.
+type Compression string
+
+const (
+	// Gzip writes the payload as one gzip stream, which every macOS release reads.
+	Gzip Compression = "gzip"
+	// XZ writes the payload as PBZX, 16 MiB blocks that are each one xz stream,
+	// as pkgbuild --compression latest does. Installer reads it on macOS 10.10
+	// and later.
+	XZ Compression = "xz"
+)
+
 // Options declares one component package. Paths are relative to the input root.
-// Payload is optional. Scripts names a directory of hooks and their resources,
-// with at least one regular preinstall or postinstall file at its root.
+// Payload is optional and is compressed as Compression says. Scripts names a
+// directory of hooks and their resources, with at least one regular preinstall
+// or postinstall file at its root; like pkgbuild, it is always gzip.
 // Files default to root:wheel; Metadata and ScriptMetadata override archive
 // ownership and modes relative to their respective trees. Hooks use mode 0755.
 // Contents are packaged, never executed.
@@ -55,6 +69,7 @@ type Options struct {
 	Version         string                   `json:"version"`
 	InstallLocation string                   `json:"install_location,omitempty"`
 	Payload         string                   `json:"payload,omitempty"`
+	Compression     Compression              `json:"compression,omitempty"`
 	Scripts         string                   `json:"scripts,omitempty"`
 	Metadata        map[string]EntryMetadata `json:"metadata,omitempty"`
 	ScriptMetadata  map[string]EntryMetadata `json:"script_metadata,omitempty"`
@@ -129,7 +144,7 @@ func Build(ctx context.Context, root, output string, opts Options) (err error) {
 		info.InstallLocation = "/"
 	}
 	if opts.Payload != "" {
-		paths, size, err := writeTree(ctx, source, opts.Payload, filepath.Join(workspace, "Payload"), opts.Timestamp, opts.Metadata, false)
+		paths, size, err := writeTree(ctx, source, opts.Payload, filepath.Join(workspace, "Payload"), opts.Compression, opts.Timestamp, opts.Metadata, false)
 		if err != nil {
 			return fmt.Errorf("package payload: %w", err)
 		}
@@ -149,7 +164,7 @@ func Build(ctx context.Context, root, output string, opts Options) (err error) {
 		info.Payload = &flatpkg.Payload{NumberOfFiles: len(paths), InstallKBytes: int((size + 1023) / 1024)}
 	}
 	if opts.Scripts != "" {
-		paths, _, err := writeTree(ctx, source, opts.Scripts, filepath.Join(workspace, "Scripts"), opts.Timestamp, opts.ScriptMetadata, true)
+		paths, _, err := writeTree(ctx, source, opts.Scripts, filepath.Join(workspace, "Scripts"), Gzip, opts.Timestamp, opts.ScriptMetadata, true)
 		if err != nil {
 			return fmt.Errorf("package scripts: %w", err)
 		}
@@ -207,6 +222,9 @@ func Validate(opts Options) error {
 	}
 	if opts.Payload != "" && !validPath(opts.Payload) {
 		return errors.New("payload must be a confined relative path")
+	}
+	if opts.Payload != "" && opts.Compression != Gzip && opts.Compression != XZ {
+		return errors.New("payload compression must be gzip or xz")
 	}
 	if opts.Scripts != "" && !validPath(opts.Scripts) {
 		return errors.New("scripts must be a confined relative path")
@@ -278,7 +296,7 @@ func copyContents(ctx context.Context, destination io.Writer, f *os.File, info o
 	return nil
 }
 
-func writeTree(ctx context.Context, source *os.Root, prefix, destination string, timestamp time.Time, metadata map[string]EntryMetadata, scripts bool) ([]bom.Entry, int64, error) {
+func writeTree(ctx context.Context, source *os.Root, prefix, destination string, compression Compression, timestamp time.Time, metadata map[string]EntryMetadata, scripts bool) ([]bom.Entry, int64, error) {
 	tree, err := source.OpenRoot(prefix)
 	if err != nil {
 		return nil, 0, err
@@ -289,8 +307,11 @@ func writeTree(ctx context.Context, source *os.Root, prefix, destination string,
 		return nil, 0, err
 	}
 	defer func() { _ = f.Close() }()
-	gz := gzip.NewWriter(f)
-	writer := cpio.NewWriter(gz)
+	compressed, err := compress(f, compression)
+	if err != nil {
+		return nil, 0, err
+	}
+	writer := cpio.NewWriter(compressed)
 	var paths []bom.Entry
 	var total int64
 	used := map[string]bool{}
@@ -421,13 +442,23 @@ func writeTree(ctx context.Context, source *os.Root, prefix, destination string,
 	if err := writer.Close(); err != nil {
 		return nil, 0, err
 	}
-	if err := gz.Close(); err != nil {
+	if err := compressed.Close(); err != nil {
 		return nil, 0, err
 	}
 	if err := f.Close(); err != nil {
 		return nil, 0, err
 	}
 	return paths, total, nil
+}
+
+func compress(w io.Writer, compression Compression) (io.WriteCloser, error) {
+	switch compression {
+	case Gzip:
+		return gzip.NewWriter(w), nil
+	case XZ:
+		return pbzx.NewWriter(w, pbzx.XZ, pbzx.DefaultBlockSize)
+	}
+	return nil, fmt.Errorf("unsupported payload compression %q", compression)
 }
 
 // CPIO and BOM share second precision; BOM's unsigned field is the tighter bound.

@@ -49,85 +49,89 @@ func bundleFixture(t *testing.T) string {
 }
 
 func TestWriteApplicationPreservesTheBundle(t *testing.T) {
-	app := bundleFixture(t)
-	output := filepath.Join(t.TempDir(), "Example.dmg")
-	if err := WriteApplication(t.Context(), app, output, imageTime); err != nil {
-		t.Fatal(err)
-	}
-	image, err := Open(t.Context(), output)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = image.Close() }()
-	if info, err := fs.Stat(image, "Example.app"); err != nil || !info.IsDir() {
-		t.Fatalf("bundle missing from the image: %v", err)
-	}
-	if entries, err := image.ReadDir("."); err != nil || len(entries) != 1 {
-		t.Fatalf("volume root holds more than the bundle: %v, %v", entries, err)
-	}
-	seen := 0
-	err = filepath.WalkDir(app, func(filename string, _ fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		relative, err := filepath.Rel(filepath.Dir(app), filename)
-		if err != nil {
-			return err
-		}
-		name := filepath.ToSlash(relative)
-		want, err := os.Lstat(filename)
-		if err != nil {
-			return err
-		}
-		got, err := image.Lstat(name)
-		if err != nil {
-			return err
-		}
-		seen++
-		if !got.ModTime().Equal(imageTime) {
-			t.Errorf("%s dated %v", name, got.ModTime())
-		}
-		switch {
-		case want.Mode()&fs.ModeSymlink != 0:
-			target, err := os.Readlink(filename)
+	for _, compression := range []Compression{LZFSE, Zlib, LZMA} {
+		t.Run(string(compression), func(t *testing.T) {
+			app := bundleFixture(t)
+			output := filepath.Join(t.TempDir(), "Example.dmg")
+			if err := WriteApplication(t.Context(), app, output, compression, imageTime); err != nil {
+				t.Fatal(err)
+			}
+			image, err := Open(t.Context(), output)
 			if err != nil {
-				return err
+				t.Fatal(err)
 			}
-			if link, err := image.ReadLink(name); err != nil || link != filepath.ToSlash(target) || got.Mode()&fs.ModeSymlink == 0 {
-				t.Errorf("%s links to %q as %v: %v", name, link, got.Mode(), err)
+			defer func() { _ = image.Close() }()
+			if info, err := fs.Stat(image, "Example.app"); err != nil || !info.IsDir() {
+				t.Fatalf("bundle missing from the image: %v", err)
 			}
-		case got.Mode().Type() != want.Mode().Type() || got.Mode().Perm() != want.Mode().Perm():
-			t.Errorf("%s mode %v, want %v", name, got.Mode(), want.Mode())
-		case want.Mode().IsRegular():
-			expected, err := os.ReadFile(filename)
+			if entries, err := image.ReadDir("."); err != nil || len(entries) != 1 {
+				t.Fatalf("volume root holds more than the bundle: %v, %v", entries, err)
+			}
+			seen := 0
+			err = filepath.WalkDir(app, func(filename string, _ fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				relative, err := filepath.Rel(filepath.Dir(app), filename)
+				if err != nil {
+					return err
+				}
+				name := filepath.ToSlash(relative)
+				want, err := os.Lstat(filename)
+				if err != nil {
+					return err
+				}
+				got, err := image.Lstat(name)
+				if err != nil {
+					return err
+				}
+				seen++
+				if !got.ModTime().Equal(imageTime) {
+					t.Errorf("%s dated %v", name, got.ModTime())
+				}
+				switch {
+				case want.Mode()&fs.ModeSymlink != 0:
+					target, err := os.Readlink(filename)
+					if err != nil {
+						return err
+					}
+					if link, err := image.ReadLink(name); err != nil || link != filepath.ToSlash(target) || got.Mode()&fs.ModeSymlink == 0 {
+						t.Errorf("%s links to %q as %v: %v", name, link, got.Mode(), err)
+					}
+				case got.Mode().Type() != want.Mode().Type() || got.Mode().Perm() != want.Mode().Perm():
+					t.Errorf("%s mode %v, want %v", name, got.Mode(), want.Mode())
+				case want.Mode().IsRegular():
+					expected, err := os.ReadFile(filename)
+					if err != nil {
+						return err
+					}
+					file, err := image.Open(name)
+					if err != nil {
+						return err
+					}
+					actual, err := io.ReadAll(file)
+					_ = file.Close()
+					if err != nil || !bytes.Equal(actual, expected) {
+						t.Errorf("%s bytes differ: %v", name, err)
+					}
+				}
+				return nil
+			})
 			if err != nil {
-				return err
+				t.Fatal(err)
 			}
-			file, err := image.Open(name)
-			if err != nil {
-				return err
+			if seen != 16 {
+				t.Fatalf("compared %d entries", seen)
 			}
-			actual, err := io.ReadAll(file)
-			_ = file.Close()
-			if err != nil || !bytes.Equal(actual, expected) {
-				t.Errorf("%s bytes differ: %v", name, err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if seen != 16 {
-		t.Fatalf("compared %d entries", seen)
+		})
 	}
 }
 
 func TestWriteApplicationIsReproducible(t *testing.T) {
-	digest := func(app string, timestamp time.Time) [sha256.Size]byte {
+	digest := func(app string, compression Compression, timestamp time.Time) [sha256.Size]byte {
 		t.Helper()
 		output := filepath.Join(t.TempDir(), "Example.dmg")
-		if err := WriteApplication(t.Context(), app, output, timestamp); err != nil {
+		if err := WriteApplication(t.Context(), app, output, compression, timestamp); err != nil {
 			t.Fatal(err)
 		}
 		data, err := os.ReadFile(output)
@@ -140,10 +144,12 @@ func TestWriteApplicationIsReproducible(t *testing.T) {
 	if err := os.Chtimes(filepath.Join(second, "Contents/Info.plist"), imageTime, imageTime.Add(-time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	if digest(first, imageTime) != digest(second, imageTime) {
-		t.Fatal("equal bundles produced different images")
+	for _, compression := range []Compression{LZFSE, Zlib, LZMA} {
+		if digest(first, compression, imageTime) != digest(second, compression, imageTime) {
+			t.Fatalf("equal bundles produced different %s images", compression)
+		}
 	}
-	if digest(first, imageTime) == digest(first, imageTime.Add(time.Second)) {
+	if digest(first, LZFSE, imageTime) == digest(first, LZFSE, imageTime.Add(time.Second)) {
 		t.Fatal("timestamp did not reach the image")
 	}
 }
@@ -161,19 +167,21 @@ func TestWriteApplicationRejectsUnsupportedInput(t *testing.T) {
 	cancelled, cancel := context.WithCancel(t.Context())
 	cancel()
 	for name, test := range map[string]struct {
-		ctx       context.Context
-		app       string
-		output    string
-		timestamp time.Time
+		ctx         context.Context
+		app         string
+		output      string
+		compression Compression
+		timestamp   time.Time
 	}{
-		"not a bundle":      {t.Context(), directory, filepath.Join(t.TempDir(), "Example.dmg"), imageTime},
-		"existing output":   {t.Context(), app, existing, imageTime},
-		"date before HFS+":  {t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), time.Date(1903, 1, 1, 0, 0, 0, 0, time.UTC)},
-		"date after HFS+":   {t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), time.Date(2041, 1, 1, 0, 0, 0, 0, time.UTC)},
-		"cancelled context": {cancelled, app, filepath.Join(t.TempDir(), "Example.dmg"), imageTime},
+		"not a bundle":        {t.Context(), directory, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime},
+		"existing output":     {t.Context(), app, existing, LZFSE, imageTime},
+		"unknown compression": {t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), "bzip2", imageTime},
+		"date before HFS+":    {t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, time.Date(1903, 1, 1, 0, 0, 0, 0, time.UTC)},
+		"date after HFS+":     {t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, time.Date(2041, 1, 1, 0, 0, 0, 0, time.UTC)},
+		"cancelled context":   {cancelled, app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := WriteApplication(test.ctx, test.app, test.output, test.timestamp); err == nil {
+			if err := WriteApplication(test.ctx, test.app, test.output, test.compression, test.timestamp); err == nil {
 				t.Fatal("accepted")
 			}
 			entries, err := os.ReadDir(filepath.Dir(test.output))
@@ -197,7 +205,7 @@ func TestWriteApplicationRejectsWhatTheVolumeCannotHold(t *testing.T) {
 		if info, err := os.Lstat(filename); err != nil || info.Mode()&fs.ModeSetuid == 0 {
 			t.Skip("host does not record setuid")
 		}
-		if err := WriteApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), imageTime); err == nil {
+		if err := WriteApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime); err == nil {
 			t.Fatal("setuid executable accepted")
 		}
 	})
@@ -211,7 +219,7 @@ func TestWriteApplicationRejectsWhatTheVolumeCannotHold(t *testing.T) {
 		if entries, err := os.ReadDir(filepath.Join(app, "Contents/Resources")); err != nil || len(entries) != 3 {
 			t.Skip("host folds case")
 		}
-		if err := WriteApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), imageTime); err == nil {
+		if err := WriteApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime); err == nil {
 			t.Fatal("case-conflicting names accepted")
 		}
 	})
@@ -220,7 +228,7 @@ func TestWriteApplicationRejectsWhatTheVolumeCannotHold(t *testing.T) {
 		if err := os.Symlink("../../../outside", filepath.Join(app, "Contents/Resources/outside")); err != nil {
 			t.Skip(err)
 		}
-		err := WriteApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), imageTime)
+		err := WriteApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime)
 		if err == nil || errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("escaping symlink accepted: %v", err)
 		}

@@ -68,6 +68,40 @@ publishes the image as `type: dmg`. The application installs to
 [Signature](#signature) verifies the application; the image is a container and
 carries no signature of its own.
 
+### Compress the image
+
+`disk_image.compression` controls how a disk image created by Stemma is compressed:
+
+```yaml
+spec:
+  disk_image:
+    compression: lzma
+```
+
+| `compression`     | Image size     | Copy time on a Mac | Compatibility        |
+| ----------------- | -------------- | ------------------ | -------------------- |
+| `lzfse` (default) | 5–6% smaller   | 11–17% faster      | macOS 10.11 or later |
+| `zlib`            | baseline       | baseline           | any macOS            |
+| `lzma`            | 12–18% smaller | 2.4–4.5x slower    | macOS 10.15 or later |
+
+`lzfse` is the default because it produces a slightly smaller image than `zlib`
+while also being faster for Macs to read.
+
+`lzma` produces the smallest images, but takes 3.5–5x as long to build and is
+slower to copy files from. It is most useful when image size matters more than
+preparation and installation time.
+
+The figures above come from Chrome, Visual Studio Code and Minecraft Education.
+Image creation happens once per release, while managed Macs pay the read cost each
+time the image is mounted and its application is copied.
+
+For reference, `hdiutil` calls the LZFSE, zlib and LZMA image formats ULFO, UDZO
+and ULMO respectively. LZMA also requires roughly four times as much memory while
+building.
+
+`disk_image` applies only when Stemma creates the image. Vendor DMGs and PKGs keep
+their original bytes, so declaring `disk_image` for one causes preparation to fail.
+
 ## Select an application once
 
 Inspection lists every application and package in the installer. If it finds one

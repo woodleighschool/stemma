@@ -2,12 +2,15 @@ package macpkg
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/deploymenttheory/go-macos-pkg/pkg/xar"
 	"github.com/woodleighschool/stemma/internal/apple"
+	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -59,6 +62,53 @@ func TestBuildMappedPayloadIsReproducibleAndScriptsAreNotRun(t *testing.T) {
 	}
 	if data, err := os.ReadFile(inputs["script"].Path); err != nil || string(data) != "#!/bin/sh\nexit 93\n" {
 		t.Fatal("source script changed")
+	}
+}
+
+func TestBuildCompressesThePayloadAsDeclared(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		compression pkgbuild.Compression
+		magic       string
+	}{
+		{"default", "", "\x1f\x8b"},
+		{"gzip", pkgbuild.Gzip, "\x1f\x8b"},
+		{"xz", pkgbuild.XZ, "pbzx"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spec, inputs := fixture(t)
+			spec.Package.Compression = test.compression
+			artifact, err := Build(t.Context(), spec, inputs, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			archive, err := xar.OpenFile(artifact.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = archive.Close() }()
+			payload, err := archive.Open(archive.Lookup("Payload"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = payload.Close() }()
+			head := make([]byte, len(test.magic))
+			if _, err := io.ReadFull(payload, head); err != nil || string(head) != test.magic {
+				t.Fatalf("payload begins %q: %v", head, err)
+			}
+		})
+	}
+}
+
+func TestSpecRejectsCompressionItCannotApply(t *testing.T) {
+	spec, _ := fixture(t)
+	spec.Package.Compression = "zstd"
+	if err := spec.Validate(); err == nil {
+		t.Fatal("unknown compression accepted")
+	}
+	spec.Package.Compression, spec.Payload = pkgbuild.XZ, nil
+	if err := spec.Validate(); err == nil {
+		t.Fatal("compression accepted without a payload")
 	}
 }
 

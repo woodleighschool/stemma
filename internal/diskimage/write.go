@@ -22,14 +22,41 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// WriteApplication writes a new zlib-compressed DMG holding one application
-// bundle at the root of an HFS+ volume named after it. The image carries the
-// bundle's bytes, permission bits and confined relative symlinks, owned by root,
-// with every date set to timestamp, so the same bundle and timestamp produce the
-// same bytes on every host. The bundle is never mounted or executed.
-func WriteApplication(ctx context.Context, app, output string, timestamp time.Time) (err error) {
+// Compression names the codec that compresses a disk image's data chunks.
+type Compression string
+
+// Chunk codecs, as hdiutil's ULFO, UDZO and ULMO formats use them.
+const (
+	LZFSE Compression = "lzfse"
+	Zlib  Compression = "zlib"
+	LZMA  Compression = "lzma"
+)
+
+func (c Compression) codec() (disk.Compression, error) {
+	switch c {
+	case LZFSE:
+		return disk.CompressionLZFSE, nil
+	case Zlib:
+		return disk.CompressionZlib, nil
+	case LZMA:
+		return disk.CompressionLZMA, nil
+	}
+	return 0, fmt.Errorf("unsupported disk image compression %q", c)
+}
+
+// WriteApplication writes a new DMG holding one application bundle at the root
+// of an HFS+ volume named after it, with its chunks compressed by compression.
+// The image carries the bundle's bytes, permission bits and confined relative
+// symlinks, owned by root, with every date set to timestamp, so the same bundle,
+// compression and timestamp produce the same bytes on every host. The bundle is
+// never mounted or executed.
+func WriteApplication(ctx context.Context, app, output string, compression Compression, timestamp time.Time) (err error) {
 	done := plugin.Stage(ctx, "Building disk image", plugin.Detail(filepath.Base(output)))
 	defer func() { done(err) }()
+	codec, err := compression.codec()
+	if err != nil {
+		return err
+	}
 	name := filepath.Base(app)
 	if !strings.EqualFold(filepath.Ext(name), ".app") {
 		return errors.New("disk image requires an application bundle")
@@ -72,7 +99,7 @@ func WriteApplication(ctx context.Context, app, output string, timestamp time.Ti
 	if err != nil {
 		return err
 	}
-	if err := disk.WrapRawImageDMGFrom(output, contextReaderAt{ctx, volume}, size, "Apple_HFS", nil); err != nil {
+	if err := disk.WrapRawImageDMGFrom(output, contextReaderAt{ctx, volume}, size, "Apple_HFS", &disk.EncodeOptions{Compression: codec}); err != nil {
 		return fmt.Errorf("disk image: %w", err)
 	}
 	return ctx.Err()

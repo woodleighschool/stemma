@@ -12,16 +12,16 @@ arbitrary plugin code.
 
 ## Files and packages
 
-| Operation             | Supported scope                                                                                                      |
-| --------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Mac PKG inspection    | Flat XAR packages and supported component payloads; streams file contents while retaining bounded inventory metadata |
-| DMG inspection        | Raw, ADC, zlib, bzip2, LZFSE and LZMA chunks; supported HFS+, HFSX and single-volume APFS filesystems                |
-| Application DMGs      | One application at the root of a zlib-compressed HFS+ image; bytes, modes and confined relative symlinks             |
-| Custom Mac packaging  | Unsigned component packages, payload layouts, endpoint hooks and temporary script resources                          |
-| MSI inspection        | Reads MSI database metadata without Windows or executing the installer                                               |
-| EXE preparation       | Preserves the vendor installer; commands, version-specific detection and other installation semantics are declared   |
-| Intune Win32 wrapping | Portable `.intunewin` preparation with a 2 GiB implementation bound                                                  |
-| Icon creation         | `stemma icon` extracts icon artwork on any host; the glassy presentation needs the macOS renderer                    |
+| Operation             | Supported scope                                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Mac PKG inspection    | Flat XAR packages and supported component payloads; streams file contents while retaining bounded inventory metadata     |
+| DMG inspection        | Raw, ADC, zlib, bzip2, LZFSE and LZMA chunks; supported HFS+, HFSX and single-volume APFS filesystems                    |
+| Application DMGs      | One application at the root of an LZFSE, zlib or LZMA compressed HFS+ image; bytes, modes and confined relative symlinks |
+| Custom Mac packaging  | Unsigned component packages with gzip or xz payloads, payload layouts, endpoint hooks and temporary script resources     |
+| MSI inspection        | Reads MSI database metadata without Windows or executing the installer                                                   |
+| EXE preparation       | Preserves the vendor installer; commands, version-specific detection and other installation semantics are declared       |
+| Intune Win32 wrapping | Portable `.intunewin` preparation with a 2 GiB implementation bound                                                      |
+| Icon creation         | `stemma icon` extracts icon artwork on any host; the glassy presentation needs the macOS renderer                        |
 
 PKG inspection bounds entry counts and retained path metadata, rather than imposing
 a small total payload size. Exceptionally large inventories can still hit those

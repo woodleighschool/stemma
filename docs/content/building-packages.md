@@ -197,6 +197,36 @@ cover its selected content. Vendor-specific
 discovery and other metadata extraction belong in a resolver or resource plugin.
 Set `package.filename` only when the default output name needs to be overridden.
 
+## Compress the payload
+
+`package.compression` controls how the package payload is compressed:
+
+```yaml
+package:
+  identifier: org.example.fonts
+  version: "1.0"
+  compression: xz
+```
+
+| `compression`    | Package size   | Expand time on a Mac | Compatibility        |
+| ---------------- | -------------- | -------------------- | -------------------- |
+| `gzip` (default) | baseline       | baseline             | any macOS            |
+| `xz`             | 14–23% smaller | 12–29% faster        | macOS 10.10 or later |
+
+`xz` is useful when package size matters. It takes 6–8x as long to create, but
+macOS expands the payload in parallel, so installation is no slower than with
+`gzip`, though it uses 3–4x the CPU.
+
+The size range above comes from Chrome, Visual Studio Code and Minecraft
+Education packaged as payloads.
+
+`xz` uses PBZX, the same payload format produced by `pkgbuild --compression latest`,
+with 16 MiB independently compressed blocks. Stemma needs 5–9x the CPU to read
+an xz payload during operations such as `MacSoftware` inspection. The
+Scripts archive remains gzip-compressed, matching `pkgbuild`.
+
+A package without a payload cannot declare `package.compression`.
+
 ## Verify the wrapped input
 
 `signatures` asserts the signing state of subjects the resolved payload and scripts

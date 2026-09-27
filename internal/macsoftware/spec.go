@@ -9,12 +9,13 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-const Version = "stemma.macsoftware/10"
+const Version = "stemma.macsoftware/11"
 
 // Spec declares a macOS installer, how preparation selects from it and how
 // destinations publish it.
@@ -23,6 +24,7 @@ type Spec struct {
 	Application *Application  `json:"application,omitempty" yaml:"application,omitempty" jsonschema_description:"Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image."`
 	// PackagePath selects one installer by archive-relative path or glob.
 	PackagePath string                  `json:"package_path,omitempty" yaml:"package_path,omitempty" jsonschema_description:"Archive-relative path or glob selecting one installer package. Selection must be unambiguous."`
+	DiskImage   *DiskImage              `json:"disk_image,omitempty" yaml:"disk_image,omitempty" jsonschema_description:"How preparation encodes the disk image it creates for an application from an archive or tree."`
 	Signatures  []signature.Expectation `json:"signatures,omitempty" yaml:"signatures,omitempty" jsonschema:"minItems=1" jsonschema_description:"Explicit signing expectations for the published PKG root or every top-level application in the published disk image. Omit to make no signing assertion. Derive with stemma signature."`
 	// MinimumOS replaces the installer's and the selected application's macOS
 	// requirements for every destination.
@@ -40,6 +42,19 @@ type Application struct {
 	VersionKey    string `json:"version_key,omitempty" yaml:"version_key,omitempty" jsonschema:"enum=CFBundleShortVersionString,enum=CFBundleVersion" jsonschema_description:"Info.plist key used as the managed version. Omit to prefer CFBundleShortVersionString, then CFBundleVersion."`
 }
 
+// DiskImage declares how preparation encodes the disk image it creates.
+type DiskImage struct {
+	Compression diskimage.Compression `json:"compression,omitempty" yaml:"compression,omitempty" jsonschema:"enum=lzfse,enum=zlib,enum=lzma" jsonschema_description:"Chunk compression: lzfse, zlib or lzma. Omit for lzfse. lzma builds the smallest image and costs the most CPU to build and read."`
+}
+
+// compression returns the declared compression, or LZFSE.
+func (d *DiskImage) compression() diskimage.Compression {
+	if d == nil || d.Compression == "" {
+		return diskimage.LZFSE
+	}
+	return d.Compression
+}
+
 // Preparation keeps the fields that shape the installer; publication settings
 // and the icon asset change without invalidating prepared outputs.
 func (s Spec) Preparation() Spec {
@@ -51,6 +66,13 @@ func (s Spec) Preparation() Spec {
 func (s Spec) Validate() error {
 	if s.PackagePath != "" && !relativePath(s.PackagePath) {
 		return errors.New("package_path must be a confined archive path")
+	}
+	if image := s.DiskImage; image != nil {
+		switch image.Compression {
+		case "", diskimage.LZFSE, diskimage.Zlib, diskimage.LZMA:
+		default:
+			return errors.New("disk_image.compression must be lzfse, zlib or lzma")
+		}
 	}
 	if s.MinimumOS != "" && !macOSVersion.MatchString(s.MinimumOS) {
 		return errors.New("minimum_os must be a macOS version such as 14.0")

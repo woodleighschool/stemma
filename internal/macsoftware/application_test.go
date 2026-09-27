@@ -26,7 +26,7 @@ func bundleInputs(t *testing.T, root string) []plugin.Artifact {
 	image := filepath.Join(t.TempDir(), "Example.dmg")
 	testdiskimage.Write(t, image, root)
 	installer := filepath.Join(t.TempDir(), "Example.pkg")
-	if err := pkgbuild.Build(t.Context(), filepath.Join(root, "Example.app"), installer, pkgbuild.Options{Identifier: "org.example.app", Version: "1.2", InstallLocation: "/Applications/Example.app", Payload: "."}); err != nil {
+	if err := pkgbuild.Build(t.Context(), filepath.Join(root, "Example.app"), installer, pkgbuild.Options{Identifier: "org.example.app", Version: "1.2", InstallLocation: "/Applications/Example.app", Payload: ".", Compression: pkgbuild.Gzip}); err != nil {
 		t.Fatal(err)
 	}
 	return []plugin.Artifact{

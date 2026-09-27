@@ -78,7 +78,7 @@ func build(ctx context.Context, spec Spec, sources *sources, workspace string) (
 			}
 		}
 		if area == "Payload" {
-			opts.Payload, opts.Metadata = area, stage.metadata
+			opts.Payload, opts.Compression, opts.Metadata = area, spec.Package.compression(), stage.metadata
 		} else {
 			opts.Scripts, opts.ScriptMetadata = area, stage.metadata
 		}

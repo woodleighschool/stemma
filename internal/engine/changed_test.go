@@ -150,7 +150,7 @@ func testPackage(t *testing.T, identifier string) []byte {
 	}
 	writeFile(t, filepath.Join(source, "payload", identifier+".txt"), []byte(identifier))
 	output := filepath.Join(t.TempDir(), identifier+".pkg")
-	if err := pkgbuild.Build(t.Context(), source, output, pkgbuild.Options{Identifier: identifier, Version: "1.0", Payload: "payload"}); err != nil {
+	if err := pkgbuild.Build(t.Context(), source, output, pkgbuild.Options{Identifier: identifier, Version: "1.0", Payload: "payload", Compression: pkgbuild.Gzip}); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(output)

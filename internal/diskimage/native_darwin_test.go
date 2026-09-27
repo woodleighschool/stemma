@@ -1,25 +1,71 @@
 package diskimage
 
 import (
+	"bytes"
 	"context"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-// TestNativeMountVerifiesSignedApplication uses macOS as the oracle: the image
-// verifies and mounts, and the signed bundle verifies in place.
+// TestNativeMountVerifiesSignedApplication uses macOS as the oracle: each
+// compression is the image format hdiutil names, the image verifies and mounts,
+// and the signed bundle verifies in place.
 func TestNativeMountVerifiesSignedApplication(t *testing.T) {
-	app := filepath.Join(t.TempDir(), "NestedFixture.app")
-	if err := os.CopyFS(app, os.DirFS("../apple/testdata/NestedFixture.app")); err != nil {
-		t.Fatal(err)
+	for compression, format := range map[Compression]string{LZFSE: "ULFO", Zlib: "UDZO", LZMA: "ULMO"} {
+		t.Run(string(compression), func(t *testing.T) {
+			app := filepath.Join(t.TempDir(), "NestedFixture.app")
+			if err := os.CopyFS(app, os.DirFS("../apple/testdata/NestedFixture.app")); err != nil {
+				t.Fatal(err)
+			}
+			image := filepath.Join(t.TempDir(), "NestedFixture.dmg")
+			if err := WriteApplication(t.Context(), app, image, compression, imageTime); err != nil {
+				t.Fatal(err)
+			}
+			native(t, "/usr/bin/hdiutil", "verify", image)
+			if info := native(t, "/usr/bin/hdiutil", "imageinfo", image); !strings.Contains(info, "\nFormat: "+format+"\n") {
+				t.Fatalf("hdiutil does not see a %s image:\n%s", format, info)
+			}
+			mountpoint := mount(t, image)
+			if entries, err := os.ReadDir(mountpoint); err != nil || len(entries) != 1 || entries[0].Name() != "NestedFixture.app" {
+				t.Fatalf("mounted volume holds %v: %v", entries, err)
+			}
+			native(t, "/usr/bin/codesign", "--verify", "--strict", "--deep", filepath.Join(mountpoint, "NestedFixture.app"))
+		})
 	}
-	image := filepath.Join(t.TempDir(), "NestedFixture.dmg")
-	if err := WriteApplication(t.Context(), app, image, imageTime); err != nil {
-		t.Fatal(err)
+}
+
+// TestNativeMountReadsIncompressibleContent mounts each compression holding a
+// file that does not compress. macOS 26 refused to attach such LZFSE and LZMA
+// images while their blocks asked for a zlib-sized decode buffer, although
+// hdiutil verify passed.
+func TestNativeMountReadsIncompressibleContent(t *testing.T) {
+	data := make([]byte, 1<<20)
+	_, _ = rand.NewChaCha8([32]byte{}).Read(data)
+	for _, compression := range []Compression{LZFSE, Zlib, LZMA} {
+		t.Run(string(compression), func(t *testing.T) {
+			app := bundleFixture(t)
+			if err := os.WriteFile(filepath.Join(app, "Contents/Resources/random.bin"), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			image := filepath.Join(t.TempDir(), "Example.dmg")
+			if err := WriteApplication(t.Context(), app, image, compression, imageTime); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(filepath.Join(mount(t, image), "Example.app/Contents/Resources/random.bin"))
+			if err != nil || !bytes.Equal(got, data) {
+				t.Fatalf("macOS reads different bytes: %v", err)
+			}
+		})
 	}
-	native(t, "/usr/bin/hdiutil", "verify", image)
+}
+
+// mount attaches image read-only until the test ends and returns its mountpoint.
+func mount(t *testing.T, image string) string {
+	t.Helper()
 	mountpoint := filepath.Join(t.TempDir(), "volume")
 	native(t, "/usr/bin/hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mountpoint, image)
 	t.Cleanup(func() {
@@ -28,17 +74,16 @@ func TestNativeMountVerifiesSignedApplication(t *testing.T) {
 			t.Errorf("detach: %v: %s", err, output)
 		}
 	})
-	if entries, err := os.ReadDir(mountpoint); err != nil || len(entries) != 1 || entries[0].Name() != "NestedFixture.app" {
-		t.Fatalf("mounted volume holds %v: %v", entries, err)
-	}
-	native(t, "/usr/bin/codesign", "--verify", "--strict", "--deep", filepath.Join(mountpoint, "NestedFixture.app"))
+	return mountpoint
 }
 
-func native(t *testing.T, name string, args ...string) {
+func native(t *testing.T, name string, args ...string) string {
 	t.Helper()
-	if output, err := exec.CommandContext(t.Context(), name, args...).CombinedOutput(); err != nil {
+	output, err := exec.CommandContext(t.Context(), name, args...).CombinedOutput()
+	if err != nil {
 		t.Fatalf("%s %v: %v: %s", filepath.Base(name), args, err, output)
 	}
+	return string(output)
 }
 
 // TestNativeMountReadsPOSIXNames covers bundle names macOS allows and Windows
@@ -56,17 +101,11 @@ func TestNativeMountReadsPOSIXNames(t *testing.T) {
 		}
 	}
 	image := filepath.Join(t.TempDir(), "NamedFixture.dmg")
-	if err := WriteApplication(t.Context(), app, image, imageTime); err != nil {
+	if err := WriteApplication(t.Context(), app, image, LZFSE, imageTime); err != nil {
 		t.Fatal(err)
 	}
 	native(t, "/usr/bin/hdiutil", "verify", image)
-	mountpoint := filepath.Join(t.TempDir(), "volume")
-	native(t, "/usr/bin/hdiutil", "attach", "-readonly", "-nobrowse", "-noautoopen", "-mountpoint", mountpoint, image)
-	t.Cleanup(func() {
-		if output, err := exec.CommandContext(context.Background(), "/usr/bin/hdiutil", "detach", "-force", mountpoint).CombinedOutput(); err != nil {
-			t.Errorf("detach: %v: %s", err, output)
-		}
-	})
+	mountpoint := mount(t, image)
 	for _, name := range names {
 		data, err := os.ReadFile(filepath.Join(mountpoint, "NamedFixture.app", "Contents", "Resources", name))
 		if err != nil || string(data) != "payload" {
