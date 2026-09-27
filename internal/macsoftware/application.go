@@ -82,7 +82,11 @@ func Icon(ctx context.Context, installer plugin.Artifact, workspace string, pres
 		artwork, err := icon.FromICNS(data)
 		return icon.Subject{Artwork: artwork}, err
 	}
-	if err := icon.StageExecutable(bundle, app.App.Executable); err != nil {
+	executable, err := apple.ResolveExecutable(app.App.Executable, filepath.Base(bundle))
+	if err != nil {
+		return icon.Subject{}, err
+	}
+	if err := icon.StageExecutable(bundle, executable); err != nil {
 		return icon.Subject{}, err
 	}
 	return icon.Subject{Path: bundle}, nil

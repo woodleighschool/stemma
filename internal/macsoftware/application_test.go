@@ -3,6 +3,7 @@ package macsoftware
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"image"
 	"image/png"
@@ -220,5 +221,53 @@ func TestIconWithOnlyAssetCatalog(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestIconResolvesUndeclaredExecutable(t *testing.T) {
+	root := applicationFixture(t)
+	info := []byte(`<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.app</string><key>CFBundleName</key><string>Display Name</string><key>CFBundleShortVersionString</key><string>1.2</string><key>CFBundleIconName</key><string>AppIcon</string></dict></plist>`)
+	if err := os.WriteFile(filepath.Join(root, "Example.app/Contents/Info.plist"), info, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "Example.app/Contents/Resources/Assets.car"), []byte("artwork"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "Example.app/Contents/MacOS/example"), filepath.Join(root, "Example.app/Contents/MacOS/Example")); err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range bundleInputs(t, root) {
+		t.Run(input.Filename, func(t *testing.T) {
+			outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			installer := outputs["installer"]
+			var app plugin.Subject
+			if err := json.Unmarshal(installer.Evidence["macos.application"], &app); err != nil {
+				t.Fatal(err)
+			}
+			if app.App == nil || app.App.Executable != "" {
+				t.Fatalf("invented executable: %+v", app.App)
+			}
+			subject, err := Icon(t.Context(), installer, t.TempDir(), icon.Glassy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stub, err := os.ReadFile(filepath.Join(subject.Path, "Contents/MacOS/Example"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(stub) != 32 || binary.LittleEndian.Uint32(stub) != 0xfeedfacf {
+				t.Fatal("missing native executable stub")
+			}
+			got, err := os.ReadFile(filepath.Join(subject.Path, "Contents/Info.plist"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(got, info) {
+				t.Fatal("staging changed declared metadata")
+			}
+		})
 	}
 }

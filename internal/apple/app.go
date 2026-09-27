@@ -102,7 +102,8 @@ func (v *bundleVerifier) verifyApp(bundle fs.ReadLinkFS, name string, want signa
 }
 
 // ParseAppInfo reads conventional application metadata without accessing an
-// installed application or evaluating installer scripts.
+// installed application or evaluating installer scripts. An absent executable
+// declaration stays absent; resolving it requires the bundle filename.
 func ParseAppInfo(data []byte) (AppFacts, error) {
 	if len(data) > maxMetadata {
 		return AppFacts{}, fmt.Errorf("app Info.plist exceeds read limit")
@@ -113,11 +114,10 @@ func ParseAppInfo(data []byte) (AppFacts, error) {
 	}
 	// Script applets may omit CFBundleIdentifier. Destinations require one
 	// only of the application they detect.
-	if facts.Executable == "" {
-		return facts, fmt.Errorf("app Info.plist lacks CFBundleExecutable")
-	}
-	if facts.Executable == "." || facts.Executable == ".." || strings.ContainsAny(facts.Executable, "/\\\x00:") {
-		return facts, fmt.Errorf("unsafe CFBundleExecutable %q", facts.Executable)
+	if facts.Executable != "" {
+		if err := validateExecutable(facts.Executable); err != nil {
+			return facts, err
+		}
 	}
 	if facts.MinimumOS == "" {
 		var requirements struct {

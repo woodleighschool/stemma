@@ -603,3 +603,20 @@ func TestPBZXPayloadEarlyFailureClosesSource(t *testing.T) {
 		t.Fatalf("source left open: %v", err)
 	}
 }
+
+func TestPackageContentsAllowsUndeclaredHelperExecutable(t *testing.T) {
+	helper := plistEntry(t, "Example.app/Contents/Frameworks/Helper.app/Contents/Info.plist", "Helper")
+	helper.body = []byte(`<plist version="1.0"><dict><key>CFBundleName</key><string>Display Name</string><key>CFBundleIdentifier</key><string>org.example.helper</string></dict></plist>`)
+	name := applicationPackage(t, "/Applications", []payloadEntry{plistEntry(t, "Example.app/Contents/Info.plist", "Example"), helper})
+	facts, err := InspectPackageContents(t.Context(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts.Applications) != 2 {
+		t.Fatalf("applications: %+v", facts.Applications)
+	}
+	app := facts.Applications[1]
+	if app.App.Executable != "" || app.App.BundleID != "org.example.helper" || app.InstalledPath != "/Applications/Example.app/Contents/Frameworks/Helper.app" {
+		t.Fatalf("helper facts: %+v", app)
+	}
+}

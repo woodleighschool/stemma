@@ -502,3 +502,69 @@ func TestUnsignedMachORequiresEveryArchitectureToBeUnsigned(t *testing.T) {
 		})
 	}
 }
+
+func TestAppExecutableDeclaration(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		value   any
+		want    string
+		wantErr bool
+	}{
+		{name: "absent"},
+		{name: "empty", value: ""},
+		{name: "declared", value: "Helper", want: "Helper"},
+		{name: "wrong type", value: 42, wantErr: true},
+		{name: "traversal", value: "../Helper", wantErr: true},
+		{name: "dot", value: ".", wantErr: true},
+		{name: "parent", value: "..", wantErr: true},
+		{name: "backslash", value: `dir\Helper`, wantErr: true},
+		{name: "colon", value: "dir:Helper", wantErr: true},
+		{name: "nul", value: "Helper\x00", wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			values := map[string]any{"CFBundleName": "Display Name"}
+			if tt.value != nil {
+				values["CFBundleExecutable"] = tt.value
+			}
+			data, err := plist.Marshal(values, plist.BinaryFormat)
+			if err != nil {
+				t.Fatal(err)
+			}
+			facts, err := ParseAppInfo(data)
+			if (err != nil) != tt.wantErr || !tt.wantErr && facts.Executable != tt.want {
+				t.Fatalf("executable %q, error %v", facts.Executable, err)
+			}
+		})
+	}
+}
+
+func TestBundleExecutableResolution(t *testing.T) {
+	for _, tt := range []struct {
+		name, declared, bundle, want string
+		wantErr                      bool
+	}{
+		{name: "declared precedence", declared: "Actual", bundle: "Other.app", want: "Actual"},
+		{name: "bundle filename", bundle: "Helper (Plugin).app", want: "Helper (Plugin)"},
+		{name: "framework", bundle: "Helper.framework", want: "Helper"},
+		{name: "dots in name", bundle: "Helper.2.app", want: "Helper.2"},
+		{name: "no name", wantErr: true},
+		{name: "empty basename", bundle: ".app", wantErr: true},
+		{name: "unsafe declaration", declared: "../Helper", bundle: "Safe.app", wantErr: true},
+		{name: "unsafe fallback", bundle: "../Helper.app", wantErr: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			values := map[string]any{"CFBundleName": "Display Name"}
+			if tt.declared != "" {
+				values["CFBundleExecutable"] = tt.declared
+			}
+			data, err := plist.Marshal(values, plist.XMLFormat)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := bundleExecutable(data, tt.bundle)
+			if (err != nil) != tt.wantErr || got != tt.want {
+				t.Fatalf("executable %q, error %v; want %q, error %v", got, err, tt.want, tt.wantErr)
+			}
+		})
+	}
+}

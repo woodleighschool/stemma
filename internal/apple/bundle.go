@@ -70,14 +70,28 @@ func bundleExecutable(info []byte, bundleName string) (string, error) {
 	if _, err := plist.Unmarshal(info, &facts); err != nil {
 		return "", fmt.Errorf("bundle Info.plist: %w", err)
 	}
-	executable := facts.Executable
+	return ResolveExecutable(facts.Executable, bundleName)
+}
+
+// ResolveExecutable returns the declared executable name, or the bundle filename
+// without its extension when the declaration is absent. It validates the name
+// but does not check whether the executable exists.
+func ResolveExecutable(declared, bundleName string) (string, error) {
+	executable := declared
 	if executable == "" {
 		executable = strings.TrimSuffix(bundleName, path.Ext(bundleName))
 	}
-	if executable == "" || executable == "." || executable == ".." || strings.ContainsAny(executable, "/\\\x00:") {
-		return "", fmt.Errorf("unsafe CFBundleExecutable %q", executable)
+	if err := validateExecutable(executable); err != nil {
+		return "", err
 	}
 	return executable, nil
+}
+
+func validateExecutable(executable string) error {
+	if executable == "" || executable == "." || executable == ".." || strings.ContainsAny(executable, "/\\\x00:") {
+		return fmt.Errorf("unsafe CFBundleExecutable %q", executable)
+	}
+	return nil
 }
 
 // verifyFramework verifies a versioned framework. Only the current version is
