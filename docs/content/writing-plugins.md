@@ -187,6 +187,7 @@ spec:
 
 ```sh
 stemma validate
+stemma update VendorPackage/vendor-app
 stemma prepare VendorPackage/vendor-app
 stemma plan VendorPackage/vendor-app
 ```

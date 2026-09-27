@@ -79,15 +79,16 @@ Run from the catalog:
 
 ```sh
 stemma validate
-stemma prepare
+stemma update
 git diff -- stemma.lock.yaml
+stemma prepare
 stemma plan
 ```
 
 `validate` checks the documents and operation contracts without credentials or
-downloads. `prepare` downloads the
-installer, inspects it and writes the lockfile. On its first creation, the lockfile
-is untracked: open it directly as well as checking `git status`.
+downloads. `update` downloads the installer and writes the lockfile. On its first
+creation, the lockfile is untracked: open it directly as well as checking
+`git status`. `prepare` builds what the lockfile pins and inspects it.
 
 `plan` reads the destination and reports the changes it would make. It can fetch
 locked inputs into an empty cache, but does not write to the destination. It is the
@@ -121,6 +122,6 @@ git diff -- stemma.lock.yaml
 stemma plan MacSoftware/chrome
 ```
 
-`update` explicitly checks upstream again. `prepare` keeps an existing remote pin.
-Review and commit the new lock before applying. See [sources and updates](sources.md)
+`update` checks upstream again and records what it finds. Review and commit the
+new lock before applying. See [sources and updates](sources.md)
 for local changes, cold caches and URLs whose content changes in place.

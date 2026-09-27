@@ -159,10 +159,10 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	for _, method := range []string{"update", "prepare", "signature", "icon", "plan", "apply"} {
 		var offline bool
 		var icons engine.IconOptions
-		var presentation string
+		var presentation, changedSince string
 		cmd := &cobra.Command{Use: method + " [Kind/name...]"}
 		jsonFlag(cmd)
-		cmd.Short = map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Lock and prepare inputs without publication", "signature": "Derive the verified signer of each published artifact", "icon": "Create declared icon assets from the artwork prepared software carries", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method]
+		cmd.Short = map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Prepare resources from the lockfile without publication", "signature": "Derive the verified signer of each published artifact", "icon": "Create declared icon assets from the artwork prepared software carries", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method]
 		cmd.RunE = func(cmd *cobra.Command, args []string) error {
 			path, err := resolve()
 			if err != nil {
@@ -173,9 +173,9 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 					return err
 				}
 			}
-			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Method: method, Resources: args, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error {
+			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Method: method, Resources: args, ChangedSince: changedSince, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error {
 				return display.resourceDone(method, resource)
-			}, Lock: lockfile.Options{Frozen: method == "plan" || method == "apply" || method == "icon", Refresh: method == "update", Offline: offline}})
+			}, Lock: lockfile.Options{Offline: offline}})
 			if err := display.report(out, method, report, runErr); err != nil {
 				if runErr != nil {
 					runErr = fmt.Errorf("%s: %w", method, runErr)
@@ -187,6 +187,9 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 
 		cmd.Flags().Bool("all", false, "Include unchanged resources in the report")
 		cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
+		if method == "prepare" {
+			cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the whole lockfile, then prepare only resources whose preparation changed since the Git revision `REV`")
+		}
 		if method == "icon" {
 			cmd.Flags().BoolVar(&icons.Force, "force", false, "Replace icon assets that already exist")
 			cmd.Flags().StringVar(&presentation, "presentation", string(icon.Auto), "Icon presentation: auto (glassy on macOS, raw elsewhere), raw or glassy")
@@ -366,7 +369,7 @@ func publishCommand(out io.Writer) *cobra.Command {
 			}
 			values[key] = value
 		}
-		done := plugin.Stage(cmd.Context(), "Publishing plugin")
+		done := plugin.Stage(cmd.Context(), "Publishing plugin", plugin.Detail(args[0]))
 		bundles, err := pluginstore.GoReleaserBundles(dist, archiveID)
 		var entry pluginstore.Entry
 		if err == nil {

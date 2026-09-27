@@ -69,7 +69,7 @@ func TestRefreshAsksHTTPConditionallyWhateverTheLock(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(previous.Observation) != `{"url":"`+server.URL+`/app.pkg"}` {
+			if string(previous.Observation) != "{}" {
 				t.Fatalf("lock observation carries transport state: %s", previous.Observation)
 			}
 			for _, locked := range []Entry{previous, {}} {

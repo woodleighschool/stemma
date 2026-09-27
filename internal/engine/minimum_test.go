@@ -94,10 +94,13 @@ func TestDeclaredMinimumOSReusesPreparation(t *testing.T) {
 		received = request.MinimumOS
 		return plugin.ReconcileResponse{}, nil
 	}
-	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "prepare", Handlers: map[string]reconcileHandler{"munki": record}}
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Handlers: map[string]reconcileHandler{"munki": record}}
 	testproject.Write(t, filename, fmt.Sprintf(minimumProject, "12.0"))
-	if _, err := Run(t.Context(), options); err != nil {
-		t.Fatal(err)
+	for _, method := range []string{"update", "prepare"} {
+		options.Method = method
+		if _, err := Run(t.Context(), options); err != nil {
+			t.Fatal(err)
+		}
 	}
 	options.Method = "plan"
 	for _, test := range []struct {

@@ -28,6 +28,10 @@ source:
 header. Credentials and custom headers stay confined to the source origin across
 redirects. An optional `sha256` asserts a known digest in the declaration.
 
+The lock keeps only a digest of this declaration, so a URL that works as a
+credential can come from `{{ env.NAME }}`. Set `filename` with it; the default
+name can come from the URL.
+
 ## Discover a release
 
 GitHub release assets use the `github` resolver:
@@ -134,7 +138,7 @@ their consumers even when only the consumer was selected on the command line.
 | Command          | Input behaviour                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
 | `update`         | Discover current inputs and atomically update their locks; does not publish                       |
-| `prepare`        | Reuse remote pins, observe changed local inputs, prepare artifacts and record locks               |
+| `prepare`        | Require matching locked declarations and local inputs; prepare artifacts                          |
 | `plan` / `apply` | Require matching locked declarations and local inputs; fetch only the recorded remote observation |
 
 A lock records the resolver and its version, the relevant declaration, a

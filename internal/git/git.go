@@ -1,4 +1,4 @@
-// Package git drives the checkout holding a project, and its origin.
+// Package git reads and drives the checkout holding a project, and its origin.
 package git
 
 import (
@@ -30,12 +30,14 @@ type Identity struct {
 	Name, Email string
 }
 
-// Repository is the checkout whose origin remote is being reconciled.
+// Repository is the checkout holding a project.
 type Repository struct {
 	// Dir is the top-level directory of the checkout.
 	Dir string
-	// Remote is the origin URL as the checkout configures it.
+	// Remote is the origin URL as the checkout configures it, or "" without one.
 	Remote string
+	// Shallow reports a checkout cloned without its whole history.
+	Shallow bool
 	// Credentials authenticate fetches and pushes to an HTTP origin. An SSH
 	// origin uses the SSH agent instead.
 	Credentials Credentials
@@ -55,7 +57,7 @@ type Commit struct {
 
 const remoteName = "origin"
 
-// Open locates the checkout containing dir and its origin remote.
+// Open locates the checkout containing dir.
 func Open(dir string) (*Repository, error) {
 	repo, err := gogit.PlainOpenWithOptions(dir, &gogit.PlainOpenOptions{DetectDotGit: true})
 	if err != nil {
@@ -65,21 +67,20 @@ func Open(dir string) (*Repository, error) {
 	if err != nil {
 		return nil, fmt.Errorf("git: %w", err)
 	}
-	if len(shallow) > 0 {
-		return nil, errors.New("git: the checkout is shallow; clone it with history so proposals can be told apart from reviewed commits")
-	}
 	worktree, err := repo.Worktree()
 	if err != nil {
 		return nil, fmt.Errorf("git: %w", err)
 	}
+	r := &Repository{Dir: worktree.Filesystem().Root(), Shallow: len(shallow) > 0, repo: repo}
 	origin, err := repo.Remote(remoteName)
-	if err != nil {
+	switch {
+	case errors.Is(err, gogit.ErrRemoteNotFound):
+	case err != nil:
 		return nil, fmt.Errorf("git: %w", err)
+	case len(origin.Config().URLs) > 0:
+		r.Remote, r.origin = origin.Config().URLs[0], origin
 	}
-	if len(origin.Config().URLs) == 0 {
-		return nil, errors.New("git: origin has no URL")
-	}
-	return &Repository{Dir: worktree.Filesystem().Root(), Remote: origin.Config().URLs[0], repo: repo, origin: origin}, nil
+	return r, nil
 }
 
 // options authenticate one exchange with origin.
@@ -230,6 +231,40 @@ func (r *Repository) Count(base, tip string) (int, error) {
 	return count, nil
 }
 
+// MergeBase returns the commit where the histories of rev and HEAD meet, as
+// git merge-base finds it.
+func (r *Repository) MergeBase(rev string) (_ string, err error) {
+	defer func() {
+		if err != nil && r.Shallow {
+			err = fmt.Errorf("%w; the checkout is shallow, so fetch its history", err)
+		}
+	}()
+	hash, err := r.repo.ResolveRevision(plumbing.Revision(rev))
+	if err != nil {
+		return "", fmt.Errorf("git: %s: %w", rev, err)
+	}
+	other, err := r.repo.CommitObject(*hash)
+	if err != nil {
+		return "", fmt.Errorf("git: %s: %w", rev, err)
+	}
+	ref, err := r.repo.Head()
+	if err != nil {
+		return "", fmt.Errorf("git: HEAD: %w", err)
+	}
+	head, err := r.repo.CommitObject(ref.Hash())
+	if err != nil {
+		return "", fmt.Errorf("git: HEAD: %w", err)
+	}
+	bases, err := head.MergeBase(other)
+	if err != nil {
+		return "", fmt.Errorf("git: merge base of %s and HEAD: %w", rev, err)
+	}
+	if len(bases) == 0 {
+		return "", fmt.Errorf("git: %s and HEAD share no history", rev)
+	}
+	return bases[0].Hash.String(), nil
+}
+
 // Commit describes the commit a SHA or ref points at.
 func (r *Repository) Commit(ref string) (Commit, error) {
 	c, err := r.commit(ref)
@@ -277,6 +312,55 @@ func (r *Repository) Show(commit, path string) ([]byte, error) {
 		return nil, fmt.Errorf("git: %s: %w", path, err)
 	}
 	return []byte(contents), nil
+}
+
+// ChangedPaths returns paths changed since commit, including working-tree edits.
+func (r *Repository) ChangedPaths(ctx context.Context, commit string) ([]string, error) {
+	base, err := r.commit(commit)
+	if err != nil {
+		return nil, err
+	}
+	head, err := r.repo.Head()
+	if err != nil {
+		return nil, err
+	}
+	current, err := r.repo.CommitObject(head.Hash())
+	if err != nil {
+		return nil, err
+	}
+	before, err := base.Tree()
+	if err != nil {
+		return nil, err
+	}
+	after, err := current.Tree()
+	if err != nil {
+		return nil, err
+	}
+	changes, err := before.DiffContext(ctx, after)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, change := range changes {
+		for _, name := range []string{change.From.Name, change.To.Name} {
+			if name != "" {
+				paths = append(paths, name)
+			}
+		}
+	}
+	worktree, err := r.repo.Worktree()
+	if err != nil {
+		return nil, err
+	}
+	status, err := worktree.Status()
+	if err != nil {
+		return nil, err
+	}
+	for name := range status {
+		paths = append(paths, name)
+	}
+	slices.Sort(paths)
+	return slices.Compact(paths), ctx.Err()
 }
 
 // overlay is the storage behind a worktree: it reads the checkout's objects
@@ -350,7 +434,9 @@ func (w *Worktree) checkout() error {
 		return err
 	}
 	cfg := config.NewConfig()
-	cfg.Remotes[remoteName] = w.repo.origin.Config()
+	if w.repo.origin != nil {
+		cfg.Remotes[remoteName] = w.repo.origin.Config()
+	}
 	if err := store.SetConfig(cfg); err != nil {
 		return err
 	}

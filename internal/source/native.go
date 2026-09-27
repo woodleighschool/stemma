@@ -52,8 +52,9 @@ var nativeFields = map[string][]string{
 	"local":  {"base", "include", "filename", "sha256"},
 }
 
-// nativeObservation records where remote content came from. File and local
-// inputs observe nothing beyond their declaration.
+// nativeObservation records what discovery found beyond the declaration: a
+// matched link or a GitHub release asset. Declared HTTP URLs, files and local
+// trees observe nothing, so a URL supplied as a credential stays out of the lock.
 type nativeObservation struct {
 	URL       string `json:"url,omitempty"`
 	Release   string `json:"release,omitempty"`
@@ -71,6 +72,33 @@ func NativeResolver(name string) bool {
 func ValidateInput(input plugin.Input) error {
 	_, err := native(input)
 	return err
+}
+
+// LocalInputChanged reports whether a changed project path can belong to a
+// native file or tree input. Tree includes are deliberately conservative: a
+// directory edit selects the input even if a glob later excludes the file.
+func LocalInputChanged(input plugin.Input, changed []string) (bool, error) {
+	var base string
+	var err error
+	switch input.Resolver {
+	case "file":
+		name, _ := input.Config["path"].(string)
+		base, err = resolvePath(input.Base, name)
+	case "local":
+		name, _ := input.Config["base"].(string)
+		base, err = projectPath(input.Base, name)
+	default:
+		return false, nil
+	}
+	if err != nil || absolutePath(base) {
+		return false, err
+	}
+	for _, name := range changed {
+		if base == "." && filepath.IsLocal(filepath.FromSlash(name)) || name == base || strings.HasPrefix(name, base+"/") || strings.HasPrefix(base, name+"/") {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func native(input plugin.Input) (nativeConfig, error) {
@@ -171,7 +199,6 @@ func (m *Manager) discoverNative(ctx context.Context, input plugin.Input) (Disco
 	case "github":
 		err = m.github(ctx, s, &observed)
 	case "http":
-		observed.URL = s.URL
 		if s.Match != "" {
 			observed.URL, err = m.discoverLink(ctx, s)
 		}
@@ -183,7 +210,8 @@ func (m *Manager) discoverNative(ctx context.Context, input plugin.Input) (Disco
 	return Discovery{Observation: data, Immutable: s.Type == "github"}, err
 }
 
-// fetchNative reads a local input or downloads the observed URL.
+// fetchNative reads a local input or downloads its URL. A declared HTTP URL is
+// fetched as written; a matched link or GitHub asset comes from the observation.
 func (m *Manager) fetchNative(ctx context.Context, input plugin.Input, observation json.RawMessage, previous *record) (record, bool, error) {
 	s, err := native(input)
 	if err != nil {
@@ -197,7 +225,11 @@ func (m *Manager) fetchNative(ctx context.Context, input plugin.Input, observati
 	if err := decode(observation, &observed); err != nil {
 		return record{}, false, fmt.Errorf("observation: %w", err)
 	}
-	return m.download(ctx, s, observed.URL, previous)
+	address := observed.URL
+	if s.Type == "http" && s.Match == "" {
+		address = s.URL
+	}
+	return m.download(ctx, s, address, previous)
 }
 
 func safeRelative(name string) bool {
@@ -396,16 +428,13 @@ func (m *Manager) readLocal(ctx context.Context, s nativeConfig) (content Conten
 	return content, errors.New("file source is not a regular file or directory")
 }
 
-// download fetches an observed URL into the cache. With a previous record it
-// asks conditionally and reuses that record when the server confirms it.
+// download fetches a URL into the cache. With a previous record it asks
+// conditionally and reuses that record when the server confirms it.
 func (m *Manager) download(ctx context.Context, s nativeConfig, address string, previous *record) (result record, reused bool, err error) {
 	if err := validateHTTPURL(address); err != nil {
 		return record{}, false, fmt.Errorf("observation URL: %w", err)
 	}
 	u, _ := url.Parse(address)
-	if s.Type == "http" && s.Match == "" && address != s.URL {
-		return record{}, false, errors.New("observed HTTP URL does not match configuration")
-	}
 	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
 		return record{}, false, errors.New("observed asset does not belong to the configured GitHub repository")
 	}

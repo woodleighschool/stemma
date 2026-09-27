@@ -305,7 +305,7 @@ func TestSuspendedResourcesRunOnlyWhenSelected(t *testing.T) {
 	}
 	options.Method = "apply"
 	report, err = Run(t.Context(), options)
-	if err != nil || !slices.Equal(keys(report), []string{vendor}) || len(report.Resources[0].Destinations) != 1 || *report.LockChanged {
+	if err != nil || !slices.Equal(keys(report), []string{vendor}) || len(report.Resources[0].Destinations) != 1 || report.LockChanged != nil {
 		t.Fatalf("implicit apply did not skip suspended resources: %v %+v", err, report)
 	}
 	if err := os.WriteFile(private, []byte("private"), 0o644); err != nil {

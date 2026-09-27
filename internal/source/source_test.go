@@ -10,11 +10,39 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
 )
+
+func TestLocalInputChangesRespectResourcePaths(t *testing.T) {
+	for _, test := range []struct {
+		name, resolver, base, input, changed string
+		want                                 bool
+	}{
+		{"file", "file", "software", "app.pkg", "software/app.pkg", true},
+		{"sibling", "file", "software", "app.pkg", "software/other.pkg", false},
+		{"tree member", "local", "software", "payload", "software/payload/settings.conf", true},
+		{"sibling tree", "local", "software", "payload", "software/payload-other/settings.conf", false},
+		{"replaced ancestor", "file", "software", "payload/app.pkg", "software/payload", true},
+		{"shared checkout file", "file", ".", "../shared/app.pkg", "../shared/app.pkg", true},
+		{"project tree excludes siblings", "local", ".", ".", "../shared/app.pkg", false},
+		{"external file", "file", ".", "/private/app.pkg", "private/app.pkg", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			field := "path"
+			if test.resolver == "local" {
+				field = "base"
+			}
+			input := plugin.Input{Resolver: test.resolver, Base: test.base, Config: map[string]any{field: test.input}}
+			if got, err := LocalInputChanged(input, []string{test.changed}); err != nil || got != test.want {
+				t.Fatalf("changed = %v, want %v: %v", got, test.want, err)
+			}
+		})
+	}
+}
 
 func TestGitHubReleaseRetainsRawTag(t *testing.T) {
 	store, err := cas.Open(t.TempDir())
@@ -223,11 +251,13 @@ func TestRedirectFailureDoesNotExposeTemporaryCredentials(t *testing.T) {
 }
 
 func TestStableQueryRetainsOriginalURLAcrossRedirects(t *testing.T) {
+	var links atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/fwlink" {
 			if r.URL.Query().Get("linkid") != "853070" {
 				t.Error("stable link identifier was lost")
 			}
+			links.Add(1)
 			http.Redirect(w, r, "/installer?sig=temporary-signature&expires=123", http.StatusFound)
 			return
 		}
@@ -244,8 +274,14 @@ func TestStableQueryRetainsOriginalURLAcrossRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observation(t, entry).URL != s.Config["url"].(string) || strings.Contains(observation(t, entry).URL, "temporary-signature") {
-		t.Fatalf("lock retained redirected URL: %q", observation(t, entry).URL)
+	if string(entry.Observation) != "{}" {
+		t.Fatalf("lock recorded a URL: %s", entry.Observation)
+	}
+	if err := store.Prune(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.FetchLocked(t.Context(), s, entry); err != nil || links.Load() != 2 {
+		t.Fatalf("locked fetch did not return through the stable link: links=%d error=%v", links.Load(), err)
 	}
 }
 

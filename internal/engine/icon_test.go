@@ -196,10 +196,10 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 		}
 	}
 
-	// A new declaration locks and extracts before its asset exists; the raw
+	// A new declaration is locked and extracts before its asset exists; the raw
 	// presentation writes Mac and Windows artwork alike, and a bundle without
 	// a PNG-backed icon file has nothing portable to write.
-	statuses("prepare")
+	statuses("update")
 	want := map[string]string{"example": "created raw", "setup": "created raw", "fixture": "no artwork", "branding": "no artwork", "plain": "no icon declared"}
 	if got := statuses("icon"); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("first run: %v", got)

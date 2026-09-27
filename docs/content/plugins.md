@@ -28,11 +28,10 @@ Executable scripts can implement the protocol too. On Unix they need executable
 permissions and a working shebang. Interpreters and helper tools must be available
 on the runner.
 
-Run `stemma prepare` to snapshot the selected files and record their content in
-the lockfile. Changing the executable or bundled helpers changes plugin identity.
-Frozen `plan` and `apply` runs reject changed code. Create or refresh local plugin
-pins with `prepare` before using `--offline`. Local plugins need no registry or
-container runtime.
+Run `stemma plugins install` to snapshot the selected files and record their
+content in the lockfile. Changing the executable or bundled helpers changes plugin
+identity, and runs reject the changed code until `stemma plugins update` or
+`stemma update` records it. Local plugins need no registry or container runtime.
 
 ## Load an OCI bundle
 

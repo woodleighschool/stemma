@@ -29,8 +29,12 @@ type Options struct {
 	ConfigPath, CacheDir string
 	Method               string
 	Resources            []string
-	Lock                 lockfile.Options
-	Icons                IconOptions
+	// ChangedSince selects, for prepare, the resources whose preparation
+	// differs from the catalog at this Git revision, after checking the whole
+	// lockfile.
+	ChangedSince string
+	Lock         lockfile.Options
+	Icons        IconOptions
 	// Output names the resource output the artifact method materializes;
 	// empty selects installer.
 	Output   string
@@ -70,6 +74,7 @@ func Unreported(err error) error {
 
 // Report distinguishes source, preparation and each destination's work.
 type Report struct {
+	// LockChanged reports whether update wrote the lockfile.
 	LockChanged *bool `json:"lock_changed,omitempty"`
 	// RemovedInputs are lock entries of resources the catalog no longer declares.
 	RemovedInputs []lockfile.InputChange `json:"removed_inputs,omitempty"`
@@ -132,6 +137,9 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	default:
 		return report, fmt.Errorf("unsupported run method %q", opts.Method)
 	}
+	if opts.ChangedSince != "" && (opts.Method != "prepare" || len(opts.Resources) > 0) {
+		return report, errors.New("changed-since selects the resources prepare runs; remove the selectors")
+	}
 	if opts.Method == "icon" {
 		// A presentation the host cannot draw fails before anything is acquired.
 		presentation, err := opts.Icons.Presentation.Resolve()
@@ -143,15 +151,10 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	// signature derives each resource's signer through the preparation path;
 	// icon presents the artwork of prepared software the same way.
 	preparing := opts.Method == "prepare" || opts.Method == "signature" || opts.Method == "icon"
-	switch opts.Method {
-	case "plan", "apply", "icon":
-		opts.Lock.Frozen = true
-	case "artifact":
-		opts.Lock.Frozen = !opts.Lock.IgnoreInputs
-	}
-	// A run that ignores input locks records nothing, so its plugins must still
-	// match the lockfile.
-	s, err := open(ctx, opts, opts.Lock.Frozen || opts.Lock.Offline || opts.Lock.IgnoreInputs)
+	// Update writes the lockfile. Every other run consumes it as reviewed, with
+	// the plugins it pins.
+	opts.Lock.Refresh = opts.Method == "update"
+	s, err := open(ctx, opts, !opts.Lock.Refresh)
 	if err != nil {
 		return report, err
 	}
@@ -162,6 +165,11 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	roots, err := selectResources(p.Resources, opts.Resources)
 	if err != nil {
 		return report, err
+	}
+	if opts.ChangedSince != "" {
+		if roots, err = changedSince(ctx, s, opts.ChangedSince); err != nil {
+			return report, err
+		}
 	}
 	plans, selected, err := discoverClosure(ctx, p, ops, roots, true)
 	if err != nil {
@@ -201,13 +209,14 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	done(nil)
 	declarations := declarations(plans, selected)
-	opts.Lock.PreserveUnselected = len(opts.Resources) > 0
+	opts.Lock.PreserveUnselected = len(opts.Resources) > 0 || opts.ChangedSince != ""
 	opts.Lock.Retain = suspended(p.Resources)
 	plugin.Logger(ctx).DebugContext(ctx, "Resources selected", "count", len(selected), "suspended", len(opts.Lock.Retain))
 	locked, err := lockfile.Begin(ctx, root, declarations, ops.plugins, manager, opts.Lock)
 	if err != nil {
 		return report, err
 	}
+	report.Resources = []ResourceReport{}
 	preparedItems := map[string]preparedResource{}
 	pending := map[string]int{}
 	if opts.Method != "update" {
@@ -533,7 +542,9 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err != nil {
 		return report, errors.Join(append(failures, err)...)
 	}
-	report.LockChanged = &result.Changed
+	if opts.Method == "update" {
+		report.LockChanged = &result.Changed
+	}
 	reported := map[string]bool{}
 	for _, resource := range report.Resources {
 		reported[resource.Key] = true

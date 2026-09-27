@@ -261,12 +261,13 @@ func (o origin) commitObject(t *testing.T, sha string) *object.Commit {
 type fakeGitHub struct {
 	*httptest.Server
 
-	mu       sync.Mutex
-	origin   origin
-	backend  http.Handler
-	pulls    []*pullRequest
-	statuses map[string][]map[string]string
-	tokens   atomic.Int32
+	mu             sync.Mutex
+	origin         origin
+	backend        http.Handler
+	pulls          []*pullRequest
+	statuses       map[string][]map[string]string
+	tokens         atomic.Int32
+	rejectStatuses atomic.Bool
 }
 
 type pullRequest struct {
@@ -381,6 +382,10 @@ func (f *fakeGitHub) api(w http.ResponseWriter, r *http.Request, path string) {
 		pull.Head.SHA = f.origin.tip(pull.Head.Ref)
 		_ = json.NewEncoder(w).Encode(pull)
 	case r.Method == http.MethodPost && strings.HasPrefix(rest, "statuses/"):
+		if f.rejectStatuses.Load() {
+			http.Error(w, "status unavailable", http.StatusForbidden)
+			return
+		}
 		sha := strings.TrimPrefix(rest, "statuses/")
 		f.statuses[sha] = append(f.statuses[sha], map[string]string{"context": body["context"].(string), "state": body["state"].(string), "description": body["description"].(string)})
 		w.WriteHeader(http.StatusCreated)
@@ -663,6 +668,36 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	assertUndisturbed(t, cloned, checkout, head)
 }
 
+func TestApplyRetriesWhenCommitStatusWasNotRecorded(t *testing.T) {
+	t.Setenv("GITHUB_APP_CLIENT_ID", "Iv1.fixture")
+	t.Setenv("GITHUB_APP_INSTALLATION_ID", "7")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY", testKey(t))
+	munki := filepath.Join(t.TempDir(), "munki")
+	o := newOrigin(t, map[string]string{"stemma.yaml": project(munki), "policy.software.yaml": policy})
+	gh := newFakeGitHub(t, o)
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	if _, err := gogit.PlainCloneContext(t.Context(), checkout, &gogit.CloneOptions{URL: gh.remote(), ClientOptions: []client.Option{gh.auth()}}); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()}
+	gh.rejectStatuses.Store(true)
+	failed, err := Run(t.Context(), opts)
+	if !errors.Is(err, ErrFailed) || failed.Apply == nil || !strings.Contains(failed.Apply.Error, "commit status") {
+		t.Fatalf("status failure was not reported: %+v, %v", failed, err)
+	}
+	if m, err := readMarker(opts.StateDir); err != nil || m.Applied != "" {
+		t.Fatalf("status failure moved the completion marker: %+v, %v", m, err)
+	}
+	gh.rejectStatuses.Store(false)
+	retried, err := Run(t.Context(), opts)
+	if err != nil || retried.Apply == nil || retried.Apply.Skipped || retried.Apply.Failed() || gh.status(retried.Head, applyContext)["state"] != "success" {
+		t.Fatalf("status was not repaired by the next run: %+v, %v", retried, err)
+	}
+	if m, err := readMarker(opts.StateDir); err != nil || m.Applied != retried.Head {
+		t.Fatalf("completed apply was not recorded: %+v, %v", m, err)
+	}
+}
+
 // assertUndisturbed proves runs leave the checkout as the scheduler made it.
 func assertUndisturbed(t *testing.T, repo *gogit.Repository, dir, head string) {
 	t.Helper()
@@ -776,6 +811,7 @@ func TestProposalBodySummarisesWithoutValues(t *testing.T) {
 				{Kind: "metadata", Field: "package.postinstall_script", Action: "set", Before: json.RawMessage(`"exit 0\n"`), After: json.RawMessage(secret)},
 				{Kind: "metadata", Field: "package.version", Action: "set", Before: json.RawMessage(`"1"`), After: json.RawMessage(`"2"`)},
 				{Kind: "retention", Field: "package", Action: "delete", Before: json.RawMessage(`"0.9"`)},
+				{Kind: "metadata", Field: "token", Action: "delete", Before: json.RawMessage(`"s3cr3t"`)},
 			}},
 			{Name: "munki", Error: "upload rejected: Authorization: s3cr3t"},
 		}},
@@ -785,7 +821,7 @@ func TestProposalBodySummarisesWithoutValues(t *testing.T) {
 		"Stemma found an update for `MacSoftware/app`.",
 		"| Source | `source`: `App 1.pkg` → `App 2.pkg` |",
 		"| Prepared | `App-2.pkg` (2) |",
-		"| woodstar | Upload `package.installer`; update `package.postinstall_script`, `package.version`; delete `package` (0.9) |",
+		"| woodstar | Upload `package.installer`; update `package.postinstall_script`, `package.version`; delete `package`, `token` |",
 		"| munki | Planning failed |",
 		"| woodstar (`MacSoftware/consumer`) | No changes |",
 		"Passed.",
@@ -944,6 +980,26 @@ spec:
 	}
 	if updates["MacSoftware/fixture"].Action != "created" || len(gh.open()) != 1 || gh.status(o.tip("stemma/MacSoftware/fixture"), planContext)["state"] != "success" {
 		t.Fatalf("independent proposal failed: %+v", updates)
+	}
+}
+
+func TestRunRejectsShallowCheckouts(t *testing.T) {
+	o := newOrigin(t, map[string]string{
+		"stemma.yaml":           project(filepath.Join(t.TempDir(), "munki")),
+		"fixture.software.yaml": software("https://downloads.example"),
+	})
+	gh := newFakeGitHub(t, o)
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	cloned, err := gogit.PlainCloneContext(t.Context(), checkout, &gogit.CloneOptions{URL: gh.remote(), ClientOptions: []client.Option{gh.auth()}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cloned.Storer.SetShallow([]plumbing.Hash{plumbing.NewHash(o.tip("main"))}); err != nil {
+		t.Fatal(err)
+	}
+	// A shallow checkout cannot tell proposals from reviewed commits.
+	if _, err := Run(t.Context(), Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "shallow") {
+		t.Fatalf("shallow checkout accepted: %v", err)
 	}
 }
 

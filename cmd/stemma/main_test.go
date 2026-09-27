@@ -216,13 +216,16 @@ spec:
 	if output := invoke(false, "artifact", "fixture"); len(output) != 0 || downloads.Load() != 0 {
 		t.Fatalf("artifact without a lockfile printed %q or acquired input", output)
 	}
-	firstPrepare := run(true, "prepare")
-	if firstPrepare.LockChanged == nil || !*firstPrepare.LockChanged {
-		t.Fatal("first preparation did not record inputs")
+	if output := invoke(false, "prepare"); len(output) != 0 || downloads.Load() != 0 {
+		t.Fatalf("preparation without a lockfile printed %q or acquired input", output)
 	}
-	secondPrepare := run(true, "prepare")
-	if secondPrepare.LockChanged == nil || *secondPrepare.LockChanged {
-		t.Fatal("locked preparation changed inputs")
+	updated := run(true, "update")
+	if updated.LockChanged == nil || !*updated.LockChanged {
+		t.Fatal("update did not record inputs")
+	}
+	prepared := run(true, "prepare")
+	if prepared.LockChanged != nil || len(prepared.Resources) != 1 {
+		t.Fatalf("locked preparation reported a lockfile: %+v", prepared)
 	}
 	if downloads.Load() != 1 {
 		t.Fatal("unexpected acquisition count")

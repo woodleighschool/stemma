@@ -18,8 +18,8 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/internal/git"
 	"github.com/woodleighschool/stemma/internal/lockfile"
-	"github.com/woodleighschool/stemma/internal/reconcile/git"
 	"github.com/woodleighschool/stemma/internal/reconcile/sourcecontrol"
 	"github.com/woodleighschool/stemma/internal/reconcile/sourcecontrol/github"
 	"github.com/woodleighschool/stemma/internal/source"
@@ -190,6 +190,12 @@ func newRunner(ctx context.Context, opts Options) (*runner, error) {
 	if err != nil {
 		return nil, err
 	}
+	if repo.Shallow {
+		return nil, errors.New("reconcile: the checkout is shallow; clone it with history so proposals can be told apart from reviewed commits")
+	}
+	if repo.Remote == "" {
+		return nil, errors.New("reconcile: the checkout has no origin URL")
+	}
 	host, err := openSourceControl(document.Spec.Reconcile.SourceControl, repo.Remote)
 	if err != nil {
 		return nil, err
@@ -253,7 +259,7 @@ func (r *runner) configIn(worktree *git.Worktree) string {
 }
 
 func (r *runner) engineOptions(method, configPath string, resources []string, offline bool) engine.Options {
-	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Method: method, Resources: resources, Lock: lockfile.Options{Frozen: true, Offline: offline}}
+	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Method: method, Resources: resources, Lock: lockfile.Options{Offline: offline}}
 	if r.opts.ResourceDone != nil {
 		opts.ResourceDone = func(resource engine.ResourceReport) error { return r.opts.ResourceDone(method, resource) }
 	}
@@ -284,8 +290,8 @@ func (r *runner) reject(ctx context.Context, head string) error {
 	return r.host.SetCommitStatus(ctx, head, sourcecontrol.Status{Name: applyContext, State: sourcecontrol.Failure, Description: failedDescription})
 }
 
-// apply publishes the reviewed commit offline once. The marker moves only
-// after every destination succeeded, so a partial apply is retried next run.
+// apply publishes the reviewed commit offline. The marker moves after
+// publication and its commit status succeed, so failures retry next run.
 func (r *runner) apply(ctx context.Context, head string, reviewed *git.Worktree) Apply {
 	result := Apply{Commit: head}
 	m, err := readMarker(r.stateDir)
@@ -307,10 +313,11 @@ func (r *runner) apply(ctx context.Context, head string, reviewed *git.Worktree)
 		summary = failedDescription
 	}
 	failures := []error{engine.Unreported(applyErr)}
-	if err := r.host.SetCommitStatus(ctx, head, sourcecontrol.Status{Name: applyContext, State: state, Description: summary}); err != nil {
-		failures = append(failures, fmt.Errorf("commit status: %w", err))
+	statusErr := r.host.SetCommitStatus(ctx, head, sourcecontrol.Status{Name: applyContext, State: state, Description: summary})
+	if statusErr != nil {
+		failures = append(failures, fmt.Errorf("commit status: %w", statusErr))
 	}
-	if applyErr == nil {
+	if applyErr == nil && statusErr == nil {
 		failures = append(failures, writeMarker(r.stateDir, head))
 	}
 	if err := errors.Join(failures...); err != nil {

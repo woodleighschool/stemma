@@ -69,7 +69,7 @@ spec:
 `)
 	var out, logs bytes.Buffer
 	cmd, finish := command(&out, &logs)
-	cmd.SetArgs([]string{"prepare", "--root", project, "--cache-dir", t.TempDir(), "--json"})
+	cmd.SetArgs([]string{"update", "--root", project, "--cache-dir", t.TempDir(), "--json"})
 	err := cmd.ExecuteContext(t.Context())
 	finish(err)
 	if err == nil {
@@ -320,7 +320,7 @@ spec:
 `)
 	var stderr bytes.Buffer
 	cmd, finish := command(failingReportWriter{}, &stderr)
-	cmd.SetArgs([]string{"prepare", "--root", project, "--cache-dir", t.TempDir(), "--json"})
+	cmd.SetArgs([]string{"update", "--root", project, "--cache-dir", t.TempDir(), "--json"})
 	err := cmd.ExecuteContext(t.Context())
 	finish(err)
 	for _, want := range []string{"output unavailable", "missing-installer", "missing.pkg"} {

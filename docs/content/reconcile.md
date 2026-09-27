@@ -78,8 +78,8 @@ Further behaviour of the update phase:
   as it is. Consumers of its outputs are reported as blocked and retain their
   proposals too. Successful independent resources still get update proposals.
 - Locked plugins must match the lockfile before any plugin code runs. A plugin
-  lock problem fails the update phase; fix it with `stemma plugins update` or
-  `stemma prepare` and commit the result. A plugin has to be reachable from a
+  lock problem fails the update phase; fix it with `stemma plugins update` and
+  commit the result. A plugin has to be reachable from a
   fresh checkout: an image, or a tracked path.
 
 ## Ownership
