@@ -6,6 +6,7 @@ project_name: stemma
 before:
   hooks:
     - go mod tidy
+    - mise run notices
 
 builds:
   - id: stemma
@@ -46,8 +47,9 @@ archives:
     files:
       - LICENSE
       - README.md
-      - src: docs/static/stemma.schema.json
-        dst: .
+      - third_party_licenses/**/*
+      - src: "{{ .Env.GOROOT }}/LICENSE"
+        dst: third_party_licenses/go
         strip_parent: true
 
 checksum:

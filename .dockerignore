@@ -16,3 +16,5 @@ coverage.out
 *.log
 
 .DS_Store
+
+/third_party_licenses/

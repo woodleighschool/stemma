@@ -2,6 +2,7 @@ monorepo_root = true
 
 [tools]
 go = "1.27.1"
+"go:github.com/google/go-licenses/v2" = "v2.0.1"
 "go:golang.org/x/vuln/cmd/govulncheck" = "v1.8.0"
 golangci-lint = "2.13.2"
 lefthook = "2.1.14"
@@ -27,6 +28,10 @@ run = "go mod download"
 [tasks.build]
 description = "Build application"
 run = "go build -o stemma ./cmd/stemma"
+
+[tasks.notices]
+description = "Collect dependency licenses and notices"
+run = "go-licenses save ./cmd/stemma --save_path third_party_licenses --ignore github.com/woodleighschool/stemma --force"
 
 [tasks.tidy]
 description = "Tidy the Go module"

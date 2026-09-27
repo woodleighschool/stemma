@@ -77,6 +77,11 @@ url = "https://dl.google.com/go/go1.27.1.darwin-arm64.tar.gz"
 checksum = "sha256:a3911b5e0e1b1053f25ed0675f4c1c6aad1e2bfcf253df2b9be4caabd2edd95d"
 url = "https://dl.google.com/go/go1.27.1.windows-amd64.zip"
 
+[[tools."go:github.com/google/go-licenses/v2"]]
+version = "2.0.1"
+backend = "go:github.com/google/go-licenses/v2"
+specifiers = ["v2.0.1"]
+
 [[tools."go:golang.org/x/vuln/cmd/govulncheck"]]
 version = "1.8.0"
 backend = "go:golang.org/x/vuln/cmd/govulncheck"
