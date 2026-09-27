@@ -116,7 +116,8 @@ enough.
 ## Cache and state
 
 The cache is disposable and shared by the reviewed branch and every proposal;
-a proposal warms it for its own merge. The state directory holds only
+a proposal warms it for its own merge, and later runs reuse what it downloaded
+rather than fetching a pending update again. The state directory holds only
 `reconcile.json`, the applied marker. Losing it repeats one apply, which
 converges on what the destinations already hold. To take over by hand, stop the
 schedule and run `stemma apply` from any checkout.

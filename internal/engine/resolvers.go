@@ -24,40 +24,21 @@ func registerResolvers(manager *source.Manager, ops *operations, work string) er
 		if _, exists := manager.Resolvers[operation.Name]; exists {
 			return fmt.Errorf("resolver %s is already registered", operation.Name)
 		}
-		resolve := func(ctx context.Context, input plugin.Input, observation json.RawMessage, locked bool) (source.Resolution, error) {
-			workspace, err := os.MkdirTemp(work, "resolver-*")
-			if err != nil {
-				return source.Resolution{}, err
-			}
-			// Manager imports these bytes before the enclosing operation lease ends.
+		call := func(ctx context.Context, method string, input plugin.Input, observation json.RawMessage, workspace string) (plugin.ResolveResponse, error) {
 			settings, err := json.Marshal(input.Config)
 			if err != nil {
-				return source.Resolution{}, err
+				return plugin.ResolveResponse{}, err
 			}
-			request := plugin.ResolveRequest[json.RawMessage]{Config: settings, Base: input.Base, Root: manager.Root, Workspace: workspace, Locked: locked, Observation: observation}
+			request := plugin.ResolveRequest[json.RawMessage]{Config: settings, Base: input.Base, Root: manager.Root, Workspace: workspace, Observation: observation}
 			if err := ops.call(ctx, operation.Name, "validate", request, nil); err != nil {
-				return source.Resolution{}, err
+				return plugin.ResolveResponse{}, err
 			}
 			var response plugin.ResolveResponse
-			if err := ops.call(ctx, operation.Name, "run", request, &response); err != nil {
-				return source.Resolution{}, err
-			}
-			resolved, err := filepath.EvalSymlinks(response.Artifact.Path)
-			if err != nil {
-				return source.Resolution{}, err
-			}
-			allowed, err := filepath.EvalSymlinks(workspace)
-			if err != nil {
-				return source.Resolution{}, err
-			}
-			if !within(allowed, resolved) {
-				return source.Resolution{}, errors.New("resolver output must be inside its leased workspace")
-			}
-			response.Artifact.Path = resolved
-			return source.Resolution{Observation: response.Observation, Artifact: response.Artifact}, nil
+			err = ops.call(ctx, operation.Name, method, request, &response)
+			return response, err
 		}
 		resolver := source.Resolver{
-			Version: config.Fingerprint(struct{ Version, Implementation string }{operation.Resolver.Version, ops.identity[operation.Name]}), Local: operation.Resolver.Local,
+			Version: operation.Resolver.Version, Identity: ops.identity[operation.Name], Local: operation.Resolver.Local,
 			Fingerprint: func(input plugin.Input) (string, error) {
 				var schema map[string]any
 				if len(operation.ConfigSchema) > 0 {
@@ -75,12 +56,33 @@ func registerResolvers(manager *source.Manager, ops *operations, work string) er
 					Base        string
 				}{declaration, base}), nil
 			},
-			Resolve: func(ctx context.Context, input plugin.Input) (source.Resolution, error) {
-				return resolve(ctx, input, nil, false)
+			Discover: func(ctx context.Context, input plugin.Input) (source.Discovery, error) {
+				response, err := call(ctx, "discover", input, nil, "")
+				return source.Discovery{Observation: response.Observation, Immutable: response.Immutable}, err
 			},
-			FetchLocked: func(ctx context.Context, input plugin.Input, observation json.RawMessage) (plugin.Artifact, error) {
-				result, err := resolve(ctx, input, observation, true)
-				return result.Artifact, err
+			Fetch: func(ctx context.Context, input plugin.Input, observation json.RawMessage) (plugin.Artifact, error) {
+				workspace, err := os.MkdirTemp(work, "resolver-*")
+				if err != nil {
+					return plugin.Artifact{}, err
+				}
+				// Manager imports these bytes before the enclosing operation lease ends.
+				response, err := call(ctx, "run", input, observation, workspace)
+				if err != nil {
+					return plugin.Artifact{}, err
+				}
+				resolved, err := filepath.EvalSymlinks(response.Artifact.Path)
+				if err != nil {
+					return plugin.Artifact{}, err
+				}
+				allowed, err := filepath.EvalSymlinks(workspace)
+				if err != nil {
+					return plugin.Artifact{}, err
+				}
+				if !within(allowed, resolved) {
+					return plugin.Artifact{}, errors.New("resolver output must be inside its leased workspace")
+				}
+				response.Artifact.Path = resolved
+				return response.Artifact, nil
 			},
 		}
 		if err := manager.Register(operation.Name, resolver); err != nil {

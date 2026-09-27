@@ -172,8 +172,8 @@ cannot traverse a symlink; links inside copied trees must remain within that
 selection. Overlapping entries fail. Each output area is limited to 100,000 entries
 and 16 GiB; individual files must fit the package writer's 32-bit size field.
 Hooks are limited to 1 MiB each, independently of their accompanying media.
-Archive expansion is also bounded to 100,000 entries and 16 GiB. The locked source
-timestamp normalises output dates, and entries are written in sorted order.
+Archive expansion is also bounded to 100,000 entries and 16 GiB. Output dates are
+fixed at the Unix epoch, and entries are written in sorted order.
 
 Keep destination behaviour out of the builder. For example, a GarageBand content
 package can carry a downloader and its installer hook, while Munki's detection and

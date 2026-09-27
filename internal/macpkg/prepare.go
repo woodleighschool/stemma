@@ -79,7 +79,7 @@ func Prepare(ctx context.Context, request plugin.ResourceRequest[json.RawMessage
 	if spec.Package.Filename == "" {
 		spec.Package.Filename = artifactname.Filename(request.Identity.Name, spec.Package.Version, "", "pkg")
 	}
-	return build(ctx, spec, sources, request.Workspace, request.Timestamp)
+	return build(ctx, spec, sources, request.Workspace)
 }
 
 // inputFacts inventories an input and keys its subjects by ID, as destination

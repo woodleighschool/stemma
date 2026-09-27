@@ -174,7 +174,7 @@ func describe(entry source.Entry) string {
 	if len(digest) > 12 {
 		digest = digest[:12]
 	}
-	return fmt.Sprintf("`%s` %s `%s…` %s", entry.Content.Filename, humanize.IBytes(uint64(max(entry.Content.Artifact.Size, 0))), digest, entry.ResolvedAt.Format("2006-01-02"))
+	return fmt.Sprintf("`%s` %s `%s…`", entry.Content.Filename, humanize.IBytes(uint64(max(entry.Content.Artifact.Size, 0))), digest)
 }
 
 // observationDiff lists resolver observation fields that changed, without

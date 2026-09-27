@@ -46,7 +46,7 @@ func TestTypedRegistration(t *testing.T) {
 	calls := 0
 	register := func() *plugin.Registry {
 		registry := plugin.New("fixture", "1")
-		err := plugin.Register(registry, plugin.Operation{Name: "release", Kind: "resolve", Resolver: &plugin.ResolverKind{Version: "1"}, SideEffects: "none", Methods: []string{"validate", "run"}}, func(_ context.Context, request plugin.ResolveRequest[resolverConfig]) (resolverConfig, error) {
+		err := plugin.Register(registry, plugin.Operation{Name: "release", Kind: "resolve", Resolver: &plugin.ResolverKind{Version: "1"}, SideEffects: "none", Methods: []string{"validate", "discover", "run"}}, func(_ context.Context, request plugin.ResolveRequest[resolverConfig]) (resolverConfig, error) {
 			calls++
 			received = request.Config
 			return request.Config, nil
@@ -82,7 +82,7 @@ func TestTypedRegistration(t *testing.T) {
 	} {
 		t.Run(test.config, func(t *testing.T) {
 			before := calls
-			for _, method := range []string{"validate", "run"} {
+			for _, method := range []string{"validate", "discover", "run"} {
 				if err := call(method, test.config); err == nil || !strings.Contains(err.Error(), test.message) || !strings.Contains(err.Error(), "release") {
 					t.Fatalf("error = %v, want useful %q error", err, test.message)
 				}

@@ -215,26 +215,31 @@ accepts Munki `nopkg` or an arbitrary script policy.
 
 ## Resolvers
 
-Register an operation with `kind: resolve`, methods `validate` and `run`, and a
-`ResolverKind` containing the observation contract's version. Set `local: true`
-when consuming a lock must also check current local files.
+Register an operation with `kind: resolve`, methods `validate`, `discover` and
+`run`, and a `ResolverKind` containing the observation contract's version. Set
+`local: true` when consuming a lock must also check current local files.
 
-`ResolveRequest[Config]` supplies declaration `config`, resource-relative `base`, project
-`root`, a workspace, `locked` and the previous `observation`. Return a
-`ResolveResponse` containing the observation and artifact.
+`ResolveRequest[Config]` supplies declaration `config`, resource-relative `base`
+and project `root`. `discover` returns the current `observation` without
+downloading anything. `run` receives an `observation` and a workspace and
+returns the `artifact` it names, reproducing that observation instead of asking
+for the latest release. Stemma owns the surrounding versioned lock, declaration
+fingerprint and content verification; your resolver owns the observation body.
+Keep credentials out of observations and identify credential configuration
+fields with `writeOnly: true`.
 
-When `locked` is false, discover the input. When true, reproduce the recorded
-observation instead of asking for the latest release. Stemma owns the surrounding
-versioned lock, declaration fingerprint and content verification; your resolver
-owns the observation body. Keep credentials out of observations and identify
-credential configuration fields with `writeOnly: true`.
+Set `immutable` when an observation always fetches the same bytes, such as a
+vendor release ID. Stemma then reuses what it fetched for that observation, or
+what the lock records for it, instead of calling `run`. Reuse from the cache is
+per plugin build; the lock's answer holds across builds. Change the version
+when an observation's meaning changes.
 
 Return consumer metadata in namespaced `artifact.evidence`, for example
 `{"vendor.release":{"version":"1.2"}}`. Evidence is reviewed in the source lock
 and passed to resource inputs; destination metadata can reference it with
 `{{ evidence['vendor.release'].version }}`. A builder reads the same evidence
 through `inputs.<name>.evidence`. Changing evidence invalidates preparation even
-when the bytes are unchanged. The byte timestamp stays the same.
+when the bytes are unchanged.
 
 Observation remains private to the resolver. A locked fetch verifies bytes and
 uses the lock's saved evidence, ignoring evidence returned by the fetch. Resolver

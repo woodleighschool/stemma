@@ -756,7 +756,7 @@ spec:
 func TestDiffLeavesSuspendedResourcesAlone(t *testing.T) {
 	const key = "stemma/v1alpha1/MacSoftware/private"
 	entries := map[string]source.Entry{"source": {Version: 1}}
-	candidate := engine.Candidate{Lock: lockfile.File{Version: 2, Inputs: map[string]map[string]source.Entry{key: entries}}, Resources: map[string]engine.CandidateResource{key: {Name: "private", Kind: "MacSoftware", Suspended: true}}}
+	candidate := engine.Candidate{Lock: lockfile.File{Version: lockfile.Version, Inputs: map[string]map[string]source.Entry{key: entries}}, Resources: map[string]engine.CandidateResource{key: {Name: "private", Kind: "MacSoftware", Suspended: true}}}
 	if changes := diff(candidate); len(changes) != 0 {
 		t.Fatalf("suspended resource was proposed: %+v", changes)
 	}

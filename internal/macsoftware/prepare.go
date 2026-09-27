@@ -32,7 +32,6 @@ import (
 type Request struct {
 	Input           plugin.Artifact
 	Workspace       string
-	Timestamp       time.Time
 	DeriveSignature bool
 }
 
@@ -146,7 +145,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 			}
 		}
 	} else {
-		if installer, err = writeImage(ctx, local, request.Workspace, request.Timestamp); err != nil {
+		if installer, err = writeImage(ctx, local, request.Workspace); err != nil {
 			return plugin.Artifact{}, nil, nil, err
 		}
 		app.ID, app.Path, app.Parent = name, name, "."
@@ -248,13 +247,11 @@ func verify(ctx context.Context, spec Spec, check func(signature.Signer) (signat
 
 // writeImage places the selected application alone at the root of a new disk
 // image. The image is our container around the publisher's software and carries
-// no signature of its own.
-func writeImage(ctx context.Context, app, workspace string, timestamp time.Time) (plugin.Artifact, error) {
-	if timestamp.IsZero() {
-		timestamp = time.Unix(0, 0).UTC()
-	}
+// no signature of its own. A fixed date keeps the image a function of the
+// application alone.
+func writeImage(ctx context.Context, app, workspace string) (plugin.Artifact, error) {
 	output := filepath.Join(workspace, strings.TrimSuffix(filepath.Base(app), filepath.Ext(app))+".dmg")
-	if err := diskimage.WriteApplication(ctx, app, output, timestamp); err != nil {
+	if err := diskimage.WriteApplication(ctx, app, output, time.Unix(0, 0).UTC()); err != nil {
 		return plugin.Artifact{}, err
 	}
 	return describeArtifact(ctx, output, "dmg")

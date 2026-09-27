@@ -35,9 +35,6 @@ func (s *Store) Load(ctx context.Context, root string, declaration config.Plugin
 	if !current.Content.Tree && declaration.Entrypoint != "" {
 		return Bundle{}, Entry{}, errors.New("entrypoint requires a directory; path already selects an executable")
 	}
-	if previous.Local != nil && previous.Local.Content == current.Content {
-		current.ResolvedAt = previous.Local.ResolvedAt
-	}
 	entry := Entry{Path: declaration.Path, Entrypoint: declaration.Entrypoint, Local: &current}
 	if frozen && (previous.Image != "" || previous.Digest != "" || previous.Size != 0 || previous.Path != entry.Path || previous.Entrypoint != entry.Entrypoint || previous.Local == nil || !current.Equal(*previous.Local)) {
 		return Bundle{}, Entry{}, errors.New("local plugin is missing or changed in the lockfile; run stemma plugins update")

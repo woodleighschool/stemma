@@ -159,7 +159,7 @@ type releaseSettings struct {
 
 func TestProjectSchemaComposesTypedResolvers(t *testing.T) {
 	registry := plugin.New("fixture", "1")
-	if err := plugin.Register(registry, plugin.Operation{Name: "fixture.release", Kind: "resolve", Resolver: &plugin.ResolverKind{Version: "1"}, SideEffects: "none", Methods: []string{"validate", "run"}}, func(context.Context, plugin.ResolveRequest[releaseSettings]) (plugin.ResolveResponse, error) {
+	if err := plugin.Register(registry, plugin.Operation{Name: "fixture.release", Kind: "resolve", Resolver: &plugin.ResolverKind{Version: "1"}, SideEffects: "none", Methods: []string{"validate", "discover", "run"}}, func(context.Context, plugin.ResolveRequest[releaseSettings]) (plugin.ResolveResponse, error) {
 		t.Fatal("schema generation invoked a resolver")
 		return plugin.ResolveResponse{}, nil
 	}); err != nil {

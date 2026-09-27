@@ -47,7 +47,7 @@ func main() {
 		panic(err)
 	}
 	if err := plugin.Register(registry, plugin.Operation{
-		Name: "echo.download", Kind: "resolve", Resolver: &plugin.ResolverKind{Version: "1"}, SideEffects: "workspace", Methods: []string{"validate", "run"},
+		Name: "echo.download", Kind: "resolve", Resolver: &plugin.ResolverKind{Version: "1"}, SideEffects: "workspace", Methods: []string{"validate", "discover", "run"},
 	}, download); err != nil {
 		panic(err)
 	}
@@ -124,17 +124,31 @@ type downloadConfig struct {
 	URL string `json:"url" jsonschema_description:"Fixture download URL."`
 }
 
+// download observes the fixture's revision with a HEAD request and fetches
+// its bytes with a GET.
 func download(ctx context.Context, request plugin.ResolveRequest[downloadConfig]) (plugin.ResolveResponse, error) {
-	config := struct {
+	observed := struct {
 		URL      string `json:"url"`
 		Revision string `json:"revision,omitempty"`
 	}{URL: request.Config.URL}
-	if request.Locked {
-		if err := json.Unmarshal(request.Observation, &config); err != nil {
+	if request.Method == "discover" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodHead, observed.URL, nil)
+		if err != nil {
 			return plugin.ResolveResponse{}, err
 		}
+		response, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return plugin.ResolveResponse{}, err
+		}
+		_ = response.Body.Close()
+		observed.Revision = response.Header.Get("X-Fixture-Revision")
+		observation, err := json.Marshal(observed)
+		return plugin.ResolveResponse{Observation: observation}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, config.URL, nil)
+	if err := json.Unmarshal(request.Observation, &observed); err != nil {
+		return plugin.ResolveResponse{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, observed.URL, nil)
 	if err != nil {
 		return plugin.ResolveResponse{}, err
 	}
@@ -156,11 +170,6 @@ func download(ctx context.Context, request plugin.ResolveRequest[downloadConfig]
 	if err != nil {
 		return plugin.ResolveResponse{}, err
 	}
-	config.Revision = response.Header.Get("X-Fixture-Revision")
-	observation, err := json.Marshal(config)
-	if err != nil {
-		return plugin.ResolveResponse{}, err
-	}
 	artifact := plugin.Artifact{Path: filename, Filename: "vendor.pkg"}
 	if version := response.Header.Get("X-Fixture-Version"); version != "" {
 		evidence, err := json.Marshal(map[string]string{"version": version})
@@ -169,5 +178,5 @@ func download(ctx context.Context, request plugin.ResolveRequest[downloadConfig]
 		}
 		artifact.Evidence = map[string]json.RawMessage{"vendor.release": evidence}
 	}
-	return plugin.ResolveResponse{Observation: observation, Artifact: artifact}, nil
+	return plugin.ResolveResponse{Artifact: artifact}, nil
 }

@@ -9,14 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/deploymenttheory/go-macos-pkg/pkg/cpio"
 )
 
 func TestNativeMetadataMatchesPayloadDeclaration(t *testing.T) {
 	spec, inputs := fixture(t)
-	artifact, err := Build(t.Context(), spec, inputs, t.TempDir(), time.Time{})
+	artifact, err := Build(t.Context(), spec, inputs, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

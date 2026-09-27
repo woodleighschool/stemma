@@ -85,7 +85,7 @@ func TestDiscoveryValidatesResolverConfigBeforeAcquisition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := plugin.Register(ops.registry, plugin.Operation{Name: "fixture.release", Kind: "resolve", Resolver: &plugin.ResolverKind{Version: "1"}, SideEffects: "none", Methods: []string{"validate", "run"}}, func(context.Context, plugin.ResolveRequest[validationConfig]) (plugin.ResolveResponse, error) {
+	if err := plugin.Register(ops.registry, plugin.Operation{Name: "fixture.release", Kind: "resolve", Resolver: &plugin.ResolverKind{Version: "1"}, SideEffects: "none", Methods: []string{"validate", "discover", "run"}}, func(context.Context, plugin.ResolveRequest[validationConfig]) (plugin.ResolveResponse, error) {
 		t.Fatal("validation acquired content")
 		return plugin.ResolveResponse{}, nil
 	}); err != nil {
