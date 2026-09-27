@@ -14,7 +14,7 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-const Version = "stemma.macsoftware/9"
+const Version = "stemma.macsoftware/10"
 
 // Spec declares a macOS installer, how preparation selects from it and how
 // destinations publish it.
@@ -22,11 +22,8 @@ type Spec struct {
 	Source      *plugin.Input `json:"source,omitempty" yaml:"source,omitempty" jsonschema_description:"Installer input from a built-in or loaded resolver, or a named resource output. Omit for source-free destination policies."`
 	Application *Application  `json:"application,omitempty" yaml:"application,omitempty" jsonschema_description:"Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image."`
 	// PackagePath selects one installer by archive-relative path or glob.
-	PackagePath string `json:"package_path,omitempty" yaml:"package_path,omitempty" jsonschema_description:"Archive-relative path or glob selecting one installer package. Selection must be unambiguous."`
-	// Signature requires the published PKG, or every application of the
-	// published disk image outside another application, to carry a complete
-	// Developer ID signature from the expected team.
-	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require a complete Developer ID signature from the expected team on the published PKG, or on every application in the published disk image, before publication."`
+	PackagePath string                  `json:"package_path,omitempty" yaml:"package_path,omitempty" jsonschema_description:"Archive-relative path or glob selecting one installer package. Selection must be unambiguous."`
+	Signatures  []signature.Expectation `json:"signatures,omitempty" yaml:"signatures,omitempty" jsonschema:"minItems=1" jsonschema_description:"Explicit signing expectations for the published PKG root or every top-level application in the published disk image. Omit to make no signing assertion. Derive with stemma signature."`
 	// MinimumOS replaces the installer's and the selected application's macOS
 	// requirements for every destination.
 	MinimumOS string `json:"minimum_os,omitempty" yaml:"minimum_os,omitempty" jsonschema:"pattern=^[0-9]+([.][0-9]+)?([.][0-9]+)?$" jsonschema_description:"Minimum macOS release, such as 14.0. Destinations receive this instead of the installer's and the selected application's requirements. Omit to use the latest of those."`
@@ -69,13 +66,9 @@ func (s Spec) Validate() error {
 			return errors.New("application.version_key must be CFBundleShortVersionString or CFBundleVersion")
 		}
 	}
-	if s.Signature != nil {
-		signer, err := signature.Parse(s.Signature.Signer)
-		if err != nil {
-			return fmt.Errorf("signature: %w", err)
-		}
-		if signer.Scheme != signature.AppleDeveloperID {
-			return errors.New("signature.signer must name an Apple Developer ID team")
+	for i, expected := range s.Signatures {
+		if err := expected.Validate(signature.AppleDeveloperID); err != nil {
+			return fmt.Errorf("signatures[%d]: %w", i, err)
 		}
 	}
 	if s.Icon != "" && !icon.ValidName(s.Icon) {

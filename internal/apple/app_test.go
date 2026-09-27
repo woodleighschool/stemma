@@ -1,6 +1,8 @@
 package apple
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"io/fs"
 	"os"
@@ -408,4 +410,95 @@ func copyFixtureTo(t *testing.T, dir, name string) string {
 		t.Fatal(err)
 	}
 	return target
+}
+
+func TestUnsignedBundleIsDistinctFromAnIncompleteSignature(t *testing.T) {
+	// A minimal Mach-O header with no load commands is structurally unsigned.
+	unsigned := make([]byte, 32)
+	binary.LittleEndian.PutUint32(unsigned, 0xfeedfacf)
+	binary.LittleEndian.PutUint32(unsigned[4:], 0x01000007)
+	binary.LittleEndian.PutUint32(unsigned[12:], 2)
+	for _, test := range []struct {
+		name                                        string
+		removeEnvelope, replaceExecutable, unsigned bool
+	}{
+		{"no signature", true, true, true},
+		{"deleted envelope", true, false, false},
+		{"unsigned code with envelope", false, true, false},
+		{"intact signed app", false, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			app := copyFixture(t, "SignedFixture.app")
+			if test.removeEnvelope {
+				if err := os.RemoveAll(filepath.Join(app, "Contents/_CodeSignature")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.replaceExecutable {
+				writeTestFile(t, filepath.Join(app, "Contents/MacOS/fixture"), unsigned, 0o755)
+			}
+			_, err := VerifyApp(t.Context(), app, signature.Signer{})
+			if errors.Is(err, signature.ErrUnsigned) != test.unsigned {
+				t.Fatalf("unsigned=%v: %v", test.unsigned, err)
+			}
+			if test.name != "intact signed app" && !test.unsigned && err == nil {
+				t.Fatal("accepted partial signature")
+			}
+		})
+	}
+	if _, err := VerifyApp(t.Context(), "testdata/Fixture.app", signature.Signer{}); err == nil || errors.Is(err, signature.ErrUnsigned) {
+		t.Fatalf("ad-hoc signature misclassified: %v", err)
+	}
+}
+
+func TestUnsignedMachORequiresEveryArchitectureToBeUnsigned(t *testing.T) {
+	signed := readTestFile(t, "testdata/SignedFixture.app/Contents/MacOS/fixture")
+	architectures, err := machoSlices(bytes.NewReader(signed), int64(len(signed)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedArch := architectures[len(architectures)-1]
+	signedSlice := make([]byte, signedArch.size)
+	if _, err := signedArch.r.ReadAt(signedSlice, 0); err != nil {
+		t.Fatal(err)
+	}
+	unsigned := func(cpu uint32) []byte {
+		data := make([]byte, 32)
+		binary.LittleEndian.PutUint32(data, 0xfeedfacf)
+		binary.LittleEndian.PutUint32(data[4:], cpu)
+		binary.LittleEndian.PutUint32(data[12:], 2)
+		return data
+	}
+	for _, test := range []struct {
+		name         string
+		second       []byte
+		wantUnsigned bool
+	}{
+		{"all unsigned", unsigned(signedArch.cpu), true},
+		{"one signed", signedSlice, false},
+		{"malformed architecture", unsigned(signedArch.cpu)[:8], false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fat := make([]byte, 128+len(test.second))
+			binary.BigEndian.PutUint32(fat, 0xcafebabe)
+			binary.BigEndian.PutUint32(fat[4:], 2)
+			for i, entry := range []struct{ cpu, offset, size uint32 }{{0x01000007, 64, 32}, {signedArch.cpu, 128, uint32(len(test.second))}} {
+				table := fat[8+i*20:]
+				binary.BigEndian.PutUint32(table, entry.cpu)
+				binary.BigEndian.PutUint32(table[8:], entry.offset)
+				binary.BigEndian.PutUint32(table[12:], entry.size)
+				binary.BigEndian.PutUint32(table[16:], 6)
+			}
+			copy(fat[64:], unsigned(0x01000007))
+			copy(fat[128:], test.second)
+			external := map[uint32][]byte{1: readTestFile(t, "testdata/SignedFixture.app/Contents/Info.plist"), 3: readTestFile(t, "testdata/SignedFixture.app/Contents/_CodeSignature/CodeResources")}
+			_, err := verifyMachO(t.Context(), bytes.NewReader(fat), int64(len(fat)), external)
+			if err == nil || errors.Is(err, signature.ErrUnsigned) != test.wantUnsigned {
+				t.Fatalf("unsigned=%v: %v", test.wantUnsigned, err)
+			}
+			if test.name == "one signed" && !strings.Contains(err.Error(), "mixes signed and unsigned architectures") {
+				t.Fatalf("did not check every architecture: %v", err)
+			}
+		})
+	}
 }

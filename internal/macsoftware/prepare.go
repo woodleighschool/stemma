@@ -65,7 +65,7 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 		return nil, err
 	}
 	var installer plugin.Artifact
-	var verified *signature.Result
+	var verified []signature.Observation
 	if app != nil {
 		installer, app, verified, err = publishApplication(ctx, spec, request, source, inventory, *app)
 	} else {
@@ -76,6 +76,7 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	}
 	installer.Version = installerVersion(installer.Facts)
 	installer.Evidence = maps.Clone(input.Evidence)
+	delete(installer.Evidence, "signatures")
 	if installer.Evidence == nil {
 		installer.Evidence = map[string]json.RawMessage{}
 	}
@@ -85,7 +86,7 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 		installer.Evidence["macos.version_key"], _ = json.Marshal(versionKey(spec.Application, *app))
 	}
 	if verified != nil {
-		installer.Evidence["signature"], _ = json.Marshal(verified)
+		installer.Evidence["signatures"], _ = json.Marshal(verified)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -95,7 +96,7 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 
 // publishApplication publishes a vendor disk image as it is, or places an
 // archive or tree application alone in a new one.
-func publishApplication(ctx context.Context, spec Spec, request Request, source *contents.Source, inventory plugin.Facts, app plugin.Subject) (plugin.Artifact, *plugin.Subject, *signature.Result, error) {
+func publishApplication(ctx context.Context, spec Spec, request Request, source *contents.Source, inventory plugin.Facts, app plugin.Subject) (plugin.Artifact, *plugin.Subject, []signature.Observation, error) {
 	input := request.Input
 	name, local := path.Base(app.Path), input.Path
 	var node contents.Node
@@ -114,18 +115,25 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 	if app.InstalledPath == "" {
 		app.InstalledPath = path.Join("/Applications", name)
 	}
-	var verified *signature.Result
-	if spec.Signature != nil || request.DeriveSignature {
+	var verified []signature.Observation
+	if len(spec.Signatures) > 0 || request.DeriveSignature {
 		var err error
-		verified, err = verify(ctx, spec, func(want signature.Signer) (signature.Result, error) {
+		targets := []plugin.Subject{app}
+		if source.IsImage() {
+			targets = topLevel(inventory)
+		} else {
+			// The selected archive app is published alone at the image root.
+			targets[0].ID, targets[0].Path, targets[0].Parent = name, name, "."
+		}
+		verified, err = signature.Verify(ctx, spec.Signatures, targets, request.DeriveSignature, func(subject plugin.Subject) (signature.Result, error) {
+			var result signature.Result
+			var err error
 			if source.IsImage() {
-				var apps []string
-				for _, app := range topLevel(inventory) {
-					apps = append(apps, app.Path)
-				}
-				return apple.VerifyAppsFS(ctx, node.FS, apps, want)
+				result, err = apple.VerifySubject(ctx, source, subject, request.Workspace)
+			} else {
+				result, err = apple.VerifyApp(ctx, local, signature.Signer{})
 			}
-			return apple.VerifyApp(ctx, local, want)
+			return result, err
 		})
 		if err != nil {
 			return plugin.Artifact{}, nil, nil, err
@@ -158,7 +166,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 }
 
 // publishPackage retains a PKG source, or extracts the selected nested package.
-func publishPackage(ctx context.Context, spec Spec, request Request, source *contents.Source, inventory plugin.Facts, pkg string) (plugin.Artifact, *plugin.Subject, *signature.Result, error) {
+func publishPackage(ctx context.Context, spec Spec, request Request, source *contents.Source, inventory plugin.Facts, pkg string) (plugin.Artifact, *plugin.Subject, []signature.Observation, error) {
 	local, facts := request.Input.Path, inventory
 	if pkg != "." {
 		node, err := source.At(ctx, pkg)
@@ -188,10 +196,10 @@ func publishPackage(ctx context.Context, spec Spec, request Request, source *con
 	if options := spec.Application; app != nil && options != nil && options.InstalledPath != "" {
 		app.InstalledPath = options.InstalledPath
 	}
-	var verified *signature.Result
-	if spec.Signature != nil || request.DeriveSignature {
-		verified, err = verify(ctx, spec, func(want signature.Signer) (signature.Result, error) {
-			return apple.VerifyPackage(ctx, local, want)
+	var verified []signature.Observation
+	if len(spec.Signatures) > 0 || request.DeriveSignature {
+		verified, err = signature.Verify(ctx, spec.Signatures, facts.Subjects[:1], request.DeriveSignature, func(plugin.Subject) (signature.Result, error) {
+			return apple.VerifyPackage(ctx, local, signature.Signer{})
 		})
 		if err != nil {
 			return plugin.Artifact{}, nil, nil, err
@@ -203,25 +211,6 @@ func publishPackage(ctx context.Context, spec Spec, request Request, source *con
 	}
 	installer.Format, installer.Facts = "pkg", facts
 	return installer, app, verified, nil
-}
-
-// verify checks a signature against the declared signer, or derives the
-// observed signer when none is declared.
-func verify(ctx context.Context, spec Spec, check func(signature.Signer) (signature.Result, error)) (*signature.Result, error) {
-	var want signature.Signer
-	if spec.Signature != nil {
-		var err error
-		if want, err = signature.Parse(spec.Signature.Signer); err != nil {
-			return nil, err
-		}
-	}
-	done := plugin.Stage(ctx, "Verifying signature")
-	result, err := check(want)
-	done(err, plugin.Detail(result.Name))
-	if err != nil {
-		return nil, err
-	}
-	return &result, nil
 }
 
 // writeImage places the selected application alone at the root of a new disk

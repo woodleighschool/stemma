@@ -7,8 +7,8 @@ import (
 
 // SubjectSelector matches observed evidence; an installation path is not a copy instruction.
 type SubjectSelector struct {
-	Kind          string `yaml:"kind,omitempty" json:"kind,omitempty" jsonschema_description:"Observed subject kind: app, package or msi."`
-	Path          string `yaml:"path,omitempty" json:"path,omitempty" jsonschema_description:"Exact path within the inspected artifact."`
+	Kind          string `yaml:"kind,omitempty" json:"kind,omitempty" jsonschema_description:"Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."`
+	Path          string `yaml:"path,omitempty" json:"path,omitempty" jsonschema_description:"Exact path within the inspected artifact. A dot selects the artifact root."`
 	InstalledPath string `yaml:"installed_path,omitempty" json:"installed_path,omitempty" jsonschema_description:"Observed absolute installation path, when the installer declares one."`
 	BundleID      string `yaml:"bundle_id,omitempty" json:"bundle_id,omitempty" jsonschema_description:"Application bundle identifier, combined with any supplied path selectors."`
 }

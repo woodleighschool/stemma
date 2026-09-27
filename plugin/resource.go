@@ -150,7 +150,7 @@ type ResourceRequest[C any] struct {
 	Method string `json:"-"`
 	Config C      `json:"config,omitempty"`
 	// Derive names a policy to observe from the inputs instead of enforcing
-	// the configured value: "signature" reports the verified signer as evidence.
+	// the configured value: "signature" reports signed or unsigned subjects as evidence.
 	Derive    string              `json:"derive,omitempty"`
 	Identity  ResourceReference   `json:"identity"`
 	Inputs    map[string]Artifact `json:"inputs,omitempty"`

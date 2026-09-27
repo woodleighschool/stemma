@@ -252,3 +252,59 @@ func isDMG(f *os.File, size int64) bool {
 	_, err := f.ReadAt(trailer[:], size-512)
 	return err == nil && string(trailer[:]) == "koly"
 }
+
+// Selection inventories only the subtree a consumer copies, retaining paths
+// relative to the source. Unselected siblings do not participate in inspection.
+func Selection(ctx context.Context, source *contents.Source, selection string) (plugin.Facts, error) {
+	if selection == "" || selection == "." {
+		return Source(ctx, source)
+	}
+	node, err := source.At(ctx, selection)
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	var facts plugin.Facts
+	switch {
+	case node.Local != "":
+		facts, err = Read(ctx, node.Local)
+	default:
+		var info fs.FileInfo
+		info, err = node.Stat()
+		if err != nil {
+			return plugin.Facts{}, err
+		}
+		root := plugin.Subject{ID: ".", Path: ".", Kind: "file"}
+		switch {
+		case info.IsDir() && strings.EqualFold(path.Ext(selection), ".app"):
+			var app apple.AppFacts
+			app, err = apple.InspectAppFS(ctx, node.FS, node.Path)
+			root.Kind, root.App = "app", appFacts(app)
+		case info.IsDir():
+			var sub fs.FS
+			sub, err = fs.Sub(node.FS, node.Path)
+			if err == nil {
+				links, ok := sub.(fs.ReadLinkFS)
+				if !ok {
+					return plugin.Facts{}, fmt.Errorf("selected filesystem does not report symlinks")
+				}
+				facts.Subjects, err = Contents(ctx, links)
+			}
+			root.Kind = "directory"
+		case strings.EqualFold(path.Ext(selection), ".pkg"):
+			root.Kind = "container"
+		}
+		facts.Subjects = append([]plugin.Subject{root}, facts.Subjects...)
+	}
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	for i := range facts.Subjects {
+		subject := &facts.Subjects[i]
+		subject.ID, subject.Path = path.Join(selection, subject.ID), path.Join(selection, subject.Path)
+		if subject.Parent != "" {
+			subject.Parent = path.Join(selection, subject.Parent)
+		}
+	}
+	facts.Version = plugin.FactsVersion
+	return facts, nil
+}

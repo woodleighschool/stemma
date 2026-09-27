@@ -47,13 +47,14 @@ This is distinct from preserving an existing vendor PKG or DMG unchanged.
 
 ## Signatures
 
-Signature verification establishes that acquired bytes are the content one
-expected publisher signed: Developer ID signatures over PKGs and application
+Each signed subject is verified independently against its expected publisher: Developer ID signatures over PKGs and application
 bundles, and Authenticode signatures over MSI and EXE files. Apple verification
 covers the shapes `codesign` writes today: `files2` envelopes, versioned and
 shallow frameworks, nested bundles and executables. Legacy envelopes, detached
 signature files and nested code replaced under Apple's requirement language are
-rejected rather than emulated, identically on every host.
+rejected rather than emulated, identically on every host. Signature absence is a
+normal observation for supported formats; partial and ad-hoc signatures are not
+unsigned.
 Windows verification anchors at the issuing authority recorded in the signer
 value and never consults the operating system's root store. Neither asserts
 notarisation, Gatekeeper, SmartScreen or WDAC policy, nor certificate revocation.

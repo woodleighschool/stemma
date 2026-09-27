@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -174,8 +175,18 @@ func validateLOB(artifact plugin.Artifact, declared []any, managed bool) error {
 	if artifact.Size > lobLimit {
 		return errors.New("a line-of-business PKG must be at most 2 GiB")
 	}
-	if len(artifact.Evidence["signature"]) == 0 {
-		return errors.New("a line-of-business app requires a verified Developer ID Installer signature; set signature.signer")
+	var observations []signature.Observation
+	signedRoot := false
+	if json.Unmarshal(artifact.Evidence["signatures"], &observations) == nil {
+		for _, observed := range observations {
+			signer, err := signature.Parse(observed.Signer)
+			if err == nil && signer.Scheme == signature.AppleDeveloperID && observed.Input == "" && observed.Subject.Path == "." && observed.State == "signed" && observed.Authority == "Developer ID Installer" && observed.Verifier == signature.Verifier {
+				signedRoot = true
+			}
+		}
+	}
+	if !signedRoot {
+		return errors.New("a line-of-business app requires a verified Developer ID Installer signature on the published PKG root; declare signatures for the root subject")
 	}
 	components, payload, placed := 0, false, false
 	apps, receipts := map[string]bool{}, map[string]bool{}

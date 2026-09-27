@@ -281,53 +281,163 @@
                   ],
                   "description": "Literal script text or input selections in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma."
                 },
-                "signature": {
+                "signatures": {
                   "anyOf": [
                     {
-                      "additionalProperties": false,
-                      "properties": {
-                        "input": {
-                          "anyOf": [
-                            {
-                              "type": "string"
+                      "items": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "oneOf": [
+                              {
+                                "required": [
+                                  "signer"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "unsigned"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "input": {
+                                "anyOf": [
+                                  {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Declared input whose selected content the build consumes."
+                              },
+                              "signer": {
+                                "anyOf": [
+                                  {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                              },
+                              "subject": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "minProperties": 1,
+                                    "properties": {
+                                      "bundle_id": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Application bundle identifier, combined with any supplied path selectors."
+                                      },
+                                      "installed_path": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Observed absolute installation path, when the installer declares one."
+                                      },
+                                      "kind": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
+                                      },
+                                      "path": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Exact path within the inspected artifact. A dot selects the artifact root."
+                                      }
+                                    },
+                                    "propertyNames": {
+                                      "not": {
+                                        "pattern": "\\{\\{"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                              },
+                              "unsigned": {
+                                "anyOf": [
+                                  {
+                                    "enum": [
+                                      true
+                                    ],
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Assert that the subject has no signature. A signed, invalid or unsupported signature fails this assertion."
+                              }
                             },
-                            {
-                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                              "type": "string"
-                            }
-                          ],
-                          "description": "Declared input to verify: a PKG by its package signature, or every application in a disk image, archive or folder outside another application."
-                        },
-                        "signer": {
-                          "anyOf": [
-                            {
-                              "pattern": "^apple:developer-id:[A-Z0-9]{10}$",
-                              "type": "string"
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
+                              }
                             },
-                            {
-                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                              "type": "string"
-                            }
-                          ],
-                          "description": "Expected publisher identity: apple:developer-id:\u003cTEAMID\u003e. Omit it only to derive the value with stemma signature."
-                        }
+                            "required": [
+                              "subject",
+                              "input"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ]
                       },
-                      "propertyNames": {
-                        "not": {
-                          "pattern": "\\{\\{"
-                        }
-                      },
-                      "required": [
-                        "input"
-                      ],
-                      "type": "object"
+                      "minItems": 1,
+                      "type": "array"
                     },
                     {
                       "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                       "type": "string"
                     }
                   ],
-                  "description": "Require one input to carry a complete Developer ID signature from an expected team before building. The built package itself is unsigned."
+                  "description": "Signing expectations for every physical signing subject consumed by the resolved payload and scripts layout. Unused siblings are excluded. The built package itself is unsigned."
                 }
               },
               "propertyNames": {
@@ -600,50 +710,155 @@
                       ],
                       "description": "Literal script text or input selections in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma."
                     },
-                    "signature": {
+                    "signatures": {
                       "anyOf": [
                         {
-                          "additionalProperties": false,
-                          "properties": {
-                            "input": {
-                              "anyOf": [
-                                {
-                                  "type": "string"
+                          "items": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "allOf": [
+                                  {
+                                    "anyOf": [
+                                      {},
+                                      {}
+                                    ]
+                                  }
+                                ],
+                                "properties": {
+                                  "input": {
+                                    "anyOf": [
+                                      {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Declared input whose selected content the build consumes."
+                                  },
+                                  "signer": {
+                                    "anyOf": [
+                                      {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                                  },
+                                  "subject": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "minProperties": 1,
+                                        "properties": {
+                                          "bundle_id": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Application bundle identifier, combined with any supplied path selectors."
+                                          },
+                                          "installed_path": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Observed absolute installation path, when the installer declares one."
+                                          },
+                                          "kind": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
+                                          },
+                                          "path": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Exact path within the inspected artifact. A dot selects the artifact root."
+                                          }
+                                        },
+                                        "propertyNames": {
+                                          "not": {
+                                            "pattern": "\\{\\{"
+                                          }
+                                        },
+                                        "type": "object"
+                                      },
+                                      {
+                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                                  },
+                                  "unsigned": {
+                                    "anyOf": [
+                                      {
+                                        "enum": [
+                                          true
+                                        ],
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Assert that the subject has no signature. A signed, invalid or unsupported signature fails this assertion."
+                                  }
                                 },
-                                {
-                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                  "type": "string"
-                                }
-                              ],
-                              "description": "Declared input to verify: a PKG by its package signature, or every application in a disk image, archive or folder outside another application."
-                            },
-                            "signer": {
-                              "anyOf": [
-                                {
-                                  "pattern": "^apple:developer-id:[A-Z0-9]{10}$",
-                                  "type": "string"
+                                "propertyNames": {
+                                  "not": {
+                                    "pattern": "\\{\\{"
+                                  }
                                 },
-                                {
-                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                  "type": "string"
-                                }
-                              ],
-                              "description": "Expected publisher identity: apple:developer-id:\u003cTEAMID\u003e. Omit it only to derive the value with stemma signature."
-                            }
+                                "type": "object"
+                              },
+                              {
+                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                "type": "string"
+                              }
+                            ]
                           },
-                          "propertyNames": {
-                            "not": {
-                              "pattern": "\\{\\{"
-                            }
-                          },
-                          "type": "object"
+                          "minItems": 1,
+                          "type": "array"
                         },
                         {
                           "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                           "type": "string"
                         }
                       ],
-                      "description": "Require one input to carry a complete Developer ID signature from an expected team before building. The built package itself is unsigned."
+                      "description": "Signing expectations for every physical signing subject consumed by the resolved payload and scripts layout. Unused siblings are excluded. The built package itself is unsigned."
                     }
                   },
                   "propertyNames": {
@@ -1424,40 +1639,149 @@
                   ],
                   "description": "Archive-relative path or glob selecting one installer package. Selection must be unambiguous."
                 },
-                "signature": {
+                "signatures": {
                   "anyOf": [
                     {
-                      "additionalProperties": false,
-                      "properties": {
-                        "signer": {
-                          "anyOf": [
-                            {
-                              "type": "string"
+                      "items": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "oneOf": [
+                              {
+                                "required": [
+                                  "signer"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "unsigned"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "signer": {
+                                "anyOf": [
+                                  {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                              },
+                              "subject": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "minProperties": 1,
+                                    "properties": {
+                                      "bundle_id": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Application bundle identifier, combined with any supplied path selectors."
+                                      },
+                                      "installed_path": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Observed absolute installation path, when the installer declares one."
+                                      },
+                                      "kind": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
+                                      },
+                                      "path": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Exact path within the inspected artifact. A dot selects the artifact root."
+                                      }
+                                    },
+                                    "propertyNames": {
+                                      "not": {
+                                        "pattern": "\\{\\{"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                              },
+                              "unsigned": {
+                                "anyOf": [
+                                  {
+                                    "enum": [
+                                      true
+                                    ],
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Assert that the subject has no signature. A signed, invalid or unsupported signature fails this assertion."
+                              }
                             },
-                            {
-                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                              "type": "string"
-                            }
-                          ],
-                          "description": "Expected publisher identity: apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e. Use stemma signature to inspect the input and derive it."
-                        }
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
+                              }
+                            },
+                            "required": [
+                              "subject"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ]
                       },
-                      "propertyNames": {
-                        "not": {
-                          "pattern": "\\{\\{"
-                        }
-                      },
-                      "required": [
-                        "signer"
-                      ],
-                      "type": "object"
+                      "minItems": 1,
+                      "type": "array"
                     },
                     {
                       "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                       "type": "string"
                     }
                   ],
-                  "description": "Require a complete Developer ID signature from the expected team on the published PKG, or on every application in the published disk image, before publication."
+                  "description": "Explicit signing expectations for the published PKG root or every top-level application in the published disk image. Omit to make no signing assertion. Derive with stemma signature."
                 },
                 "source": {
                   "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/Input",
@@ -1505,7 +1829,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Observed subject kind: app, package or msi."
+                                "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
                               },
                               "path": {
                                 "anyOf": [
@@ -1517,7 +1841,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Exact path within the inspected artifact."
+                                "description": "Exact path within the inspected artifact. A dot selects the artifact root."
                               }
                             },
                             "propertyNames": {
@@ -1697,37 +2021,142 @@
                       ],
                       "description": "Archive-relative path or glob selecting one installer package. Selection must be unambiguous."
                     },
-                    "signature": {
+                    "signatures": {
                       "anyOf": [
                         {
-                          "additionalProperties": false,
-                          "properties": {
-                            "signer": {
-                              "anyOf": [
-                                {
-                                  "type": "string"
+                          "items": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "allOf": [
+                                  {
+                                    "anyOf": [
+                                      {},
+                                      {}
+                                    ]
+                                  }
+                                ],
+                                "properties": {
+                                  "signer": {
+                                    "anyOf": [
+                                      {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                                  },
+                                  "subject": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "minProperties": 1,
+                                        "properties": {
+                                          "bundle_id": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Application bundle identifier, combined with any supplied path selectors."
+                                          },
+                                          "installed_path": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Observed absolute installation path, when the installer declares one."
+                                          },
+                                          "kind": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
+                                          },
+                                          "path": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Exact path within the inspected artifact. A dot selects the artifact root."
+                                          }
+                                        },
+                                        "propertyNames": {
+                                          "not": {
+                                            "pattern": "\\{\\{"
+                                          }
+                                        },
+                                        "type": "object"
+                                      },
+                                      {
+                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                                  },
+                                  "unsigned": {
+                                    "anyOf": [
+                                      {
+                                        "enum": [
+                                          true
+                                        ],
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Assert that the subject has no signature. A signed, invalid or unsupported signature fails this assertion."
+                                  }
                                 },
-                                {
-                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                  "type": "string"
-                                }
-                              ],
-                              "description": "Expected publisher identity: apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e. Use stemma signature to inspect the input and derive it."
-                            }
+                                "propertyNames": {
+                                  "not": {
+                                    "pattern": "\\{\\{"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              {
+                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                "type": "string"
+                              }
+                            ]
                           },
-                          "propertyNames": {
-                            "not": {
-                              "pattern": "\\{\\{"
-                            }
-                          },
-                          "type": "object"
+                          "minItems": 1,
+                          "type": "array"
                         },
                         {
                           "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                           "type": "string"
                         }
                       ],
-                      "description": "Require a complete Developer ID signature from the expected team on the published PKG, or on every application in the published disk image, before publication."
+                      "description": "Explicit signing expectations for the published PKG root or every top-level application in the published disk image. Omit to make no signing assertion. Derive with stemma signature."
                     },
                     "source": {
                       "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/PartialInput",
@@ -1775,7 +2204,7 @@
                                         "type": "string"
                                       }
                                     ],
-                                    "description": "Observed subject kind: app, package or msi."
+                                    "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
                                   },
                                   "path": {
                                     "anyOf": [
@@ -1787,7 +2216,7 @@
                                         "type": "string"
                                       }
                                     ],
-                                    "description": "Exact path within the inspected artifact."
+                                    "description": "Exact path within the inspected artifact. A dot selects the artifact root."
                                   }
                                 },
                                 "propertyNames": {
@@ -7864,40 +8293,149 @@
                   ],
                   "description": "Setup-relative path or glob selecting the file Intune records as the setup entry point. It may name any file, such as a wrapper script. Omit to use the installer of a single-file source, the entry point of a resource output, or the only MSI or EXE in a setup directory or archive."
                 },
-                "signature": {
+                "signatures": {
                   "anyOf": [
                     {
-                      "additionalProperties": false,
-                      "properties": {
-                        "signer": {
-                          "anyOf": [
-                            {
-                              "type": "string"
+                      "items": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "oneOf": [
+                              {
+                                "required": [
+                                  "signer"
+                                ]
+                              },
+                              {
+                                "required": [
+                                  "unsigned"
+                                ]
+                              }
+                            ],
+                            "properties": {
+                              "signer": {
+                                "anyOf": [
+                                  {
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                              },
+                              "subject": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "minProperties": 1,
+                                    "properties": {
+                                      "bundle_id": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Application bundle identifier, combined with any supplied path selectors."
+                                      },
+                                      "installed_path": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Observed absolute installation path, when the installer declares one."
+                                      },
+                                      "kind": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
+                                      },
+                                      "path": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Exact path within the inspected artifact. A dot selects the artifact root."
+                                      }
+                                    },
+                                    "propertyNames": {
+                                      "not": {
+                                        "pattern": "\\{\\{"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                              },
+                              "unsigned": {
+                                "anyOf": [
+                                  {
+                                    "enum": [
+                                      true
+                                    ],
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Assert that the subject has no signature. A signed, invalid or unsupported signature fails this assertion."
+                              }
                             },
-                            {
-                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                              "type": "string"
-                            }
-                          ],
-                          "description": "Expected publisher identity: apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e. Use stemma signature to inspect the input and derive it."
-                        }
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
+                              }
+                            },
+                            "required": [
+                              "subject"
+                            ],
+                            "type": "object"
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ]
                       },
-                      "propertyNames": {
-                        "not": {
-                          "pattern": "\\{\\{"
-                        }
-                      },
-                      "required": [
-                        "signer"
-                      ],
-                      "type": "object"
+                      "minItems": 1,
+                      "type": "array"
                     },
                     {
                       "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                       "type": "string"
                     }
                   ],
-                  "description": "Require a complete Authenticode signature from the configured publisher on the setup file."
+                  "description": "Signing expectations for the selected setup entry point. Use path: . for a scalar installer or its exact path in the prepared setup tree. Omit to make no signing assertion."
                 },
                 "source": {
                   "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/Input",
@@ -7945,7 +8483,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Observed subject kind: app, package or msi."
+                                "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
                               },
                               "path": {
                                 "anyOf": [
@@ -7957,7 +8495,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Exact path within the inspected artifact."
+                                "description": "Exact path within the inspected artifact. A dot selects the artifact root."
                               }
                             },
                             "propertyNames": {
@@ -8108,37 +8646,142 @@
                       ],
                       "description": "Setup-relative path or glob selecting the file Intune records as the setup entry point. It may name any file, such as a wrapper script. Omit to use the installer of a single-file source, the entry point of a resource output, or the only MSI or EXE in a setup directory or archive."
                     },
-                    "signature": {
+                    "signatures": {
                       "anyOf": [
                         {
-                          "additionalProperties": false,
-                          "properties": {
-                            "signer": {
-                              "anyOf": [
-                                {
-                                  "type": "string"
+                          "items": {
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "allOf": [
+                                  {
+                                    "anyOf": [
+                                      {},
+                                      {}
+                                    ]
+                                  }
+                                ],
+                                "properties": {
+                                  "signer": {
+                                    "anyOf": [
+                                      {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                                  },
+                                  "subject": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "minProperties": 1,
+                                        "properties": {
+                                          "bundle_id": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Application bundle identifier, combined with any supplied path selectors."
+                                          },
+                                          "installed_path": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Observed absolute installation path, when the installer declares one."
+                                          },
+                                          "kind": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
+                                          },
+                                          "path": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Exact path within the inspected artifact. A dot selects the artifact root."
+                                          }
+                                        },
+                                        "propertyNames": {
+                                          "not": {
+                                            "pattern": "\\{\\{"
+                                          }
+                                        },
+                                        "type": "object"
+                                      },
+                                      {
+                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                                  },
+                                  "unsigned": {
+                                    "anyOf": [
+                                      {
+                                        "enum": [
+                                          true
+                                        ],
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Assert that the subject has no signature. A signed, invalid or unsupported signature fails this assertion."
+                                  }
                                 },
-                                {
-                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                  "type": "string"
-                                }
-                              ],
-                              "description": "Expected publisher identity: apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e. Use stemma signature to inspect the input and derive it."
-                            }
+                                "propertyNames": {
+                                  "not": {
+                                    "pattern": "\\{\\{"
+                                  }
+                                },
+                                "type": "object"
+                              },
+                              {
+                                "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                "type": "string"
+                              }
+                            ]
                           },
-                          "propertyNames": {
-                            "not": {
-                              "pattern": "\\{\\{"
-                            }
-                          },
-                          "type": "object"
+                          "minItems": 1,
+                          "type": "array"
                         },
                         {
                           "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                           "type": "string"
                         }
                       ],
-                      "description": "Require a complete Authenticode signature from the configured publisher on the setup file."
+                      "description": "Signing expectations for the selected setup entry point. Use path: . for a scalar installer or its exact path in the prepared setup tree. Omit to make no signing assertion."
                     },
                     "source": {
                       "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/PartialInput",
@@ -8186,7 +8829,7 @@
                                         "type": "string"
                                       }
                                     ],
-                                    "description": "Observed subject kind: app, package or msi."
+                                    "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
                                   },
                                   "path": {
                                     "anyOf": [
@@ -8198,7 +8841,7 @@
                                         "type": "string"
                                       }
                                     ],
-                                    "description": "Exact path within the inspected artifact."
+                                    "description": "Exact path within the inspected artifact. A dot selects the artifact root."
                                   }
                                 },
                                 "propertyNames": {

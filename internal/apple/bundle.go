@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 	"howett.net/plist"
 )
@@ -160,8 +161,28 @@ func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, executable, infoPath str
 		return codeIdentity{}, err
 	}
 	signatureEntries, err := fs.ReadDir(root, "_CodeSignature")
+	if errors.Is(err, fs.ErrNotExist) {
+		// An absent envelope is unsigned only when the executable also has no
+		// signature. A deleted envelope must not disguise signed or ad-hoc code.
+		f, size, openErr := openRegular(root, executable)
+		if openErr != nil {
+			return codeIdentity{}, openErr
+		}
+		_, verifyErr := verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info})
+		_ = f.Close()
+		if errors.Is(verifyErr, signature.ErrUnsigned) {
+			return codeIdentity{}, signature.ErrUnsigned
+		}
+		if err := v.ctx.Err(); err != nil {
+			return codeIdentity{}, err
+		}
+		if verifyErr != nil {
+			return codeIdentity{}, errors.New("bundle is missing its signature resource envelope")
+		}
+		return codeIdentity{}, errors.New("signed executable is missing its resource envelope")
+	}
 	if err != nil {
-		return codeIdentity{}, fmt.Errorf("bundle is not signed: %w", err)
+		return codeIdentity{}, err
 	}
 	for _, entry := range signatureEntries {
 		if entry.Name() != "CodeResources" || !entry.Type().IsRegular() {
@@ -178,10 +199,16 @@ func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, executable, infoPath str
 	}
 	identity, err := verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info, 3: resources})
 	_ = f.Close()
+	if errors.Is(err, signature.ErrUnsigned) {
+		return codeIdentity{}, fmt.Errorf("%s: resource envelope exists but executable is unsigned", executable)
+	}
 	if err != nil {
 		return codeIdentity{}, fmt.Errorf("%s: %w", executable, err)
 	}
 	if err := v.verifyResources(root, resources, executable, infoPath); err != nil {
+		if errors.Is(err, signature.ErrUnsigned) {
+			return codeIdentity{}, errors.New("resource envelope contains unsigned nested code")
+		}
 		return codeIdentity{}, err
 	}
 	return identity, nil

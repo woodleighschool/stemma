@@ -30,11 +30,9 @@ type Spec struct {
 	// SetupFile selects the setup entry point within the setup directory.
 	SetupFile string `json:"setup_file,omitempty" yaml:"setup_file,omitempty" jsonschema_description:"Setup-relative path or glob selecting the file Intune records as the setup entry point. It may name any file, such as a wrapper script. Omit to use the installer of a single-file source, the entry point of a resource output, or the only MSI or EXE in a setup directory or archive."`
 	// VersionFile selects the managed version from the setup MSI's File table.
-	VersionFile string   `json:"version_file,omitempty" yaml:"version_file,omitempty" jsonschema_description:"Name of the file the setup MSI installs whose File table version is the managed version, such as Zoom.exe. It must name one versioned file. Omit to use the MSI ProductVersion."`
-	Content     *Content `json:"content,omitempty" yaml:"content,omitempty" jsonschema_description:"Supporting files added to the setup directory beside the vendor installer."`
-	// Signature requires the setup file to carry a complete Authenticode
-	// signature from the expected publisher.
-	Signature *signature.Policy `json:"signature,omitempty" yaml:"signature,omitempty" jsonschema_description:"Require a complete Authenticode signature from the configured publisher on the setup file."`
+	VersionFile string                  `json:"version_file,omitempty" yaml:"version_file,omitempty" jsonschema_description:"Name of the file the setup MSI installs whose File table version is the managed version, such as Zoom.exe. It must name one versioned file. Omit to use the MSI ProductVersion."`
+	Content     *Content                `json:"content,omitempty" yaml:"content,omitempty" jsonschema_description:"Supporting files added to the setup directory beside the vendor installer."`
+	Signatures  []signature.Expectation `json:"signatures,omitempty" yaml:"signatures,omitempty" jsonschema:"minItems=1" jsonschema_description:"Signing expectations for the selected setup entry point. Use path: . for a scalar installer or its exact path in the prepared setup tree. Omit to make no signing assertion."`
 	// Icon names the catalog asset icons/<name>.png that destinations publish;
 	// documents that name the same asset share it.
 	Icon         string                            `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Create it with stemma icon or commit a square PNG."`
@@ -59,13 +57,9 @@ func (s Spec) Validate() error {
 	if err := validateContent(s.Content); err != nil {
 		return err
 	}
-	if s.Signature != nil {
-		signer, err := signature.Parse(s.Signature.Signer)
-		if err != nil {
-			return fmt.Errorf("signature: %w", err)
-		}
-		if signer.Scheme != signature.Authenticode {
-			return errors.New("signature.signer must name an Authenticode publisher")
+	for i, expected := range s.Signatures {
+		if err := expected.Validate(signature.Authenticode); err != nil {
+			return fmt.Errorf("signatures[%d]: %w", i, err)
 		}
 	}
 	if len(s.Destinations) == 0 {
@@ -150,8 +144,8 @@ func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, 
 		artifact.Version = ""
 	}
 	result, err := describe(ctx, artifact, setup, spec.VersionFile)
-	if err == nil && (spec.Signature != nil || deriveSignature) {
-		err = verifySignature(ctx, spec, &result)
+	if err == nil && (len(spec.Signatures) > 0 || deriveSignature) {
+		err = verifySignature(ctx, spec, &result, deriveSignature)
 	}
 	if err != nil {
 		cleanup()
@@ -160,11 +154,9 @@ func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, 
 	return map[string]plugin.Artifact{"installer": result}, nil
 }
 
-func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact) error {
-	var want signature.Signer
-	if spec.Signature != nil {
-		var err error
-		if want, err = signature.Parse(spec.Signature.Signer); err != nil {
+func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact, derive bool) error {
+	for _, expected := range spec.Signatures {
+		if err := expected.Validate(signature.Authenticode); err != nil {
 			return err
 		}
 	}
@@ -172,16 +164,19 @@ func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact) 
 	if artifact.Tree {
 		setup = filepath.Join(artifact.Path, filepath.FromSlash(artifact.EntryPoint))
 	}
-	done := plugin.Stage(ctx, "Verifying signature", plugin.Detail(filepath.Base(setup)))
-	result, err := authenticode.Verify(ctx, setup, want)
-	done(err, plugin.Detail(result.Name))
+	// describe inspects only the selected entry point, not auxiliary executables.
+	subject := artifact.Facts.Subjects[0]
+	observations, err := signature.Verify(ctx, spec.Signatures, []plugin.Subject{subject}, derive, func(plugin.Subject) (signature.Result, error) {
+		result, err := authenticode.Verify(ctx, setup, signature.Signer{})
+		return result, err
+	})
 	if err != nil {
 		return err
 	}
 	if artifact.Evidence == nil {
 		artifact.Evidence = map[string]json.RawMessage{}
 	}
-	artifact.Evidence["signature"], err = json.Marshal(result)
+	artifact.Evidence["signatures"], err = json.Marshal(observations)
 	return err
 }
 
@@ -250,9 +245,15 @@ func describe(ctx context.Context, artifact plugin.Artifact, setup, versionFile 
 	if err != nil {
 		return artifact, err
 	}
+	if artifact.Tree {
+		for i := range facts.Subjects {
+			facts.Subjects[i].ID, facts.Subjects[i].Path = setup, setup
+		}
+	}
 	artifact.Facts = facts
 	artifact.Evidence = maps.Clone(artifact.Evidence)
 	delete(artifact.Evidence, "windows.installer")
+	delete(artifact.Evidence, "signatures")
 	for _, subject := range facts.Subjects {
 		if subject.Parent != "" || subject.MSI == nil {
 			continue

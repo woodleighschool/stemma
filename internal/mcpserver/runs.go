@@ -59,16 +59,16 @@ type input struct {
 	Evidence    map[string]any `json:"evidence,omitempty"`
 }
 
-// artifact is a prepared output with its inspected subjects. Signature is the
-// verified signer as the block a document declares.
+// artifact is a prepared output with its inspected subjects. Signatures is the
+// complete signed or unsigned expectations a document can declare.
 type artifact struct {
-	Output    string           `json:"output"`
-	Filename  string           `json:"filename"`
-	Format    string           `json:"format"`
-	Version   string           `json:"version,omitempty"`
-	Signature string           `json:"signature,omitempty"`
-	Subjects  []plugin.Subject `json:"subjects,omitempty"`
-	Evidence  map[string]any   `json:"evidence,omitempty"`
+	Output     string           `json:"output"`
+	Filename   string           `json:"filename"`
+	Format     string           `json:"format"`
+	Version    string           `json:"version,omitempty"`
+	Signatures string           `json:"signatures,omitempty"`
+	Subjects   []plugin.Subject `json:"subjects,omitempty"`
+	Evidence   map[string]any   `json:"evidence,omitempty"`
 }
 
 // lockUpdate answers update. Changed reports whether the lockfile was written.
@@ -259,15 +259,9 @@ func lockedInput(name, change string, entry source.Entry) input {
 func describeArtifact(output string, prepared engine.Prepared) artifact {
 	evidence := maps.Clone(prepared.Evidence)
 	result := artifact{Output: output, Filename: prepared.Filename, Format: prepared.Format, Version: prepared.Version, Subjects: prepared.Facts.Subjects}
-	var verified signature.Result
-	if json.Unmarshal(evidence["signature"], &verified) == nil && verified.Signer != "" {
-		result.Signature = verified.Fragment()
-		delete(evidence, "signature")
-	}
-	var input signature.InputResult
-	if json.Unmarshal(evidence["input.signature"], &input) == nil && input.Signer != "" {
-		result.Signature = input.Fragment()
-		delete(evidence, "input.signature")
+	var observations []signature.Observation
+	if json.Unmarshal(evidence["signatures"], &observations) == nil {
+		result.Signatures = signature.Fragment(observations)
 	}
 	result.Evidence = decode(evidence)
 	return result

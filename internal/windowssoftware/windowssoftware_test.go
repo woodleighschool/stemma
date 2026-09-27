@@ -7,10 +7,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/archive"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -318,5 +320,58 @@ func TestCompanionSymlinkIsRejected(t *testing.T) {
 	entries, err := os.ReadDir(workspace)
 	if err != nil || len(entries) != 0 {
 		t.Fatalf("failed copy left output: %v %v", entries, err)
+	}
+}
+
+func TestUnsignedSetupExpectationsUsePreparedPaths(t *testing.T) {
+	installer, err := filepath.Abs("../msi/testdata/test.msi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tree := range []bool{false, true} {
+		t.Run(strconv.FormatBool(tree), func(t *testing.T) {
+			source := plugin.Artifact{Path: installer, Filename: "setup.msi", Format: "msi"}
+			subjectPath := "."
+			if tree {
+				root := t.TempDir()
+				if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				data, err := os.ReadFile(installer)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(root, "bin/setup.msi"), data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				// Auxiliary executable files are outside the entrypoint's signing scope.
+				if err := os.WriteFile(filepath.Join(root, "other.exe"), []byte("not an executable"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				source = plugin.Artifact{Path: root, Filename: "setup", Tree: true}
+				subjectPath = "bin/setup.msi"
+			}
+			spec := Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: subjectPath}, Unsigned: true}}}
+			if tree {
+				spec.SetupFile = "bin/setup.msi"
+			}
+			inputs := map[string]plugin.Artifact{"source": source}
+			outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var observed []signature.Observation
+			if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &observed); err != nil || len(observed) != 1 || observed[0].State != "unsigned" || observed[0].Subject.Path != subjectPath {
+				t.Fatalf("observations: %+v, %v", observed, err)
+			}
+			spec.Signatures[0].Unsigned = false
+			spec.Signatures[0].Signer = "authenticode:" + strings.Repeat("a", 64)
+			if _, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false); !errors.Is(err, signature.ErrUnsigned) {
+				t.Fatalf("unsigned setup satisfied signer: %v", err)
+			}
+			if _, err := Prepare(t.Context(), spec, inputs, t.TempDir(), true); err != nil {
+				t.Fatalf("derive unsigned: %v", err)
+			}
+		})
 	}
 }

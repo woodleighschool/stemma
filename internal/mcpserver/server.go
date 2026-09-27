@@ -40,7 +40,7 @@ func newServer(opts Options) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "prepare",
 		Description: "Prepare resources from their sources as they are now, ignoring the lockfile. " +
-			"Reports the lockfile changes update would record, each artifact with its inspected facts, and the verified signer as the signature block to declare. " +
+			"Reports the lockfile changes update would record, each artifact with its inspected facts, and signed or unsigned observations and the signatures block to declare. " +
 			"Destination metadata is checked against the artifact. Writes nothing to the catalog.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld},
 	}, tools.prepare)

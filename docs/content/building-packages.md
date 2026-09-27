@@ -192,26 +192,33 @@ package:
   version: "{{ inputs.vendor.facts['Vendor Installer.app'].app.version }}-1"
 ```
 
-An input is inspected only when an expression reads its facts. Vendor-specific
+An input is inspected when an expression reads its facts or signing expectations
+cover its selected content. Vendor-specific
 discovery and other metadata extraction belong in a resolver or resource plugin.
 Set `package.filename` only when the default output name needs to be overridden.
 
 ## Verify the wrapped input
 
-`signature` requires one input to carry a complete Developer ID signature from an
-expected team before the package is built:
+`signatures` asserts the signing state of subjects the resolved payload and scripts
+layout consumes:
 
 ```yaml
-signature:
-  input: vendor
-  signer: apple:developer-id:JQ525L2MZD # Adobe Inc.
+signatures:
+  - input: vendor
+    subject:
+      path: Install.app
+    signer: apple:developer-id:JQ525L2MZD # Adobe Inc.
 ```
 
-A PKG input is verified by its package signature. A disk image, archive or folder
-has every application verified, except those inside another application, with the
-checks [MacSoftware](mac-software.md#signature) uses. Declare `input` alone and run
-`stemma signature BuildMacPkg/<name>` to print the fragment with the observed signer.
+Each subject uses its path within the named input. Selecting one app excludes its
+unused siblings; copying a whole directory, archive or DMG includes its top-level
+apps and packages. A PKG is verified by its outer signature, never a component
+receipt. When `signatures` is present, every consumed signing subject needs an
+expectation. Literal text and ordinary data files are outside this scope.
 
-The result describes the input, not the built package, which stays unsigned.
-Destinations that require a signed package, such as Intune line-of-business apps,
-still reject it.
+The [MacSoftware signing rules](mac-software.md#signature) also apply here,
+including `unsigned: true`. Run `stemma signature BuildMacPkg/<name>` with no
+placeholder declaration to derive every consumed subject's signing state.
+
+Evidence records each input and subject separately. The built package stays
+unsigned, so input verification cannot satisfy Intune line-of-business validation.

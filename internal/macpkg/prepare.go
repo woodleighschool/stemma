@@ -3,15 +3,16 @@ package macpkg
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"maps"
+	"path"
 	"slices"
+	"strings"
 
 	"github.com/woodleighschool/stemma/internal/apple"
 	"github.com/woodleighschool/stemma/internal/artifactname"
-	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/expression"
+	"github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -82,84 +83,102 @@ func Prepare(ctx context.Context, request plugin.ResourceRequest[json.RawMessage
 	if spec.Package.Filename == "" {
 		spec.Package.Filename = artifactname.Filename(request.Identity.Name, spec.Package.Version, "", "pkg")
 	}
-	var verified []byte
-	if spec.Signature != nil {
-		result, err := verifyInput(ctx, sources, *spec.Signature, request.Derive == "signature")
+	// Expressions have resolved; verify precisely what this layout consumes.
+	spec.Inputs = make(map[string]plugin.Input, len(request.Inputs))
+	for name := range request.Inputs {
+		spec.Inputs[name] = plugin.Input{}
+	}
+	if err := spec.Validate(); err != nil {
+		return plugin.Artifact{}, err
+	}
+	var observed []signature.Observation
+	if len(spec.Signatures) > 0 || request.Derive == "signature" {
+		observed, err = verifyInputs(ctx, sources, spec, request.Derive == "signature")
 		if err != nil {
-			return plugin.Artifact{}, err
-		}
-		if verified, err = json.Marshal(result); err != nil {
 			return plugin.Artifact{}, err
 		}
 	}
 	artifact, err := build(ctx, spec, sources, request.Workspace)
-	if err != nil || verified == nil {
+	if err != nil || len(observed) == 0 {
 		return artifact, err
 	}
-	// Intune and stemma signature read "signature" as proof about the
-	// published package, which the builder never signs.
-	artifact.Evidence = map[string]json.RawMessage{"input.signature": verified}
+	encoded, err = json.Marshal(observed)
+	if err != nil {
+		return plugin.Artifact{}, err
+	}
+	artifact.Evidence = map[string]json.RawMessage{"signatures": encoded}
 	return artifact, nil
 }
 
-// verifyInput checks the publisher signature of the input a build wraps: a
-// PKG's package signature, or every application in a disk image, archive or
-// folder outside another application. Deriving reports the observed signer
-// when none is declared.
-func verifyInput(ctx context.Context, sources *sources, policy InputSignature, derive bool) (signature.InputResult, error) {
-	var want signature.Signer
-	switch {
-	case policy.Signer != "":
-		var err error
-		if want, err = signature.Parse(policy.Signer); err != nil {
-			return signature.InputResult{}, err
-		}
-	case !derive:
-		return signature.InputResult{}, errors.New("signature.signer is required; derive it with stemma signature")
-	}
-	source, err := sources.get(policy.Input)
-	if err != nil {
-		return signature.InputResult{}, err
-	}
-	facts, err := sources.inventory(ctx, policy.Input)
-	if err != nil {
-		return signature.InputResult{}, fmt.Errorf("input %q: %w", policy.Input, err)
-	}
-	done := plugin.Stage(ctx, "Verifying input signature", plugin.Detail(policy.Input))
-	result, err := verifySource(ctx, source, facts, want)
-	done(err, plugin.Detail(result.Name))
-	if err != nil {
-		return signature.InputResult{}, fmt.Errorf("input %q: %w", policy.Input, err)
-	}
-	return signature.InputResult{Input: policy.Input, Result: result}, nil
-}
-
-func verifySource(ctx context.Context, source *contents.Source, facts plugin.Facts, want signature.Signer) (signature.Result, error) {
-	local := source.Artifact().Path
-	if !source.Traversable() {
-		return apple.VerifyPackage(ctx, local, want)
-	}
-	apps := map[string]bool{}
-	for _, subject := range facts.Subjects {
-		if subject.App != nil {
-			apps[subject.ID] = true
+func verifyInputs(ctx context.Context, sources *sources, spec Spec, derive bool) ([]signature.Observation, error) {
+	selections := map[string][]string{}
+	for _, entry := range spec.Payload {
+		if entry.Input != "" {
+			selections[entry.Input] = append(selections[entry.Input], entry.Path)
 		}
 	}
-	var top []string
-	for _, subject := range facts.Subjects {
-		if subject.App == nil || apps[subject.Parent] {
-			continue
+	for _, entry := range spec.Scripts {
+		if entry.Input != "" {
+			selections[entry.Input] = append(selections[entry.Input], entry.Path)
 		}
-		if subject.ID == "." {
-			return apple.VerifyApp(ctx, local, want)
+	}
+	policies := map[string][]signature.Expectation{}
+	if !derive {
+		for _, policy := range spec.Signatures {
+			if _, consumed := selections[policy.Input]; !consumed {
+				return nil, fmt.Errorf("signature input %q is not consumed by the build", policy.Input)
+			}
+			policies[policy.Input] = append(policies[policy.Input], policy.Expectation)
 		}
-		top = append(top, subject.Path)
 	}
-	root, err := source.At(ctx, ".")
-	if err != nil {
-		return signature.Result{}, err
+	var observations []signature.Observation
+	for _, name := range slices.Sorted(maps.Keys(selections)) {
+		source, err := sources.get(name)
+		if err != nil {
+			return nil, err
+		}
+		targets := map[string]plugin.Subject{}
+		paths := selections[name]
+		slices.Sort(paths)
+		for _, selection := range slices.Compact(paths) {
+			facts, err := inspect.Selection(ctx, source, selection)
+			if err != nil {
+				return nil, fmt.Errorf("input %q path %q: %w", name, selection, err)
+			}
+			// A scalar PKG has one outer signing subject, never its component
+			// receipts or installed payload apps. A selected app is likewise whole.
+			root := facts.Subjects[0]
+			filename := selection
+			if filename == "" || filename == "." {
+				filename = source.Artifact().Filename
+			}
+			packageRoot := root.Kind == "container" && (strings.EqualFold(path.Ext(filename), ".pkg") || slices.ContainsFunc(facts.Subjects, func(subject plugin.Subject) bool { return subject.Parent == root.ID && subject.Package != nil }))
+			if root.App != nil || packageRoot {
+				targets[root.Path] = root
+				continue
+			}
+			for _, subject := range facts.Subjects[1:] {
+				if subject.Parent == root.ID && (subject.App != nil || subject.Kind == "container" && strings.EqualFold(path.Ext(subject.Path), ".pkg")) {
+					targets[subject.Path] = subject
+				}
+			}
+		}
+		subjects := make([]plugin.Subject, 0, len(targets))
+		for _, name := range slices.Sorted(maps.Keys(targets)) {
+			subjects = append(subjects, targets[name])
+		}
+		observed, err := signature.Verify(ctx, policies[name], subjects, derive, func(subject plugin.Subject) (signature.Result, error) {
+			return apple.VerifySubject(ctx, source, subject, sources.workspace)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("input %q: %w", name, err)
+		}
+		for i := range observed {
+			observed[i].Input = name
+		}
+		observations = append(observations, observed...)
 	}
-	return apple.VerifyAppsFS(ctx, root.FS, top, want)
+	return observations, nil
 }
 
 // inputFacts inventories an input and keys its subjects by ID, as destination

@@ -8,12 +8,15 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"maps"
 	"os"
 	"sort"
+
+	"github.com/woodleighschool/stemma/internal/signature"
 )
 
 const maxSignature = 64 << 20
@@ -102,15 +105,20 @@ func verifyMachO(ctx context.Context, r io.ReaderAt, size int64, external map[ui
 		return codeIdentity{}, err
 	}
 	var identity codeIdentity
+	unsigned := 0
 	for i, slice := range slices {
 		if err := ctx.Err(); err != nil {
 			return codeIdentity{}, err
 		}
 		current, err := slice.verify(external)
+		if errors.Is(err, signature.ErrUnsigned) {
+			unsigned++
+			continue
+		}
 		if err != nil {
 			return codeIdentity{}, fmt.Errorf("Mach-O CPU %#x: %w", slice.cpu, err)
 		}
-		if i == 0 {
+		if i == unsigned {
 			identity = current
 			continue
 		}
@@ -118,6 +126,12 @@ func verifyMachO(ctx context.Context, r io.ReaderAt, size int64, external map[ui
 			return codeIdentity{}, fmt.Errorf("Mach-O architectures are signed by different identities")
 		}
 		identity.cdhashes = append(identity.cdhashes, current.cdhashes...)
+	}
+	if unsigned == len(slices) {
+		return codeIdentity{}, signature.ErrUnsigned
+	}
+	if unsigned != 0 {
+		return codeIdentity{}, fmt.Errorf("Mach-O mixes signed and unsigned architectures")
 	}
 	return identity, ctx.Err()
 }
@@ -271,8 +285,10 @@ func (m machoSlice) loadCommands(visit func(order binary.ByteOrder, kind uint32,
 		return 0, fmt.Errorf("invalid Mach-O load commands")
 	}
 	commands := make([]byte, size)
-	if _, err := m.r.ReadAt(commands, headerSize); err != nil {
-		return 0, err
+	if len(commands) > 0 {
+		if _, err := m.r.ReadAt(commands, headerSize); err != nil {
+			return 0, err
+		}
 	}
 	for range count {
 		if len(commands) < 8 {
@@ -358,7 +374,7 @@ func (m machoSlice) signature() (*codeSignature, error) {
 		return nil, err
 	}
 	if !found {
-		return nil, fmt.Errorf("Mach-O is unsigned")
+		return nil, signature.ErrUnsigned
 	}
 	if offset < end || length < 12 || length > maxSignature || offset > m.size || length != m.size-offset {
 		return nil, fmt.Errorf("%w: Mach-O signature must be a bounded final region", ErrUnsupported)

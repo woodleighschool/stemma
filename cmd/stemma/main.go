@@ -159,7 +159,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		var presentation, changedSince string
 		cmd := &cobra.Command{Use: method + " [Kind/name...]"}
 		jsonFlag(cmd)
-		cmd.Short = map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Prepare resources from the lockfile without publication", "signature": "Derive the verified signer of each published artifact", "icon": "Create declared icon assets from the artwork prepared software carries", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method]
+		cmd.Short = map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Prepare resources from the lockfile without publication", "signature": "Derive signed or unsigned expectations for each signing subject", "icon": "Create declared icon assets from the artwork prepared software carries", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method]
 		cmd.RunE = func(cmd *cobra.Command, args []string) error {
 			path, err := resolve()
 			if err != nil {

@@ -3,6 +3,7 @@ package apple
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -101,6 +102,9 @@ func VerifyPackage(ctx context.Context, filePath string, want signature.Signer) 
 		}
 	}
 	verified, err := pkgsign.Verify(archive.reader, pkgsign.VerifyOptions{RequireDeveloperID: true})
+	if errors.Is(err, pkgsign.ErrUnsigned) {
+		return signature.Result{}, signature.ErrUnsigned
+	}
 	if err != nil {
 		return signature.Result{}, fmt.Errorf("package signature: %w", err)
 	}

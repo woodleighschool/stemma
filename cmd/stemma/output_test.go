@@ -63,7 +63,7 @@ kind: MacSoftware
 metadata: {name: missing-installer}
 spec:
   source: {path: missing.pkg}
-  signature: {signer: apple:developer-id:SMLKBTR495}
+  signatures: [{subject: {path: .}, signer: apple:developer-id:SMLKBTR495}]
 `)
 	var out, logs bytes.Buffer
 	cmd, finish := command(&out, &logs)
@@ -333,7 +333,7 @@ kind: MacSoftware
 metadata: {name: missing-installer}
 spec:
   source: {path: missing.pkg}
-  signature: {signer: apple:developer-id:SMLKBTR495}
+  signatures: [{subject: {path: .}, signer: apple:developer-id:SMLKBTR495}]
 `)
 	var stderr bytes.Buffer
 	cmd, finish := command(failingReportWriter{}, &stderr)
@@ -348,21 +348,23 @@ spec:
 }
 
 func TestSignatureDetailsKeepInputsApartFromPublishedSignatures(t *testing.T) {
-	published, err := json.Marshal(signature.Result{Signer: "apple:developer-id:UBF8T346G9", Name: "Microsoft Corporation", Authority: "Developer ID Installer", Target: "installer.pkg"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	input, err := json.Marshal(signature.InputResult{Input: "vendor", Signer: "apple:developer-id:JQ525L2MZD", Name: "Adobe Inc.", Authority: "Developer ID Application", Target: "Install.app"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	report := func(evidence map[string]json.RawMessage) engine.ResourceReport {
-		return engine.ResourceReport{Artifacts: map[string]engine.Prepared{"installer": {Evidence: evidence}}}
-	}
-	if got := signatureDetails(report(map[string]json.RawMessage{"signature": published})); got != "  Signer: Microsoft Corporation (Developer ID Installer)\n  Target: installer.pkg\n  signature:\n    signer: apple:developer-id:UBF8T346G9 # Microsoft Corporation\n" {
-		t.Fatalf("published signature: %q", got)
-	}
-	if got := signatureDetails(report(map[string]json.RawMessage{"input.signature": input})); got != "  Input: vendor\n  Signer: Adobe Inc. (Developer ID Application)\n  Target: Install.app\n  signature:\n    input: \"vendor\"\n    signer: apple:developer-id:JQ525L2MZD # Adobe Inc.\n" {
-		t.Fatalf("input signature: %q", got)
+	for _, test := range []struct {
+		observation signature.Observation
+		want        []string
+	}{
+		{signature.Observation{Subject: plugin.SubjectSelector{Path: "."}, State: "signed", Signer: "apple:developer-id:UBF8T346G9", Name: "Microsoft Corporation", Authority: "Developer ID Installer"}, []string{"Subject: .", "Signer: Microsoft Corporation (Developer ID Installer)", "signatures:", `path: "."`, "signer: apple:developer-id:UBF8T346G9"}},
+		{signature.Observation{Input: "vendor", Subject: plugin.SubjectSelector{Path: "Install.app"}, State: "unsigned"}, []string{"Input: vendor", "Subject: Install.app", "Signing state: unsigned", `input: "vendor"`, "unsigned: true"}},
+	} {
+		evidence, err := json.Marshal([]signature.Observation{test.observation})
+		if err != nil {
+			t.Fatal(err)
+		}
+		resource := engine.ResourceReport{Artifacts: map[string]engine.Prepared{"installer": {Evidence: map[string]json.RawMessage{"signatures": evidence}}}}
+		got := signatureDetails(resource)
+		for _, want := range test.want {
+			if !strings.Contains(got, want) {
+				t.Fatalf("report lost %q: %s", want, got)
+			}
+		}
 	}
 }

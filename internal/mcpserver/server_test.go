@@ -12,6 +12,7 @@ import (
 	gogit "github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/woodleighschool/stemma/internal/engine"
 )
 
 const project = `apiVersion: stemma/v1alpha1
@@ -82,7 +83,7 @@ func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 	if len(app.Inputs) != 1 || app.Inputs[0].Change != "added" || app.Inputs[0].Resolver != "file" || app.Inputs[0].SHA256 == "" {
 		t.Fatalf("inputs = %+v", app.Inputs)
 	}
-	if len(app.Artifacts) != 1 || app.Artifacts[0].Version != "1.2.3" || !strings.Contains(app.Artifacts[0].Signature, "signer: apple:developer-id:SMLKBTR495") || len(app.Artifacts[0].Subjects) == 0 {
+	if len(app.Artifacts) != 1 || app.Artifacts[0].Version != "1.2.3" || !strings.Contains(app.Artifacts[0].Signatures, "signer: apple:developer-id:SMLKBTR495") || len(app.Artifacts[0].Subjects) == 0 {
 		t.Fatalf("artifacts = %+v", app.Artifacts)
 	}
 	if _, err := os.Stat(lockfile); !os.IsNotExist(err) {
@@ -257,5 +258,16 @@ func write(t *testing.T, name, text string) {
 	}
 	if err := os.WriteFile(name, []byte(text), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestArtifactDescriptionKeepsUnsignedObservations(t *testing.T) {
+	artifact := describeArtifact("installer", engine.Prepared{Filename: "unsigned.pkg", Evidence: map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/2"}]`)}})
+	if !strings.Contains(artifact.Signatures, "unsigned: true") || !strings.Contains(artifact.Signatures, `path: "."`) {
+		t.Fatalf("unsigned fragment: %s", artifact.Signatures)
+	}
+	observations, ok := artifact.Evidence["signatures"].([]any)
+	if !ok || len(observations) != 1 || observations[0].(map[string]any)["state"] != "unsigned" {
+		t.Fatalf("lost structured observations: %+v", artifact.Evidence)
 	}
 }

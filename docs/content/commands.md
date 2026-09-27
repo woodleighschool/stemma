@@ -10,7 +10,7 @@ Run commands from a catalog. Stemma discovers its Git root and `stemma.yaml`.
 | `stemma validate`                 | Check the catalog as written, without environment values or acquisition   |
 | `stemma update [Kind/name...]`    | Discover current inputs and update their locks                            |
 | `stemma prepare [Kind/name...]`   | Prepare resources from the lockfile without publication                   |
-| `stemma signature [Kind/name...]` | Derive the verified signer of each published artifact                     |
+| `stemma signature [Kind/name...]` | Derive signed or unsigned expectations for each signing subject           |
 | `stemma artifact Kind/name`       | Prepare one resource from the lockfile and print the path of its artifact |
 | `stemma icon [Kind/name...]`      | Create missing declared icons from the software's own artwork             |
 | `stemma plan [Kind/name...]`      | Read destinations and report proposed changes                             |
@@ -61,13 +61,14 @@ Existing icons stay unchanged unless `--force` is set. Only resources needing an
 icon are prepared. The command leaves the lockfile unchanged and does not contact
 destinations. Commit the icons so publication sends the same bytes on every host.
 
-`signature` acquires and prepares inputs like `prepare`, verifies each published
-artifact against the signer it observes and prints the `signature` fragment to
-add. It never writes documents, and a document that already names a different
-signer fails. A `BuildMacPkg` package is unsigned, so the command reports only the
-input its `signature` names, labelled as that input. See
-[macOS](mac-software.md#signature), [Windows](windows-software.md#signature) and
-[builder](building-packages.md#verify-the-wrapped-input) signature policy.
+`signature` acquires and prepares inputs like `prepare`, records each subject's
+signed or unsigned state and prints a complete `signatures` fragment. It never
+writes documents and ignores existing signing expectations while deriving their
+replacement. Invalid or unsupported signatures still fail. For `BuildMacPkg`, the
+command reports the signing subjects its resolved layout consumes, labelled with
+their input. See [macOS](mac-software.md#signature),
+[Windows](windows-software.md#signature) and
+[builder](building-packages.md#verify-the-wrapped-input) signing expectations.
 
 `artifact` prepares one resource and prints only the absolute path of its
 `installer` output, or of the output `--output` names. `--no-input-lock` instead

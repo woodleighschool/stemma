@@ -148,7 +148,7 @@ func TestPackageDetectionUsesApplicationsOrReceipts(t *testing.T) {
 func lobRequest(metadata object, subjects ...plugin.Subject) plugin.ReconcileRequest[Config] {
 	req := macRequest(metadata, nil, subjects...)
 	req.Artifact.Path, req.Artifact.Filename, req.Artifact.Format, req.Artifact.Size = "leased.pkg", "exporter-1.4.0.pkg", "pkg", 4096
-	req.Artifact.Evidence = map[string]json.RawMessage{"signature": json.RawMessage(`{"signer":"apple:developer-id:ABCDE12345","target":"exporter-1.4.0.pkg","verifier":"pkgsign"}`)}
+	req.Artifact.Evidence = map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/2"}]`)}
 	return req
 }
 
@@ -248,7 +248,7 @@ func TestLineOfBusinessUploadRequirements(t *testing.T) {
 		{"disk image", object{"type": "lob"}, []plugin.Subject{root, receipt}, func(req *plugin.ReconcileRequest[Config]) {
 			req.Artifact.Filename, req.Artifact.Format = "exporter.dmg", "dmg"
 		}},
-		{"unsigned", object{"type": "lob"}, []plugin.Subject{root, receipt}, func(req *plugin.ReconcileRequest[Config]) { delete(req.Artifact.Evidence, "signature") }},
+		{"unsigned", object{"type": "lob"}, []plugin.Subject{root, receipt}, func(req *plugin.ReconcileRequest[Config]) { delete(req.Artifact.Evidence, "signatures") }},
 		{"oversized", object{"type": "lob"}, []plugin.Subject{root, receipt}, func(req *plugin.ReconcileRequest[Config]) { req.Artifact.Size = lobLimit + 1 }},
 		{"no payload", object{"type": "lob"}, []plugin.Subject{root, scripts}, nil},
 		{"no application", object{"type": "lob"}, []plugin.Subject{root, receipt}, nil},
@@ -355,5 +355,24 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 				t.Fatalf("provider validity differs: %v", err)
 			}
 		})
+	}
+}
+
+func TestLOBRequiresThePublishedRootInstallerObservation(t *testing.T) {
+	for _, evidence := range []string{
+		`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/2"}]`,
+		`[{"input":"vendor","subject":{"path":"."},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/2"}]`,
+		`[{"subject":{"path":"Companion.app"},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Application","verifier":"stemma.signature/2"}]`,
+		`[{"subject":{"path":"PackageInfo"},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/2"}]`,
+	} {
+		artifact := plugin.Artifact{Path: "/leased/upload.pkg", Filename: "upload.pkg", Evidence: map[string]json.RawMessage{"signatures": json.RawMessage(evidence)}}
+		if err := validateLOB(artifact, nil, false); err == nil || !strings.Contains(err.Error(), "published PKG root") {
+			t.Fatalf("accepted wrong signature evidence: %v", err)
+		}
+	}
+	req := lobRequest(object{"type": "pkg"}, plugin.Subject{ID: "receipt", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.autopkg", Version: "1.0"}})
+	req.Artifact.Evidence = map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/2"}]`)}
+	if _, _, err := Derive(req); err != nil {
+		t.Fatalf("ordinary PKG rejected unsigned root: %v", err)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/artifactname"
 	"github.com/woodleighschool/stemma/internal/macpkg"
 	"github.com/woodleighschool/stemma/internal/macsoftware"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/windowssoftware"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -28,7 +29,7 @@ func registerKinds(ops *operations) error {
 	}
 	ops.identity["build.mac.pkg"] = macpkg.Version
 	ops.identity["software.mac"] = macsoftware.Version
-	ops.identity["software.windows"] = "windowssoftware/1"
+	ops.identity["software.windows"] = "windowssoftware/2"
 	return nil
 }
 
@@ -48,13 +49,18 @@ func buildMacPkg(ctx context.Context, request plugin.ResourceRequest[json.RawMes
 				return plugin.ResourceResult{}, err
 			}
 		}
-		if data, ok := spec["signature"]; ok {
-			var policy macpkg.InputSignature
-			if err := json.Unmarshal(data, &policy); err != nil {
-				return plugin.ResourceResult{}, fmt.Errorf("signature: %w", err)
+		if data, ok := spec["signatures"]; ok {
+			var policies []signature.InputExpectation
+			if err := json.Unmarshal(data, &policies); err != nil {
+				return plugin.ResourceResult{}, fmt.Errorf("signatures: %w", err)
 			}
-			if _, declared := declarations[policy.Input]; !declared {
-				return plugin.ResourceResult{}, fmt.Errorf("signature.input %q is not a declared input", policy.Input)
+			for _, policy := range policies {
+				if _, declared := declarations[policy.Input]; !declared {
+					return plugin.ResourceResult{}, fmt.Errorf("signatures.input %q is not a declared input", policy.Input)
+				}
+				if err := policy.Validate(signature.AppleDeveloperID); err != nil {
+					return plugin.ResourceResult{}, fmt.Errorf("signatures: %w", err)
+				}
 			}
 		}
 		delete(spec, "inputs")
@@ -68,7 +74,7 @@ func macSoftware(ctx context.Context, request plugin.ResourceRequest[macsoftware
 	spec := request.Config
 	input := request
 	if request.Method == "discover" {
-		if spec.Source == nil && (spec.Application != nil || spec.PackagePath != "" || spec.Signature != nil) {
+		if spec.Source == nil && (spec.Application != nil || spec.PackagePath != "" || len(spec.Signatures) > 0) {
 			return plugin.ResourceResult{}, errors.New("application selection, package selection and signature verification require a source")
 		}
 

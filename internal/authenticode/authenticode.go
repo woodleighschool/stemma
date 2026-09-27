@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/x509"
+	"debug/pe"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/sassoftware/relic/v8/lib/authenticode"
+	"github.com/sassoftware/relic/v8/lib/comdoc"
 	"github.com/sassoftware/relic/v8/lib/pkcs9"
 	"github.com/sassoftware/relic/v8/signers/sigerrors"
 	"github.com/woodleighschool/stemma/internal/fileio"
@@ -66,20 +68,20 @@ func Verify(ctx context.Context, filePath string, want signature.Signer) (signat
 	if kind == ".msi" {
 		signed, err := authenticode.VerifyMSI(contextReaderAt{ctx, f}, false)
 		if err != nil {
-			return signature.Result{}, classify(err)
+			return signature.Result{}, verificationError(ctx, f, kind, info.Size(), err)
 		}
 		signatures = append(signatures, signed.TimestampedSignature)
 	} else {
 		signed, err := authenticode.VerifyPE(&contextReadSeeker{ctx, f}, false)
 		if err != nil {
-			return signature.Result{}, classify(err)
+			return signature.Result{}, verificationError(ctx, f, kind, info.Size(), err)
 		}
 		for _, entry := range signed {
 			signatures = append(signatures, entry.TimestampedSignature)
 		}
 	}
 	if len(signatures) == 0 {
-		return signature.Result{}, errors.New("installer is not signed")
+		return signature.Result{}, errors.New("installer has an empty signature")
 	}
 	var identity publisher
 	for i, signed := range signatures {
@@ -100,11 +102,60 @@ func Verify(ctx context.Context, filePath string, want signature.Signer) (signat
 	return result, ctx.Err()
 }
 
-func classify(err error) error {
-	if _, unsigned := errors.AsType[sigerrors.NotSignedError](err); unsigned {
-		return errors.New("installer is not signed")
+// verificationError distinguishes container-level absence from empty signature
+// streams or CMS structures without signer records. Signed files stay entirely
+// within the cryptographic verifier's supported format handling.
+func verificationError(ctx context.Context, f *os.File, kind string, size int64, err error) error {
+	if _, missing := errors.AsType[sigerrors.NotSignedError](err); missing {
+		present, presenceErr := signaturePresent(ctx, f, kind, size)
+		if presenceErr != nil {
+			return fmt.Errorf("installer signature metadata: %w", presenceErr)
+		}
+		if !present {
+			return signature.ErrUnsigned
+		}
 	}
 	return fmt.Errorf("installer signature: %w", err)
+}
+
+func signaturePresent(ctx context.Context, f *os.File, kind string, size int64) (bool, error) {
+	reader := contextReaderAt{ctx, f}
+	if kind == ".msi" {
+		document, err := comdoc.ReadFile(reader)
+		if err != nil {
+			return false, err
+		}
+		entries, err := document.ListDir(nil)
+		if err != nil {
+			return false, err
+		}
+		for _, entry := range entries {
+			if strings.EqualFold(entry.Name(), "\x05DigitalSignature") || strings.EqualFold(entry.Name(), "\x05MsiDigitalSignatureEx") {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	executable, err := pe.NewFile(reader)
+	if err != nil {
+		return false, err
+	}
+	var directory pe.DataDirectory
+	switch header := executable.OptionalHeader.(type) {
+	case *pe.OptionalHeader32:
+		directory = header.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_SECURITY]
+	case *pe.OptionalHeader64:
+		directory = header.DataDirectory[pe.IMAGE_DIRECTORY_ENTRY_SECURITY]
+	default:
+		return false, fmt.Errorf("%w: missing PE optional header", ErrUnsupported)
+	}
+	if directory.VirtualAddress == 0 && directory.Size == 0 {
+		return false, nil
+	}
+	if directory.VirtualAddress == 0 || directory.Size == 0 || int64(directory.VirtualAddress)+int64(directory.Size) > size {
+		return false, errors.New("invalid PE certificate table bounds")
+	}
+	return true, nil
 }
 
 func identify(signed pkcs9.TimestampedSignature) (publisher, error) {

@@ -272,9 +272,9 @@ func TestPrepareVerifiesTheWrappedInputBeforeBuilding(t *testing.T) {
 	testarchive.Zip(t, archive, release)
 	config := func(policy map[string]any) map[string]any {
 		return map[string]any{
-			"package":   map[string]any{"identifier": "org.example.wrapper", "version": "1.0"},
-			"scripts":   map[string]any{"installer": map[string]any{"$input": "vendor", "path": "."}, "postinstall": "#!/bin/sh\nexit 0\n"},
-			"signature": policy,
+			"package":    map[string]any{"identifier": "org.example.wrapper", "version": "1.0"},
+			"scripts":    map[string]any{"installer": map[string]any{"$input": "vendor", "path": "."}, "postinstall": "#!/bin/sh\nexit 0\n"},
+			"signatures": []any{policy},
 		}
 	}
 	for name, input := range map[string]plugin.Artifact{
@@ -283,31 +283,30 @@ func TestPrepareVerifiesTheWrappedInputBeforeBuilding(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			inputs := map[string]plugin.Artifact{"vendor": input}
-			artifact, err := Prepare(t.Context(), prepareRequest(t, config(map[string]any{"input": "vendor", "signer": signer}), inputs))
+			artifact, err := Prepare(t.Context(), prepareRequest(t, config(map[string]any{"input": "vendor", "subject": map[string]any{"path": "Vendor Installer.app"}, "signer": signer}), inputs))
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, found := artifact.Evidence["signature"]; found {
-				t.Fatal("input verification presented as a signature on the built package")
-			}
-			var verified signature.InputResult
-			if err := json.Unmarshal(artifact.Evidence["input.signature"], &verified); err != nil || verified.Input != "vendor" || verified.Signer != signer || verified.Target != "Vendor Installer.app" {
+			var verified []signature.Observation
+			if err := json.Unmarshal(artifact.Evidence["signatures"], &verified); err != nil || len(verified) != 1 || verified[0].Input != "vendor" || verified[0].Signer != signer || verified[0].Target != "Vendor Installer.app" {
 				t.Fatalf("input evidence: %+v, %v", verified, err)
 			}
-			rejected := prepareRequest(t, config(map[string]any{"input": "vendor", "signer": "apple:developer-id:AAAAAAAAAA"}), inputs)
+			rejected := prepareRequest(t, config(map[string]any{"input": "vendor", "subject": map[string]any{"path": "Vendor Installer.app"}, "signer": "apple:developer-id:AAAAAAAAAA"}), inputs)
 			if _, err := Prepare(t.Context(), rejected); !errors.Is(err, signature.ErrMismatch) {
 				t.Fatalf("unexpected signer accepted: %v", err)
 			}
 			if built, _ := filepath.Glob(filepath.Join(rejected.Workspace, "*.pkg")); len(built) != 0 {
 				t.Fatalf("built a package from a rejected input: %v", built)
 			}
-			if _, err := Prepare(t.Context(), prepareRequest(t, config(map[string]any{"input": "vendor"}), inputs)); err == nil || !strings.Contains(err.Error(), "stemma signature") {
+			if _, err := Prepare(t.Context(), prepareRequest(t, config(map[string]any{"input": "vendor"}), inputs)); err == nil {
 				t.Fatalf("missing signer accepted outside derivation: %v", err)
 			}
-			derive := prepareRequest(t, config(map[string]any{"input": "vendor"}), inputs)
+			declaration := config(nil)
+			delete(declaration, "signatures")
+			derive := prepareRequest(t, declaration, inputs)
 			derive.Derive = "signature"
 			derived, err := Prepare(t.Context(), derive)
-			if err != nil || json.Unmarshal(derived.Evidence["input.signature"], &verified) != nil || verified.Signer != signer {
+			if err != nil || json.Unmarshal(derived.Evidence["signatures"], &verified) != nil || verified[0].Signer != signer {
 				t.Fatalf("derived input evidence: %+v, %v", verified, err)
 			}
 		})
@@ -328,16 +327,69 @@ func TestPrepareVerifiesPackageInputsAndRejectsUnsignedApplications(t *testing.T
 	unsigned := filepath.Join(t.TempDir(), "vendor.zip")
 	testarchive.Zip(t, unsigned, root)
 	config := map[string]any{
-		"package":   map[string]any{"identifier": "org.example.wrapper", "version": "1.0"},
-		"scripts":   map[string]any{"installer": map[string]any{"$input": "vendor"}, "postinstall": "#!/bin/sh\nexit 0\n"},
-		"signature": map[string]any{"input": "vendor", "signer": signer},
+		"package":    map[string]any{"identifier": "org.example.wrapper", "version": "1.0"},
+		"scripts":    map[string]any{"installer": map[string]any{"$input": "vendor"}, "postinstall": "#!/bin/sh\nexit 0\n"},
+		"signatures": []any{map[string]any{"input": "vendor", "subject": map[string]any{"path": "."}, "signer": signer}},
 	}
 	artifact, err := Prepare(t.Context(), prepareRequest(t, config, map[string]plugin.Artifact{"vendor": {Path: pkg, Filename: "vendor.pkg"}}))
-	var verified signature.InputResult
-	if err != nil || json.Unmarshal(artifact.Evidence["input.signature"], &verified) != nil || verified.Signer != signer {
+	var verified []signature.Observation
+	if err != nil || json.Unmarshal(artifact.Evidence["signatures"], &verified) != nil || verified[0].Signer != signer {
 		t.Fatalf("package input: %+v, %v", verified, err)
 	}
+	if _, err := Prepare(t.Context(), prepareRequest(t, config, map[string]plugin.Artifact{"vendor": {Path: pkg, Filename: "download.bin"}})); err != nil {
+		t.Fatalf("package signature depended on filename: %v", err)
+	}
+	config["signatures"].([]any)[0].(map[string]any)["subject"] = map[string]any{"path": "Vendor Installer.app"}
 	if _, err := Prepare(t.Context(), prepareRequest(t, config, map[string]plugin.Artifact{"vendor": {Path: unsigned, Filename: "vendor.zip", Format: "zip"}})); err == nil || !strings.Contains(err.Error(), "Vendor Installer.app") {
 		t.Fatalf("unsigned application accepted: %v", err)
+	}
+}
+
+func TestBuilderSignatureScopeFollowsConsumedSelections(t *testing.T) {
+	root := t.TempDir()
+	if err := os.CopyFS(filepath.Join(root, "Selected.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
+		t.Fatal(err)
+	}
+	// A malformed sibling is irrelevant to a build copying only Selected.app.
+	if err := os.MkdirAll(filepath.Join(root, "Unused.app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inputs := map[string]plugin.Artifact{"vendor": {Path: root, Filename: "vendor", Tree: true}}
+	config := map[string]any{
+		"package":    map[string]any{"identifier": "org.example.scope", "version": "1.0"},
+		"payload":    map[string]any{"/Applications/Selected.app": map[string]any{"$input": "vendor", "path": "Selected.app"}},
+		"signatures": []any{map[string]any{"input": "vendor", "subject": map[string]any{"path": "Selected.app"}, "signer": "apple:developer-id:SMLKBTR495"}},
+	}
+	for _, derive := range []bool{false, true} {
+		request := prepareRequest(t, config, inputs)
+		if derive {
+			request.Derive = "signature"
+		}
+		artifact, err := Prepare(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var observations []signature.Observation
+		if err := json.Unmarshal(artifact.Evidence["signatures"], &observations); err != nil || len(observations) != 1 || observations[0].Input != "vendor" || observations[0].Subject.Path != "Selected.app" {
+			t.Fatalf("scope: %+v, %v", observations, err)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(root, "Unused.app")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.CopyFS(filepath.Join(root, "Unused.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
+		t.Fatal(err)
+	}
+	config["payload"].(map[string]any)["/Applications/Selected.app"].(map[string]any)["path"] = "."
+	if _, err := Prepare(t.Context(), prepareRequest(t, config, inputs)); err == nil || !strings.Contains(err.Error(), `missing signature expectation for "Unused.app"`) {
+		t.Fatalf("whole input lacks companion coverage: %v", err)
+	}
+	// Embedding the opaque DMG consumes its contained signing subjects too.
+	image := filepath.Join(t.TempDir(), "vendor.dmg")
+	testdiskimage.Write(t, image, root)
+	inputs["vendor"] = plugin.Artifact{Path: image, Filename: "vendor.dmg", Format: "dmg"}
+	config["payload"].(map[string]any)["/Applications/Selected.app"].(map[string]any)["path"] = ""
+	if _, err := Prepare(t.Context(), prepareRequest(t, config, inputs)); err == nil || !strings.Contains(err.Error(), "Unused.app") {
+		t.Fatalf("opaque DMG omitted companion: %v", err)
 	}
 }

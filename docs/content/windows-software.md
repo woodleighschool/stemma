@@ -250,18 +250,27 @@ largest frame unchanged. An installer without a registered icon reports
 
 ## Signature
 
-Require the setup file to carry a complete, valid Authenticode signature from an
-expected publisher:
+Declare the selected setup entry point's signing expectation:
 
 ```yaml
-signature:
-  signer: authenticode:4a6519d3c145fc3838df20b3009980fe59b9bc68ee5871e59aaa0097a523e333 # Google LLC
+signatures:
+  - subject:
+      path: bin/setup.exe
+    signer: authenticode:4a6519d3c145fc3838df20b3009980fe59b9bc68ee5871e59aaa0097a523e333 # Google LLC
 ```
 
-`stemma signature WindowsSoftware/<name>` derives the value from the acquired
-installer, verifying it first. The value identifies the publisher by its
-certificate subject together with the issuing authority's public key, so routine
-certificate renewal keeps it while a new authority or publisher fails preparation
-until the document is updated. Timestamp countersignatures fix the time at which
+Paths are relative to the prepared setup directory. A scalar MSI or EXE uses
+`path: .`. Only the selected entry point is a signing subject; auxiliary executables
+are outside this scope.
+
+`stemma signature WindowsSoftware/<name>` derives a complete fragment without
+requiring an existing declaration. It reports unsigned installers normally, as
+`unsigned: true` instead of `signer`. The two assertions are mutually exclusive.
+Omitting `signatures` makes no assertion. Preparation fails when the observed state
+or publisher differs; invalid and unsupported signatures also fail derivation.
+
+The signer identifies the certificate subject together with the issuing
+authority's public key. Routine certificate renewal keeps it while a new authority
+or publisher requires review. Timestamp countersignatures fix the time at which
 certificate validity is judged. Windows trust policy such as SmartScreen is not
 assessed. See [signature limits](limitations.md#signatures).

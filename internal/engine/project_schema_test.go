@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/config"
-
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -117,12 +116,12 @@ func TestBuilderSignatureNamesADeclaredInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for input, message := range map[string]string{"vendor": "", "vendr": `signature.input "vendr" is not a declared input`} {
+	for input, message := range map[string]string{"vendor": "", "vendr": `signatures.input "vendr" is not a declared input`} {
 		spec := map[string]any{
-			"inputs":    map[string]any{"vendor": map[string]any{"url": "https://downloads.example.invalid/vendor.dmg"}},
-			"package":   map[string]any{"identifier": "org.example.wrapper", "version": "1.0"},
-			"scripts":   map[string]any{"postinstall": "#!/bin/sh\nexit 0\n"},
-			"signature": map[string]any{"input": input, "signer": "apple:developer-id:SMLKBTR495"},
+			"inputs":     map[string]any{"vendor": map[string]any{"url": "https://downloads.example.invalid/vendor.dmg"}},
+			"package":    map[string]any{"identifier": "org.example.wrapper", "version": "1.0"},
+			"scripts":    map[string]any{"postinstall": "#!/bin/sh\nexit 0\n"},
+			"signatures": []any{map[string]any{"input": input, "subject": map[string]any{"path": "."}, "signer": "apple:developer-id:SMLKBTR495"}},
 		}
 		project := config.Project{Resources: map[string]config.Resource{"wrapper": {APIVersion: "stemma/v1alpha1", Kind: "BuildMacPkg", Metadata: config.Metadata{Name: "wrapper"}, Spec: spec}}}
 		_, _, err := discoverClosure(t.Context(), project, ops, sortedKeys(project.Resources), false, true)

@@ -50,8 +50,10 @@ spec:
     resolver: github
     repository: company/application
     asset: Example-*.zip
-  signature:
-    signer: apple:developer-id:ABCDE12345
+  signatures:
+    - subject:
+        path: Example.app
+      signer: apple:developer-id:ABCDE12345
   destinations:
     munki:
       pkginfo:
@@ -174,25 +176,46 @@ not imply that support.
 
 ## Signature
 
-Require the published artifact to carry a complete, valid Developer ID signature
-from an expected team:
+Declare one exact signing expectation for each published signing subject:
 
 ```yaml
-signature:
-  signer: apple:developer-id:UBF8T346G9 # Microsoft Corporation
+signatures:
+  - subject:
+      path: .
+    signer: apple:developer-id:UBF8T346G9 # Microsoft Corporation
 ```
 
-`stemma signature MacSoftware/<name>` derives the value from the acquired source,
-verifying it first, and prints this fragment to paste. The comment is display
-information only. The vendor PKG is verified when that is what Stemma publishes
-(a PKG source or `package_path`). A vendor DMG has every application verified,
-except those inside another application, which are covered by its signature; an
-application that goes into a new DMG is verified on its own. Verification covers
-every architecture's code, Info.plist, the resource envelope, symlinks and nested
-code by its exact recorded cdhash, chained to Apple's roots at the signature's
-trusted timestamp. A different team on any of them fails preparation until the
-document is updated. Notarisation and Gatekeeper policy are not assessed. See
-[signature limits](limitations.md#signatures).
+For a PKG, `path: .` selects the outer package signature. Component receipts and
+payload applications do not prove that the published PKG is signed. For a DMG,
+select each top-level application by its exact path or bundle identifier. Every
+shipped top-level app requires an entry when `signatures` is present, including
+companion apps. Nested code is covered by its enclosing app's signature. An app
+selected from an archive is published alone at the new image's root.
+
+`stemma signature MacSoftware/<name>` inspects every signing subject and prints a
+complete fragment, independently of existing expectations. It needs no placeholder
+declaration. Different apps may name different publishers. The comment is display
+information only.
+
+Unsigned software can be asserted explicitly:
+
+```yaml
+signatures:
+  - subject:
+      path: .
+    unsigned: true
+```
+
+Each entry requires exactly one of `signer` or `unsigned: true`. Omitting
+`signatures` makes no assertion. An unsigned expectation fails when the subject
+becomes signed; a signer expectation fails when it becomes unsigned or changes
+publisher. Malformed, tampered, ad-hoc and unsupported signatures remain errors in
+both preparation and derivation.
+
+Apple verification covers every architecture's code, Info.plist, the resource
+envelope, symlinks and nested code by its exact recorded cdhash, chained to Apple's
+roots at the signature's trusted timestamp. Notarisation and Gatekeeper policy are
+not assessed. See [signature limits](limitations.md#signatures).
 
 ## Icons
 

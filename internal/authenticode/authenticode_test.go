@@ -19,6 +19,8 @@ import (
 	"github.com/sassoftware/relic/v8/lib/authenticode"
 	"github.com/sassoftware/relic/v8/lib/certloader"
 	"github.com/sassoftware/relic/v8/lib/comdoc"
+	"github.com/sassoftware/relic/v8/lib/pkcs7"
+	"github.com/sassoftware/relic/v8/signers/sigerrors"
 	"github.com/woodleighschool/stemma/internal/signature"
 )
 
@@ -243,10 +245,10 @@ func TestVerifyRejectsTamperedAndUnsignedInstallers(t *testing.T) {
 	if err := os.WriteFile(unsigned, minimalPE(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Verify(t.Context(), unsigned, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "not signed") {
+	if _, err := Verify(t.Context(), unsigned, signature.Signer{}); !errors.Is(err, signature.ErrUnsigned) {
 		t.Fatalf("unsigned installer: %v", err)
 	}
-	if _, err := Verify(t.Context(), "../msi/testdata/test.msi", signature.Signer{}); err == nil || !strings.Contains(err.Error(), "not signed") {
+	if _, err := Verify(t.Context(), "../msi/testdata/test.msi", signature.Signer{}); !errors.Is(err, signature.ErrUnsigned) {
 		t.Fatalf("unsigned MSI: %v", err)
 	}
 	if _, err := Verify(t.Context(), "setup.msix", signature.Signer{}); !errors.Is(err, ErrUnsupported) {
@@ -260,5 +262,106 @@ func TestVerifyRequiresEmbeddedAuthority(t *testing.T) {
 	identity.Certificates = identity.Certificates[:1]
 	if _, err := Verify(t.Context(), signMSI(t, identity), signature.Signer{}); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("missing issuing authority accepted: %v", err)
+	}
+}
+
+func TestSignatureMetadataCannotBeMistakenForAbsence(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		offset, size uint32
+	}{
+		{"offset without size", 0x400, 0},
+		{"size without offset", 0, 8},
+		{"table outside file", 0x400, 8},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			data := minimalPE()
+			// PE32+ optional-header data directory 4 locates the certificate table.
+			binary.LittleEndian.PutUint32(data[0x58+112+4*8:], test.offset)
+			binary.LittleEndian.PutUint32(data[0x58+112+4*8+4:], test.size)
+			name := filepath.Join(t.TempDir(), "partial.exe")
+			if err := os.WriteFile(name, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Verify(t.Context(), name, signature.Signer{}); err == nil || errors.Is(err, signature.ErrUnsigned) {
+				t.Fatalf("partial PE treated as unsigned: %v", err)
+			}
+		})
+	}
+	for _, stream := range []string{"\x05DigitalSignature", "\x05MsiDigitalSignatureEx", "\x05digitalsignature"} {
+		t.Run(stream[1:], func(t *testing.T) {
+			data, err := os.ReadFile("../msi/testdata/test.msi")
+			if err != nil {
+				t.Fatal(err)
+			}
+			name := filepath.Join(t.TempDir(), "partial.msi")
+			if err := os.WriteFile(name, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			document, err := comdoc.WritePath(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := document.AddFile(stream, []byte{0}); err != nil {
+				t.Fatal(err)
+			}
+			if stream == "\x05DigitalSignature" {
+				// The compound-document writer cannot allocate an empty stream. Retain
+				// its directory entry while declaring zero bytes of signature content.
+				for i := range document.Files {
+					if document.Files[i].Name() == stream {
+						document.Files[i].StreamSize = 0
+					}
+				}
+			}
+			if err := document.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Verify(t.Context(), name, signature.Signer{}); err == nil || errors.Is(err, signature.ErrUnsigned) {
+				t.Fatalf("partial MSI treated as unsigned: %v", err)
+			}
+		})
+	}
+}
+
+func TestCMSWithoutSignerRecordsIsInvalidRatherThanUnsigned(t *testing.T) {
+	content, err := pkcs7.NewContentInfo(authenticode.OidSpcIndirectDataContent, []byte{0x30, 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := pkcs7.ContentInfoSignedData{ContentType: pkcs7.OidSignedData, Content: pkcs7.SignedData{Version: 1, ContentInfo: content}}
+	encoded, err := document.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile("../msi/testdata/test.msi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(t.TempDir(), "empty-signers.msi")
+	if err := os.WriteFile(name, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	compound, err := comdoc.WritePath(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compound.AddFile("\x05DigitalSignature", encoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := compound.Close(); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = file.Close() }()
+	_, err = authenticode.VerifyMSI(file, false)
+	if missing, ok := errors.AsType[sigerrors.NotSignedError](err); !ok || missing.Type != "pkcs7" {
+		t.Fatalf("fixture did not reach empty CMS signers: %v", err)
+	}
+	if _, err := Verify(t.Context(), name, signature.Signer{}); err == nil || errors.Is(err, signature.ErrUnsigned) {
+		t.Fatalf("CMS without signers treated as unsigned: %v", err)
 	}
 }

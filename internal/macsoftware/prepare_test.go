@@ -90,16 +90,16 @@ func TestZIPSignatureVerifiesTheApplication(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "WoodSweep-1.2.3.zip")
 	testarchive.Zip(t, filename, release)
 	input := plugin.Artifact{Path: filename, Filename: "WoodSweep-1.2.3.zip", Format: "zip"}
-	outputs, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: signer}}, Request{Input: input, Workspace: t.TempDir()})
+	outputs, err := Prepare(t.Context(), Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: "WoodSweep.app"}, Signer: signer}}}, Request{Input: input, Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	installer := outputs["installer"]
-	var evidence signature.Result
-	if err := json.Unmarshal(installer.Evidence["signature"], &evidence); err != nil {
+	var evidence []signature.Observation
+	if err := json.Unmarshal(installer.Evidence["signatures"], &evidence); err != nil {
 		t.Fatal(err)
 	}
-	if installer.Format != "dmg" || evidence.Signer != signer || evidence.Target != "WoodSweep.app" {
+	if installer.Format != "dmg" || evidence[0].Signer != signer || evidence[0].Target != "WoodSweep.app" {
 		t.Fatalf("installer=%+v evidence=%+v", installer, evidence)
 	}
 	image, err := diskimage.Open(t.Context(), installer.Path)
@@ -107,11 +107,11 @@ func TestZIPSignatureVerifiesTheApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = image.Close() }()
-	if inside, err := apple.VerifyAppFS(t.Context(), image, "WoodSweep.app", signature.Signer{}); err != nil || inside != evidence {
+	if inside, err := apple.VerifyAppFS(t.Context(), image, "WoodSweep.app", signature.Signer{}); err != nil || inside != evidence[0].Result {
 		t.Fatalf("bundle in the image verifies as %+v, evidence is %+v: %v", inside, evidence, err)
 	}
 	workspace := t.TempDir()
-	if _, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: "apple:developer-id:AAAAAAAAAA"}}, Request{Input: input, Workspace: workspace}); !errors.Is(err, signature.ErrMismatch) {
+	if _, err := Prepare(t.Context(), Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: "WoodSweep.app"}, Signer: "apple:developer-id:AAAAAAAAAA"}}}, Request{Input: input, Workspace: workspace}); !errors.Is(err, signature.ErrMismatch) {
 		t.Fatalf("unexpected signer accepted: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(workspace, "WoodSweep.dmg")); !errors.Is(err, fs.ErrNotExist) {
@@ -197,8 +197,25 @@ func TestPackageWithMultipleApplicationsRetainsInstallerEvidence(t *testing.T) {
 	if err := json.Unmarshal(outputs["installer"].Evidence["macos.application"], &selected); err != nil || selected.Path != "Payload/Applications/Main.app" || outputs["installer"].Version != "1.2" {
 		t.Fatalf("selected application = %+v: %v", selected, err)
 	}
-	if _, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: "apple:developer-id:SMLKBTR495"}}, Request{Input: input, Workspace: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "not signed") {
+	if _, err := Prepare(t.Context(), Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: "."}, Signer: "apple:developer-id:SMLKBTR495"}}}, Request{Input: input, Workspace: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "not signed") {
 		t.Fatalf("unsigned multi-application package accepted: %v", err)
+	}
+	for _, derive := range []bool{false, true} {
+		spec := Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: "."}, Unsigned: true}}}
+		if derive {
+			spec.Signatures = nil
+		}
+		outputs, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir(), DeriveSignature: derive})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var observed []signature.Observation
+		if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &observed); err != nil || len(observed) != 1 || observed[0].State != "unsigned" || observed[0].Subject.Path != "." {
+			t.Fatalf("unsigned observations: %+v, %v", observed, err)
+		}
+	}
+	if _, err := Prepare(t.Context(), Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Kind: "package"}, Unsigned: true}}}, Request{Input: input, Workspace: t.TempDir()}); err == nil {
+		t.Fatal("receipt selected the outer PKG signature")
 	}
 }
 
@@ -297,7 +314,7 @@ func TestDMGSignatureVerifiesInsideTheImage(t *testing.T) {
 			testdiskimage.Write(t, filename, root)
 			input := plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}
 			workspace := t.TempDir()
-			outputs, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: signer}}, Request{Input: input, Workspace: workspace})
+			outputs, err := Prepare(t.Context(), Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: "SignedFixture.app"}, Signer: signer}}}, Request{Input: input, Workspace: workspace})
 			// The application is verified inside the image; only the retained
 			// installer reaches the workspace.
 			if entries, readErr := os.ReadDir(workspace); readErr != nil || len(entries) > 1 || len(entries) == 1 && entries[0].Name() != "Example.dmg" {
@@ -315,24 +332,24 @@ func TestDMGSignatureVerifiesInsideTheImage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var evidence signature.Result
-			if err := json.Unmarshal(outputs["installer"].Evidence["signature"], &evidence); err != nil {
+			var evidence []signature.Observation
+			if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &evidence); err != nil {
 				t.Fatal(err)
 			}
-			if evidence.Signer != signer || evidence.Name != "Woodleigh School" || evidence.Target != "SignedFixture.app" {
+			if evidence[0].Signer != signer || evidence[0].Name != "Woodleigh School" || evidence[0].Target != "SignedFixture.app" {
 				t.Fatalf("signature evidence: %+v", evidence)
 			}
-			if local, err := apple.VerifyApp(t.Context(), app, signature.Signer{}); err != nil || local != evidence {
+			if local, err := apple.VerifyApp(t.Context(), app, signature.Signer{}); err != nil || local != evidence[0].Result {
 				t.Fatalf("evidence from the image %+v differs from the bundle on disk %+v: %v", evidence, local, err)
 			}
-			if _, err := Prepare(t.Context(), Spec{Signature: &signature.Policy{Signer: "apple:developer-id:AAAAAAAAAA"}}, Request{Input: input, Workspace: t.TempDir()}); !errors.Is(err, signature.ErrMismatch) {
+			if _, err := Prepare(t.Context(), Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: "SignedFixture.app"}, Signer: "apple:developer-id:AAAAAAAAAA"}}}, Request{Input: input, Workspace: t.TempDir()}); !errors.Is(err, signature.ErrMismatch) {
 				t.Fatalf("unexpected signer accepted: %v", err)
 			}
 			derived, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir(), DeriveSignature: true})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := json.Unmarshal(derived["installer"].Evidence["signature"], &evidence); err != nil || evidence.Signer != signer {
+			if err := json.Unmarshal(derived["installer"].Evidence["signatures"], &evidence); err != nil || evidence[0].Signer != signer {
 				t.Fatalf("derived evidence: %+v: %v", evidence, err)
 			}
 		})
@@ -349,34 +366,30 @@ func TestDMGSignatureVerifiesEveryApplication(t *testing.T) {
 	}
 	signed := filepath.Join(t.TempDir(), "Signed.dmg")
 	testdiskimage.Write(t, signed, root)
-	spec := Spec{Application: &Application{Path: "Suite/Main.app"}, Signature: &signature.Policy{Signer: signer}}
+	spec := Spec{Application: &Application{Path: "Suite/Main.app"}, Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: "Suite/Companion.app"}, Signer: signer}, {Subject: plugin.SubjectSelector{Path: "Suite/Main.app"}, Signer: signer}}}
 	outputs, err := Prepare(t.Context(), spec, Request{Input: plugin.Artifact{Path: signed, Filename: "Signed.dmg", Format: "dmg"}, Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var evidence signature.Result
-	if err := json.Unmarshal(outputs["installer"].Evidence["signature"], &evidence); err != nil || evidence.Signer != signer || evidence.Target != "Companion.app, Main.app" {
+	var evidence []signature.Observation
+	if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &evidence); err != nil || evidence[0].Signer != signer || len(evidence) != 2 || evidence[0].Subject.Path != "Suite/Companion.app" || evidence[1].Subject.Path != "Suite/Main.app" {
 		t.Fatalf("signature evidence: %+v, %v", evidence, err)
 	}
-	unsigned := filepath.Join(applicationFixture(t), "Example.app")
-	if err := os.CopyFS(filepath.Join(root, "Suite/Example.app"), os.DirFS(unsigned)); err != nil {
+	// A new independently signed companion still needs an explicit assertion.
+	if err := os.CopyFS(filepath.Join(root, "Suite/New.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
 		t.Fatal(err)
 	}
 	mixed := filepath.Join(t.TempDir(), "Mixed.dmg")
 	testdiskimage.Write(t, mixed, root)
 	input := plugin.Artifact{Path: mixed, Filename: "Mixed.dmg", Format: "dmg"}
-	for name, request := range map[string]Request{
-		"declared": {Input: input, Workspace: t.TempDir()},
-		"derived":  {Input: input, Workspace: t.TempDir(), DeriveSignature: true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			spec := spec
-			if request.DeriveSignature {
-				spec.Signature = nil
-			}
-			if _, err := Prepare(t.Context(), spec, request); err == nil || !strings.Contains(err.Error(), "Suite/Example.app") {
-				t.Fatalf("unsigned companion accepted: %v", err)
-			}
-		})
+	if _, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()}); err == nil || !strings.Contains(err.Error(), `missing signature expectation for "Suite/New.app"`) {
+		t.Fatalf("missing coverage: %v", err)
+	}
+	outputs, err = Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir(), DeriveSignature: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &evidence); err != nil || len(evidence) != 3 {
+		t.Fatalf("derived observations: %+v, %v", evidence, err)
 	}
 }

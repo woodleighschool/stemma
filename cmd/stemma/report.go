@@ -204,30 +204,32 @@ func writeError(text *strings.Builder, style textStyle, indent, message string) 
 	}
 }
 
-// signatureDetails shows the signature each artifact carries and, separately,
-// the verified input a build consumed; a built package carries no signature.
+// signatureDetails retains each observed subject and its owning input.
 func signatureDetails(resource engine.ResourceReport) string {
 	var text strings.Builder
 	for _, name := range slices.Sorted(maps.Keys(resource.Artifacts)) {
-		evidence := resource.Artifacts[name].Evidence
-		var result signature.Result
-		if err := json.Unmarshal(evidence["signature"], &result); err == nil {
-			writeSignature(&text, result, result.Fragment())
+		var observations []signature.Observation
+		if err := json.Unmarshal(resource.Artifacts[name].Evidence["signatures"], &observations); err != nil {
+			continue
 		}
-		var input signature.InputResult
-		if err := json.Unmarshal(evidence["input.signature"], &input); err == nil {
-			fmt.Fprintf(&text, "  Input: %s\n", changes.Text(input.Input))
-			writeSignature(&text, input.Result, input.Fragment())
+		for _, observed := range observations {
+			if observed.Input != "" {
+				fmt.Fprintf(&text, "  Input: %s\n", changes.Text(observed.Input))
+			}
+			fmt.Fprintf(&text, "  Subject: %s\n", changes.Text(observed.Subject.Path))
+			if observed.State == "unsigned" {
+				text.WriteString("  Signing state: unsigned\n")
+			} else {
+				fmt.Fprintf(&text, "  Signer: %s (%s)\n", changes.Text(observed.Name), changes.Text(observed.Authority))
+			}
+		}
+		for line := range strings.SplitSeq(strings.TrimSuffix(signature.Fragment(observations), "\n"), "\n") {
+			if line != "" {
+				fmt.Fprintf(&text, "  %s\n", changes.Text(line))
+			}
 		}
 	}
 	return text.String()
-}
-
-func writeSignature(text *strings.Builder, result signature.Result, fragment string) {
-	fmt.Fprintf(text, "  Signer: %s (%s)\n  Target: %s\n", changes.Text(result.Name), changes.Text(result.Authority), changes.Text(result.Target))
-	for line := range strings.SplitSeq(strings.TrimSuffix(fragment, "\n"), "\n") {
-		fmt.Fprintf(text, "  %s\n", changes.Text(line))
-	}
 }
 
 // printReportEnd ends a human report below the resources that streamed: the

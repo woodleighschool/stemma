@@ -132,7 +132,7 @@ metadata:
   name: fixture
 spec:
   source: {url: %s/fixture.pkg}
-  signature: {signer: apple:developer-id:SMLKBTR495}
+  signatures: [{subject: {path: .}, signer: apple:developer-id:SMLKBTR495}]
   destinations:
     first: {pkginfo: {description: original, unattended_install: false, catalogs: [testing]}}
     second: {pkginfo: {catalogs: [testing]}}
@@ -238,10 +238,10 @@ spec:
 		t.Fatalf("inspecting the artifact: %+v %v", inspected.Facts, err)
 	}
 	derived := run(true, "signature")
-	var signer struct {
+	var signer []struct {
 		Signer string `json:"signer"`
 	}
-	if len(derived.Resources) != 1 || json.Unmarshal(derived.Resources[0].Artifacts["installer"].Evidence["signature"], &signer) != nil || signer.Signer != "apple:developer-id:SMLKBTR495" {
+	if len(derived.Resources) != 1 || json.Unmarshal(derived.Resources[0].Artifacts["installer"].Evidence["signatures"], &signer) != nil || (len(signer) != 1 || signer[0].Signer != "apple:developer-id:SMLKBTR495") {
 		t.Fatalf("signature derivation: %+v", derived.Resources)
 	}
 	plan := run(true, "plan")
@@ -326,11 +326,11 @@ spec:
 	var tried struct {
 		Resources []struct {
 			Inputs    []any
-			Artifacts []struct{ Version, Signature string }
+			Artifacts []struct{ Version, Signatures string }
 		}
 	}
 	callTool(t, session, "prepare", map[string]any{"resources": []string{"MacSoftware/fixture"}}, &tried)
-	if len(tried.Resources) != 1 || len(tried.Resources[0].Inputs) != 0 || len(tried.Resources[0].Artifacts) != 1 || !strings.Contains(tried.Resources[0].Artifacts[0].Signature, "signer: apple:developer-id:SMLKBTR495") {
+	if len(tried.Resources) != 1 || len(tried.Resources[0].Inputs) != 0 || len(tried.Resources[0].Artifacts) != 1 || !strings.Contains(tried.Resources[0].Artifacts[0].Signatures, "signer: apple:developer-id:SMLKBTR495") {
 		t.Fatalf("prepare: %+v", tried)
 	}
 	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {

@@ -215,7 +215,7 @@ func TestOpenEvidencePreservesNativeTypes(t *testing.T) {
 func TestSourceFreeCannotSilentlySkipVerification(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
-	manifest := strings.Replace(policyProject, "spec:\n  destinations:\n    first:\n      pkginfo:", "spec:\n  signature:\n    signer: apple:developer-id:SMLKBTR495\n  destinations:\n    first:\n      pkginfo:", 1)
+	manifest := strings.Replace(policyProject, "spec:\n  destinations:\n    first:\n      pkginfo:", "spec:\n  signatures:\n    - subject: {path: .}\n      signer: apple:developer-id:SMLKBTR495\n  destinations:\n    first:\n      pkginfo:", 1)
 	testproject.Write(t, filename, manifest)
 	if _, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"}); err == nil || !strings.Contains(err.Error(), "require a source") {
 		t.Fatalf("sourcefree verification was skipped: %v", err)
@@ -548,7 +548,7 @@ kind: MacSoftware
 metadata: {name: woodsweep}
 spec:
   source: {url: %s/WoodSweep-1.2.3.zip}
-  signature: {signer: 'apple:developer-id:SMLKBTR495'}
+  signatures: [{subject: {path: WoodSweep.app}, signer: 'apple:developer-id:SMLKBTR495'}]
   destinations:
     repo: {pkginfo: {catalogs: [testing]}}
 `, server.URL))
@@ -562,7 +562,7 @@ spec:
 		t.Fatal(err)
 	}
 	installer := report.Resources[0].Artifacts["installer"]
-	if installer.Format != "dmg" || installer.Filename != "woodsweep-1.2.3.dmg" || installer.Evidence["signature"] == nil {
+	if installer.Format != "dmg" || installer.Filename != "woodsweep-1.2.3.dmg" || installer.Evidence["signatures"] == nil {
 		t.Fatalf("installer = %+v", installer)
 	}
 	pkginfos, err := filepath.Glob(filepath.Join(root, "repo/pkgsinfo/*.plist"))
