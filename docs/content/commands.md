@@ -5,16 +5,16 @@ Run commands from a catalog. Stemma discovers its Git root and `stemma.yaml`.
 
 ## Catalog workflow
 
-| Command                           | Purpose                                                                      |
-| --------------------------------- | ---------------------------------------------------------------------------- |
-| `stemma validate`                 | Check composition, schemas and operation contracts before acquiring software |
-| `stemma update [Kind/name...]`    | Discover current inputs and update their locks                               |
-| `stemma prepare [Kind/name...]`   | Lock and prepare inputs without publication                                  |
-| `stemma signature [Kind/name...]` | Derive the verified signer of each published artifact                        |
-| `stemma artifact Kind/name`       | Prepare one resource from the lockfile and print the path of its artifact    |
-| `stemma icon [Kind/name...]`      | Create missing declared icons from the software's own artwork                |
-| `stemma plan [Kind/name...]`      | Read destinations and report proposed changes                                |
-| `stemma apply [Kind/name...]`     | Re-read and reconcile destinations once                                      |
+| Command                           | Purpose                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------- |
+| `stemma validate`                 | Check the catalog as written, without environment values or acquisition   |
+| `stemma update [Kind/name...]`    | Discover current inputs and update their locks                            |
+| `stemma prepare [Kind/name...]`   | Lock and prepare inputs without publication                               |
+| `stemma signature [Kind/name...]` | Derive the verified signer of each published artifact                     |
+| `stemma artifact Kind/name`       | Prepare one resource from the lockfile and print the path of its artifact |
+| `stemma icon [Kind/name...]`      | Create missing declared icons from the software's own artwork             |
+| `stemma plan [Kind/name...]`      | Read destinations and report proposed changes                             |
+| `stemma apply [Kind/name...]`     | Re-read and reconcile destinations once                                   |
 
 For example, `stemma plan MacSoftware/chrome` selects one document. Required build
 references are prepared first. Use `apiVersion/Kind/name` when needed to resolve an
@@ -92,8 +92,10 @@ same registry and schema composition as project generation.
 `inspect` describes a local file or directory from its own metadata, without
 executing it or loading a project; `--json` prints its complete facts. Pass it
 the path `artifact` prints to inspect what Stemma prepares for a resource.
-`validate --resolved` prints merged configuration and may expose expanded
-environment values: do not share it without reviewing it.
+`validate` needs no credentials. `validate --resolved` also evaluates every
+environment value, as runs do, and prints the merged configuration with connection
+settings resolved. It needs every referenced variable and may expose secrets: do
+not share it without reviewing it.
 
 ## Plugins and cache
 

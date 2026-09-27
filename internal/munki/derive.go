@@ -54,8 +54,7 @@ func DestinationSchema() *jsonschema.Schema {
 	schema := r.Reflect(&DestinationMetadata{})
 	schema.ID = ""
 	pkginfo := MetadataSchema()
-	// Destinations derive the minimum from the software's minimum_os, so a
-	// catalog declaration can never lower the installer's requirement.
+	// The software's minimum_os is the one declaration of the minimum macOS.
 	pkginfo.Properties.Delete("minimum_os_version")
 	link := r.Reflect(resourceRelationship{})
 	link.ID = ""

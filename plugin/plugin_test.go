@@ -136,7 +136,7 @@ func TestExecutableProtocol(t *testing.T) {
 		}
 	})
 	t.Run("configuration obeys its declared schema", func(t *testing.T) {
-		request := plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Config: json.RawMessage(`{"fail":"yes"}`)}
+		request := plugin.ReconcileRequest[json.RawMessage]{Method: "plan", Config: json.RawMessage(`{"fail":"yes"}`)}
 		if _, err := plugin.Run(t.Context(), binary, reconcileRequest(t, request)); err == nil || !strings.Contains(err.Error(), "config") {
 			t.Fatalf("invalid configuration error = %v", err)
 		}
@@ -162,7 +162,7 @@ func TestExecutableProtocol(t *testing.T) {
 			<-r.Context().Done()
 		}))
 		defer server.Close()
-		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":7,"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
+		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":8,"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
 		t.Setenv("STEMMA_ECHO_WAIT_URL", server.URL)
 		response, err := plugin.Run(ctx, binary, plugin.Request{Method: "describe"})
 		if !errors.Is(err, context.Canceled) || response.Protocol != plugin.ProtocolVersion || string(response.Output) != `{"changes":[{"kind":"content","field":"installer","action":"upload"}]}` {
@@ -182,7 +182,7 @@ func TestExecutableProtocol(t *testing.T) {
 	})
 	t.Run("reject malformed responses", func(t *testing.T) {
 		for _, response := range []string{
-			`{"protocol":1,"output":{}}`, `{"protocol":"2"}`, `{"protocol":7,"unknown":true}`, `{"protocol":7}{}`, `null`, `{"protocol":7`,
+			`{"protocol":1,"output":{}}`, `{"protocol":"2"}`, `{"protocol":8,"unknown":true}`, `{"protocol":8}{}`, `null`, `{"protocol":8`,
 		} {
 			t.Setenv("STEMMA_ECHO_RESPONSE", response)
 			if _, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"}); err == nil {
@@ -191,7 +191,7 @@ func TestExecutableProtocol(t *testing.T) {
 		}
 	})
 	t.Run("process errors retain partial output without diagnostics", func(t *testing.T) {
-		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":7,"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
+		t.Setenv("STEMMA_ECHO_RESPONSE", `{"protocol":8,"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
 		t.Setenv("STEMMA_ECHO_FAIL", "1")
 		response, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"})
 		if err == nil || len(reconcileResponse(t, response).Changes) != 1 || strings.Contains(err.Error(), "credential") {
@@ -382,10 +382,10 @@ func TestSchemaValidation(t *testing.T) {
 
 func TestServeRejectsMalformedProtocolBeforeHandler(t *testing.T) {
 	for _, input := range []string{
-		`{"protocol":1,"method":"describe"}`, `{"protocol":7,"method":"describe","unknown":true}`,
-		`{"protocol":7,"method":"describe"}{"protocol":7}`, `{"protocol":7`, `{"protocol":7}`,
-		`{"protocol":7,"method":"observe"}`, `{"protocol":"2","method":"describe"}`, `null`, `[]`,
-		`{"protocol":7,"method":"run","operation":"fixture.echo"}`, `{"protocol":7,"method":"describe","input":{}}`,
+		`{"protocol":1,"method":"describe"}`, `{"protocol":8,"method":"describe","unknown":true}`,
+		`{"protocol":8,"method":"describe"}{"protocol":8}`, `{"protocol":8`, `{"protocol":8}`,
+		`{"protocol":8,"method":"observe"}`, `{"protocol":"2","method":"describe"}`, `null`, `[]`,
+		`{"protocol":8,"method":"run","operation":"fixture.echo"}`, `{"protocol":8,"method":"describe","input":{}}`,
 	} {
 		t.Run(input, func(t *testing.T) {
 			registry := plugin.New("fixture", "1")
@@ -418,11 +418,11 @@ func TestServeBounds(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	input := `{"protocol":7,"operation":"fixture.echo","method":"run","input":{"padding":"` + strings.Repeat("x", 4<<20) + `"}}`
+	input := `{"protocol":8,"operation":"fixture.echo","method":"run","input":{"padding":"` + strings.Repeat("x", 4<<20) + `"}}`
 	if err := plugin.Serve(t.Context(), strings.NewReader(input), &out, registry); err == nil || !strings.Contains(err.Error(), "size limit") || called {
 		t.Fatalf("oversized request: error=%v handler called=%v", err, called)
 	}
-	input = `{"protocol":7,"operation":"fixture.echo","method":"run","input":{"value":7}}`
+	input = `{"protocol":8,"operation":"fixture.echo","method":"run","input":{"value":7}}`
 	if err := plugin.Serve(t.Context(), strings.NewReader(input), &out, registry); err == nil || !strings.Contains(err.Error(), "size limit") || !called || out.Len() != 0 {
 		t.Fatalf("oversized response: error=%v handler called=%v output size=%d", err, called, out.Len())
 	}

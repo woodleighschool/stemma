@@ -8,7 +8,7 @@ import (
 )
 
 // ProtocolVersion is the executable protocol understood by this SDK.
-const ProtocolVersion = 7
+const ProtocolVersion = 8
 
 // Request invokes one advertised operation. Describe requests omit Operation and Input.
 type Request struct {
@@ -55,6 +55,8 @@ type Artifact struct {
 
 // ReconcileRequest carries native desired state. Raw JSON retains absent, null,
 // false and empty collections; Config contains provider-owned connection settings.
+// Validate requests omit Config: they check desired state without connecting,
+// and plan and apply check the settings they connect with.
 //
 // A destination keeps no state between runs: it identifies what it manages from
 // Identity and the destination itself. Peers holds declared metadata for each
@@ -73,9 +75,9 @@ type ReconcileRequest[C any] struct {
 	Root      string                     `json:"root,omitempty"`
 }
 
-// MinimumOS is the latest of the installer's requirement, the primary
-// application's and the software's declared floor. Origin names the one that
-// set Version: installer.minimum_os, app.minimum_os or software.minimum_os.
+// MinimumOS is the software's declared minimum_os, or else the latest of the
+// installer's requirement and the primary application's. Origin names the one
+// that set Version: software.minimum_os, installer.minimum_os or app.minimum_os.
 type MinimumOS struct {
 	Version string `json:"version"`
 	Origin  string `json:"origin"`
@@ -171,5 +173,11 @@ type MSIFacts struct {
 	Properties     map[string]string `json:"properties,omitempty"`
 }
 
-func (request ReconcileRequest[C]) validateConfig() error    { return validateConfig(request.Config) }
+func (request ReconcileRequest[C]) validateConfig() error {
+	if request.Method == "validate" {
+		return nil
+	}
+	return validateConfig(request.Config)
+}
+
 func (request *ReconcileRequest[C]) setMethod(method string) { request.Method = method }

@@ -81,7 +81,7 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 	if err != nil {
 		return candidate, err
 	}
-	plans, selected, err := discoverClosure(ctx, s.project, s.ops, roots)
+	plans, selected, err := discoverClosure(ctx, s.project, s.ops, roots, true)
 	if err != nil {
 		return candidate, err
 	}

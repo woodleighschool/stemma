@@ -234,7 +234,7 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "icons/shared-artwork.png") || !strings.Contains(err.Error(), "stemma icon") || applies != 0 {
 		t.Fatalf("missing asset did not stop publication: applies=%d error=%v", applies, err)
 	}
-	if _, err := ValidateProject(t.Context(), options); err == nil || !strings.Contains(err.Error(), "icons/shared-artwork.png") {
+	if _, err := ValidateProject(t.Context(), options, false); err == nil || !strings.Contains(err.Error(), "icons/shared-artwork.png") {
 		t.Fatalf("validation accepted a missing asset: %v", err)
 	}
 	if err := icon.Write(root, "shared-artwork", custom); err != nil {

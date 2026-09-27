@@ -37,14 +37,6 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	if inputErr != nil {
 		return plugin.ReconcileResponse{}, inputErr
 	}
-	root := request.Config.Path
-	err := request.Config.Validate()
-	if err == nil && !filepath.IsAbs(root) && request.Root != "" {
-		root = filepath.Join(request.Root, root)
-	}
-	if err != nil {
-		return plugin.ReconcileResponse{}, err
-	}
 	if request.Method == "validate" && !request.Prepared && request.Artifact.Path == "" {
 		_, err := munki.DecodeDestination(request.Metadata)
 		return plugin.ReconcileResponse{}, err
@@ -58,6 +50,13 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	}
 	if request.Method != "plan" && request.Method != "apply" {
 		return plugin.ReconcileResponse{}, fmt.Errorf("unsupported Munki method %q", request.Method)
+	}
+	if err := request.Config.Validate(); err != nil {
+		return plugin.ReconcileResponse{}, err
+	}
+	root := request.Config.Path
+	if !filepath.IsAbs(root) && request.Root != "" {
+		root = filepath.Join(request.Root, root)
 	}
 	if request.Method == "apply" {
 		if err := os.MkdirAll(root, 0o755); err != nil {

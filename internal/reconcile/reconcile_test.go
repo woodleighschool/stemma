@@ -702,6 +702,30 @@ func TestRunRequiresSourceControl(t *testing.T) {
 	}
 }
 
+func TestRunReadsSourceControlSettingsWhenConnecting(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "stemma.yaml"), []byte(project("/munki")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GITHUB_APP_CLIENT_ID", "Iv1.fixture")
+	t.Setenv("GITHUB_APP_INSTALLATION_ID", "7")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY", "")
+	if err := os.Unsetenv("GITHUB_APP_PRIVATE_KEY"); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := gogit.PlainInit(root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateRemote(&config.RemoteConfig{Name: "origin", URLs: []string{"https://github.com/example/catalog.git"}}); err != nil {
+		t.Fatal(err)
+	}
+	// Loading keeps the settings as written; connecting reads their values.
+	if _, err := Run(t.Context(), Options{ConfigPath: filepath.Join(root, "stemma.yaml")}); err == nil || !strings.Contains(err.Error(), "source_control config") || !strings.Contains(err.Error(), "required reference is missing") {
+		t.Fatalf("source control connected without its settings: %v", err)
+	}
+}
+
 // TestProposalTitlesDescribeMerging covers titles for each kind of proposal:
 // a refresh is only called one when merging changes no destination.
 func TestProposalTitlesDescribeMerging(t *testing.T) {

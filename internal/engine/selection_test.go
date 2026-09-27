@@ -78,7 +78,7 @@ func closure(t *testing.T, project config.Project, ops *operations, selectors ..
 	if err != nil {
 		return nil, err
 	}
-	_, selected, err := discoverClosure(t.Context(), project, ops, roots)
+	_, selected, err := discoverClosure(t.Context(), project, ops, roots, true)
 	return selected, err
 }
 
@@ -215,7 +215,7 @@ func TestBrokenResourcesBlockOnlyTheRunsThatReachThem(t *testing.T) {
 	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), broken) {
 		t.Fatalf("unscoped run skipped a broken root: %v", err)
 	}
-	if _, err := ValidateProject(t.Context(), options); err == nil || !strings.Contains(err.Error(), broken) {
+	if _, err := ValidateProject(t.Context(), options, false); err == nil || !strings.Contains(err.Error(), broken) {
 		t.Fatalf("validation skipped a broken resource: %v", err)
 	}
 	// Suspension keeps the broken resource out of every run that does not
@@ -233,7 +233,7 @@ func TestBrokenResourcesBlockOnlyTheRunsThatReachThem(t *testing.T) {
 		t.Fatalf("explicitly selected suspended resource was not validated: %v", err)
 	}
 	options.Resources = nil
-	if _, err := ValidateProject(t.Context(), options); err == nil || !strings.Contains(err.Error(), broken) {
+	if _, err := ValidateProject(t.Context(), options, false); err == nil || !strings.Contains(err.Error(), broken) {
 		t.Fatalf("validation skipped a suspended resource: %v", err)
 	}
 }

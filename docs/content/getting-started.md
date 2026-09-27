@@ -84,7 +84,8 @@ git diff -- stemma.lock.yaml
 stemma plan
 ```
 
-`validate` checks the documents and operation contracts. `prepare` downloads the
+`validate` checks the documents and operation contracts without credentials or
+downloads. `prepare` downloads the
 installer, inspects it and writes the lockfile. On its first creation, the lockfile
 is untracked: open it directly as well as checking `git status`.
 

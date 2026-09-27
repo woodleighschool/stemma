@@ -46,7 +46,7 @@ func resolveMetadata(software plugin.ResourceResult, native map[string]any, fact
 		return nil, nil, err
 	}
 	metadata := resolved.(map[string]any)
-	authoredRefs, err := publicationReferences(native)
+	declaredRefs, err := publicationReferences(native)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -62,14 +62,14 @@ func resolveMetadata(software plugin.ResourceResult, native map[string]any, fact
 		slices.Sort(result)
 		return slices.Compact(result)
 	}
-	if !slices.Equal(keys(authoredRefs), keys(resolvedRefs)) {
+	if !slices.Equal(keys(declaredRefs), keys(resolvedRefs)) {
 		return nil, nil, fmt.Errorf("metadata expressions must preserve declared resource references")
 	}
 	origins := map[string]string{}
 	var visit func(any, any, string, string)
-	visit = func(authored, resolved any, path, inherited string) {
-		fields, authoredObject := authored.(map[string]any)
-		if !authoredObject && expression.Has(authored) {
+	visit = func(declared, resolved any, path, inherited string) {
+		fields, declaredObject := declared.(map[string]any)
+		if !declaredObject && expression.Has(declared) {
 			inherited = "expression"
 		}
 		if values, ok := resolved.(map[string]any); ok && len(values) > 0 {

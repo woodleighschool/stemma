@@ -79,8 +79,8 @@ func Load(filename string) (Project, error) {
 	return p, p.Validate()
 }
 
-// LoadDocument evaluates Project connection expressions without loading imported
-// resources. Components retain their authored expressions until preparation.
+// LoadDocument reads the Project without loading imported resources.
+// Components and connection settings keep their expressions until use.
 func LoadDocument(filename string) (ProjectDocument, error) {
 	document, _, err := loadDocument(filename)
 	return document, err

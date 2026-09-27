@@ -341,7 +341,7 @@ func TestActiveResourceCannotConsumeSuspendedOutputs(t *testing.T) {
 	testproject.Write(t, filename, manifest)
 	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update", Resources: []string{"MacSoftware/private"}}
 	const want = "resource stemma/v1alpha1/MacSoftware/private input source: depends on suspended resource stemma/v1alpha1/BuildMacPkg/private; suspend stemma/v1alpha1/MacSoftware/private as well"
-	if _, err := ValidateProject(t.Context(), options); err == nil || err.Error() != want {
+	if _, err := ValidateProject(t.Context(), options, false); err == nil || err.Error() != want {
 		t.Fatalf("validation accepted an active consumer of a suspended build: %v", err)
 	}
 	if _, err := Run(t.Context(), options); err == nil || err.Error() != want {

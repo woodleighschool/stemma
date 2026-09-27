@@ -6,7 +6,7 @@ import (
 	"slices"
 )
 
-// ExpressionSchema accepts authored expressions while retaining native constraints
+// ExpressionSchema accepts expressions while retaining native constraints
 // on literals. The evaluated value must still pass the original schema.
 func ExpressionSchema(native json.RawMessage) (json.RawMessage, error) {
 	if len(native) == 0 {

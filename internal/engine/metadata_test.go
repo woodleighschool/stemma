@@ -40,7 +40,7 @@ func TestMetadataExpressionsPreserveNativeValuesAndOrigins(t *testing.T) {
 		}
 	}
 	if origins["pkginfo.literal"] != "explicit" || native["pkginfo"].(map[string]any)["version"] != "{{ facts.application.app.version }}" {
-		t.Fatal("literal provenance or authored metadata changed")
+		t.Fatal("literal provenance or declared metadata changed")
 	}
 }
 
@@ -123,25 +123,29 @@ func TestDestinationPreflightResolvesUnselectedPeersBeforeProviderValidation(t *
 	ops, err := builtins(map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 		calls++
 		if strings.Contains(string(request.Peers[peer]), "{{") || !strings.Contains(string(request.Peers[peer]), "Environment Peer") {
-			t.Fatalf("provider received authored peer metadata: %s", request.Peers[peer])
+			t.Fatalf("provider received declared peer metadata: %s", request.Peers[peer])
 		}
 		return plugin.ReconcileResponse{}, nil
 	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer}); err != nil {
+	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer}, true); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 1 {
 		t.Fatalf("provider validations: %d", calls)
 	}
+	calls = 0
+	if destinations, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer}, false); err != nil || calls != 0 || !destinations[destinationRef{consumer, "repo"}].environment {
+		t.Fatalf("environment peer was validated without the environment: calls=%d, %v", calls, err)
+	}
 	plans[peer].Destinations["repo"]["pkginfo"].(map[string]any)["name"] = "{{ facts.application.app.name }}"
-	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer}); err == nil || !strings.Contains(err.Error(), "requires preparation") {
+	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer}, true); err == nil || !strings.Contains(err.Error(), "requires preparation") {
 		t.Fatalf("unselected peer's required facts were deferred: %v", err)
 	}
 	calls = 0
-	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer, peer}); err != nil {
+	if _, err := planDestinations(t.Context(), project, plans, ops, t.TempDir(), []string{consumer, peer}, true); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 0 {

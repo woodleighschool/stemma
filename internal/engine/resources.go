@@ -16,7 +16,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/expression"
-	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -68,8 +67,10 @@ func selectResources(resources map[string]config.Resource, selectors []string) (
 // consume, and returns the evaluated plans alongside the roots' closure in
 // dependency-first order. Nothing outside the closure is evaluated, so a
 // resource that fails its own operation contract cannot fail a run that does
-// not reach it.
-func discoverClosure(ctx context.Context, p config.Project, ops *operations, roots []string) (map[string]resourcePlan, []string, error) {
+// not reach it. Environment reads the closure's environment values for a run
+// that acquires it; publication peers only lend metadata, so their
+// declarations always stay as written.
+func discoverClosure(ctx context.Context, p config.Project, ops *operations, roots []string, environment bool) (map[string]resourcePlan, []string, error) {
 	kinds := map[plugin.ResourceKind]plugin.Operation{}
 	for _, op := range ops.registry.Descriptor().Operations {
 		if op.Resource != nil {
@@ -80,11 +81,11 @@ func discoverClosure(ctx context.Context, p config.Project, ops *operations, roo
 	// Callers reach evaluate with declared keys: selection resolves roots
 	// against the project, resource inputs name their producer before the walk
 	// follows it, and publication references are checked before they join it.
-	evaluate := func(key string) error {
+	evaluate := func(key string, environment bool) error {
 		if _, evaluated := plans[key]; evaluated {
 			return nil
 		}
-		plan, err := discoverResource(ctx, p, ops, kinds, key, p.Resources[key])
+		plan, err := discoverResource(ctx, p, ops, kinds, key, p.Resources[key], environment)
 		if err != nil {
 			return err
 		}
@@ -101,7 +102,7 @@ func discoverClosure(ctx context.Context, p config.Project, ops *operations, roo
 		if done[key] {
 			return nil
 		}
-		if err := evaluate(key); err != nil {
+		if err := evaluate(key, environment); err != nil {
 			return err
 		}
 		active[key] = true
@@ -138,7 +139,7 @@ func discoverClosure(ctx context.Context, p config.Project, ops *operations, roo
 				if _, declared := p.Resources[peer]; !declared {
 					continue
 				}
-				if err := evaluate(peer); err != nil {
+				if err := evaluate(peer, false); err != nil {
 					return nil, nil, err
 				}
 				queue = append(queue, peer)
@@ -151,8 +152,9 @@ func discoverClosure(ctx context.Context, p config.Project, ops *operations, roo
 // discoverResource evaluates one resource against its registered kind and
 // validates everything the declaration owns: its configuration, the resolvers
 // of its non-resource inputs, the resources it consumes and the destinations it
-// publishes to.
-func discoverResource(ctx context.Context, p config.Project, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, key string, r config.Resource) (resourcePlan, error) {
+// publishes to. Without the environment, the kind discovers the declaration
+// as written and values that hold expressions are checked by schema alone.
+func discoverResource(ctx context.Context, p config.Project, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, key string, r config.Resource, environment bool) (resourcePlan, error) {
 	op, ok := kinds[plugin.ResourceKind{APIVersion: r.APIVersion, Kind: r.Kind}]
 	if !ok {
 		return resourcePlan{}, fmt.Errorf("resource %s: no installed operation registers this apiVersion and kind", key)
@@ -160,7 +162,7 @@ func discoverResource(ctx context.Context, p config.Project, ops *operations, ki
 	if err := ops.check(op.Name, true); err != nil {
 		return resourcePlan{}, err
 	}
-	declaration, bindings, err := resourceDeclaration(r)
+	declaration, bindings, err := resourceDeclaration(r, environment)
 	if err != nil {
 		return resourcePlan{}, fmt.Errorf("resource %s: %w", key, err)
 	}
@@ -170,7 +172,7 @@ func discoverResource(ctx context.Context, p config.Project, ops *operations, ki
 	}
 	var result plugin.ResourceResult
 	schema := op.ConfigSchema
-	if deferredPreparation(r) {
+	if !environment || deferredPreparation(r) {
 		schema, err = config.ExpressionSchema(schema)
 		if err != nil {
 			return resourcePlan{}, err
@@ -194,19 +196,7 @@ func discoverResource(ctx context.Context, p config.Project, ops *operations, ki
 		input.Base = r.Base
 		result.Inputs[inputName] = input
 		if input.Resource == nil {
-			var err error
-			if source.NativeResolver(input.Resolver) {
-				err = source.ValidateInput(input)
-			} else if operation, lookupErr := ops.operation(input.Resolver); lookupErr != nil || operation.Resolver == nil {
-				err = fmt.Errorf("unknown resolver %q", input.Resolver)
-			} else {
-				var settings []byte
-				settings, err = json.Marshal(input.Config)
-				if err == nil {
-					err = ops.call(ctx, input.Resolver, "validate", plugin.ResolveRequest[json.RawMessage]{Config: settings, Base: input.Base}, nil)
-				}
-			}
-			if err != nil {
+			if err := ops.validateInput(ctx, input); err != nil {
 				return resourcePlan{}, fmt.Errorf("resource %s input %s: %w", key, inputName, err)
 			}
 		}
@@ -232,8 +222,8 @@ func discoverResource(ctx context.Context, p config.Project, ops *operations, ki
 		if err := ops.check(d.Operation, false); err != nil {
 			return resourcePlan{}, err
 		}
-		if err := ops.configuration(d.Operation, d.Config); err != nil {
-			return resourcePlan{}, err
+		if err := ops.configuration(d.Operation, d.Config, false); err != nil {
+			return resourcePlan{}, fmt.Errorf("destination %s: %w", destination, err)
 		}
 	}
 	for destination, metadata := range result.Destinations {

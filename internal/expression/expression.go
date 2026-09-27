@@ -421,7 +421,7 @@ func transform(value any, visit func(string) (any, error)) (any, error) {
 	return walk(reflect.ValueOf(value), "$", 0, &budget, true, visit)
 }
 
-func walk(value reflect.Value, path string, depth int, budget *limits, authored bool, visit func(string) (any, error)) (any, error) {
+func walk(value reflect.Value, path string, depth int, budget *limits, checkKeys bool, visit func(string) (any, error)) (any, error) {
 	if err := budget.add(depth, 0); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
@@ -429,7 +429,7 @@ func walk(value reflect.Value, path string, depth int, budget *limits, authored 
 		return nil, nil
 	}
 	if value.Kind() == reflect.Interface {
-		return walk(value.Elem(), path, depth, budget, authored, visit)
+		return walk(value.Elem(), path, depth, budget, checkKeys, visit)
 	}
 	// New Go kinds do not become admissible expression data automatically.
 	//exhaustive:ignore
@@ -452,13 +452,13 @@ func walk(value reflect.Value, path string, depth int, budget *limits, authored 
 		slices.SortFunc(keys, func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) })
 		for _, key := range keys {
 			name := key.String()
-			if authored && hasOpener(name) {
+			if checkKeys && hasOpener(name) {
 				return nil, fmt.Errorf("%s: expressions are not supported in object keys", path)
 			}
 			if err := budget.add(depth, len(name)); err != nil {
 				return nil, fmt.Errorf("%s: %w", path, err)
 			}
-			child, err := walk(value.MapIndex(key), path+"."+name, depth+1, budget, authored, visit)
+			child, err := walk(value.MapIndex(key), path+"."+name, depth+1, budget, checkKeys, visit)
 			if err != nil {
 				return nil, err
 			}
@@ -468,7 +468,7 @@ func walk(value reflect.Value, path string, depth int, budget *limits, authored 
 	case reflect.Slice, reflect.Array:
 		result := make([]any, value.Len())
 		for i := range result {
-			child, err := walk(value.Index(i), fmt.Sprintf("%s[%d]", path, i), depth+1, budget, authored, visit)
+			child, err := walk(value.Index(i), fmt.Sprintf("%s[%d]", path, i), depth+1, budget, checkKeys, visit)
 			if err != nil {
 				return nil, err
 			}

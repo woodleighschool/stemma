@@ -250,7 +250,7 @@ spec:
 
 			install()
 			opts := Options{ConfigPath: filename, CacheDir: store.Dir, Method: "prepare"}
-			if _, err := ValidateProject(t.Context(), opts); err != nil {
+			if _, err := ValidateProject(t.Context(), opts, false); err != nil {
 				t.Fatal(err)
 			}
 			descriptor, err := Catalog(t.Context(), opts)

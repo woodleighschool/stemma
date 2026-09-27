@@ -22,10 +22,12 @@ func parseConfig(data []byte, value any) (map[string]any, error) {
 			return nil, err
 		}
 		spec, _ := document["spec"].(map[string]any)
+		// Connection settings keep their expressions until a command connects.
+		// Plugins resolve now: loading them defines the operation contracts.
 		destinations, _ := spec["destinations"].(map[string]any)
 		for name, value := range destinations {
 			destination, _ := value.(map[string]any)
-			if err := evaluateEnvironment(destination, "config"); err != nil {
+			if err := expression.Check(destination["config"], "env"); err != nil {
 				return nil, fmt.Errorf("destination %s: %w", name, err)
 			}
 		}
@@ -34,7 +36,7 @@ func parseConfig(data []byte, value any) (map[string]any, error) {
 		}
 		reconcile, _ := spec["reconcile"].(map[string]any)
 		control, _ := reconcile["source_control"].(map[string]any)
-		if err := evaluateEnvironment(control, "config"); err != nil {
+		if err := expression.Check(control["config"], "env"); err != nil {
 			return nil, fmt.Errorf("reconcile source_control: %w", err)
 		}
 	}
@@ -52,6 +54,19 @@ func decodeDocument(document map[string]any, value any) error {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(value)
+}
+
+// resolveSettings evaluates the environment expressions in connection settings.
+// A missing variable is an error.
+func resolveSettings(settings map[string]any) (map[string]any, error) {
+	if settings == nil {
+		return nil, nil
+	}
+	resolved, err := expression.Eval(settings, expression.Env())
+	if err != nil {
+		return nil, err
+	}
+	return resolved.(map[string]any), nil
 }
 
 func evaluateEnvironment(object map[string]any, key string) error {

@@ -127,8 +127,10 @@ func TestResourceExpressionsKeepSchedulingReferencesLiteral(t *testing.T) {
 		"{{ {'resolver': 'http', 'url': 'https://example.invalid/app.pkg'} }}",
 	} {
 		resource := config.Resource{APIVersion: "stemma/v1alpha1", Kind: "MacSoftware", Spec: map[string]any{"source": source}}
-		if _, _, err := resourceDeclaration(resource); err == nil {
-			t.Fatal("accepted expression-generated scheduling reference")
+		for _, evaluate := range []bool{false, true} {
+			if _, _, err := resourceDeclaration(resource, evaluate); err == nil {
+				t.Fatalf("accepted expression-generated scheduling reference with evaluate=%t: %v", evaluate, source)
+			}
 		}
 	}
 }
@@ -156,8 +158,10 @@ func TestResourceExpressionsTreatFileNamesAndProviderSettingsAsData(t *testing.T
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := resourceDeclaration(resource); err != nil {
-				t.Fatalf("ordinary data was treated as a scheduling reference: %v", err)
+			for _, evaluate := range []bool{false, true} {
+				if _, _, err := resourceDeclaration(resource, evaluate); err != nil {
+					t.Fatalf("ordinary data was treated as a scheduling reference with evaluate=%t: %v", evaluate, err)
+				}
 			}
 		})
 	}
@@ -191,8 +195,10 @@ func TestResourceExpressionsKeepScopedInputAndOutputReferencesLiteral(t *testing
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := resourceDeclaration(resource); err == nil {
-				t.Fatal("accepted computed scheduling reference")
+			for _, evaluate := range []bool{false, true} {
+				if _, _, err := resourceDeclaration(resource, evaluate); err == nil {
+					t.Fatalf("accepted computed scheduling reference with evaluate=%t", evaluate)
+				}
 			}
 		})
 	}

@@ -171,7 +171,7 @@ func TestContextsAndResultsRemainIndependent(t *testing.T) {
 		t.Fatal("evaluation mutated or reinterpreted context data")
 	}
 	if result["{{ key }}"] != "literal" {
-		t.Fatal("context data was treated as authored syntax")
+		t.Fatal("context data was interpreted as an expression")
 	}
 	if _, err := Eval("{{ facts.call() }}", map[string]any{"facts": map[string]any{"call": func() string { return "unsafe" }}}); err == nil {
 		t.Fatal("accepted a function in a data context")
