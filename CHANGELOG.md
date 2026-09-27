@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0](https://github.com/woodleighschool/stemma/compare/0.4.0...0.5.0) (2026-09-27)
+
+
+### ⚠ BREAKING CHANGES
+
+* declare signing expectations per subject
+
+### Features
+
+* declare signing expectations per subject ([b3ba758](https://github.com/woodleighschool/stemma/commit/b3ba758fdf00bb0e59df200eb72ad380238f240e))
+
+
+### Build System
+
+* **deps:** use upstream macOS platform bindings ([0e2798f](https://github.com/woodleighschool/stemma/commit/0e2798fab42562a3014c536bb9854bef61f83266))
+
 ## [0.4.0](https://github.com/woodleighschool/stemma/compare/0.3.0...0.4.0) (2026-09-27)
 
 
