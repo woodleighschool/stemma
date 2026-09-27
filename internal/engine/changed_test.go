@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -366,24 +365,6 @@ spec:
 }
 
 func TestChangedSinceRefusesWhatItCannotCompare(t *testing.T) {
-	t.Run("plugin", func(t *testing.T) {
-		root, _, prepare := changedCatalog(t)
-		script := "#!/bin/sh\ntouch \"$(dirname \"$0\")/ran\"\n"
-		if err := os.MkdirAll(filepath.Join(root, "new-plugin"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "new-plugin", "plugin"), []byte(script), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		project := strings.Replace(changedProject, "  destinations:\n    repo: {operation", "  plugins:\n    added: {trusted: true, path: new-plugin}\n  destinations:\n    repo: {operation", 1)
-		writeFileText(t, filepath.Join(root, "stemma.yaml"), project)
-		if _, err := prepare(); err == nil || !strings.Contains(err.Error(), "plugin added changed since HEAD; plugin changes require trusted verification") {
-			t.Fatalf("a new plugin was not refused: %v", err)
-		}
-		if _, err := os.Stat(filepath.Join(root, "new-plugin", "ran")); !errors.Is(err, os.ErrNotExist) {
-			t.Fatal("the refused plugin ran")
-		}
-	})
 	t.Run("unreadable catalog", func(t *testing.T) {
 		root, _, prepare := changedCatalog(t)
 		filename := filepath.Join(root, "stemma.lock.yaml")
@@ -394,7 +375,7 @@ func TestChangedSinceRefusesWhatItCannotCompare(t *testing.T) {
 		writeFile(t, filename, []byte("version: 2\ninputs: {}\n"))
 		commit(t, root)
 		writeFile(t, filename, reviewed)
-		if _, err := prepare(); err == nil || !strings.Contains(err.Error(), "requires trusted verification") {
+		if _, err := prepare(); err == nil || !strings.Contains(err.Error(), "verify this change with an explicit preparation run") {
 			t.Fatalf("an unreadable catalog was compared: %v", err)
 		}
 	})

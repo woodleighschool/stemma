@@ -66,7 +66,7 @@ metadata: {name: evidence}
 spec:
   imports: ['*.software.yaml']
   plugins:
-    provider: {trusted: true, path: local-plugin}
+    provider: {path: local-plugin}
   destinations:
     repo: {operation: munki, config: {path: repo}}
 ---
@@ -181,7 +181,6 @@ metadata:
 spec:
   plugins:
     provider:
-      trusted: true
       image: registry.example/plugins/echo:v1
   destinations:
     local:
@@ -440,7 +439,7 @@ metadata: {name: stale}
 spec:
   imports: ['*.software.yaml']
   plugins:
-    provider: {trusted: true, path: local-plugin}
+    provider: {path: local-plugin}
   destinations:
     remote: {operation: echo.reconcile}
 ---
@@ -488,7 +487,7 @@ spec:
   components:
     app: {destinations: {repo: {pkginfo: {catalogs: [testing]}}}}
   plugins:
-    vendor: {path: plugins/vendor, trusted: true}
+    vendor: {path: plugins/vendor}
   destinations:
     repo: {operation: munki, config: {path: repo}}
 ---

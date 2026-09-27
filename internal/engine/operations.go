@@ -29,7 +29,7 @@ import (
 )
 
 // Contracts are what a project can declare: its components and destination
-// connections, and the operations Stemma and its trusted plugins provide.
+// connections, and the operations Stemma and its plugins provide.
 type Contracts struct {
 	Project    string
 	Components map[string]map[string]any
@@ -44,7 +44,7 @@ type Contracts struct {
 // ProjectContracts describes what a project can declare from its project
 // document alone, so resource documents that do not load yet leave it
 // describable. A plugin that does not load is reported beside the operations
-// that did. Trusted plugin discovery executes code.
+// that did. Plugin discovery executes code.
 func ProjectContracts(ctx context.Context, opts Options) (result Contracts, err error) {
 	p, err := config.LoadProjectDocument(opts.ConfigPath)
 	if err != nil {

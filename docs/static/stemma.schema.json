@@ -943,7 +943,7 @@
           "description": "Destination-specific connection configuration. Reference credential environment variables instead of embedding secrets."
         },
         "operation": {
-          "description": "Registered destination operation, such as munki, intune or jamf. Trusted executable plugins register their own operation names.",
+          "description": "Registered destination operation, such as munki, intune or jamf. Executable plugins register their own operation names.",
           "type": "string"
         }
       },
@@ -8084,18 +8084,6 @@
             }
           ],
           "description": "Local executable or directory. Relative paths resolve from the Project."
-        },
-        "trusted": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-              "type": "string"
-            }
-          ],
-          "description": "Consent to execute this plugin with the caller's privileges."
         }
       },
       "propertyNames": {
@@ -8103,9 +8091,6 @@
           "pattern": "\\{\\{"
         }
       },
-      "required": [
-        "trusted"
-      ],
       "type": "object"
     },
     "ProjectDocument": {
@@ -8228,7 +8213,7 @@
           "additionalProperties": {
             "$ref": "#/$defs/Plugin"
           },
-          "description": "Trusted local executables or OCI plugin images.",
+          "description": "Local executables or OCI plugin images.",
           "type": "object"
         },
         "reconcile": {

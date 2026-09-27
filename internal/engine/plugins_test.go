@@ -36,7 +36,7 @@ metadata: {name: plugins}
 spec:
   imports: ['*.software.yaml']
   plugins:
-    provider: {trusted: true, path: local-plugin}
+    provider: {path: local-plugin}
 ---
 apiVersion: example.test/v1
 kind: ExternalInstaller

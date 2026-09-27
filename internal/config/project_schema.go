@@ -53,8 +53,8 @@ func LoadProjectDocument(filename string) (Project, error) {
 		}
 	}
 	for name, provider := range p.Plugins {
-		if !namePattern.MatchString(name) || !provider.Trusted {
-			return p, fmt.Errorf("plugin %s: requires a valid name and trusted: true", name)
+		if !namePattern.MatchString(name) {
+			return p, fmt.Errorf("invalid plugin name %q", name)
 		}
 		if err := provider.Validate(); err != nil {
 			return p, fmt.Errorf("plugin %s: %w", name, err)

@@ -3,7 +3,9 @@ package mcpserver
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -154,14 +156,26 @@ func TestToolsReportFailuresAsToolErrors(t *testing.T) {
 	}
 }
 
-func TestCheckRejectsPluginChangesBeforeLoading(t *testing.T) {
+func TestCheckAcceptsPluginChanges(t *testing.T) {
 	root := committedProject(t)
 	session := connect(t, root)
-	changed := strings.Replace(project, "  components:", "  plugins:\n    draft: {path: missing-plugin, trusted: true}\n  components:", 1)
+	binary := filepath.Join(root, "local-plugin", "plugin")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../plugin/testdata/echo")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build plugin: %v\n%s", err, output)
+	}
+	changed := strings.Replace(project, "  components:", "  plugins:\n    provider: {path: local-plugin}\n  components:", 1)
+	changed = strings.Replace(changed, "operation: munki, config: {path: repo}", "operation: echo.reconcile", 1)
 	write(t, filepath.Join(root, "stemma.yaml"), changed)
+	if _, err := engine.UpdatePlugins(t.Context(), engine.Options{ConfigPath: filepath.Join(root, "stemma.yaml"), CacheDir: t.TempDir()}, nil); err != nil {
+		t.Fatal(err)
+	}
 	var result checkResult
-	decodeResult(t, callFailing(t, session, "check", map[string]any{"since": "HEAD"}), &result)
-	if result.Valid || !strings.Contains(result.Error, "plugin draft changed since HEAD") {
+	call(t, session, "check", map[string]any{"since": "HEAD"}, &result)
+	if !result.Valid || len(result.Resources) != 0 {
 		t.Fatalf("check = %+v", result)
 	}
 }

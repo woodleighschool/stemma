@@ -175,7 +175,6 @@ spec:
   plugins:
     catalog-tools:
       path: plugins/catalog-tools
-      trusted: true
 ```
 
 With the `munki` connection from [getting started](getting-started.md), add a

@@ -177,7 +177,6 @@ func (c catalog) check(ctx context.Context, _ *mcp.CallToolRequest, in checkInpu
 	opts := c.options("prepare")
 	opts.ChangedSince = in.Since
 	report, err := engine.Run(ctx, opts)
-	// Changed-since rejects plugin changes before any of their code runs.
 	if err == nil {
 		_, err = engine.ValidateProject(ctx, c.options(""), false)
 	}

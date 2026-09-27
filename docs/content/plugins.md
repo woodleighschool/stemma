@@ -18,7 +18,6 @@ spec:
   plugins:
     catalog-tools:
       path: plugins/catalog-tools
-      trusted: true
 ```
 
 `path` selects an executable or a directory containing `plugin` (`plugin.exe` on
@@ -46,7 +45,6 @@ spec:
   plugins:
     catalog-tools:
       image: ghcr.io/example/catalog-tools:1.0.0@sha256:0f5c…
-      trusted: true
 ```
 
 These are executable bundles, not arbitrary container images, and need no
@@ -132,7 +130,8 @@ native metadata in the software document.
 `stemma schema --offline --output-file stemma.schema.json` includes their schemas
 for your editor, and the `describe` tool of `stemma mcp` outlines them for agents.
 
-`trusted: true` authorises execution with your privileges. Workspaces isolate
-working files but are not a security sandbox. Review plugin code and lock changes
-as executable code. See [creating plugins](writing-plugins.md) for the SDK and wire
+Declaring a plugin selects executable code that runs with the caller’s privileges,
+including when loading contracts for validation. Workspaces isolate working files
+but are not a security sandbox. Review plugin declarations and lock changes as
+executable dependencies. See [creating plugins](writing-plugins.md) for the SDK and wire
 contract.

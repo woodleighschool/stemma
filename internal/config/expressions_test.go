@@ -13,8 +13,7 @@ func TestConnectionExpressionsResolveNativeValuesWhenUsed(t *testing.T) {
 	t.Setenv("STEMMA_TEST_DATA", "{{ facts.unavailable }}")
 	p, err := parseTest(t, []byte(projectFixture+`  plugins:
     fixture:
-      trusted: '{{ true }}'
-      path: plugins/fixture
+      path: '{{ "plugins/fixture" }}'
   destinations:
     repo:
       operation: fixture.publish
@@ -29,7 +28,7 @@ func TestConnectionExpressionsResolveNativeValuesWhenUsed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !p.Plugins["fixture"].Trusted {
+	if p.Plugins["fixture"].Path != "plugins/fixture" {
 		t.Fatal("plugin declaration did not resolve while loading")
 	}
 	if p.Destinations["repo"].Config["token"] != "{{ env.STEMMA_TEST_VALUE }}" {
@@ -113,7 +112,7 @@ func TestExpressionsRejectInvalidTypesAndDynamicIdentities(t *testing.T) {
 		"resource identity":       strings.Replace(base, "name: app", "name: '{{ \"app\" }}'", 1),
 		"import":                  strings.Replace(base, "'*.software.yaml'", "'{{ \"*.software.yaml\" }}'", 1),
 		"inheritance":             base + "  extends: '{{ \"base\" }}'\n",
-		"plugin boolean":          strings.Replace(base, "  imports:", "  plugins:\n    fixture:\n      trusted: '{{ \"false\" }}'\n      path: fixture\n  imports:", 1),
+		"plugin path":             strings.Replace(base, "  imports:", "  plugins:\n    fixture:\n      path: '{{ false }}'\n  imports:", 1),
 		"connection late context": strings.Replace(base, "  imports:", "  destinations:\n    repo:\n      operation: fixture.publish\n      config:\n        token: '{{ facts.app.version }}'\n  imports:", 1),
 	} {
 		t.Run(name, func(t *testing.T) {

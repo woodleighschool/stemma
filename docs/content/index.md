@@ -51,7 +51,7 @@ AutoPkg. These are useful starting points when creating a Stemma catalog:
 | Package construction recipe           | `BuildMacPkg`, when you need to construct a payload                         |
 | Munki import recipe                   | Native destination settings on `MacSoftware`                                |
 | Shared recipe inputs and overrides    | Optional components and explicit values                                     |
-| Custom processors                     | Trusted plugins registering operations or resource kinds                    |
+| Custom processors                     | Plugins registering operations or resource kinds                            |
 
 An AutoPkg processor chain need not become a chain of Stemma documents. A vendor
 application normally needs one software document. Custom package construction is

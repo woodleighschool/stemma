@@ -31,7 +31,7 @@ func newServer(opts Options) *mcp.Server {
 	openWorld := true
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "describe",
-		Description: "Describe what this catalog can declare, from the installed Stemma and its trusted plugins. " +
+		Description: "Describe what this catalog can declare, from the installed Stemma and its plugins. " +
 			"Without arguments: resource kinds, input resolvers with the values their fields accept, destinations and Project components. " +
 			"Name a kind, resolver or destination for its fields, one line each with * marking required fields, and a field to narrow to one nested block. " +
 			"A source names its resolver with resolver:, except that a url alone uses http and a path alone uses file.",
@@ -57,7 +57,7 @@ func newServer(opts Options) *mcp.Server {
 	}, tools.icon)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "check",
-		Description: "Check the catalog as pull requests do: reject plugin changes, prepare affected resources " +
+		Description: "Check the catalog as pull requests do: prepare affected resources " +
 			"from the lockfile since a Git revision, then validate every document.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld},
 	}, tools.check)

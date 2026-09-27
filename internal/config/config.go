@@ -47,7 +47,7 @@ type ProjectSpec struct {
 	Imports      []string                  `yaml:"imports" json:"imports" jsonschema:"minItems=1" jsonschema_description:"Project-relative resource document paths or globs, such as software/**/*.yaml. Every pattern must match."`
 	Components   map[string]map[string]any `yaml:"components,omitempty" json:"components,omitempty" jsonschema_description:"Reusable software defaults. Maps merge recursively; lists and null replace inherited values."`
 	Destinations map[string]Destination    `yaml:"destinations,omitempty" json:"destinations,omitempty" jsonschema_description:"Named connections, separate from each resource document's native destination metadata."`
-	Plugins      map[string]Plugin         `yaml:"plugins,omitempty" json:"plugins,omitempty" jsonschema_description:"Trusted local executables or OCI plugin images."`
+	Plugins      map[string]Plugin         `yaml:"plugins,omitempty" json:"plugins,omitempty" jsonschema_description:"Local executables or OCI plugin images."`
 	Reconcile    *Reconcile                `yaml:"reconcile,omitempty" json:"reconcile,omitempty" jsonschema_description:"How stemma reconcile integrates the repository holding this project with its source-control host."`
 }
 
@@ -86,7 +86,7 @@ func (r Resource) Reference() plugin.ResourceReference {
 
 // Destination keeps connection settings separate from native software metadata.
 type Destination struct {
-	Operation string         `yaml:"operation" json:"operation" jsonschema_description:"Registered destination operation, such as munki, intune or jamf. Trusted executable plugins register their own operation names."`
+	Operation string         `yaml:"operation" json:"operation" jsonschema_description:"Registered destination operation, such as munki, intune or jamf. Executable plugins register their own operation names."`
 	Config    map[string]any `yaml:"config,omitempty" json:"config,omitempty" jsonschema_description:"Destination-specific connection configuration. Reference credential environment variables instead of embedding secrets."`
 }
 
@@ -96,9 +96,8 @@ func (d Destination) ResolvedConfig() (map[string]any, error) {
 	return resolveSettings(d.Config)
 }
 
-// Plugin selects trusted executable code independently of its distribution.
+// Plugin selects executable code independently of its distribution.
 type Plugin struct {
-	Trusted    bool   `yaml:"trusted" json:"trusted" jsonschema_description:"Consent to execute this plugin with the caller's privileges."`
 	Image      string `yaml:"image,omitempty" json:"image,omitempty" jsonschema_description:"OCI registry reference with a tag or digest."`
 	Path       string `yaml:"path,omitempty" json:"path,omitempty" jsonschema_description:"Local executable or directory. Relative paths resolve from the Project."`
 	Entrypoint string `yaml:"entrypoint,omitempty" json:"entrypoint,omitempty" jsonschema_description:"Executable within a local directory. Defaults to plugin, or plugin.exe on Windows."`
@@ -259,8 +258,8 @@ func (p Project) Validate() error {
 		return errors.New("reconcile: source_control.type must name a provider")
 	}
 	for name, plugin := range p.Plugins {
-		if !namePattern.MatchString(name) || !plugin.Trusted {
-			return fmt.Errorf("plugin %s: requires a valid name and trusted: true", name)
+		if !namePattern.MatchString(name) {
+			return fmt.Errorf("invalid plugin name %q", name)
 		}
 		if err := plugin.Validate(); err != nil {
 			return fmt.Errorf("plugin %s: %w", name, err)

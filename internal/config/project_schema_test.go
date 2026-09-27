@@ -102,7 +102,6 @@ spec:
         token: '{{ env.STEMMA_MISSING_SCHEMA_TEST_TOKEN }}'
   plugins:
     fixture:
-      trusted: true
       image: '{{ env.STEMMA_SCHEMA_TEST_IMAGE }}'
 `)
 	project, err := LoadProjectDocument(filepath.Join(root, "stemma.yaml"))
@@ -214,5 +213,20 @@ func TestProjectSchemaComposesTypedResolvers(t *testing.T) {
 	})
 	if !found {
 		t.Fatal("typed resolver schema missing from editor")
+	}
+}
+
+func TestPluginDeclarationsRejectUnknownFields(t *testing.T) {
+	for _, field := range []string{"trusted: true", "typo: true"} {
+		t.Run(field, func(t *testing.T) {
+			root := t.TempDir()
+			writeConfig(t, root, "stemma.yaml", "apiVersion: stemma/v1alpha1\nkind: Project\nmetadata: {name: fixture}\nspec:\n  plugins:\n    fixture: {path: fixture, "+field+"}\n")
+			path := filepath.Join(root, "stemma.yaml")
+			for _, load := range []func(string) (Project, error){Load, LoadProjectDocument} {
+				if _, err := load(path); err == nil {
+					t.Fatalf("accepted plugin field %s", field)
+				}
+			}
+		})
 	}
 }

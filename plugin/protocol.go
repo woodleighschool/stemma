@@ -57,7 +57,7 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, registry *Registry)
 	return stream.send(wireResponse{Response: response})
 }
 
-// Run invokes an explicitly selected trusted executable without a shell or a
+// Run invokes an explicitly selected executable without a shell or a
 // sandbox. Cancellation ends the process. Partial output survives
 // operation/process errors.
 func Run(ctx context.Context, executable string, request Request) (Response, error) {

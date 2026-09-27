@@ -6,10 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"maps"
+	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/expression"
@@ -24,6 +22,8 @@ import (
 // inputs it declares and their reviewed entries.
 type preparation struct {
 	Operation string                  `json:"operation"`
+	Identity  string                  `json:"identity"`
+	Resolvers map[string]string       `json:"resolvers,omitempty"`
 	Config    json.RawMessage         `json:"config"`
 	Inputs    map[string]plugin.Input `json:"inputs"`
 	Locked    map[string]source.Entry `json:"locked,omitempty"`
@@ -33,13 +33,20 @@ type preparation struct {
 type catalog struct {
 	project config.Project
 	lock    lockfile.File
+	ops     *operations
 	changed []string
 }
 
 // catalogAt reads the catalog as it was where the histories of rev and HEAD
 // meet. A commit without the catalog declares no resources.
-func catalogAt(ctx context.Context, root, name, rev string) (catalog, error) {
-	repo, err := git.Open(root)
+func (s *session) catalogAt(ctx context.Context, opts Options) (_ catalog, err error) {
+	rev := opts.ChangedSince
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("catalog at %s: %w; verify this change with an explicit preparation run", rev, err)
+		}
+	}()
+	repo, err := git.Open(s.root)
 	if err != nil {
 		return catalog{}, err
 	}
@@ -47,7 +54,7 @@ func catalogAt(ctx context.Context, root, name, rev string) (catalog, error) {
 	if err != nil {
 		return catalog{}, err
 	}
-	dir, err := filepath.Rel(repo.Dir, root)
+	dir, err := filepath.Rel(repo.Dir, s.root)
 	if err != nil {
 		return catalog{}, err
 	}
@@ -55,7 +62,7 @@ func catalogAt(ctx context.Context, root, name, rev string) (catalog, error) {
 	if err != nil {
 		return catalog{}, err
 	}
-	defer func() { _ = worktree.Remove() }()
+	s.closers = append(s.closers, worktree.Remove)
 	base := filepath.Join(worktree.Dir, dir)
 	var result catalog
 	changed, err := repo.ChangedPaths(ctx, commit)
@@ -69,9 +76,9 @@ func catalogAt(ctx context.Context, root, name, rev string) (catalog, error) {
 		}
 		result.changed = append(result.changed, filepath.ToSlash(relative))
 	}
-	result.project, err = config.Load(filepath.Join(base, name))
+	result.project, err = config.Load(filepath.Join(base, filepath.Base(opts.ConfigPath)))
 	if errors.Is(err, fs.ErrNotExist) {
-		return result, nil
+		err = nil
 	}
 	if err == nil {
 		result.lock, err = lockfile.Load(lockfile.Filename(base))
@@ -80,31 +87,14 @@ func catalogAt(ctx context.Context, root, name, rev string) (catalog, error) {
 		}
 	}
 	if err != nil {
-		return catalog{}, fmt.Errorf("catalog at %s: %w; a change this Stemma cannot compare requires trusted verification", rev, err)
+		return catalog{}, err
 	}
-	return result, nil
-}
-
-// reviewedPlugins fails when the plugins the catalog declares or locks differ
-// from those at rev. It runs before any plugin loads: plugin code runs with
-// the runner's privileges, so a new plugin needs trusted verification.
-func reviewedPlugins(root string, p config.Project, base catalog, rev string) error {
-	locked, err := lockfile.Load(lockfile.Filename(root))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+	work, err := os.MkdirTemp(s.work, "base-operations-*")
+	if err != nil {
+		return catalog{}, err
 	}
-	names := slices.Concat(slices.Collect(maps.Keys(p.Plugins)), slices.Collect(maps.Keys(base.project.Plugins)), slices.Collect(maps.Keys(locked.Plugins)), slices.Collect(maps.Keys(base.lock.Plugins)))
-	slices.Sort(names)
-	var changed []string
-	for _, name := range slices.Compact(names) {
-		if p.Plugins[name] != base.project.Plugins[name] || config.Fingerprint(locked.Plugins[name]) != config.Fingerprint(base.lock.Plugins[name]) {
-			changed = append(changed, name)
-		}
-	}
-	if len(changed) > 0 {
-		return fmt.Errorf("plugin %s changed since %s; plugin changes require trusted verification", strings.Join(changed, ", "), rev)
-	}
-	return nil
+	result.ops, err = loadOperations(ctx, result.project, source.New(s.store, base, opts.Lock.Offline), work, opts.Handlers, false)
+	return result, err
 }
 
 // changedSince returns the resources whose preparation differs from the
@@ -120,6 +110,7 @@ func changedSince(ctx context.Context, s *session, rev string) (roots []string, 
 		return nil, err
 	}
 	kinds := resourceKinds(s.ops)
+	baseKinds := resourceKinds(s.base.ops)
 	current := map[string]preparation{}
 	inputs := map[string]map[string]plugin.Input{}
 	consumers := map[string][]string{}
@@ -150,9 +141,11 @@ func changedSince(ctx context.Context, s *session, rev string) (roots []string, 
 			affected[key] = true
 			continue
 		}
-		// A declaration the current kinds cannot read is a change.
-		reviewed, err := preparationOf(ctx, s.ops, kinds, previous, s.base.lock)
-		if err != nil || config.Fingerprint(prepared) != config.Fingerprint(reviewed) {
+		reviewed, err := preparationOf(ctx, s.base.ops, baseKinds, previous, s.base.lock)
+		if err != nil {
+			return nil, fmt.Errorf("resource %s at %s: %w", key, rev, err)
+		}
+		if config.Fingerprint(prepared) != config.Fingerprint(reviewed) {
 			affected[key] = true
 			continue
 		}
@@ -197,7 +190,7 @@ func changedSince(ctx context.Context, s *session, rev string) (roots []string, 
 func preparationOf(ctx context.Context, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, r config.Resource, lock lockfile.File) (preparation, error) {
 	op, ok := kinds[plugin.ResourceKind{APIVersion: r.APIVersion, Kind: r.Kind}]
 	if !ok {
-		return preparation{}, errors.New("no installed operation registers this apiVersion and kind")
+		return preparation{}, ops.missing("no installed operation registers this apiVersion and kind")
 	}
 	declaration, _, err := resourceDeclaration(r, false)
 	if err != nil {
@@ -211,10 +204,20 @@ func preparationOf(ctx context.Context, ops *operations, kinds map[plugin.Resour
 	if err := ops.call(ctx, op.Name, "discover", plugin.ResourceRequest[json.RawMessage]{Config: encoded, Identity: r.Reference()}, &result); err != nil {
 		return preparation{}, err
 	}
-	prepared := preparation{Operation: op.Name, Config: result.Config, Inputs: map[string]plugin.Input{}, Locked: lock.Inputs[r.Reference().Key()]}
+	prepared := preparation{Operation: op.Name, Identity: ops.identity[op.Name], Resolvers: map[string]string{}, Config: result.Config, Inputs: map[string]plugin.Input{}, Locked: lock.Inputs[r.Reference().Key()]}
 	for name, input := range result.Inputs {
 		input.Base = r.Base
 		prepared.Inputs[name] = input
+		if input.Resource == nil && !source.NativeResolver(input.Resolver) {
+			resolver, err := ops.lookup(input.Resolver, "resolver")
+			if err != nil {
+				return preparation{}, err
+			}
+			if resolver.Resolver == nil {
+				return preparation{}, fmt.Errorf("unknown resolver %q", input.Resolver)
+			}
+			prepared.Resolvers[input.Resolver] = ops.identity[input.Resolver]
+		}
 	}
 	return prepared, nil
 }

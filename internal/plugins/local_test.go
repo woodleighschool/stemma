@@ -25,7 +25,7 @@ func TestLocalSnapshot(t *testing.T) {
 			if err := os.WriteFile(path, []byte("original executable"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			declaration := config.Plugin{Path: "run", Trusted: true}
+			declaration := config.Plugin{Path: "run"}
 			if tree {
 				declaration.Path = root
 				declaration.Entrypoint = "run"
@@ -106,7 +106,7 @@ func TestImageTagsLockTheirIndex(t *testing.T) {
 	s := New(cache, false)
 	s.platform = ocispec.Platform{OS: "linux", Architecture: "amd64"}
 	s.registry = func(string) (oras.ReadOnlyTarget, error) { return target, nil }
-	declaration := config.Plugin{Image: image, Trusted: true}
+	declaration := config.Plugin{Image: image}
 	if _, _, err := s.Load(t.Context(), "", declaration, Entry{}, false); err == nil || !strings.Contains(err.Error(), "not locked") {
 		t.Fatalf("unlocked tag loaded: %v", err)
 	}
@@ -126,11 +126,11 @@ func TestImageTagsLockTheirIndex(t *testing.T) {
 	if _, refreshed, err := s.Load(t.Context(), "", declaration, Entry{}, true); err != nil || refreshed.Digest != secondIndex.Digest.String() {
 		t.Fatalf("refresh kept the old index: %+v %v", refreshed, err)
 	}
-	other := config.Plugin{Image: "registry.example/plugin:main", Trusted: true}
+	other := config.Plugin{Image: "registry.example/plugin:main"}
 	if _, _, err := s.Load(t.Context(), "", other, entry, false); err == nil || !strings.Contains(err.Error(), "not locked") {
 		t.Fatalf("another tag used the old entry: %v", err)
 	}
-	pinned := config.Plugin{Image: "registry.example/plugin:dev@" + firstIndex.Digest.String(), Trusted: true}
+	pinned := config.Plugin{Image: "registry.example/plugin:dev@" + firstIndex.Digest.String()}
 	bundle, entry, err = s.Load(t.Context(), "", pinned, Entry{}, false)
 	if err != nil || bundle.Manifest != first.Digest.String() || entry != (Entry{}) {
 		t.Fatalf("declared digest needed a lock entry: %+v %+v %v", bundle, entry, err)

@@ -169,7 +169,7 @@ func TestArtifactWithoutInputLocksKeepsPluginsLocked(t *testing.T) {
 	}
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
-	testproject.Write(t, filename, strings.Replace(policyProject, "  imports:\n", "  plugins:\n    probe:\n      path: plugins/probe\n      trusted: true\n  imports:\n", 1))
+	testproject.Write(t, filename, strings.Replace(policyProject, "  imports:\n", "  plugins:\n    probe:\n      path: plugins/probe\n  imports:\n", 1))
 	if err := os.MkdirAll(filepath.Join(root, "plugins"), 0o755); err != nil {
 		t.Fatal(err)
 	}

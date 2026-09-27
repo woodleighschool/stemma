@@ -44,14 +44,6 @@ func open(ctx context.Context, opts Options, resolvePlugins bool) (_ *session, e
 	if err != nil {
 		return nil, err
 	}
-	if opts.ChangedSince != "" {
-		if s.base, err = catalogAt(ctx, s.root, filepath.Base(opts.ConfigPath), opts.ChangedSince); err != nil {
-			return nil, err
-		}
-		if err := reviewedPlugins(s.root, p, s.base, opts.ChangedSince); err != nil {
-			return nil, err
-		}
-	}
 	unlock, err := lockfile.Lock(ctx, s.root)
 	if err != nil {
 		return nil, err
@@ -73,6 +65,11 @@ func open(ctx context.Context, opts Options, resolvePlugins bool) (_ *session, e
 	}
 	work := s.work
 	s.closers = append(s.closers, func() error { return os.RemoveAll(work) })
+	if opts.ChangedSince != "" {
+		if s.base, err = s.catalogAt(ctx, opts); err != nil {
+			return nil, err
+		}
+	}
 	s.ops, err = loadOperations(ctx, p, s.manager, work, opts.Handlers, resolvePlugins)
 	if err != nil {
 		return nil, err

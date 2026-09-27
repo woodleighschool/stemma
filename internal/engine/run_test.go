@@ -183,7 +183,7 @@ func TestNativeValidationBeforeAcquisition(t *testing.T) {
 func TestOpenReleasesAPartialSessionOnFailure(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
-	manifest := strings.Replace(policyProject, "  imports:\n", "  plugins:\n    missing:\n      path: plugins/missing\n      trusted: true\n  imports:\n", 1)
+	manifest := strings.Replace(policyProject, "  imports:\n", "  plugins:\n    missing:\n      path: plugins/missing\n  imports:\n", 1)
 	testproject.Write(t, filename, manifest)
 	if err := os.WriteFile(filepath.Join(root, "stemma.lock.yaml"), []byte("version: [\n"), 0o644); err != nil {
 		t.Fatal(err)

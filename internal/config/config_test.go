@@ -10,18 +10,16 @@ func TestPluginSources(t *testing.T) {
 		plugin Plugin
 		valid  bool
 	}{
-		{Plugin{Image: "ghcr.io/example/plugin:v1", Trusted: true}, true},
-		{Plugin{Image: "ghcr.io/example/plugin@sha256:" + strings.Repeat("a", 64), Trusted: true}, true},
-		{Plugin{Image: "ghcr.io/example/plugin", Trusted: true}, false},
-		{Plugin{Image: "https://ghcr.io/example/plugin:v1", Trusted: true}, false},
-		{Plugin{Image: "ghcr.io/example/plugin:v1"}, false},
-		{Plugin{Path: "plugins/probe", Trusted: true}, true},
-		{Plugin{Path: "/opt/plugins/probe", Trusted: true}, true},
-		{Plugin{Path: "plugins/probe", Entrypoint: "bin/run", Trusted: true}, true},
-		{Plugin{Path: "plugins/probe", Entrypoint: "../run", Trusted: true}, false},
-		{Plugin{Path: "plugins/probe", Image: "ghcr.io/example/plugin:v1", Trusted: true}, false},
-		{Plugin{Path: "plugins/probe"}, false},
-		{Plugin{Trusted: true}, false},
+		{Plugin{Image: "ghcr.io/example/plugin:v1"}, true},
+		{Plugin{Image: "ghcr.io/example/plugin@sha256:" + strings.Repeat("a", 64)}, true},
+		{Plugin{Image: "ghcr.io/example/plugin"}, false},
+		{Plugin{Image: "https://ghcr.io/example/plugin:v1"}, false},
+		{Plugin{Path: "plugins/probe"}, true},
+		{Plugin{Path: "/opt/plugins/probe"}, true},
+		{Plugin{Path: "plugins/probe", Entrypoint: "bin/run"}, true},
+		{Plugin{Path: "plugins/probe", Entrypoint: "../run"}, false},
+		{Plugin{Path: "plugins/probe", Image: "ghcr.io/example/plugin:v1"}, false},
+		{Plugin{}, false},
 	} {
 		resource := Resource{APIVersion: "stemma/v1alpha1", Kind: "MacSoftware", Metadata: Metadata{Name: "fixture"}, Spec: map[string]any{}}
 		project := Project{Project: "test", Resources: map[string]Resource{resource.Reference().Key(): resource}, Plugins: map[string]Plugin{"fixture": test.plugin}}

@@ -36,17 +36,21 @@ entry is missing or stale does not load.
 
 `prepare --changed-since REV` prepares only the resources whose preparation
 differs from the catalog at the commit where `REV` and `HEAD` meet: their source
-and preparation settings after components merge, their lock entries, and Git
-changes under declared local input paths. Destination metadata does not select
+and preparation settings after components merge, their lock entries, resource
+and input resolver operation identities, and Git changes under declared local
+input paths. Destination metadata does not select
 resources. Local paths containing environment expressions or outside the Git
 root are selected only by declaration and lock changes. Plugin resolvers with
 local inputs are selected for any changed project file because they do not
 declare which files they read. New resources count as changed, and a changed build selects
 the resources that consume it. Suspended resources stay out. The lockfile must
 hold entries for exactly the declared inputs; entry and environment values are
-read only for the resources the command prepares. Changed plugins, and a catalog
-at `REV` that this Stemma cannot read, fail before any plugin runs: they require
-trusted verification. The checkout needs its history back to that commit.
+read only for the resources the command prepares. Each catalog is interpreted by
+the plugins its declarations and lock select, so comparison can execute both base
+and current plugin code. Destination operation identities do not select resources
+for preparation. A base catalog or required operation that cannot be loaded or
+compared fails the comparison; verify such a change with an explicit preparation
+run. The checkout needs its history back to that commit.
 
 ```sh
 stemma prepare --changed-since origin/main
