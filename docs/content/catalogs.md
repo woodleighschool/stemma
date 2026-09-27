@@ -1,9 +1,17 @@
-# Writing a catalog
+# Starting a catalog
 
 A catalog is a Git repository with a `stemma.yaml` Project and imported resource
 documents. The Project owns composition, named destination connections, plugins
 and the [source-control integration](reconcile.md) of its repository. Resource
 documents describe individual builds or software items.
+
+Start with [our catalog](https://github.com/woodleighschool/stemma-catalog): its
+[Project](https://github.com/woodleighschool/stemma-catalog/blob/main/stemma.yaml),
+[software definitions](https://github.com/woodleighschool/stemma-catalog/tree/main/software)
+and [plugins](https://github.com/woodleighschool/stemma-catalog/tree/main/plugins)
+show how these pieces fit together. Adapt the destination connections and shared
+settings to your environment. For a minimal catalog built from scratch, follow
+[getting started](getting-started.md).
 
 ## Files and identities
 
@@ -63,7 +71,7 @@ spec:
 ```
 
 This uses the `munki` connection from [getting started](getting-started.md) and the
-`intune` connection and `windows-win32` component from [Windows software](windows-software.md).
+`intune` connection and `windows-win32` component from [Windows apps in Intune](intune-windows.md).
 
 A resource's identity is `apiVersion/kind/name`, independent of its filename or
 native destination name. Mac and Windows documents can share a name, including on
@@ -88,11 +96,11 @@ See [publication relationships](publishing.md#publication-relationships).
 
 ## Choose a kind
 
-| Kind              | Use it for                                                                                  |
-| ----------------- | ------------------------------------------------------------------------------------------- |
-| `MacSoftware`     | A vendor installer or application, or a source-free native deployment such as Munki `nopkg` |
-| `WindowsSoftware` | An existing vendor MSI, EXE or setup directory and its destination settings                 |
-| `BuildMacPkg`     | Constructing a package from declared files, directories and installer scripts               |
+| Kind                                     | Use it for                                                                                  |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [`MacSoftware`](mac-software.md)         | A vendor installer or application, or a source-free native deployment such as Munki `nopkg` |
+| [`WindowsSoftware`](windows-software.md) | An existing vendor MSI, EXE or setup directory and its destination settings                 |
+| [`BuildMacPkg`](building-packages.md)    | Constructing a package from declared files, directories and installer scripts               |
 
 A build reference selects an artifact, not an installed application dependency.
 For example, a `MacSoftware` source can reference the `installer` output of a
@@ -178,7 +186,10 @@ using its raw repository URL:
 # yaml-language-server: $schema=https://raw.githubusercontent.com/OWNER/CATALOG/main/stemma.schema.json
 ```
 
-Regenerate it when plugin declarations or destination names change.
+For agents, [`stemma mcp`](commands.md#agents) exposes the same contracts through
+its `describe` tool, including field descriptions from built-ins and plugins.
+
+Regenerate the editor schema when plugin declarations or destination names change.
 `--output-file` is required; use `--output-file -` to print JSON to stdout. Schema generation does not need destination
 credentials or acquire software, but OCI plugin bundles must already be cached
 when using `--offline`. Go validation also checks semantic rules that are broader

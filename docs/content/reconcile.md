@@ -120,10 +120,13 @@ enough.
 
 ## Cache and state
 
-The cache is disposable and shared by the reviewed branch and every proposal;
+The cache defaults to the system's user cache directory; `STEMMA_CACHE_DIR` or
+`--cache-dir` overrides it. It is disposable and shared by the reviewed branch and every proposal;
 a proposal warms it for its own merge, and later runs reuse what it downloaded
 rather than fetching a pending update again. The state directory holds only
-`reconcile.json`, the applied marker. Losing it repeats one apply, which
+`reconcile.json`, the applied marker. It defaults to `.stemma/state` under the
+project root; `STEMMA_STATE_DIR` or `reconcile --state-dir` overrides it. Ignore
+`.stemma/` in Git when using this default. Losing the marker repeats one apply, which
 converges on what the destinations already hold. To take over by hand, stop the
 schedule and run `stemma apply` from any checkout.
 

@@ -4,6 +4,11 @@ Plugins are executables that add resource kinds, input resolvers or destinations
 They use the same artifact and operation contracts as built-ins. A catalog can
 carry its own plugin files or select a published OCI bundle.
 
+Our catalog's [plugin setup](https://github.com/woodleighschool/stemma-catalog/blob/main/stemma.yaml)
+shows configured bundles. The [downloads plugin](https://github.com/woodleighschool/stemma-catalog/tree/main/plugins/downloads)
+includes vendor resolvers and instructions for both local builds and published
+bundles. To add your own operation, see [creating plugins](writing-plugins.md).
+
 ## Load a local plugin
 
 Add it to the Project:
@@ -55,7 +60,7 @@ the locked index after the tag moves; `stemma plugins update` resolves the tag
 again. Stemma never moves a declaration to another release.
 
 Private registries use Docker/ORAS registry credentials. `stemma plugins publish`
-creates these indexes; see [writing plugins](writing-plugins.md#distribute-a-bundle).
+creates these indexes; see [creating plugins](writing-plugins.md#distribute-a-bundle).
 
 ## Inspect plugins
 
@@ -127,28 +132,7 @@ native metadata in the software document.
 `stemma schema --offline --output-file stemma.schema.json` includes their schemas
 for your editor, and the `describe` tool of `stemma mcp` outlines them for agents.
 
-Woodstar's experimental plugin is an external consumer of this interface. Its
-Munki-compatible publishing belongs to that plugin; Stemma does not register it as
-a built-in or require it to run a catalog.
-
 `trusted: true` authorises execution with your privileges. Workspaces isolate
 working files but are not a security sandbox. Review plugin code and lock changes
-as executable code. See [writing plugins](writing-plugins.md) for the SDK and wire
+as executable code. See [creating plugins](writing-plugins.md) for the SDK and wire
 contract.
-
-## Reconciliation order
-
-A destination may name, while validating a document, the resources the same
-connection has to reconcile first, such as the software an Intune app depends on.
-Stemma applies those peers before the document and fails validation on a cycle.
-A named resource the run does not reconcile is left to the destination, which
-finds its publication in its own state. How native fields refer to other software
-remains each destination's contract.
-
-## Icons
-
-A resource that declares an icon supplies the committed PNG as the `icon` artifact in
-reconciliation `inputs`. Publish those exact bytes: create a missing icon, replace
-one whose content differs and keep the published icon when the input is
-absent. Icon publication must not trigger installer uploads. The destination owns
-API calls, content storage and icon presence detection.

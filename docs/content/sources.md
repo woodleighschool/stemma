@@ -184,8 +184,12 @@ stemma prepare --offline
 It controls source and plugin acquisition; **it does not disable destination
 network access for `plan` or `apply`**.
 
-Set `STEMMA_CACHE_DIR` or `--cache-dir` to relocate the disposable cache. For
-example, `stemma --cache-dir .stemma/cache prepare` keeps it visible in the catalog.
+The disposable cache lives under `stemma` in the system's user cache directory
+by default, outside the catalog. `stemma cache path` prints the effective location.
+Set `STEMMA_CACHE_DIR` or `--cache-dir` when a runner needs another location, such
+as a mounted cache volume. A repository-local cache is optional; ignore its path
+in Git if you choose one.
+
 `stemma cache prune` clears cached content after active runs finish. Locked remote
 inputs can be fetched again if the publisher still serves the recorded bytes.
 Prepared outputs depend only on input content, configuration and the stemma or

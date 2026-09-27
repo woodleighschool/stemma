@@ -126,8 +126,8 @@ These publication relationships are separate from immutable
 
 ## Intune
 
-The [Windows guide](windows-software.md) includes a complete connection and Win32
-examples. Authentication uses client credentials or an explicit access token.
+The [Windows apps in Intune guide](intune-windows.md) includes a complete
+connection, installation commands and detection examples. Authentication uses client credentials or an explicit access token.
 Graph application permission `DeviceManagementApps.ReadWrite.All` is needed to
 apply app changes; read-only planning needs app read access.
 
@@ -167,7 +167,7 @@ assignments:
     notifications: hide_all
 ```
 
-Detection uses application bundle identifiers and versions, with the selected
+For macOS, detection uses application bundle identifiers and versions, with the selected
 application first. PKG apps can detect applications outside `/Applications`, and
 use package receipt identifiers and versions when a package installs no
 applications, as a payloadless package does. Line-of-business apps require

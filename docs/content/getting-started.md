@@ -20,9 +20,13 @@ operating system; see [runtime requirements](limitations.md).
 
 ## Create a catalog
 
+[Our catalog](https://github.com/woodleighschool/stemma-catalog) is a starting
+point with software definitions and plugins. See [starting a catalog](catalogs.md)
+for its structure, or create a minimal one below.
+
 This walkthrough prepares Chrome for a local Munki repository. It needs no service
 credentials and does not install Chrome on the runner. For Windows and Intune,
-use the same command sequence with the [Windows example](windows-software.md).
+use the same command sequence with the [Intune example](intune-windows.md).
 
 Create a directory and initialise Git:
 
@@ -70,8 +74,10 @@ spec:
         description: Google Chrome.
 ```
 
-Add `.stemma/` and `munki-repo/` to `.gitignore`. The first contains local state;
-the second will contain this walkthrough's published repository.
+Add `munki-repo/` to `.gitignore`; it will contain this walkthrough's published
+repository. Downloads and prepared artifacts use the system's user cache directory
+by default. See [cache and offline runs](sources.md#cache-and-offline-runs) for
+inspection and overrides.
 
 ## Prepare and review
 

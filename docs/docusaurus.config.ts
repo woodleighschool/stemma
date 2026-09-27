@@ -111,8 +111,8 @@ const config: Config = {
           title: "Docs",
           items: [
             { label: "Getting started", to: "/getting-started" },
-            { label: "Writing a catalog", to: "/catalogs" },
-            { label: "Writing plugins", to: "/writing-plugins" },
+            { label: "Starting a catalog", to: "/catalogs" },
+            { label: "Using plugins", to: "/plugins" },
           ],
         },
         {

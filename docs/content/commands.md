@@ -152,10 +152,12 @@ declarations select now: it resolves a tag again and snapshots local files.
 changes plugin entries. See [using plugins](plugins.md).
 
 `plugins publish` pushes a GoReleaser release of plugin bundles as an OCI platform
-index; see [writing plugins](writing-plugins.md#distribute-a-bundle).
+index; see [creating plugins](writing-plugins.md#distribute-a-bundle).
 
-`--cache-dir` / `STEMMA_CACHE_DIR` relocates disposable cached content.
-`reconcile --state-dir` / `STEMMA_STATE_DIR` relocates the applied marker.
+The disposable cache defaults to the system's user cache directory under `stemma`.
+`--cache-dir` / `STEMMA_CACHE_DIR` overrides it; `cache path` prints its location.
+`reconcile --state-dir` / `STEMMA_STATE_DIR` relocates the applied marker from
+`.stemma/state` under the project root. See [reconciliation state](reconcile.md#cache-and-state).
 `cache prune` does not remove published packages.
 
 ## Reports and diagnostics

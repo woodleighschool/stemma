@@ -41,9 +41,9 @@ Use `stemma apply` to publish after reviewing the result.
 ## 📖 Documentation
 
 - [Getting started](docs/content/getting-started.md)
-- [Writing a catalog](docs/content/catalogs.md)
+- [Starting a catalog](docs/content/catalogs.md)
 - [Mac software](docs/content/mac-software.md) and [Windows software](docs/content/windows-software.md)
-- [Writing plugins](docs/content/writing-plugins.md)
+- [Creating plugins](docs/content/writing-plugins.md)
 
 ## 🧑‍💻 Development
 

@@ -1,4 +1,4 @@
-# Building a Mac package
+# BuildMacPkg
 
 Use `BuildMacPkg` for files you need to install at particular locations: fonts,
 branding assets, configuration files or a package containing installer scripts.

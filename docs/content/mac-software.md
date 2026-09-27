@@ -1,4 +1,4 @@
-# Mac software
+# MacSoftware
 
 Use `MacSoftware` for an existing installer or application. Stemma selects the
 application, inspects its metadata and prepares content suitable for publication.

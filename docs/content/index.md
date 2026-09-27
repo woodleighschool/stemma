@@ -15,9 +15,10 @@ how to organise those files.
 ## Start here
 
 - [Getting started](getting-started.md): prepare an application and see what would be published.
-- [Mac software](mac-software.md): vendor PKGs, applications in ZIPs and DMGs, and script-only items.
-- [Windows software](windows-software.md): MSI and EXE installers, accompanying files and Intune detection.
-- [Building a Mac package](building-packages.md): fonts, branding and other custom payloads.
+- [MacSoftware](mac-software.md): vendor PKGs, applications in ZIPs and DMGs, and script-only items.
+- [WindowsSoftware](windows-software.md): MSI and EXE installers, setup directories and accompanying files.
+- [BuildMacPkg](building-packages.md): fonts, branding and other custom payloads.
+- [Publishing software](publishing.md): destination settings, including [Windows apps in Intune](intune-windows.md).
 - [Using plugins](plugins.md) and [writing your own](writing-plugins.md): local executables, resolvers, resource kinds and destinations.
 
 ## How a run works
@@ -40,7 +41,7 @@ and propose updates as pull requests.
 ## Coming from AutoPkg
 
 The [AutoPkg wiki](https://github.com/autopkg/autopkg/wiki) remains the reference for
-AutoPkg. These are useful starting points when writing a Stemma catalog:
+AutoPkg. These are useful starting points when creating a Stemma catalog:
 
 | In AutoPkg                            | In Stemma                                                                   |
 | ------------------------------------- | --------------------------------------------------------------------------- |

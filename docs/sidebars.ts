@@ -6,21 +6,25 @@ const sidebars: SidebarsConfig = {
     "getting-started",
     {
       type: "category",
-      label: "Using Stemma",
-      items: [
-        "catalogs",
-        "expressions",
-        "sources",
-        "mac-software",
-        "building-packages",
-        "windows-software",
-        "publishing",
-        "reconcile",
-        "plugins",
-      ],
+      label: "Catalogs",
+      items: ["catalogs", "sources", "expressions"],
+    },
+    {
+      type: "category",
+      label: "Resource kinds",
+      items: ["mac-software", "windows-software", "building-packages"],
+    },
+    {
+      type: "category",
+      label: "Publishing",
+      items: ["publishing", "intune-windows", "reconcile"],
+    },
+    {
+      type: "category",
+      label: "Plugins",
+      items: ["plugins", "writing-plugins"],
     },
     { type: "category", label: "Reference", items: ["commands", "limitations"] },
-    "writing-plugins",
     "development",
   ],
 };

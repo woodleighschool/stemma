@@ -1,59 +1,22 @@
-# Windows software
+# WindowsSoftware
 
-`WindowsSoftware` starts with an existing vendor installer. Intune prepares the
-upload envelope from that installer or setup directory. You do not declare a build
-resource just to produce `.intunewin`.
+Use `WindowsSoftware` for a vendor installer and any files it needs at installation.
+It resolves the source, selects the setup entry point and inspects the content
+without running it. Its `installer` output is a file or setup directory with
+metadata for destinations to use.
 
-## Configure Intune
+## Start with a vendor installer
 
-Start a Project with these connection settings and shared Win32 defaults:
+| Source             | Prepared content                                      |
+| ------------------ | ----------------------------------------------------- |
+| MSI or EXE         | The original vendor installer                         |
+| Directory          | The setup tree and its selected entry point           |
+| ZIP or TAR archive | The extracted setup tree and its selected entry point |
+| Resource output    | The producing resource's file or tree                 |
 
-```yaml
-apiVersion: stemma/v1alpha1
-kind: Project
-metadata:
-  name: my-catalog
-spec:
-  imports:
-    - software/**/*.yaml
-  destinations:
-    intune:
-      operation: intune
-      config:
-        tenant_id: "{{ env.INTUNE_TENANT_ID }}"
-        client_id: "{{ env.INTUNE_CLIENT_ID }}"
-        client_secret: "{{ env.INTUNE_CLIENT_SECRET }}"
-  components:
-    windows-win32:
-      destinations:
-        intune:
-          architectures: [x64]
-          minimum_windows_release: Windows11_24H2
-          install_experience:
-            run_as: system
-            restart: based_on_return_code
-          return_codes:
-            - code: 0
-              type: success
-            - code: 1707
-              type: success
-            - code: 3010
-              type: soft_reboot
-            - code: 1641
-              type: hard_reboot
-            - code: 1618
-              type: retry
-```
-
-Supply credentials through your shell or runner's secret management. The Entra app
-needs Graph application permissions appropriate to app management; see
-[publishing](publishing.md#intune). Change architectures, minimum release and
-installation context to match the vendor and your devices; an x64 app that should
-also install on Arm devices lists `[x64, arm64]`.
-
-## Publish an enterprise MSI
-
-Save as `software/chrome.yaml`:
+Use the shared [source resolvers](sources.md) for downloads, local files and
+resource outputs. For example, with the connection from
+[Windows apps in Intune](intune-windows.md#configure-intune):
 
 ```yaml
 apiVersion: stemma/v1alpha1
@@ -61,7 +24,6 @@ kind: WindowsSoftware
 metadata:
   name: chrome
 spec:
-  extends: windows-win32
   source:
     url: https://dl.google.com/dl/chrome/install/googlechromestandaloneenterprise64.msi
   destinations:
@@ -71,72 +33,17 @@ spec:
       publisher: Google LLC
 ```
 
-```sh
-stemma validate
-stemma update WindowsSoftware/chrome
-stemma prepare WindowsSoftware/chrome
-stemma plan WindowsSoftware/chrome
-```
+`stemma update WindowsSoftware/chrome` locks the source;
+`stemma prepare WindowsSoftware/chrome` prepares the installer. Use
+`stemma artifact WindowsSoftware/chrome` to obtain a local copy for inspection.
+The kind requires destination settings; their fields and publication behaviour
+belong to the [destination](publishing.md).
 
-The selected MSI supplies its MSI information, standard silent `msiexec` install
-and uninstall commands, and ProductCode/version detection. Explicit destination
-values override these defaults. The display name, description and publisher are
-always set. `apply` publishes when you are ready.
+## Select the setup file
 
-Windows Installer properties extend the standard install command:
-
-```yaml
-destinations:
-  intune:
-    msi_properties:
-      PORTAL: vpn.example.com
-      CONNECTMETHOD: on-demand
-```
-
-Values are quoted in name order, with a quote inside a value doubled. Set
-`msi_properties` or a complete `install_command`, not both.
-
-## Publish an EXE
-
-EXE switches are vendor-specific. This uses VS Code's **system** installer, its
-[documented Inno Setup support](https://code.visualstudio.com/docs/setup/windows)
-and the installed uninstaller's silent switches:
-
-```yaml
-apiVersion: stemma/v1alpha1
-kind: WindowsSoftware
-metadata:
-  name: visual-studio-code
-spec:
-  extends: windows-win32
-  source:
-    url: https://update.code.visualstudio.com/latest/win32-x64/stable
-    filename: VSCodeSetup.exe
-  destinations:
-    intune:
-      display_name: Visual Studio Code
-      description: Visual Studio Code system installation.
-      publisher: Microsoft
-      install_command: "VSCodeSetup.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /MERGETASKS=!runcode"
-      uninstall_command: '"C:\Program Files\Microsoft VS Code\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART'
-      detection:
-        - type: file
-          path: 'C:\Program Files\Microsoft VS Code'
-          name: Code.exe
-          property: exists
-```
-
-This rule detects presence. It intentionally does not enforce a particular VS Code
-version. To manage a minimum version, use `property: version` with a `value`
-matching the installed file's version, or omit `value` when the source reports the
-installer's version. Stemma does not infer EXE commands or detection.
-
-## Publish a setup directory
-
-A committed directory or a vendor ZIP or TAR archive is the setup directory, and
-Intune receives every file in it. The only MSI or EXE inside is the setup file.
-When there are several, select one by its setup-relative path, or by a glob that
-matches exactly one file:
+A single-file source is its own setup entry point. For a directory or archive,
+the only MSI or EXE is selected automatically. When there are several, set
+`setup_file` to a setup-relative path or a glob matching exactly one file:
 
 ```yaml
 source:
@@ -144,11 +51,14 @@ source:
 setup_file: VendorSetup.exe
 ```
 
-An ambiguous directory fails with the installers it found.
+A resource output can supply its own entry point. An ambiguous directory fails
+with the installers it found. An explicit `setup_file` may select another file,
+such as a wrapper script; the destination's commands and detection must describe
+what that entry point installs.
 
-## Include a transform or wrapper
+## Include accompanying files
 
-Add accompanying files to the setup content, preserving their relative names:
+`content.files` adds inputs at relative paths in the setup directory:
 
 ```yaml
 source:
@@ -157,84 +67,32 @@ content:
   files:
     Organisation.mst:
       path: Assets/Organisation.mst
-destinations:
-  intune:
-    msi_properties:
-      TRANSFORMS: Organisation.mst
 ```
 
-This is a spec excerpt using the shared Win32 defaults. Intune includes the whole
-assembled setup directory, and the vendor installer stays the setup file. Files may
-use any shared input resolver. `setup_file` can select any file instead, such as a
-wrapper script, but commands and detection must describe the actual installed
-product; MSI defaults apply when the setup file is an MSI. See Microsoft's
-[setup-folder model](https://learn.microsoft.com/en-us/intune/app-management/deployment/create-win32-package).
+Each value uses the shared input resolvers and can supply a file or tree.
+The vendor installer remains the entry point unless `setup_file` selects another.
+A destination decides how to use these files; see the
+[Intune transform example](intune-windows.md#accompanying-files).
 
-## Choose installed-product evidence
+## Select the managed version
 
-An MSI's ProductCode identifies a product release, not the stable Stemma item or
-Intune app. A major upgrade may change ProductCode while publication still updates
-the same bound app ID. A ProductCode rule cannot detect a different ProductCode.
-
-Use file, registry or script detection when you need evidence spanning those
-upgrades. A file or registry version rule without `operator` and `value` accepts
-the managed version or newer:
-
-```yaml
-detection:
-  - type: registry
-    key: 'HKEY_LOCAL_MACHINE\SOFTWARE\Example\Client'
-    value_name: Version
-    property: version
-```
-
-Use a real vendor key. The managed version is the setup MSI's ProductVersion, or
-the version the source reports for its own installer. When the installed product
-uses another version scheme, `version_file` takes the version the MSI's File table
-records for one versioned file it installs:
+The selected MSI supplies ProductCode, ProductVersion and other MSI facts.
+ProductVersion is the managed version by default. When the installed product uses
+a different version, `version_file` selects one versioned file from the setup
+MSI's File table:
 
 ```yaml
 version_file: Zoom.exe
-destinations:
-  intune:
-    detection:
-      - type: file
-        path: 'C:\Program Files\Zoom\bin'
-        name: Zoom.exe
-        property: version
 ```
 
-MSI information and the default ProductCode rule keep the ProductVersion. An
-explicit `operator` or `value` replaces its default; `greater_than_or_equal`
-accepts an already-newer installation, while equality alone does not. File and
-registry rules can be combined, and
-`check_32bit` selects the 32-bit view on 64-bit Windows. A script rule must be the
-only rule, with `run_as_32bit` and `enforce_signature_check` where needed.
+This changes the managed version while keeping the MSI's ProductVersion in its
+inspection facts. `version_file` requires an MSI setup file. Other installers can
+retain a version supplied with their source artifact; selecting a different entry
+point clears that source version.
 
-Intune considers a detection script successful only when it exits zero and writes
-to stdout; stderr can make detection fail. Stemma does not execute detection scripts
-to prove their endpoint behaviour. See Microsoft's
-[detection documentation](https://learn.microsoft.com/en-us/intune/app-management/deployment/add-win32).
-
-For example, test this script on the intended Windows host:
-
-```yaml
-detection:
-  - type: script
-    script: |
-      $app = 'C:\Program Files\Microsoft VS Code\Code.exe'
-      if (Test-Path -LiteralPath $app -PathType Leaf) {
-          Write-Output 'Detected'
-          exit 0
-      }
-      exit 1
-```
-
-For simple presence detection, the file rule above avoids a script. Use
-script detection when the vendor's installed state needs more than a native rule.
-
-Dependencies and supersedence are [publication relationships](publishing.md#intune-relationships),
-not setup-directory inputs.
+Installation commands and installed-product detection are destination settings.
+See [Intune detection](intune-windows.md#choose-installed-product-evidence) for how
+MSI facts and the managed version become detection rules.
 
 ## Icon
 

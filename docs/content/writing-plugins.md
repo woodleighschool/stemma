@@ -1,4 +1,4 @@
-# Writing plugins
+# Creating plugins
 
 A plugin is an executable speaking Stemma's JSON protocol. It can register a
 resource kind, source resolver or destination. The public
@@ -9,6 +9,12 @@ can implement the same wire contract.
 Pin the SDK in your plugin's dependencies. A plugin works with any Stemma that
 implements its operation kinds at the same interface versions; see
 [protocol and runtime](#protocol-and-runtime).
+
+Our catalog's [downloads plugin](https://github.com/woodleighschool/stemma-catalog/tree/main/plugins/downloads)
+is a working SDK example with typed resolvers, tests, Mise tasks and GoReleaser
+bundles. Its [setup guide](https://github.com/woodleighschool/stemma-catalog/blob/main/plugins/downloads/README.md)
+covers local builds and distribution. See [using plugins](plugins.md) for loading
+one into a catalog.
 
 ## Register a resource kind
 
@@ -102,14 +108,17 @@ go build -o plugin .
 
 On Windows, name the output `plugin.exe`. `go get` records the resolved revision in
 `go.mod`; keep that pin. `plugin.Register` derives the request, config and response
-schemas from the handler types. The protocol and catalog editor use those same
-contracts.
+schemas from the handler types. The protocol, MCP documentation and catalog editor
+use those same contracts.
 
 ## Typed configuration
 
 Use Go fields for structure, `omitempty` for optional fields, and invopop's
 `jsonschema` tags for constraints and defaults. Add `jsonschema_description` to
-fields whose purpose or behaviour benefits from an editor hover.
+fields to explain their purpose, behaviour and constraints. These descriptions
+are documentation for agents through the `describe` tool of `stemma mcp`, as well
+as part of the generated JSON Schema. Explain what an agent needs to choose a
+value correctly, including units, defaults and interactions with other fields.
 
 ```go
 type Architecture string
@@ -152,7 +161,7 @@ absent/null/value semantics and does not receive config defaults.
 
 JSON Schema describes structural constraints. Cross-field and external-system
 rules may remain authoritative in Go; use `JSONSchemaExtend` only when a small
-schema addition helps editors. `stemma schema --output-file stemma.schema.json` composes the
+schema addition makes the contract clearer to agents and editors. `stemma schema --output-file stemma.schema.json` composes the
 static document structure with every locally loaded operation. No copy of a
 plugin's config fields belongs in the catalog schema generator.
 
@@ -187,6 +196,7 @@ spec:
 ```
 
 ```sh
+stemma plugins update catalog-tools
 stemma validate
 stemma update VendorPackage/vendor-app
 stemma prepare VendorPackage/vendor-app
@@ -219,6 +229,11 @@ Destination descriptors use `ContentContract` to accept formats, trees and/or
 source-free content. This is independent of originating kind names. A destination
 must still validate its native deployment mode: accepting a PKG does not mean it
 accepts Munki `nopkg` or an arbitrary script policy.
+
+A resource's committed PNG arrives as the `icon` artifact in reconciliation
+`inputs`. Destinations publish those bytes independently of installer uploads:
+create a missing icon, replace changed content and retain the published icon
+when no input is supplied.
 
 ## Resolvers
 
