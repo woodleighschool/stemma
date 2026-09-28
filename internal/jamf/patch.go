@@ -398,7 +398,8 @@ func (c *client) setTitlePackages(ctx context.Context, id string, links []titles
 	for _, link := range links {
 		body = append(body, map[string]string{"packageId": link.PackageID, "version": link.Version})
 	}
-	result, updateErr := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationJSON).SetHeader("Content-Type", constants.ApplicationJSON).SetBody(map[string]any{"packages": body}).DisableRetry().Patch(titlePath + "/" + id)
+	// Jamf accepts only a JSON merge patch here; plain JSON gets HTTP 415.
+	result, updateErr := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationJSON).SetHeader("Content-Type", constants.ApplicationMergePatchJSON).SetBody(map[string]any{"packages": body}).DisableRetry().Patch(titlePath + "/" + id)
 	updateErr = requestError(ctx, result, updateErr)
 	actual, err := c.getTitle(ctx, id)
 	if err != nil {

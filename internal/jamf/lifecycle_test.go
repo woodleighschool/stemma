@@ -442,7 +442,19 @@ func (n *nativeServer) handle(s *fakeServer, w http.ResponseWriter, r *http.Requ
 			return true
 		}
 		if r.Method == http.MethodPatch {
-			fields := s.readObject(r)
+			// Jamf answers 415 to anything but a JSON merge patch here.
+			if r.Header.Get("Content-Type") != "application/merge-patch+json" {
+				w.WriteHeader(http.StatusUnsupportedMediaType)
+				return true
+			}
+			data, err := io.ReadAll(r.Body)
+			if err != nil {
+				s.t.Error(err)
+			}
+			fields, err := decodeObject(data)
+			if err != nil {
+				s.t.Error(err)
+			}
 			if len(fields) != 1 || fields["packages"] == nil {
 				s.t.Error("association PATCH changed unrelated title fields")
 			}
