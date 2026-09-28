@@ -29,7 +29,8 @@ env:
 jobs:
   workflow-lint:
     if: >-
-      ${{ !(startsWith(github.head_ref, 'release-please--')
+      ${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(release):'))
+      && !(startsWith(github.head_ref, 'release-please--')
       && github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Workflow Lint
     runs-on: ubuntu-26.04
@@ -60,7 +61,8 @@ jobs:
 
   go-checks:
     if: >-
-      ${{ !(startsWith(github.head_ref, 'release-please--')
+      ${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(release):'))
+      && !(startsWith(github.head_ref, 'release-please--')
       && github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Go Checks
     runs-on: ubuntu-26.04
@@ -118,7 +120,8 @@ jobs:
 
   go-test:
     if: >-
-      ${{ !(startsWith(github.head_ref, 'release-please--')
+      ${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(release):'))
+      && !(startsWith(github.head_ref, 'release-please--')
       && github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Go Test (${{ matrix.os }})
     strategy:
@@ -147,7 +150,8 @@ jobs:
 
   go-vulncheck:
     if: >-
-      ${{ !(startsWith(github.head_ref, 'release-please--')
+      ${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(release):'))
+      && !(startsWith(github.head_ref, 'release-please--')
       && github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Go Vulncheck
     runs-on: ubuntu-26.04
@@ -169,7 +173,8 @@ jobs:
 
   goreleaser:
     if: >-
-      ${{ !(startsWith(github.head_ref, 'release-please--')
+      ${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(release):'))
+      && !(startsWith(github.head_ref, 'release-please--')
       && github.event.pull_request.head.repo.full_name == github.repository) }}
     name: GoReleaser
     uses: $/.github/workflows/goreleaser.yaml
