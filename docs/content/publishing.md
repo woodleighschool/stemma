@@ -136,6 +136,7 @@ also grants read access:
 | -------------------------------------------- | ------------------------------- | ------------------------------------ |
 | Apps, content and metadata                   | `DeviceManagementApps.Read.All` | `DeviceManagementApps.ReadWrite.All` |
 | Assignments (`assignments`)                  | `DeviceManagementApps.Read.All` | `DeviceManagementApps.ReadWrite.All` |
+| Categories (`categories`)                    | `DeviceManagementApps.Read.All` | `DeviceManagementApps.ReadWrite.All` |
 | Relationships (`dependencies`, `supersedes`) | `DeviceManagementApps.Read.All` | `DeviceManagementApps.ReadWrite.All` |
 
 Groups and assignment filters are referenced by ID, so no directory or filter
@@ -175,6 +176,15 @@ assignments:
       id: 66666666-7777-8888-9999-000000000000
       mode: include
     notifications: hide_all
+```
+
+`categories` lists the app's Company Portal categories by name and replaces the
+app's whole set; `[]` clears them. Names match exactly, including case. Apply
+creates a category the tenant doesn't have yet:
+
+```yaml
+categories:
+  - Productivity
 ```
 
 For macOS, detection uses application bundle identifiers and versions, with the selected

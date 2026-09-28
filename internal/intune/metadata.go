@@ -30,6 +30,7 @@ var commonFields = map[string]field{
 	"information_url": {"informationUrl", text10k},
 	"privacy_url":     {"privacyInformationUrl", text10k},
 	"featured":        {"isFeatured", boolean},
+	"categories":      {"categories", categoryNames},
 	"assignments":     {"assignments", assignments},
 }
 
@@ -287,6 +288,25 @@ var (
 	filterModes   = map[string]string{"include": "include", "exclude": "exclude"}
 	notifications = map[string]string{"show_all": "showAll", "show_reboot": "showReboot", "hide_all": "hideAll"}
 )
+
+func categoryNames(value any) (any, error) {
+	list, ok := value.([]any)
+	if !ok {
+		return nil, errors.New("must be an array of category names; [] clears categories")
+	}
+	seen := map[string]bool{}
+	for _, item := range list {
+		name, ok := item.(string)
+		if !ok || strings.TrimSpace(name) == "" {
+			return nil, errors.New("category must be a nonempty name")
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("duplicate category %q", name)
+		}
+		seen[name] = true
+	}
+	return list, nil
+}
 
 // assignments translates each deployment intent and its one target: an Entra
 // group, an excluded group, all devices or all users. An included target may

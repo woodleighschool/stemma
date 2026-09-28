@@ -29,6 +29,7 @@ func generate() error {
 		base + "/{mobileApp-id}#GET", base + "/{mobileApp-id}#PATCH",
 		base + "/{mobileApp-id}/assignments#GET", base + "/{mobileApp-id}/assign#POST",
 		base + "/{mobileApp-id}/relationships#GET", base + "/{mobileApp-id}/updateRelationships#POST",
+		base + "/{mobileApp-id}/categories#GET", "/deviceAppManagement/mobileAppCategories#GET", "/deviceAppManagement/mobileAppCategories#POST",
 	}
 	for _, appType := range []string{"macOSDmgApp", "macOSLobApp", "macOSPkgApp", "win32LobApp"} {
 		versions := base + "/{mobileApp-id}/graph." + appType + "/contentVersions"

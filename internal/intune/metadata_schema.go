@@ -26,6 +26,7 @@ func MetadataSchema() *jsonschema.Schema {
 			"information_url": textSchema("Publisher information URL."),
 			"privacy_url":     textSchema("Publisher privacy information URL."),
 			"featured":        {Type: "boolean", Description: "Show the app as featured. Explicit false is managed."},
+			"categories":      {Type: "array", UniqueItems: true, Items: &jsonschema.Schema{Type: "string", MinLength: new(uint64(1))}, Description: "Company Portal categories by exact name. Missing categories are created. The list replaces the app's categories; omission preserves them and [] clears them."},
 			"assignments":     assignmentSchema(),
 		}
 	}

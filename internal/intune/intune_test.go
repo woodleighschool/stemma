@@ -590,6 +590,8 @@ type graphFixture struct {
 	relationshipWrites int
 	fileCreates        int
 	abandonedFiles     map[string]int // uncommitted files a newer file left behind, by content version
+	categories         []object       // the tenant's app categories
+	appCategories      []string       // category IDs the app references
 }
 
 func newGraphFixture(t *testing.T) (*graphFixture, *client) {
@@ -689,6 +691,37 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 	_, version, _ := strings.Cut(path, "/contentVersions/")
 	version, _, _ = strings.Cut(version, "/")
 	switch {
+	case path == "/deviceAppManagement/mobileAppCategories" && r.Method == http.MethodGet:
+		write(object{"value": f.categories})
+	case path == "/deviceAppManagement/mobileAppCategories" && r.Method == http.MethodPost:
+		category := object{"id": "cat-" + strconv.Itoa(len(f.categories)+1), "displayName": body["displayName"]}
+		f.categories = append(f.categories, category)
+		write(category)
+	case path == appsPath+"/app-1/categories" && r.Method == http.MethodGet:
+		items := []object{}
+		for _, category := range f.categories {
+			if slices.Contains(f.appCategories, text(category["id"])) {
+				items = append(items, category)
+			}
+		}
+		write(object{"value": items})
+	case path == appsPath+"/app-1/categories/$ref" && r.Method == http.MethodPost:
+		id, found := strings.CutPrefix(text(body["@odata.id"]), f.url+"/beta/deviceAppManagement/mobileAppCategories/")
+		if !found || slices.Contains(f.appCategories, id) {
+			http.Error(w, "bad category reference", http.StatusBadRequest)
+			return
+		}
+		f.appCategories = append(f.appCategories, id)
+		w.WriteHeader(http.StatusNoContent)
+	case strings.HasPrefix(path, appsPath+"/app-1/categories/") && strings.HasSuffix(path, "/$ref") && r.Method == http.MethodDelete:
+		id := strings.TrimSuffix(strings.TrimPrefix(path, appsPath+"/app-1/categories/"), "/$ref")
+		index := slices.Index(f.appCategories, id)
+		if index < 0 {
+			http.Error(w, "no such category reference", http.StatusNotFound)
+			return
+		}
+		f.appCategories = slices.Delete(f.appCategories, index, index+1)
+		w.WriteHeader(http.StatusNoContent)
 	case strings.HasSuffix(path, "/relationships") && r.Method == http.MethodGet:
 		id := strings.TrimSuffix(strings.TrimPrefix(path, appsPath+"/"), "/relationships")
 		items := f.relations[id]

@@ -1,5 +1,5 @@
 {
-  "descriptionHash": "D448D3CB769720E2F4611BA0F0C4507850CE094020C6C80C6AB51965A39A113F395B6D0E0149D205942A6A1E6443DC9215E57D1457DF8A6120AB0D0C23510F24",
+  "descriptionHash": "CE11CEE0DCFA4577BE1B457A0301D200BA807B920E465AFB44B5AE0DA00CA568AEB595DE6A5A4F394A61FCB522846D126AAE3739D13F783B7D4FABEC1DD758BF",
   "descriptionLocation": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/0d13ff1/openapi/beta/openapi.yaml",
   "lockFileVersion": "1.0.0",
   "kiotaVersion": "1.35.0",
@@ -34,6 +34,9 @@
     "/deviceAppManagement/mobileApps/{mobileApp-id}/assign#POST",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/relationships#GET",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/updateRelationships#POST",
+    "/deviceAppManagement/mobileApps/{mobileApp-id}/categories#GET",
+    "/deviceAppManagement/mobileAppCategories#GET",
+    "/deviceAppManagement/mobileAppCategories#POST",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSDmgApp/contentVersions#GET",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSDmgApp/contentVersions#POST",
     "/deviceAppManagement/mobileApps/{mobileApp-id}/graph.macOSDmgApp/contentVersions/{mobileAppContent-id}/files#GET",

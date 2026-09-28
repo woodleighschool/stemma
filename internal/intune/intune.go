@@ -202,6 +202,29 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 			response.Changes = append(response.Changes, plugin.Change{Kind: "assignments", Field: "assignments", Action: "replace", Before: raw(existing), After: raw(assignments)})
 		}
 	}
+	categoryChanged := false
+	if names, owned := desired["categories"]; owned {
+		categories, err := c.resolveCategories(ctx, names.([]any))
+		if err != nil {
+			return response, err
+		}
+		for _, category := range categories {
+			if text(category["id"]) == "" {
+				response.Changes = append(response.Changes, plugin.Change{Kind: "categories", Field: "category", Action: "create", After: raw(category["displayName"])})
+			}
+		}
+		var existing []object
+		if current != nil {
+			existing, err = c.list(ctx, c.appCategories(appID))
+			if err != nil {
+				return response, err
+			}
+		}
+		if !sameCategories(existing, categoryIDs(categories)) {
+			categoryChanged = true
+			response.Changes = append(response.Changes, plugin.Change{Kind: "categories", Field: "categories", Action: "replace", Before: raw(categoryList(existing)), After: raw(categoryList(categories))})
+		}
+	}
 	var relationships []object
 	var relationshipChanged bool
 	if lifecycle.Dependencies != nil || lifecycle.Supersedes != nil {
@@ -247,6 +270,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		published.payload = artifact.identity
 		body := mergeOwned(nil, desired)
 		delete(body, "assignments")
+		delete(body, "categories")
 		body["notes"] = withMarker(text(body["notes"]), published)
 		body["fileName"] = prepared.name
 		if c.appType == win32Type {
@@ -329,6 +353,11 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		}
 		if _, changed := reconcileAssignments(existing, desired["assignments"].([]any)); changed {
 			return response, errors.New("intune assignments readback differs from requested targeting")
+		}
+	}
+	if categoryChanged {
+		if err := c.reconcileCategories(ctx, appID, desired["categories"].([]any)); err != nil {
+			return response, err
 		}
 	}
 	if lifecycle.Dependencies != nil || lifecycle.Supersedes != nil {
@@ -430,7 +459,7 @@ func metadataPatch(current, desired object, published publication) (object, []pl
 	}
 	slices.Sort(keys)
 	for _, key := range keys {
-		if key == "@odata.type" || key == "assignments" || key == "notes" {
+		if key == "@odata.type" || key == "assignments" || key == "categories" || key == "notes" {
 			continue
 		}
 		value := desired[key]

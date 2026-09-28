@@ -27,6 +27,12 @@ func NewDeviceAppManagementRequestBuilder(rawUrl string, requestAdapter i2ae4187
 	return NewDeviceAppManagementRequestBuilderInternal(urlParams, requestAdapter)
 }
 
+// MobileAppCategories provides operations to manage the mobileAppCategories property of the microsoft.graph.deviceAppManagement entity.
+// returns a *MobileAppCategoriesRequestBuilder when successful
+func (m *DeviceAppManagementRequestBuilder) MobileAppCategories() *MobileAppCategoriesRequestBuilder {
+	return NewMobileAppCategoriesRequestBuilderInternal(m.BaseRequestBuilder.PathParameters, m.BaseRequestBuilder.RequestAdapter)
+}
+
 // MobileApps provides operations to manage the mobileApps property of the microsoft.graph.deviceAppManagement entity.
 // returns a *MobileAppsRequestBuilder when successful
 func (m *DeviceAppManagementRequestBuilder) MobileApps() *MobileAppsRequestBuilder {

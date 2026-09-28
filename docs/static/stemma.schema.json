@@ -2882,6 +2882,31 @@
               ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target, and settings it omits keep their values on a matching target."
             },
+            "categories": {
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "type": "array",
+                  "uniqueItems": true
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Company Portal categories by exact name. Missing categories are created. The list replaces the app's categories; omission preserves them and [] clears them."
+            },
             "dependencies": {
               "anyOf": [
                 {
@@ -4583,6 +4608,31 @@
               ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target, and settings it omits keep their values on a matching target."
             },
+            "categories": {
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "type": "array",
+                  "uniqueItems": true
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Company Portal categories by exact name. Missing categories are created. The list replaces the app's categories; omission preserves them and [] clears them."
+            },
             "description": {
               "anyOf": [
                 {
@@ -5037,6 +5087,31 @@
                 }
               ],
               "description": "Own the complete assignment collection. Omission preserves targeting; [] clears assignments. Each assignment has one target, and settings it omits keep their values on a matching target."
+            },
+            "categories": {
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "type": "array",
+                  "uniqueItems": true
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Company Portal categories by exact name. Missing categories are created. The list replaces the app's categories; omission preserves them and [] clears them."
             },
             "description": {
               "anyOf": [

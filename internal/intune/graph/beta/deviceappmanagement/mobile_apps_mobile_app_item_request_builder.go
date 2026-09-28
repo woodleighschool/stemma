@@ -33,6 +33,12 @@ func (m *MobileAppsMobileAppItemRequestBuilder) Assignments() *MobileAppsItemAss
 	return NewMobileAppsItemAssignmentsRequestBuilderInternal(m.BaseRequestBuilder.PathParameters, m.BaseRequestBuilder.RequestAdapter)
 }
 
+// Categories provides operations to manage the categories property of the microsoft.graph.mobileApp entity.
+// returns a *MobileAppsItemCategoriesRequestBuilder when successful
+func (m *MobileAppsMobileAppItemRequestBuilder) Categories() *MobileAppsItemCategoriesRequestBuilder {
+	return NewMobileAppsItemCategoriesRequestBuilderInternal(m.BaseRequestBuilder.PathParameters, m.BaseRequestBuilder.RequestAdapter)
+}
+
 // NewMobileAppsMobileAppItemRequestBuilderInternal instantiates a new MobileAppsMobileAppItemRequestBuilder and sets the default values.
 func NewMobileAppsMobileAppItemRequestBuilderInternal(pathParameters map[string]string, requestAdapter i2ae4187f7daee263371cb1c977df639813ab50ffa529013b7437480d1ec0158f.RequestAdapter) *MobileAppsMobileAppItemRequestBuilder {
 	m := &MobileAppsMobileAppItemRequestBuilder{
