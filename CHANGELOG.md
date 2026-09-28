@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.1](https://github.com/woodleighschool/stemma/compare/v0.8.0...v0.8.1) (2026-09-28)
+
+
+### Features
+
+* **intune:** manage app categories ([33018b0](https://github.com/woodleighschool/stemma/commit/33018b028f10152dd225463aeabce6cf352db013))
+
+
+### Bug Fixes
+
+* **go:** update module github.com/modelcontextprotocol/go-sdk (a1b0a98 → 7cb505c) ([#63](https://github.com/woodleighschool/stemma/issues/63)) ([0b7b923](https://github.com/woodleighschool/stemma/commit/0b7b9231e7b5c982b198e0d42aed7bf422136c3e))
+* **intune:** publish the first upload of a new app ([eacdefe](https://github.com/woodleighschool/stemma/commit/eacdefe031d10b7b4397b8746a854e1c95e89b0a))
+
+
+### Documentation
+
+* refine README overview ([945a870](https://github.com/woodleighschool/stemma/commit/945a870a1a09015a0662361ea59cbb11f25fc9be))
+
+
+### Miscellaneous Chores
+
+* **intune:** regenerate the Graph client from msgraph-metadata b8cbef9 ([c45bae9](https://github.com/woodleighschool/stemma/commit/c45bae9e413724fff95113a96c63b27457a670a6))
+
 ## [0.8.0](https://github.com/woodleighschool/stemma/compare/v0.7.1...v0.8.0) (2026-09-28)
 
 
