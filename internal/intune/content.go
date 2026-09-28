@@ -228,16 +228,24 @@ func (c *client) upload(ctx context.Context, current object, pending publication
 	defer func() { done(err) }()
 	appID := text(current["id"])
 	first := text(current["committedContentVersion"]) == ""
+	recorded, err := recoverMarker(current, pending.identity)
+	if err != nil {
+		return "", err
+	}
+	if first && recorded.payload != pending.payload {
+		return "", fmt.Errorf("intune app %s first upload does not match the recorded payload", appID)
+	}
 	version = pending.content
 	resuming := version != ""
-	if version == "" && first {
-		// Graph refuses another version before the first publication commits.
+	if version == "" && (first || recorded.content == "" && recorded.payload == pending.payload) {
+		// The creation marker identifies the first payload before its version
+		// is known, including when the activation reply was lost.
 		versions, err := c.list(ctx, c.content(appID, "", "", ""))
 		if err != nil {
 			return "", err
 		}
 		if len(versions) > 1 {
-			return "", fmt.Errorf("intune app %s has multiple unpublished content versions", appID)
+			return "", fmt.Errorf("intune app %s has multiple content versions without a recorded version", appID)
 		}
 		if len(versions) == 1 {
 			version = text(versions[0]["id"])
@@ -266,11 +274,13 @@ func (c *client) upload(ctx context.Context, current object, pending publication
 	var file object
 	if len(files) == 1 {
 		file = files[0]
-		if pending.content != version || text(file["name"]) != prepared.name || file["size"] != float64(prepared.metadata.PlaintextSize) || file["sizeEncrypted"] != float64(prepared.metadata.EncryptedContentSize) {
+		if recorded.payload != pending.payload || text(file["name"]) != prepared.name || file["size"] != float64(prepared.metadata.PlaintextSize) || file["sizeEncrypted"] != float64(prepared.metadata.EncryptedContentSize) {
 			return "", fmt.Errorf("intune app %s content version %s does not match the recorded upload", appID, version)
 		}
 	}
-	if pending.content != version {
+	// Graph refuses every other change to an app before its first publication,
+	// so a first upload is found again as the app's only content version.
+	if !first && pending.content != version {
 		pending.content = version
 		if err := c.request(ctx, abs.GET, c.app(appID), nil, &current); err != nil {
 			return "", err

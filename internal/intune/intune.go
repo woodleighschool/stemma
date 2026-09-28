@@ -242,6 +242,9 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		defer prepared.close()
 	}
 	if current == nil {
+		// Graph refuses notes updates until publication, so record the first
+		// payload when creating the app.
+		published.payload = artifact.identity
 		body := mergeOwned(nil, desired)
 		delete(body, "assignments")
 		body["notes"] = withMarker(text(body["notes"]), published)

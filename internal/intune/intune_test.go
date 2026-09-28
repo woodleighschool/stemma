@@ -202,6 +202,31 @@ func TestPublicationSurvivesLostReply(t *testing.T) {
 	}
 }
 
+func TestFirstUploadRejectsDifferentPayloadOfSameSize(t *testing.T) {
+	fake, c := newGraphFixture(t)
+	req := fixtureRequest(t)
+	req.Artifact.Filename = "test.pkg"
+	desired := object{"@odata.type": pkgType, "displayName": "Test", "description": "Test package", "publisher": "Test", "primaryBundleId": "org.example.test", "primaryBundleVersion": "1.0", "includedApps": []any{object{"bundleId": "org.example.test", "bundleVersion": "1.0"}}, "minimumSupportedOperatingSystem": object{"v12_0": true}}
+	fake.failCommit = true
+	if _, err := c.handle(t.Context(), req, desired); err == nil {
+		t.Fatal("expected interrupted commit")
+	}
+	if fake.commits != 1 {
+		t.Fatal("fixture did not commit its first payload")
+	}
+	size := req.Artifact.Size
+	changePayload(t, &req, "changed")
+	if req.Artifact.Size != size {
+		t.Fatal("fixture must keep the same size")
+	}
+	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), "recorded payload") {
+		t.Fatalf("different first payload: %v", err)
+	}
+	if fake.commits != 1 || text(fake.app["committedContentVersion"]) != "" {
+		t.Fatal("activated content from the previous request")
+	}
+}
+
 func TestInterruptedFirstUploadIsRetriedIntoItsFile(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	fake.failBlob = true
@@ -727,6 +752,10 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		write(f.app)
 	case path == appsPath+"/app-1" && r.Method == http.MethodPatch:
 		f.patches = append(f.patches, body)
+		if body["committedContentVersion"] == nil && f.app["publishingState"] != "published" {
+			http.Error(w, "Invalid operation: app's PublishingState is not 'Published'.", http.StatusBadRequest)
+			return
+		}
 		if version := text(body["committedContentVersion"]); version != "" && f.abandonedFiles[version] > 0 {
 			http.Error(w, "All AppFiles must be committed before committing an application.", http.StatusBadRequest)
 			return
