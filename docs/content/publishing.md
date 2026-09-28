@@ -128,8 +128,18 @@ These publication relationships are separate from immutable
 
 The [Windows apps in Intune guide](intune-windows.md) includes a complete
 connection, installation commands and detection examples. Authentication uses client credentials or an explicit access token.
-Graph application permission `DeviceManagementApps.ReadWrite.All` is needed to
-apply app changes; read-only planning needs app read access.
+The Entra app needs these Graph application permissions, with admin consent.
+Planning needs only the read permission; `DeviceManagementApps.ReadWrite.All`
+also grants read access:
+
+| Feature                                      | Read                            | Write                                |
+| -------------------------------------------- | ------------------------------- | ------------------------------------ |
+| Apps, content and metadata                   | `DeviceManagementApps.Read.All` | `DeviceManagementApps.ReadWrite.All` |
+| Assignments (`assignments`)                  | `DeviceManagementApps.Read.All` | `DeviceManagementApps.ReadWrite.All` |
+| Relationships (`dependencies`, `supersedes`) | `DeviceManagementApps.Read.All` | `DeviceManagementApps.ReadWrite.All` |
+
+Groups and assignment filters are referenced by ID, so no directory or filter
+permission is needed.
 
 Metadata names Intune concepts in Stemma's own fields, such as `display_name`,
 `install_experience.run_as` and `detection`; the schema lists them all. The
@@ -354,11 +364,30 @@ one, as when the catalog returns to an earlier release.
 Retention preserves every package still linked by a patch title, even with
 `keep: 1`. Policies omitted from the declaration remain unchanged.
 
-### Names
+### Names and privileges
 
 Categories, patch titles and scope objects are named exactly as in Jamf. Each
 name must match exactly one object, or publication fails before anything is
-written.
+written. Scope privileges follow the kind of object named, whether it is a
+target, a limitation or an exclusion.
+
+The API client's role needs these privileges for the features a catalog uses.
+Planning needs only the read privileges; applying needs both columns. Uploading
+Self Service icons needs none.
+
+| Feature                       | Read                                                                                           | Write                                            |
+| ----------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Packages                      | `Read Packages`                                                                                | `Create Packages`, `Update Packages`             |
+| Category by name (`category`) | `Read Categories`                                                                              |                                                  |
+| Install policies (`policies`) | `Read Policies`                                                                                | `Create Policies`, `Update Policies`             |
+| Patch title link (`patch`)    | `Read Patch Management Software Titles`                                                        | `Update Patch Management Software Titles`        |
+| Patch policy (`patch.policy`) | `Read Patch Policies`                                                                          | `Create Patch Policies`, `Update Patch Policies` |
+| Scope naming computers        | `Read Computers`                                                                               |                                                  |
+| Scope naming computer groups  | `Read Smart Computer Groups`, `Read Static Computer Groups`                                    |                                                  |
+| Scope naming buildings        | `Read Buildings`                                                                               |                                                  |
+| Scope naming departments      | `Read Departments`                                                                             |                                                  |
+| Scope naming network segments | `Read Network Segments`                                                                        |                                                  |
+| Retention (`retention`)       | `Read Policies`, `Read Computer PreStage Enrollments`, `Read Patch Management Software Titles` | `Delete Packages`                                |
 
 ## Identity and retention
 
