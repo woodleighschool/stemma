@@ -399,7 +399,10 @@ func streamPayload(ctx context.Context, source io.ReadCloser, budget *payloadBud
 		if binary.BigEndian.Uint64(header[4:]) != pbzx.DefaultBlockSize {
 			return fmt.Errorf("%w: PBZX chunk size", ErrUnsupported)
 		}
-		reader, err := pbzx.NewConcurrentReader(ctx, r, min(runtime.GOMAXPROCS(0), 4))
+		// Each worker holds a compressed chunk, a decoded chunk and an XZ
+		// dictionary. Beyond eight, more workers finish sooner only by
+		// spending more CPU.
+		reader, err := pbzx.NewConcurrentReader(ctx, r, min(runtime.GOMAXPROCS(0), 8))
 		if err != nil {
 			return err
 		}
