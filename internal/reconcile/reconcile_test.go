@@ -590,10 +590,12 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 		t.Fatalf("idempotent run rewrote the proposal: %+v", second.Update.Proposals)
 	}
 
-	// A squash merge applies offline from the warmed cache and retires the
+	// A squash merge applies with a fresh cache and retires the
 	// branch, although its commit never joined the reviewed history.
 	gh.squash(t, pulls[0].Number)
 	merged := o.tip("main")
+	opts.CacheDir = t.TempDir()
+	beforeFetch := downloads.Load()
 	third := run("")
 	if third.Apply.Error != "" || third.Apply.Skipped || gh.status(merged, applyContext)["state"] != "success" {
 		t.Fatalf("merged lock was not applied: %+v", third.Apply)
@@ -603,6 +605,14 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(munki, "pkgsinfo")); err != nil {
 		t.Fatal("apply did not publish into the repository destination")
+	}
+	if downloads.Load() != beforeFetch+1 {
+		t.Fatalf("fresh publication did not fetch reviewed bytes once: %d", downloads.Load()-beforeFetch)
+	}
+	// Losing only the marker repeats apply, reusing verified cached bytes.
+	opts.StateDir = t.TempDir()
+	if warm := run(""); warm.Apply.Skipped || downloads.Load() != beforeFetch+1 {
+		t.Fatalf("warm publication fetched again: %+v downloads=%d", warm.Apply, downloads.Load()-beforeFetch)
 	}
 	fourth := run("")
 	if !fourth.Apply.Skipped || len(fourth.Update.Proposals) != 0 {
@@ -771,7 +781,7 @@ func TestProposalTitlesDescribeMerging(t *testing.T) {
 		t.Fatal("artifact comparison")
 	}
 	refresh := change{kind: "MacSoftware", name: "app", entries: after, refresh: true}
-	publishing := verification{version: "2", planned: engine.Report{Resources: []engine.ResourceReport{{Kind: "MacSoftware", Name: "app", Destinations: []engine.DestinationReport{{Name: "repo", Changes: []plugin.Change{{Kind: "metadata", Field: "description", Action: "set"}}}}}}}}
+	publishing := verification{version: "2", plan: engine.Report{Resources: []engine.ResourceReport{{Kind: "MacSoftware", Name: "app", Destinations: []engine.DestinationReport{{Name: "repo", Changes: []plugin.Change{{Kind: "metadata", Field: "description", Action: "set"}}}}}}}}
 	for _, test := range []struct {
 		change change
 		v      verification
@@ -779,7 +789,7 @@ func TestProposalTitlesDescribeMerging(t *testing.T) {
 	}{
 		{refresh, verification{version: "2"}, "Refresh MacSoftware/app lock metadata"},
 		{refresh, publishing, "Update MacSoftware/app"},
-		{refresh, verification{err: errors.New("offline")}, "Update MacSoftware/app"},
+		{refresh, verification{err: errors.New("planning failed")}, "Update MacSoftware/app"},
 		{change{kind: "MacSoftware", name: "app", entries: after}, publishing, "Update MacSoftware/app to 2"},
 		{change{kind: "MacSoftware", name: "app", entries: after}, verification{}, "Update MacSoftware/app"},
 		{change{kind: "MacSoftware", name: "app", removed: true}, verification{}, "Remove MacSoftware/app"},
@@ -816,7 +826,7 @@ func TestProposalBodySummarisesWithoutValues(t *testing.T) {
 			{Name: "munki", Error: "upload rejected: Authorization: s3cr3t"},
 		}},
 	}}
-	text := body(update, before, after, verification{version: "2", planned: planned})
+	text := body(update, before, after, verification{version: "2", plan: planned})
 	for _, want := range []string{
 		"Stemma found an update for `MacSoftware/app`.",
 		"| Source | `source`: `App 1.pkg` → `App 2.pkg` |",
@@ -833,7 +843,7 @@ func TestProposalBodySummarisesWithoutValues(t *testing.T) {
 	if strings.Index(text, "| woodstar |") > strings.Index(text, "`MacSoftware/consumer`") {
 		t.Errorf("dependent listed before the proposal's own destinations:\n%s", text)
 	}
-	failed := verification{err: errors.New("prepare: upload rejected: Authorization: s3cr3t"), prepared: engine.Report{Resources: []engine.ResourceReport{
+	failed := verification{err: errors.New("prepare: upload rejected: Authorization: s3cr3t"), plan: engine.Report{Resources: []engine.ResourceReport{
 		{Kind: "MacSoftware", Name: "app", Error: "download: Authorization: s3cr3t"},
 		{Kind: "MacSoftware", Name: "consumer", Error: "blocked", BlockedBy: []string{"stemma/v1alpha1/MacSoftware/app"}},
 	}}}
@@ -844,7 +854,7 @@ func TestProposalBodySummarisesWithoutValues(t *testing.T) {
 	if summary := planSummary(update, failed); summary != "failure: MacSoftware/app could not be prepared; MacSoftware/consumer is blocked by MacSoftware/app" {
 		t.Errorf("status %q", summary)
 	}
-	for _, text := range []string{text, body(update, before, after, verification{version: "2", planned: planned})} {
+	for _, text := range []string{text, body(update, before, after, verification{version: "2", plan: planned})} {
 		if strings.Contains(text, "s3cr3t") {
 			t.Fatalf("durable description repeats a value:\n%s", text)
 		}
@@ -1041,5 +1051,152 @@ func TestApplySummaryDistinguishesBlockedResources(t *testing.T) {
 	state, summary := applySummary(report, errors.New("source unavailable"))
 	if state != "failure" || summary != "1 resource failed: producer; 1 resource blocked" {
 		t.Fatalf("blocked resource counted as failed: %s: %s", state, summary)
+	}
+}
+
+func TestRunPlansExactProposalsAfterLockedContentMismatch(t *testing.T) {
+	var payload atomic.Value
+	var invalidA atomic.Bool
+	payload.Store(buildPackage(t, "1.0"))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if invalidA.Load() && r.URL.Path == "/a.pkg" {
+			_, _ = w.Write([]byte("not an installer"))
+			return
+		}
+		_, _ = w.Write(payload.Load().([]byte))
+	}))
+	t.Cleanup(server.Close)
+	t.Setenv("GITHUB_APP_CLIENT_ID", "Iv1.fixture")
+	t.Setenv("GITHUB_APP_INSTALLATION_ID", "7")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY", testKey(t))
+	munki := filepath.Join(t.TempDir(), "munki")
+	consumer := `apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: consumer}
+spec:
+  source: {resource: {kind: MacSoftware, name: a}}
+  destinations:
+    repo: {pkginfo: {catalogs: [testing]}}
+`
+	o := newOrigin(t, map[string]string{
+		"stemma.yaml":            project(munki),
+		"a.software.yaml":        strings.ReplaceAll(software(server.URL), "fixture", "a"),
+		"b.software.yaml":        strings.ReplaceAll(software(server.URL), "fixture", "b"),
+		"consumer.software.yaml": consumer,
+		"policy.software.yaml":   policy,
+	})
+	// Record reviewed inputs using a separate cache, as another machine would.
+	_, err := engine.Run(t.Context(), engine.Options{ConfigPath: filepath.Join(o.dir, "stemma.yaml"), CacheDir: t.TempDir(), Method: "update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(o.dir, "stemma.lock.yaml")
+	reviewedBytes, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewed, err := lockfile.Parse(reviewedBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.commit(t, "review inputs", map[string]string{"stemma.lock.yaml": string(reviewedBytes)})
+	gh := newFakeGitHub(t, o)
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	if _, err := gogit.PlainCloneContext(t.Context(), checkout, &gogit.CloneOptions{URL: gh.remote(), ClientOptions: []client.Option{gh.auth()}}); err != nil {
+		t.Fatal(err)
+	}
+	methods := map[string]int{}
+	opts := Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir(), ResourceDone: func(method string, _ engine.ResourceReport) error { methods[method]++; return nil }}
+	payload.Store(buildPackage(t, "2.0"))
+	report, err := Run(t.Context(), opts)
+	if !errors.Is(err, ErrFailed) || !report.Apply.Failed() || report.Update.Failed() {
+		t.Fatalf("mismatch should fail publication but allow proposals: %+v, %v", report, err)
+	}
+	if m, err := readMarker(opts.StateDir); err != nil || m.Applied != "" {
+		t.Fatalf("partial apply advanced marker: %+v, %v", m, err)
+	}
+	if len(gh.open()) != 2 {
+		t.Fatalf("want two proposals: %+v", gh.open())
+	}
+	if methods["prepare"] != 0 || methods["plan"] != 3 {
+		t.Fatalf("want one plan per proposal including consumer: %v", methods)
+	}
+	for _, resource := range report.Apply.Report.Resources {
+		switch resource.Name {
+		case "a", "b":
+			if !strings.Contains(resource.Error, "differs from the input lock") {
+				t.Fatalf("locked mismatch missing: %+v", resource)
+			}
+		case "consumer":
+			if len(resource.BlockedBy) == 0 {
+				t.Fatalf("consumer not blocked: %+v", resource)
+			}
+		case "policy":
+			if resource.Error != "" || len(resource.Destinations) != 1 {
+				t.Fatalf("independent publication failed: %+v", resource)
+			}
+		}
+	}
+	for _, proposal := range report.Update.Proposals {
+		name := strings.TrimPrefix(proposal.Resource, "MacSoftware/")
+		file, err := o.commitObject(t, o.tip(proposal.Branch)).File("stemma.lock.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		contents, err := file.Contents()
+		if err != nil {
+			t.Fatal(err)
+		}
+		locked, err := lockfile.Parse([]byte(contents))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for key, entries := range reviewed.Inputs {
+			if key == "stemma/v1alpha1/MacSoftware/"+name {
+				if equalEntries(entries, locked.Inputs[key]) {
+					t.Fatalf("proposal did not change %s", key)
+				}
+			} else if !equalEntries(entries, locked.Inputs[key]) {
+				t.Fatalf("proposal %s changed unrelated %s", name, key)
+			}
+		}
+		if proposal.Plan == nil || gh.status(o.tip(proposal.Branch), planContext)["state"] != "success" {
+			t.Fatalf("proposal plan missing: %+v", proposal)
+		}
+		for _, resource := range proposal.Plan.Resources {
+			if resource.Artifacts["installer"].Version != "2.0" {
+				t.Fatalf("plan did not use proposed bytes: %+v", resource)
+			}
+		}
+	}
+	// Proposal planning must not have published any of the new installers.
+	entries, err := os.ReadDir(filepath.Join(munki, "pkgsinfo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("proposal wrote destinations: %v", entries)
+	}
+	current, err := os.ReadFile(lockPath)
+	if err != nil || string(current) != string(reviewedBytes) {
+		t.Fatalf("reviewed lock changed: %v", err)
+	}
+
+	// Acquisition succeeds but invalid package bytes fail planning. The PRs
+	// still update, with failing statuses and partial reports including blockers.
+	payload.Store(buildPackage(t, "3.0"))
+	invalidA.Store(true)
+	report, err = Run(t.Context(), opts)
+	if !errors.Is(err, ErrFailed) || !report.Update.Failed() || len(gh.open()) != 2 {
+		t.Fatalf("failed plans hid proposals: %+v, %v", report, err)
+	}
+	for _, proposal := range report.Update.Proposals {
+		wantAction, wantState := "failed", "failure"
+		if proposal.Resource == "MacSoftware/b" {
+			wantAction, wantState = "updated", "success"
+		}
+		if proposal.Action != wantAction || proposal.PullRequest == "" || proposal.Plan == nil || gh.status(o.tip(proposal.Branch), planContext)["state"] != wantState {
+			t.Fatalf("failed plan not published: %+v", proposal)
+		}
 	}
 }

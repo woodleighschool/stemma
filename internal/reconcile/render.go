@@ -65,10 +65,10 @@ func plural(count int, noun string) string {
 	return strconv.Itoa(count) + " " + noun + "s"
 }
 
-// verification is the outcome of preparing and planning a proposal.
+// verification is the outcome of planning a proposal or validating lock cleanup.
 type verification struct {
 	state, summary, version string
-	prepared, planned       engine.Report
+	plan                    engine.Report
 	err                     error
 }
 
@@ -76,7 +76,7 @@ func (v verification) failed() bool { return v.err != nil }
 
 // publishes reports whether the verified plan changes any destination.
 func (v verification) publishes() bool {
-	for _, resource := range v.planned.Resources {
+	for _, resource := range v.plan.Resources {
 		for _, destination := range resource.Destinations {
 			if len(destination.Changes) > 0 {
 				return true
@@ -130,17 +130,13 @@ func body(change change, before, after map[string]source.Entry, v verification) 
 	}
 	text.WriteString("| Area | Change |\n| --- | --- |\n")
 	fmt.Fprintf(&text, "| Source | %s |\n", sourceChange(change, before, after))
-	prepared := v.planned
-	if prepared.Resources == nil {
-		prepared = v.prepared
-	}
-	for _, resource := range prepared.Resources {
+	for _, resource := range v.plan.Resources {
 		if resource.Kind == change.kind && resource.Name == change.name && len(resource.Artifacts) > 0 {
 			fmt.Fprintf(&text, "| Prepared | %s |\n", artifacts(resource))
 		}
 	}
 	// The proposal's own destinations come first, then its dependents'.
-	resources := slices.Clone(v.planned.Resources)
+	resources := slices.Clone(v.plan.Resources)
 	slices.SortStableFunc(resources, func(a, b engine.ResourceReport) int {
 		return boolOrder(a.Kind != change.kind || a.Name != change.name, b.Kind != change.kind || b.Name != change.name)
 	})
@@ -159,7 +155,7 @@ func body(change change, before, after map[string]source.Entry, v verification) 
 	} else {
 		text.WriteString("Passed.\n")
 		if !change.removed {
-			text.WriteString("\nMerging applies the reviewed lock offline from the cache warmed by this run.\n")
+			text.WriteString("\nAfter merge, reconciliation applies the reviewed lock, reusing verified cached content or fetching matching locked content.\n")
 		}
 	}
 	text.WriteString("\n---\n\n")
@@ -266,7 +262,7 @@ func failures(change change, v verification, quote func(string) string) []string
 		return []string{"the catalog does not validate without " + quote(change.kind+"/"+change.name)}
 	}
 	var parts []string
-	for _, resource := range v.prepared.Resources {
+	for _, resource := range v.plan.Resources {
 		name := quote(resource.Kind + "/" + resource.Name)
 		switch {
 		case len(resource.BlockedBy) > 0:
@@ -276,14 +272,8 @@ func failures(change change, v verification, quote func(string) string) []string
 				blockers = append(blockers, quote(kind+"/"+name))
 			}
 			parts = append(parts, name+" is blocked by "+strings.Join(blockers, ", "))
-		case resource.Error != "":
+		case resource.Error != "" && len(resource.Destinations) == 0:
 			parts = append(parts, name+" could not be prepared")
-		}
-	}
-	for _, resource := range v.planned.Resources {
-		name := quote(resource.Kind + "/" + resource.Name)
-		if resource.Error != "" && len(resource.Destinations) == 0 {
-			parts = append(parts, name+" could not be prepared offline")
 		}
 		for _, destination := range resource.Destinations {
 			if destination.Error != "" {
@@ -307,7 +297,7 @@ func planSummary(change change, v verification) string {
 		return "lock maintenance: removed " + name
 	}
 	changes, destinations := 0, 0
-	for _, resource := range v.planned.Resources {
+	for _, resource := range v.plan.Resources {
 		for _, destination := range resource.Destinations {
 			destinations++
 			changes += len(destination.Changes)

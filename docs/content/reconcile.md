@@ -38,21 +38,25 @@ command.
    The working tree is never touched; the reviewed commit and every proposal
    are checked out into temporary directories.
 2. **Apply.** When the reviewed commit differs from the last one applied in full,
-   run `apply --offline` for the whole catalog and record the result as the
-   `stemma/apply` commit status. Each resource's locked inputs are verified from
-   the cache before its destinations are written. Missing or stale inputs fail
-   that resource and block consumers of its outputs; independent resources still
+   run frozen `apply` for the whole catalog and record the result as the
+   `stemma/apply` commit status. Each resource reuses verified cached inputs or
+   acquires them from their locked observations before its destinations are
+   written. Missing or stale lock entries, unavailable content, or content that
+   differs from the reviewed identity fail that resource and block consumers of its outputs; independent resources still
    publish. The applied marker moves only when the whole apply succeeded; a
    partial apply is retried next run.
 3. **Update.** Resolve every declared input of the reviewed commit once and keep
    one `stemma/Kind/name` branch per resource whose inputs differ from the lock.
    The branch is regenerated from the reviewed commit with only that resource's
    lock entries changed. The resource and every resource consuming its outputs
-   are prepared online from the exact locked observations, then planned offline:
-   proof that the cache already holds every byte a merge will need. The commit
+   are planned once against that exact proposal lock. Planning acquires locked
+   inputs as needed, prepares artifacts and compares destinations without writing
+   them. Other resources retain their reviewed inputs and plugins. The commit
    is pushed with a lease, the pull request is opened or updated with a summary
    of the lock change and what merging does to each destination, and the
-   verification becomes the `stemma/plan` commit status.
+   verification becomes the `stemma/plan` commit status. A failed plan still
+   creates or updates the proposal with a failing status and a safe summary;
+   detailed failures remain in the run report.
 
 Both phases start from the reviewed commit's project and lockfile. When either
 does not load, neither phase runs: the run fails with that one error, and the
@@ -122,18 +126,24 @@ enough.
 
 The cache defaults to the system's user cache directory; `STEMMA_CACHE_DIR` or
 `--cache-dir` overrides it. It is disposable and shared by the reviewed branch and every proposal;
-a proposal warms it for its own merge, and later runs reuse what it downloaded
-rather than fetching a pending update again. The state directory holds only
+proposal planning and publication reuse verified inputs and prepared artifacts.
+Cache warmth is not part of review approval: the reviewed lock determines which
+content publication may use. The state directory holds only
 `reconcile.json`, the applied marker. It defaults to `.stemma/state` under the
 project root; `STEMMA_STATE_DIR` or `reconcile --state-dir` overrides it. Ignore
 `.stemma/` in Git when using this default. Losing the marker repeats one apply, which
 converges on what the destinations already hold. To take over by hand, stop the
 schedule and run `stemma apply` from any checkout.
 
-After losing the cache, run `stemma plan` in a checkout of the reviewed branch
-with the same cache directory. Frozen runs acquire every locked input from its
-recorded observation without resolving anything new, so the next reconcile
-applies offline again.
+A fresh cache needs no warm-up command. Publication fetches missing inputs from
+their recorded locked observations and rejects content that differs from the
+reviewed identity. If historical content is no longer available, publication
+fails for the affected resource; discovery can independently propose newer
+content for review. Acquisition never repairs missing or stale lock entries.
+
+A successfully applied commit stays skipped on later runs, even if destinations
+drift. Failed or partially applied commits remain eligible for retry.
+Standalone commands still support `--offline` when cached acquisition is required.
 
 ## Scheduling
 

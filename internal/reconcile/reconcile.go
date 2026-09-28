@@ -258,8 +258,8 @@ func (r *runner) configIn(worktree *git.Worktree) string {
 	return filepath.Join(worktree.Dir, r.project, r.config)
 }
 
-func (r *runner) engineOptions(method, configPath string, resources []string, offline bool) engine.Options {
-	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Method: method, Resources: resources, Lock: lockfile.Options{Offline: offline}}
+func (r *runner) engineOptions(method, configPath string, resources []string) engine.Options {
+	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Method: method, Resources: resources}
 	if r.opts.ResourceDone != nil {
 		opts.ResourceDone = func(resource engine.ResourceReport) error { return r.opts.ResourceDone(method, resource) }
 	}
@@ -290,7 +290,7 @@ func (r *runner) reject(ctx context.Context, head string) error {
 	return r.host.SetCommitStatus(ctx, head, sourcecontrol.Status{Name: applyContext, State: sourcecontrol.Failure, Description: failedDescription})
 }
 
-// apply publishes the reviewed commit offline. The marker moves after
+// apply publishes the reviewed commit from its frozen lock. The marker moves after
 // publication and its commit status succeed, so failures retry next run.
 func (r *runner) apply(ctx context.Context, head string, reviewed *git.Worktree) Apply {
 	result := Apply{Commit: head}
@@ -304,7 +304,7 @@ func (r *runner) apply(ctx context.Context, head string, reviewed *git.Worktree)
 		return result
 	}
 	done := plugin.Stage(ctx, "Applying reviewed branch", plugin.Detail(short(head)))
-	report, applyErr := engine.Run(ctx, r.engineOptions("apply", r.configIn(reviewed), nil, true))
+	report, applyErr := engine.Run(ctx, r.engineOptions("apply", r.configIn(reviewed), nil))
 	result.Report = &report
 	done(applyErr)
 	state, summary := applySummary(report, applyErr)
@@ -687,10 +687,8 @@ func encode(file lockfile.File) ([]byte, error) {
 // as a commit status.
 func (r *runner) publish(ctx context.Context, proposal Proposal, key string, change change, candidate engine.Candidate, worktree *git.Worktree, commit, expected string, pull sourcecontrol.PullRequest, open bool) (Proposal, error) {
 	result := r.verify(ctx, worktree, key, change, candidate)
-	if result.planned.Resources != nil {
-		proposal.Plan = &result.planned
-	} else if result.prepared.Resources != nil {
-		proposal.Plan = &result.prepared
+	if !change.removed {
+		proposal.Plan = &result.plan
 	}
 	if proposal.Action != "retried" {
 		done := plugin.Stage(ctx, "Pushing proposal", plugin.Detail(proposal.Branch))
@@ -722,26 +720,20 @@ func (r *runner) publish(ctx context.Context, proposal Proposal, key string, cha
 
 // verify proves a proposal from its worktree: a removed resource must still
 // validate; a changed resource and everything consuming its outputs are
-// prepared online from the exact locked observations, then planned offline,
-// which shows every byte a merge will need is already cached.
+// planned against the exact proposed lock, acquiring its recorded inputs as needed.
 func (r *runner) verify(ctx context.Context, worktree *git.Worktree, key string, change change, candidate engine.Candidate) verification {
 	var result verification
 	configPath := r.configIn(worktree)
 	if change.removed {
 		done := plugin.Stage(ctx, "Validating catalog")
-		_, result.err = engine.ValidateProject(ctx, engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Lock: lockfile.Options{Offline: true}}, true)
+		_, result.err = engine.ValidateProject(ctx, engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir}, true)
 		done(result.err)
 	} else {
 		closure := append([]string{key}, candidate.Dependents(key)...)
-		done := plugin.Stage(ctx, "Preparing proposal")
-		result.prepared, result.err = engine.Run(ctx, r.engineOptions("prepare", configPath, closure, false))
+		done := plugin.Stage(ctx, "Planning proposal")
+		result.plan, result.err = engine.Run(ctx, r.engineOptions("plan", configPath, closure))
 		done(result.err)
-		if result.err == nil {
-			done = plugin.Stage(ctx, "Planning proposal offline")
-			result.planned, result.err = engine.Run(ctx, r.engineOptions("plan", configPath, closure, true))
-			done(result.err)
-		}
-		for _, resource := range slices.Concat(result.prepared.Resources, result.planned.Resources) {
+		for _, resource := range result.plan.Resources {
 			if resource.Key == key && resource.Artifacts["installer"].Version != "" {
 				result.version = resource.Artifacts["installer"].Version
 			}
