@@ -9,6 +9,7 @@ import (
 
 	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/constants"
 	titles "github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/jamf_pro_api/patch_software_title_configurations"
+	"github.com/invopop/jsonschema"
 )
 
 // A named object is a Jamf object that declarations address by its exact name.
@@ -40,16 +41,41 @@ func rsql(field, value string) string {
 	return field + `=="` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(value) + `"`
 }
 
-// categoryID resolves a declared category: a name, or null for none.
-func (c *client) categoryID(ctx context.Context, value json.RawMessage) (string, error) {
-	var name *string
-	if err := json.Unmarshal(value, &name); err != nil {
-		return "", errors.New("jamf category must be a name or null")
+// A namedID is a Jamf object resolved from its name; a nil name is none.
+type namedID struct {
+	id   string
+	name *string
+}
+
+// categoryName declares a category by its name; null declares none.
+type categoryName struct {
+	set  bool
+	name *string
+}
+
+func (c *categoryName) UnmarshalJSON(data []byte) error {
+	c.set = true
+	return json.Unmarshal(data, &c.name)
+}
+
+func (categoryName) JSONSchema() *jsonschema.Schema {
+	return &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Type: "string", MinLength: new(uint64(1))}, {Type: "null"}}}
+}
+
+// category resolves a declared category: the one it names, none for null, or
+// fallback when the declaration omits it.
+func (c *client) category(ctx context.Context, declared categoryName, fallback *namedID) (*namedID, error) {
+	switch {
+	case !declared.set:
+		return fallback, nil
+	case declared.name == nil:
+		return &namedID{id: "-1"}, nil
 	}
-	if name == nil {
-		return "-1", nil
+	id, err := c.objectID(ctx, "category", *declared.name)
+	if err != nil {
+		return nil, err
 	}
-	return c.objectID(ctx, "category", *name)
+	return &namedID{id: id, name: declared.name}, nil
 }
 
 // objectID resolves the name of a category or a scope object.

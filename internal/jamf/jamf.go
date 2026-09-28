@@ -1,6 +1,7 @@
-// Package jamf reconciles packages, patch deployment and retention with Jamf Pro.
-// It keeps no state between runs: a marker in each package's notes identifies
-// the packages that belong to a software.
+// Package jamf reconciles packages, install and patch policies, and retention
+// with Jamf Pro. It keeps no state between runs: a marker in each package's
+// notes identifies the packages that belong to a software, and policies are
+// found by name.
 package jamf
 
 import (
@@ -76,26 +77,23 @@ type payload struct {
 }
 
 // Handle validates, plans or applies one software's publication. It converges
-// the package holding the artifact's file name, then patch deployment, then
-// retention; plan reports the same changes without writing.
+// the package holding the artifact's file name, then the install policies,
+// patch deployment and retention; plan reports the same changes without
+// writing.
 func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, error) {
 	var response plugin.ReconcileResponse
-	config, metadata, adopt, err := validate(request)
+	config := request.Config
+	// Validation also runs before connection settings are available.
+	if request.Method != "validate" {
+		if err := config.Validate(); err != nil {
+			return response, err
+		}
+	}
+	config.URL = strings.TrimRight(config.URL, "/")
+	metadata, err := decodeMetadata(request.Metadata)
 	if err != nil {
 		return response, err
 	}
-	retention, err := decodeRetention(metadata)
-	if err != nil {
-		return response, err
-	}
-	delete(metadata, "retention")
-	patch, err := decodePatch(metadata)
-	if err != nil {
-		return response, err
-	}
-	delete(metadata, "patch")
-	category, categorized := metadata["category"]
-	delete(metadata, "category")
 	if request.Method == "validate" {
 		if request.Artifact.Path != "" {
 			_, err = inspectPayload(ctx, request.Identity, request.Artifact)
@@ -109,6 +107,10 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	if err != nil {
 		return response, err
 	}
+	icon, err := newSelfServiceIcon(request.Inputs["icon"])
+	if err != nil {
+		return response, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	c, err := newClient(ctx, config)
@@ -117,15 +119,20 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	}
 	// Names resolve before anything is written, so a missing or ambiguous one
 	// changes nothing.
-	if categorized {
-		id, err := c.categoryID(ctx, category)
-		if err != nil {
+	packageCategory, err := c.category(ctx, metadata.category, nil)
+	if err != nil {
+		return response, err
+	}
+	if packageCategory != nil {
+		metadata.fields["categoryId"] = raw(packageCategory.id)
+	}
+	for _, policy := range metadata.policies {
+		if err := c.resolvePolicy(ctx, policy, packageCategory); err != nil {
 			return response, err
 		}
-		metadata["categoryId"] = raw(id)
 	}
-	if patch != nil {
-		if err := c.resolvePatch(ctx, patch, request.Artifact.Version); err != nil {
+	if metadata.patch != nil {
+		if err := c.resolvePatch(ctx, metadata.patch, request.Artifact.Version); err != nil {
 			return response, err
 		}
 	}
@@ -134,37 +141,44 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	if err != nil {
 		return response, err
 	}
-	current, err := c.locate(ctx, family, adopt, identity, content.filename)
+	current, err := c.locate(ctx, family, metadata.packageID, identity, content.filename)
 	if err != nil {
 		return response, err
 	}
-	desired := maps.Clone(metadata)
+	desired := maps.Clone(metadata.fields)
 	desired["fileName"] = raw(content.filename)
 	response.Changes = plan(current, desired, content, identity)
-	var id string
+	software := request.Identity.Resource.Name
+	pub := publication{software: software, application: applicationName(request.Artifact), filename: content.filename, icon: icon}
 	if current != nil {
-		id = stringField(current.Fields, "id")
+		pub.packageID = stringField(current.Fields, "id")
 	}
-	if patch != nil {
-		if err := c.planPatch(ctx, patch, id, request.Identity.Resource.Name, &response); err != nil {
+	for _, policy := range metadata.policies {
+		if err := c.planPolicy(ctx, policy, pub, &response); err != nil {
+			return response, err
+		}
+	}
+	if metadata.patch != nil {
+		if err := c.planPatch(ctx, metadata.patch, pub.packageID, software, icon, &response); err != nil {
 			return response, err
 		}
 	}
 	// The current record is never retired, so creating it below leaves this
 	// selection as planned.
 	var retiring []summary
-	if retention.Keep > 0 {
-		retiring = retired(family, id, retention.Keep)
+	if metadata.retention.Keep > 0 {
+		retiring = retired(family, pub.packageID, metadata.retention.Keep)
 	}
 	if request.Method == "plan" {
-		return response, c.prune(ctx, retiring, patch, false, &response)
+		return response, c.prune(ctx, retiring, metadata.patch, metadata.policies, false, &response)
 	}
 	if current == nil {
 		if current, err = c.create(ctx, identity, content.filename); err != nil {
 			return response, err
 		}
-		id = stringField(current.Fields, "id")
+		pub.packageID = stringField(current.Fields, "id")
 	}
+	id := pub.packageID
 	// An adopted package takes the file name and marker before any content, so an
 	// interrupted run leaves a record the next one finds.
 	claim := map[string]json.RawMessage{"fileName": desired["fileName"]}
@@ -187,70 +201,75 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	if !contentMatches(current, content) {
 		return response, errors.New("jamf content changed during metadata reconciliation")
 	}
-	if patch != nil {
-		if err := c.applyPatch(ctx, patch, id, request.Identity.Resource.Name); err != nil {
+	for _, policy := range metadata.policies {
+		if err := c.applyPolicy(ctx, policy, pub); err != nil {
 			return response, err
 		}
 	}
-	return response, c.prune(ctx, retiring, patch, true, &response)
-}
-
-// validate checks the declaration and returns the package fields under their
-// Jamf names, beside the patch, retention and category declarations.
-func validate(request plugin.ReconcileRequest[Config]) (Config, map[string]json.RawMessage, string, error) {
-	config := request.Config
-	// Validate requests check metadata alone and carry no connection settings.
-	if request.Method != "validate" {
-		if err := config.Validate(); err != nil {
-			return config, nil, "", err
+	if metadata.patch != nil {
+		if err := c.applyPatch(ctx, metadata.patch, id, software, icon); err != nil {
+			return response, err
 		}
 	}
-	config.URL = strings.TrimRight(config.URL, "/")
-	declared, err := decodeObject(request.Metadata)
+	return response, c.prune(ctx, retiring, metadata.patch, metadata.policies, true, &response)
+}
+
+type metadata struct {
+	fields    map[string]json.RawMessage
+	packageID string
+	category  categoryName
+	policies  []*installPolicy
+	patch     *patchConfig
+	retention plugin.Retention
+}
+
+// decodeMetadata validates the declaration and translates package field names
+// at the transport boundary. Policies keep their declared settings until names resolve.
+func decodeMetadata(data json.RawMessage) (metadata, error) {
+	declared, err := decodeObject(data)
 	if err != nil {
-		return config, nil, "", fmt.Errorf("jamf metadata: %w", err)
+		return metadata{}, fmt.Errorf("jamf metadata: %w", err)
 	}
-	adopt := ""
-	metadata := map[string]json.RawMessage{}
+	result := metadata{fields: map[string]json.RawMessage{}}
 	for key, value := range declared {
 		switch key {
 		case "package_id":
 			var id uint64
 			if err := json.Unmarshal(value, &id); err != nil || id == 0 {
-				return config, nil, "", errors.New("package_id must be a positive integer")
+				return metadata{}, errors.New("package_id must be a positive integer")
 			}
-			adopt = strconv.FormatUint(id, 10)
+			result.packageID = strconv.FormatUint(id, 10)
 		case "retention":
-			if _, err := decodeRetention(declared); err != nil {
-				return config, nil, "", err
+			if result.retention, err = decodeRetention(declared); err != nil {
+				return metadata{}, err
 			}
-			metadata[key] = value
 		case "patch":
-			if _, err := decodePatch(declared); err != nil {
-				return config, nil, "", err
+			if result.patch, err = decodePatch(declared); err != nil {
+				return metadata{}, err
 			}
-			metadata[key] = value
+		case "policies":
+			if result.policies, err = decodePolicies(declared); err != nil {
+				return metadata{}, err
+			}
 		case "category":
-			var name *string
-			if err := json.Unmarshal(value, &name); err != nil || name != nil && strings.TrimSpace(*name) == "" {
-				return config, nil, "", errors.New("jamf category must be a category name or null")
+			if err := json.Unmarshal(value, &result.category); err != nil || result.category.name != nil && strings.TrimSpace(*result.category.name) == "" {
+				return metadata{}, errors.New("jamf category must be a category name or null")
 			}
-			metadata[key] = value
 		default:
 			rule, ok := packageFields[key]
 			if !ok {
-				return config, nil, "", fmt.Errorf("unsupported Jamf package metadata %q", key)
+				return metadata{}, fmt.Errorf("unsupported Jamf package metadata %q", key)
 			}
 			if err := rule.validate(value); err != nil {
-				return config, nil, "", fmt.Errorf("jamf %s: %w", key, err)
+				return metadata{}, fmt.Errorf("jamf %s: %w", key, err)
 			}
-			metadata[rule.native] = value
+			result.fields[rule.native] = value
 		}
 	}
-	if strings.Contains(stringField(metadata, "notes"), "[stemma:v1 ") {
-		return config, nil, "", errors.New("jamf notes contains a reserved Stemma marker")
+	if strings.Contains(stringField(result.fields, "notes"), "[stemma:v1 ") {
+		return metadata{}, errors.New("jamf notes contains a reserved Stemma marker")
 	}
-	return config, metadata, adopt, nil
+	return result, nil
 }
 
 // A fieldRule is one declared package setting and the Jamf property it sets.
@@ -284,19 +303,11 @@ func (r fieldRule) validate(value json.RawMessage) error {
 }
 
 var packageFields = map[string]fieldRule{
-	"display_name":          {"packageName", "string", false, "Package display name. Defaults to the artifact filename when creating a package. Identity comes from the notes marker, never this name."},
-	"info":                  {"info", "string", true, "Package information. Null clears the field."},
-	"notes":                 {"notes", "string", true, "Administrator notes. Null clears the text. Stemma keeps its identity marker on the final line and preserves the remote text when this is omitted."},
-	"priority":              {"priority", "int", false, "Installation priority. Defaults to 10 when creating a package."},
-	"os_requirements":       {"osRequirements", "string", true, "Operating system requirement expression, such as 10.6.8, 10.7.x. Null clears the field."},
-	"fill_user_template":    {"fillUserTemplate", "bool", false, "Fill the user template. Explicit false is managed."},
-	"fill_existing_users":   {"fillExistingUsers", "bool", false, "Fill existing user home directories. Explicit false is managed."},
-	"reboot_required":       {"rebootRequired", "bool", false, "Require a restart after installation. Explicit false is managed."},
-	"os_install":            {"osInstall", "bool", false, "Mark the package as an operating system installer. Explicit false is managed."},
-	"suppress_updates":      {"suppressUpdates", "bool", false, "Jamf's suppress updates package option. Explicit false is managed."},
-	"suppress_from_dock":    {"suppressFromDock", "bool", false, "Jamf's suppress from Dock package option. Explicit false is managed."},
-	"suppress_eula":         {"suppressEula", "bool", false, "Jamf's suppress EULA package option. Explicit false is managed."},
-	"suppress_registration": {"suppressRegistration", "bool", false, "Jamf's suppress registration package option. Explicit false is managed."},
+	"info":            {"info", "string", true, "Package information. Null clears the field."},
+	"notes":           {"notes", "string", true, "Administrator notes. Null clears the text. Stemma keeps its identity marker on the final line and preserves the remote text when this is omitted."},
+	"priority":        {"priority", "int", false, "Installation order among packages installed together; lower values install first. Defaults to 10 when creating a package."},
+	"os_requirements": {"osRequirements", "string", true, "Operating system requirement expression, such as 14.x, 15.x. Null clears the field."},
+	"reboot_required": {"rebootRequired", "bool", false, "Require a restart after installation. Explicit false is managed."},
 }
 
 // fieldName names a Jamf package property the way declarations do, so plans
@@ -801,6 +812,41 @@ func equalJSON(a, b json.RawMessage) bool {
 		return false
 	}
 	return bytes.Equal(left.Bytes(), right.Bytes())
+}
+
+// rejectNulls fails on JSON nulls, except as the values of the named keys.
+func rejectNulls(data json.RawMessage, nullable ...string) error {
+	if len(data) == 0 {
+		return errors.New("empty JSON value")
+	}
+	switch data[0] {
+	case 'n':
+		return errors.New("null is not supported")
+	case '{':
+		fields, err := decodeObject(data)
+		if err != nil {
+			return err
+		}
+		for key, value := range fields {
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) && slices.Contains(nullable, key) {
+				continue
+			}
+			if err := rejectNulls(value, nullable...); err != nil {
+				return err
+			}
+		}
+	case '[':
+		var values []json.RawMessage
+		if err := json.Unmarshal(data, &values); err != nil {
+			return err
+		}
+		for _, value := range values {
+			if err := rejectNulls(value, nullable...); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func strictDecode(data []byte, target any) error {

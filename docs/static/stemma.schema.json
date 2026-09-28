@@ -5307,7 +5307,7 @@
     "OperationMetadata_jamf": {
       "$id": "https://stemma.invalid/editor/jamf/metadata",
       "additionalProperties": false,
-      "description": "Jamf Pro package metadata. Omitted fields are left unchanged; explicit false, zero and empty strings are managed. Only the documented nullable strings accept null. Each artifact filename has its own package, identified by Stemma's marker in its notes; changed bytes under the same filename are uploaded into that package. Patch deployment and retention are opt-in.",
+      "description": "Jamf Pro package metadata. Omitted fields are left unchanged; explicit false, zero and empty strings are managed. Only the documented nullable fields accept null. Each artifact filename has its own package, identified by Stemma's marker in its notes; changed bytes under the same filename are uploaded into that package. Install policies, patch deployment and retention are opt-in.",
       "properties": {
         "category": {
           "anyOf": [
@@ -5328,42 +5328,6 @@
             }
           ],
           "description": "Category name, which must match exactly one Jamf category. Null removes the category."
-        },
-        "display_name": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-              "type": "string"
-            }
-          ],
-          "description": "Package display name. Defaults to the artifact filename when creating a package. Identity comes from the notes marker, never this name."
-        },
-        "fill_existing_users": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-              "type": "string"
-            }
-          ],
-          "description": "Fill existing user home directories. Explicit false is managed."
-        },
-        "fill_user_template": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-              "type": "string"
-            }
-          ],
-          "description": "Fill the user template. Explicit false is managed."
         },
         "info": {
           "anyOf": [
@@ -5419,18 +5383,6 @@
           ],
           "description": "Administrator notes. Null clears the text. Stemma keeps its identity marker on the final line and preserves the remote text when this is omitted."
         },
-        "os_install": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-              "type": "string"
-            }
-          ],
-          "description": "Mark the package as an operating system installer. Explicit false is managed."
-        },
         "os_requirements": {
           "anyOf": [
             {
@@ -5448,7 +5400,7 @@
               "type": "string"
             }
           ],
-          "description": "Operating system requirement expression, such as 10.6.8, 10.7.x. Null clears the field."
+          "description": "Operating system requirement expression, such as 14.x, 15.x. Null clears the field."
         },
         "package_id": {
           "anyOf": [
@@ -5482,7 +5434,28 @@
                               "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                               "type": "string"
                             }
-                          ]
+                          ],
+                          "description": "Also install the target version on computers that have a newer one, as when the catalog returns to an earlier release."
+                        },
+                        "deadline_days": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            {
+                              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                              "type": "string"
+                            }
+                          ],
+                          "description": "Days an update is offered in Self Service before it installs automatically; it needs distribution: self_service. Null removes the deadline."
                         },
                         "distribution": {
                           "anyOf": [
@@ -5498,7 +5471,7 @@
                               "type": "string"
                             }
                           ],
-                          "description": "Install automatically, or offer the update in Self Service."
+                          "description": "Install updates automatically, or offer them in Self Service with a notification and reminders."
                         },
                         "enabled": {
                           "anyOf": [
@@ -5509,7 +5482,21 @@
                               "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
                               "type": "string"
                             }
-                          ]
+                          ],
+                          "description": "Enable the policy. A policy Stemma creates starts disabled."
+                        },
+                        "grace_minutes": {
+                          "anyOf": [
+                            {
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            {
+                              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                              "type": "string"
+                            }
+                          ],
+                          "description": "Minutes users have to save their work before the title's apps quit for an automatic update."
                         },
                         "name": {
                           "anyOf": [
@@ -5534,7 +5521,27 @@
                               "type": "string"
                             }
                           ],
-                          "description": "Also patch computers with an unknown installed version."
+                          "description": "Also update computers whose installed version the title does not define."
+                        },
+                        "reminder_days": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "minimum": 1,
+                                  "type": "integer"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            {
+                              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                              "type": "string"
+                            }
+                          ],
+                          "description": "Days between reminders about an update offered in Self Service; it needs distribution: self_service. Defaults to 1; null turns reminders off."
                         },
                         "scope": {
                           "anyOf": [
@@ -5824,263 +5831,6 @@
                             }
                           ],
                           "description": "Scope objects named exactly as in Jamf. Each name must match exactly one object, and supplied lists replace their collections."
-                        },
-                        "user_interaction": {
-                          "anyOf": [
-                            {
-                              "additionalProperties": false,
-                              "properties": {
-                                "deadlines": {
-                                  "anyOf": [
-                                    {
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "enabled": {
-                                          "anyOf": [
-                                            {
-                                              "type": "boolean"
-                                            },
-                                            {
-                                              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                              "type": "string"
-                                            }
-                                          ]
-                                        },
-                                        "period": {
-                                          "anyOf": [
-                                            {
-                                              "minimum": 0,
-                                              "type": "integer"
-                                            },
-                                            {
-                                              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                              "type": "string"
-                                            }
-                                          ],
-                                          "description": "Days until the deadline."
-                                        }
-                                      },
-                                      "propertyNames": {
-                                        "not": {
-                                          "pattern": "\\{\\{"
-                                        }
-                                      },
-                                      "type": "object"
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ]
-                                },
-                                "grace_period": {
-                                  "anyOf": [
-                                    {
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "duration": {
-                                          "anyOf": [
-                                            {
-                                              "minimum": 0,
-                                              "type": "integer"
-                                            },
-                                            {
-                                              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                              "type": "string"
-                                            }
-                                          ],
-                                          "description": "Minutes before a forced restart."
-                                        },
-                                        "message": {
-                                          "anyOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                              "type": "string"
-                                            }
-                                          ]
-                                        },
-                                        "subject": {
-                                          "anyOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                              "type": "string"
-                                            }
-                                          ]
-                                        }
-                                      },
-                                      "propertyNames": {
-                                        "not": {
-                                          "pattern": "\\{\\{"
-                                        }
-                                      },
-                                      "type": "object"
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ]
-                                },
-                                "install_button_text": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                      "type": "string"
-                                    }
-                                  ]
-                                },
-                                "notifications": {
-                                  "anyOf": [
-                                    {
-                                      "additionalProperties": false,
-                                      "properties": {
-                                        "enabled": {
-                                          "anyOf": [
-                                            {
-                                              "type": "boolean"
-                                            },
-                                            {
-                                              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                              "type": "string"
-                                            }
-                                          ]
-                                        },
-                                        "message": {
-                                          "anyOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                              "type": "string"
-                                            }
-                                          ]
-                                        },
-                                        "reminders": {
-                                          "anyOf": [
-                                            {
-                                              "additionalProperties": false,
-                                              "properties": {
-                                                "enabled": {
-                                                  "anyOf": [
-                                                    {
-                                                      "type": "boolean"
-                                                    },
-                                                    {
-                                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                      "type": "string"
-                                                    }
-                                                  ]
-                                                },
-                                                "frequency": {
-                                                  "anyOf": [
-                                                    {
-                                                      "minimum": 0,
-                                                      "type": "integer"
-                                                    },
-                                                    {
-                                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                                      "type": "string"
-                                                    }
-                                                  ],
-                                                  "description": "Days between reminders."
-                                                }
-                                              },
-                                              "propertyNames": {
-                                                "not": {
-                                                  "pattern": "\\{\\{"
-                                                }
-                                              },
-                                              "type": "object"
-                                            },
-                                            {
-                                              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                              "type": "string"
-                                            }
-                                          ]
-                                        },
-                                        "subject": {
-                                          "anyOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                              "type": "string"
-                                            }
-                                          ]
-                                        },
-                                        "type": {
-                                          "anyOf": [
-                                            {
-                                              "type": "string"
-                                            },
-                                            {
-                                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                              "type": "string"
-                                            }
-                                          ]
-                                        }
-                                      },
-                                      "propertyNames": {
-                                        "not": {
-                                          "pattern": "\\{\\{"
-                                        }
-                                      },
-                                      "type": "object"
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ]
-                                },
-                                "self_service_description": {
-                                  "anyOf": [
-                                    {
-                                      "type": "string"
-                                    },
-                                    {
-                                      "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                      "type": "string"
-                                    }
-                                  ]
-                                },
-                                "self_service_icon_id": {
-                                  "anyOf": [
-                                    {
-                                      "minimum": 1,
-                                      "type": "integer"
-                                    },
-                                    {
-                                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                                      "type": "string"
-                                    }
-                                  ],
-                                  "description": "ID of an icon uploaded to Jamf; icons have no unique name."
-                                }
-                              },
-                              "propertyNames": {
-                                "not": {
-                                  "pattern": "\\{\\{"
-                                }
-                              },
-                              "type": "object"
-                            },
-                            {
-                              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                              "type": "string"
-                            }
-                          ]
                         }
                       },
                       "propertyNames": {
@@ -6095,7 +5845,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Patch policy found by name within the title, where the name defaults to the software name. It is updated in place, or created disabled and unscoped before the declared settings are applied."
+                  "description": "Patch policy found by name within the title, where the name defaults to the software name. It is updated in place, or created disabled and unscoped before the declared settings are applied. The title's definitions supply the apps it quits and its minimum OS."
                 },
                 "title": {
                   "anyOf": [
@@ -6108,7 +5858,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Display name of an existing patch software title. It must match exactly one title, and the title must define the software's managed version."
+                  "description": "Display name of an existing patch software title. It must match exactly one title. Until the title defines the software's managed version, the package link, the policy's target version and a new policy wait for it."
                 }
               },
               "propertyNames": {
@@ -6126,7 +5876,549 @@
               "type": "string"
             }
           ],
-          "description": "Associate the package with the software's managed version in an existing patch title, replacing that version's package and keeping other versions, and optionally maintain a patch policy. Titles, policies and scope objects are named exactly as in Jamf, and each name must match exactly one object. Omitted fields are left unchanged and supplied scope lists replace their collections. Without patch, title associations and policies are left as they are."
+          "description": "Link the current package to an existing patch title and optionally manage its policy. Missing version definitions defer the link and target version; other settings on an existing policy still apply. Omitted fields remain unchanged and supplied scope lists replace their collections."
+        },
+        "policies": {
+          "anyOf": [
+            {
+              "items": {
+                "anyOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "category": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Category name for the policy, or null for none. Defaults to the package category."
+                      },
+                      "enabled": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Enable the policy. A policy Stemma creates starts disabled."
+                      },
+                      "event": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Custom event that runs the policy, as in jamf policy -event NAME. An empty string removes it."
+                      },
+                      "frequency": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "once_per_computer",
+                              "once_per_user_per_computer",
+                              "once_per_user",
+                              "once_every_day",
+                              "once_every_week",
+                              "once_every_month",
+                              "ongoing"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "How often the policy runs on a computer. A policy that runs once per computer leaves Self Service after it runs, so a Self Service policy usually runs ongoing."
+                      },
+                      "name": {
+                        "anyOf": [
+                          {
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          {
+                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Policy name, which finds the policy. Renaming a policy creates another one and leaves the old one in Jamf."
+                      },
+                      "retries": {
+                        "anyOf": [
+                          {
+                            "maximum": 10,
+                            "minimum": 0,
+                            "type": "integer"
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Retry a failed run at the next check-in, up to this many times; it needs frequency: once_per_computer. Zero turns retries off."
+                      },
+                      "scope": {
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "all_computers": {
+                                "anyOf": [
+                                  {
+                                    "type": "boolean"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "buildings": {
+                                "anyOf": [
+                                  {
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "type": "array"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "computer_groups": {
+                                "anyOf": [
+                                  {
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "type": "array"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "computers": {
+                                "anyOf": [
+                                  {
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "type": "array"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "departments": {
+                                "anyOf": [
+                                  {
+                                    "items": {
+                                      "anyOf": [
+                                        {
+                                          "type": "string"
+                                        },
+                                        {
+                                          "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                          "type": "string"
+                                        }
+                                      ]
+                                    },
+                                    "type": "array"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "exclusions": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "buildings": {
+                                        "anyOf": [
+                                          {
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string"
+                                                },
+                                                {
+                                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                            "type": "string"
+                                          }
+                                        ]
+                                      },
+                                      "computer_groups": {
+                                        "anyOf": [
+                                          {
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string"
+                                                },
+                                                {
+                                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                            "type": "string"
+                                          }
+                                        ]
+                                      },
+                                      "computers": {
+                                        "anyOf": [
+                                          {
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string"
+                                                },
+                                                {
+                                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                            "type": "string"
+                                          }
+                                        ]
+                                      },
+                                      "departments": {
+                                        "anyOf": [
+                                          {
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string"
+                                                },
+                                                {
+                                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                            "type": "string"
+                                          }
+                                        ]
+                                      },
+                                      "network_segments": {
+                                        "anyOf": [
+                                          {
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string"
+                                                },
+                                                {
+                                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                            "type": "string"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "propertyNames": {
+                                      "not": {
+                                        "pattern": "\\{\\{"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              },
+                              "limitations": {
+                                "anyOf": [
+                                  {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "network_segments": {
+                                        "anyOf": [
+                                          {
+                                            "items": {
+                                              "anyOf": [
+                                                {
+                                                  "type": "string"
+                                                },
+                                                {
+                                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                  "type": "string"
+                                                }
+                                              ]
+                                            },
+                                            "type": "array"
+                                          },
+                                          {
+                                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                            "type": "string"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "propertyNames": {
+                                      "not": {
+                                        "pattern": "\\{\\{"
+                                      }
+                                    },
+                                    "type": "object"
+                                  },
+                                  {
+                                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                    "type": "string"
+                                  }
+                                ]
+                              }
+                            },
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
+                              }
+                            },
+                            "type": "object"
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Scope objects named exactly as in Jamf. Each name must match exactly one object, and supplied lists replace their collections."
+                      },
+                      "self_service": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "type": "boolean"
+                              },
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "category": {
+                                    "anyOf": [
+                                      {
+                                        "anyOf": [
+                                          {
+                                            "minLength": 1,
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Self Service category name, or null for none. Defaults to the package category."
+                                  },
+                                  "description": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Description shown in Self Service, in Markdown. An empty string clears it."
+                                  },
+                                  "display_name": {
+                                    "anyOf": [
+                                      {
+                                        "minLength": 1,
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Name shown in Self Service. Defaults to the selected application's name, else the software name."
+                                  },
+                                  "featured": {
+                                    "anyOf": [
+                                      {
+                                        "type": "boolean"
+                                      },
+                                      {
+                                        "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Feature the item on the Self Service home page."
+                                  }
+                                },
+                                "propertyNames": {
+                                  "not": {
+                                    "pattern": "\\{\\{"
+                                  }
+                                },
+                                "type": "object"
+                              }
+                            ]
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Offer the policy in Self Service: true, false, or its Self Service settings."
+                      },
+                      "triggers": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "enum": [
+                                    "checkin",
+                                    "enrollment_complete",
+                                    "login",
+                                    "startup",
+                                    "network_state_change"
+                                  ],
+                                  "type": "string"
+                                },
+                                {
+                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "type": "array",
+                            "uniqueItems": true
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Events that run the policy automatically: recurring check-in, enrollment complete, login, startup or a network state change. With none, the policy runs from Self Service or its custom event."
+                      },
+                      "update_inventory": {
+                        "anyOf": [
+                          {
+                            "type": "boolean"
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ],
+                        "description": "Update inventory after the policy runs. A policy Stemma creates updates inventory."
+                      }
+                    },
+                    "propertyNames": {
+                      "not": {
+                        "pattern": "\\{\\{"
+                      }
+                    },
+                    "required": [
+                      "name"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                    "type": "string"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            {
+              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+              "type": "string"
+            }
+          ],
+          "description": "Install the current package through named policies. Existing policies are updated in place; new policies start disabled and unscoped. Omitted settings remain unchanged."
         },
         "priority": {
           "anyOf": [
@@ -6138,7 +6430,7 @@
               "type": "string"
             }
           ],
-          "description": "Installation priority. Defaults to 10 when creating a package."
+          "description": "Installation order among packages installed together; lower values install first. Defaults to 10 when creating a package."
         },
         "reboot_required": {
           "anyOf": [
@@ -6187,54 +6479,6 @@
             }
           ],
           "description": "Keep the current package and the N-1 newest others carrying this software's identity marker, ordered by numeric package ID, and delete the rest. A package that a policy, PreStage or patch title still references is kept, and nothing is deleted while those references cannot be read."
-        },
-        "suppress_eula": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-              "type": "string"
-            }
-          ],
-          "description": "Jamf's suppress EULA package option. Explicit false is managed."
-        },
-        "suppress_from_dock": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-              "type": "string"
-            }
-          ],
-          "description": "Jamf's suppress from Dock package option. Explicit false is managed."
-        },
-        "suppress_registration": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-              "type": "string"
-            }
-          ],
-          "description": "Jamf's suppress registration package option. Explicit false is managed."
-        },
-        "suppress_updates": {
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-              "type": "string"
-            }
-          ],
-          "description": "Jamf's suppress updates package option. Explicit false is managed."
         }
       },
       "propertyNames": {

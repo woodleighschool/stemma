@@ -236,7 +236,7 @@ incoming relationships as well as assignments when testing in a live tenant.
 
 ## Jamf
 
-Connect using a Jamf API client with package privileges:
+Connect using a Jamf API client:
 
 ```yaml
 spec:
@@ -253,43 +253,112 @@ Jamf publishes PKG artifacts: a vendor package, one selected with `package_path`
 or a [BuildMacPkg](building-packages.md) output. Jamf installs a DMG by copying its
 contents onto the startup disk, so an application DMG is not a Jamf package.
 
-Each installer filename is one Jamf package record, keeping its native filename;
-`display_name` defaults to the filename. Changed bytes under the same filename
-upload into the same record. Upload requires a Jamf distribution configuration
-supporting the package upload API. `package_id` pins an existing package by its
-ID instead.
+Each installer filename is one Jamf package record, named after the file.
+Changed bytes under the same filename upload into the same record. Upload
+requires a Jamf distribution configuration supporting the package upload API.
+`package_id` pins an existing package by its ID instead.
 
-To associate a package with an existing patch title and maintain a policy:
+Install policies handle first installs, Self Service and enrollment workflows;
+the patch policy updates Macs that already have the software.
+
+### Install policies
 
 ```yaml
 destinations:
   jamf:
     category: Productivity
-    retention:
-      keep: 1
-    patch:
-      title: Example
-      policy:
-        name: Example updates
-        enabled: false
+    policies:
+      - name: ALL - Visual Studio Code - ALL
+        enabled: true
+        category: Applications
+        frequency: ongoing
+        event: visual_studio_code
+        self_service:
+          description: Code editor for staff and students.
+        scope:
+          all_computers: true
+      - name: ALL - Visual Studio Code - Staff
+        enabled: true
+        category: Applications
+        triggers: [checkin, enrollment_complete]
+        frequency: once_per_computer
+        retries: 3
         scope:
           all_computers: false
           computer_groups:
             - Staff Macs
 ```
 
-Categories, patch titles, policies and scope objects are named exactly as in
-Jamf. Each name must match exactly one object, or publication fails before
-anything is written. The version the title deploys is the software's managed
-version: the selected application's under `version_key`, otherwise the
-installer's. The title must already define that version; a missing one fails and
-lists the title's recent definitions. Stemma does not create definitions from the
-package.
+Policies are found by exact `name`. Renaming one creates a new policy and leaves
+the old one in Jamf. New policies start disabled and unscoped, with inventory
+updates enabled. Set `enabled: true` and a scope to deploy them.
 
-The policy is found by its name under the title, which defaults to the resource's
-name, and keeps its ID as its target version changes. A title's link to a package
-protects it during cleanup, so retention reaches a patch-managed package only
-once no version links to it. Stemma manages no other Jamf policies.
+Each policy installs the current package. Managing an existing policy replaces
+its package list; the plan lists removed packages.
+
+`triggers` selects automatic events; `event` sets a custom trigger for
+`jamf policy -event NAME`, and `event: ""` removes it. `frequency` controls how
+often the policy runs. Use `ongoing` for Self Service reinstall availability;
+`once_per_computer` removes the item after it runs. `retries` retries failures
+at check-in and requires `frequency: once_per_computer`. `update_inventory`
+controls the inventory update after installation.
+
+`self_service` takes `true`, `false` or settings. The Self Service name defaults
+to the selected application's name, then the software name; the category
+defaults to the package category; the icon is the software's `icon`. The policy
+category also defaults to the package category, and `null` removes either
+category. Omitting `icon` leaves existing artwork unchanged. Other omitted
+settings, including scripts and restarts, keep their Jamf values.
+
+### Patch policy
+
+```yaml
+destinations:
+  jamf:
+    patch:
+      title: Visual Studio Code
+      policy:
+        enabled: true
+        distribution: self_service
+        reminder_days: 3
+        deadline_days: 7
+        grace_minutes: 30
+        scope:
+          all_computers: true
+```
+
+`patch` associates the package with the software's managed version in an existing
+patch title: the selected application's version under `version_key`, otherwise
+the installer's. Until the title defines that version, the package publishes
+alone and a warning lists the title's recent definitions, which also shows when
+a title writes versions differently. The link and the policy's target version
+follow once the title defines it. The policy's other settings apply meanwhile,
+and a new policy waits for the definition. Stemma does not create definitions
+from the package.
+
+The policy is found by its name under the title, which defaults to the software
+name, and keeps its ID as its target version changes. Like an install policy, a
+new one is created disabled and unscoped.
+
+`distribution: automatic` installs updates at check-in. `self_service` offers
+them in Self Service with a notification, reminders and the software's icon.
+`reminder_days` sets the days between reminders, 1 unless set, and null turns
+reminders off. `deadline_days` installs an update automatically once it has been
+offered for that many days, and null removes the deadline. `grace_minutes` gives
+users time to save their work before the title's apps quit for an update. The
+title's definitions supply which apps quit and the minimum macOS.
+`patch_unknown: true` also updates Macs whose installed version the title does
+not define. `allow_downgrade: true` installs the target version over a newer
+one, as when the catalog returns to an earlier release.
+
+Retention preserves every package still linked by a patch title, even with
+`keep: 1`. Policies omitted from the declaration remain unchanged.
+
+### Names
+
+Categories, patch titles and scope objects are named exactly as in Jamf. Each
+name must match exactly one object, or publication fails before anything is
+written.
 
 ## Identity and retention
 

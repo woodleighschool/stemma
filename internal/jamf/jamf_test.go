@@ -28,7 +28,7 @@ const fixtureMarker = "[stemma:v1 id=9e24b0af0c9659ee7c0bad65847e693691a7e9f6634
 
 func TestPublicationCreatesMarkedPackageAndConvergesWithoutState(t *testing.T) {
 	server, request := newFixture(t)
-	request.Metadata = raw(map[string]any{"display_name": "Managed package", "info": "Initial info", "reboot_required": true})
+	request.Metadata = raw(map[string]any{"priority": 5, "info": "Initial info", "reboot_required": true})
 	request.Method = "plan"
 	plan, err := Handle(t.Context(), request)
 	if err != nil || len(plan.Changes) != 4 {
@@ -51,7 +51,7 @@ func TestPublicationCreatesMarkedPackageAndConvergesWithoutState(t *testing.T) {
 		t.Fatalf("managed metadata activated before content: %v", steps)
 	}
 	current := server.record("1")
-	if stringField(current, "fileName") != "vendor.pkg" || stringField(current, "notes") != fixtureMarker || stringField(current, "packageName") != "Managed package" {
+	if stringField(current, "fileName") != "vendor.pkg" || stringField(current, "notes") != fixtureMarker || stringField(current, "packageName") != "vendor.pkg" || string(current["priority"]) != "5" {
 		t.Fatalf("package is not natively named and marked: %s", raw(current))
 	}
 	writes := len(server.writes())
@@ -65,7 +65,7 @@ func TestPublicationCreatesMarkedPackageAndConvergesWithoutState(t *testing.T) {
 	if len(server.writes()) != writes {
 		t.Fatalf("unchanged run wrote to Jamf: %v", server.writes()[writes:])
 	}
-	request.Metadata = raw(map[string]any{"display_name": "Renamed", "info": nil, "reboot_required": false})
+	request.Metadata = raw(map[string]any{"priority": 7, "info": nil, "reboot_required": false})
 	if _, err := Handle(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -73,11 +73,11 @@ func TestPublicationCreatesMarkedPackageAndConvergesWithoutState(t *testing.T) {
 		t.Fatal("metadata-only change uploaded content")
 	}
 	current = server.record("1")
-	if stringField(current, "packageName") != "Renamed" || string(current["info"]) != "null" || string(current["rebootRequired"]) != "false" {
+	if string(current["priority"]) != "7" || string(current["info"]) != "null" || string(current["rebootRequired"]) != "false" {
 		t.Fatalf("presence ownership failed: %s", raw(current))
 	}
 	server.set("info", raw("now owned remotely"))
-	request.Metadata = raw(map[string]any{"display_name": "Renamed"})
+	request.Metadata = raw(map[string]any{"priority": 7})
 	response, err := Handle(t.Context(), request)
 	if err != nil || len(response.Changes) != 0 {
 		t.Fatalf("omitted fields should be left unchanged: %+v: %v", response, err)
@@ -251,7 +251,7 @@ func TestPackageIDAdoptsMarksAndConverges(t *testing.T) {
 	remote := map[string]any{"label": "must not be erased", "enabled": false, "nested": map[string]any{"notes": nil}, "values": []any{"one", "two"}}
 	fields["newServerField"] = remote
 	server.seed(fields)
-	request.Metadata = raw(map[string]any{"package_id": 1, "display_name": "Adopted", "priority": 0})
+	request.Metadata = raw(map[string]any{"package_id": 1, "priority": 0})
 	if _, err := Handle(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -266,10 +266,10 @@ func TestPackageIDAdoptsMarksAndConverges(t *testing.T) {
 	if stringField(current, "fileName") != "vendor.pkg" || stringField(current, "notes") != "Uploaded by an administrator\n"+fixtureMarker || stringField(current, "sha256") != request.Artifact.SHA256 {
 		t.Fatalf("adopted package did not converge: %s", raw(current))
 	}
-	if stringField(current, "packageName") != "Adopted" || string(current["priority"]) != "0" || !equalJSON(current["newServerField"], raw(remote)) {
+	if stringField(current, "packageName") != "Vendor" || string(current["priority"]) != "0" || !equalJSON(current["newServerField"], raw(remote)) {
 		t.Fatalf("native values or unknown remote fields changed: %s", raw(current))
 	}
-	request.Metadata = raw(map[string]any{"display_name": "Adopted"})
+	request.Metadata = raw(map[string]any{"priority": 0})
 	writes := len(server.writes())
 	if response, err := Handle(t.Context(), request); err != nil || len(response.Changes) != 0 {
 		t.Fatalf("adopted package left the family: %+v: %v", response, err)
@@ -347,7 +347,7 @@ func TestLostResponsesConvergeFromJamfAlone(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			server, request := newFixture(t)
 			server.failAfter = phase
-			request.Metadata = raw(map[string]any{"display_name": "Managed"})
+			request.Metadata = raw(map[string]any{"priority": 5})
 			if _, err := Handle(t.Context(), request); (err != nil) != interrupted {
 				t.Fatalf("committed %s: %v", phase, err)
 			}
@@ -358,7 +358,7 @@ func TestLostResponsesConvergeFromJamfAlone(t *testing.T) {
 			if server.count("POST "+packagePath) != 1 || server.count("POST "+packagePath+"/1/upload") != 1 || server.count("PUT "+packagePath+"/1") != 1 {
 				t.Fatalf("committed %s was replayed: %v", phase, server.writes())
 			}
-			if current := server.record("1"); stringField(current, "packageName") != "Managed" || stringField(current, "sha256") != request.Artifact.SHA256 {
+			if current := server.record("1"); string(current["priority"]) != "5" || stringField(current, "sha256") != request.Artifact.SHA256 {
 				t.Fatalf("publication did not converge: %s", raw(current))
 			}
 		})
@@ -518,7 +518,7 @@ func TestStrictValidationPreservesNullFalseAndZero(t *testing.T) {
 			t.Fatalf("valid ownership rejected: %s: %v", metadata, err)
 		}
 	}
-	for _, metadata := range []string{`{"priority":null}`, `{"display_name":null}`, `{"packageName":"Vendor"}`, `{"categoryId":"-1"}`, `{"category":""}`, `{"package_id":"1"}`, `{"policies":[]}`, `{"fileName":"overridden.pkg"}`, `{"sha256":"untrusted"}`, `{"priority":"10"}`, `{"notes":1}`, `{"package_id":"../1"}`, `{"notes":"a","notes":"b"}`, `{"notes":"[stemma:v1 id=forged]"}`} {
+	for _, metadata := range []string{`{"priority":null}`, `{"display_name":null}`, `{"display_name":"Vendor"}`, `{"fill_user_template":false}`, `{"suppress_eula":false}`, `{"packageName":"Vendor"}`, `{"categoryId":"-1"}`, `{"category":""}`, `{"package_id":"1"}`, `{"policies":{}}`, `{"policy":{}}`, `{"fileName":"overridden.pkg"}`, `{"sha256":"untrusted"}`, `{"priority":"10"}`, `{"notes":1}`, `{"package_id":"../1"}`, `{"notes":"a","notes":"b"}`, `{"notes":"[stemma:v1 id=forged]"}`} {
 		request.Metadata = json.RawMessage(metadata)
 		if _, err := Handle(t.Context(), request); err == nil {
 			t.Fatalf("invalid metadata accepted: %s", metadata)

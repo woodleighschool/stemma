@@ -9,7 +9,8 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// MetadataSchema describes package metadata, patch deployment and retention.
+// MetadataSchema describes package metadata, install policies, patch
+// deployment and retention.
 func MetadataSchema() *jsonschema.Schema {
 	properties := orderedmap.New[string, *jsonschema.Schema]()
 	properties.Set("package_id", &jsonschema.Schema{
@@ -37,9 +38,15 @@ func MetadataSchema() *jsonschema.Schema {
 		properties.Set(key, field)
 	}
 	reflector := &jsonschema.Reflector{DoNotReference: true}
+	policy := reflector.Reflect(installPolicy{})
+	policy.ID, policy.Version = "", ""
+	properties.Set("policies", &jsonschema.Schema{
+		Type: "array", Items: policy,
+		Description: "Install the current package through named policies. Existing policies are updated in place; new policies start disabled and unscoped. Omitted settings remain unchanged.",
+	})
 	patch := reflector.Reflect(patchConfig{})
 	patch.ID, patch.Version = "", ""
-	patch.Description = "Associate the package with the software's managed version in an existing patch title, replacing that version's package and keeping other versions, and optionally maintain a patch policy. Titles, policies and scope objects are named exactly as in Jamf, and each name must match exactly one object. Omitted fields are left unchanged and supplied scope lists replace their collections. Without patch, title associations and policies are left as they are."
+	patch.Description = "Link the current package to an existing patch title and optionally manage its policy. Missing version definitions defer the link and target version; other settings on an existing policy still apply. Omitted fields remain unchanged and supplied scope lists replace their collections."
 	properties.Set("patch", patch)
 	retention := reflector.Reflect(plugin.Retention{})
 	retention.ID, retention.Version = "", ""
@@ -47,6 +54,6 @@ func MetadataSchema() *jsonschema.Schema {
 	properties.Set("retention", retention)
 	return &jsonschema.Schema{
 		Type: "object", Properties: properties, AdditionalProperties: jsonschema.FalseSchema,
-		Description: "Jamf Pro package metadata. Omitted fields are left unchanged; explicit false, zero and empty strings are managed. Only the documented nullable strings accept null. Each artifact filename has its own package, identified by Stemma's marker in its notes; changed bytes under the same filename are uploaded into that package. Patch deployment and retention are opt-in.",
+		Description: "Jamf Pro package metadata. Omitted fields are left unchanged; explicit false, zero and empty strings are managed. Only the documented nullable fields accept null. Each artifact filename has its own package, identified by Stemma's marker in its notes; changed bytes under the same filename are uploaded into that package. Install policies, patch deployment and retention are opt-in.",
 	}
 }

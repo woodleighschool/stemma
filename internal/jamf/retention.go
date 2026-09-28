@@ -8,9 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
-	"strconv"
 
-	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/constants"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -38,11 +36,15 @@ func retired(family []summary, current string, keep int) []summary {
 
 // prune deletes the retired packages that nothing in Jamf references; plan
 // reports the same deletions.
-func (c *client) prune(ctx context.Context, retiring []summary, patch *patchConfig, apply bool, response *plugin.ReconcileResponse) error {
+func (c *client) prune(ctx context.Context, retiring []summary, patch *patchConfig, installs []*installPolicy, apply bool, response *plugin.ReconcileResponse) error {
 	if len(retiring) == 0 {
 		return nil
 	}
-	referenced, err := c.references(ctx, patch)
+	if apply {
+		// Only plans project reference moves; deletion uses the current references.
+		patch, installs = nil, nil
+	}
+	referenced, err := c.references(ctx, patch, installs)
 	if err != nil {
 		return fmt.Errorf("jamf retention blocked: references could not be read: %w", err)
 	}
@@ -68,34 +70,33 @@ func (c *client) prune(ctx context.Context, retiring []summary, patch *patchConf
 // references returns the packages a policy, PreStage or patch title uses. Each
 // enumeration must be complete, because a package missing from a partial read
 // may still be deployed.
-func (c *client) references(ctx context.Context, patch *patchConfig) (map[string]bool, error) {
+func (c *client) references(ctx context.Context, patch *patchConfig, installs []*installPolicy) (map[string]bool, error) {
 	referenced := map[string]bool{}
-	policies, err := c.readXML(ctx, "/JSSResource/policies", "policies")
+	// The install policies move to the current record, whichever package they
+	// install while planning.
+	moving := map[string]bool{}
+	for _, policy := range installs {
+		if policy.id != "" {
+			moving[policy.id] = true
+		}
+	}
+	listed, err := c.listPolicies(ctx)
 	if err != nil {
 		return nil, err
 	}
-	count, err := strconv.Atoi(policies.value("size"))
-	if err != nil || count < 0 {
-		return nil, errors.New("jamf policy enumeration has no valid count")
-	}
-	seen := map[string]bool{}
-	for _, entry := range policies.Children {
-		if entry.XMLName.Local != "policy" {
-			continue
-		}
-		id := entry.value("id")
-		if !validID(id) || seen[id] {
-			return nil, errors.New("jamf policy enumeration contains invalid or duplicate IDs")
-		}
-		seen[id] = true
-		policy, err := c.readXML(ctx, "/JSSResource/policies/id/"+id, "policy")
+	for _, entry := range listed {
+		id := entry.ID
+		document, err := c.readXML(ctx, policies.path+"/id/"+id, "policy")
 		if err != nil {
 			return nil, err
 		}
-		if policy.value("general", "id") != id {
+		if document.value("general", "id") != id {
 			return nil, errors.New("jamf policy response ID does not match request")
 		}
-		installs := policy.child("package_configuration").child("packages")
+		if moving[id] {
+			continue
+		}
+		installs := document.child("package_configuration").child("packages")
 		if installs == nil {
 			return nil, errors.New("jamf policy package references were omitted")
 		}
@@ -109,9 +110,6 @@ func (c *client) references(ctx context.Context, patch *patchConfig) (map[string
 			}
 			referenced[id] = true
 		}
-	}
-	if len(seen) != count {
-		return nil, errors.New("jamf policy enumeration is incomplete")
 	}
 	prestages, err := c.listObjects(ctx, "/api/v3/computer-prestages", nil)
 	if err != nil {
@@ -145,21 +143,14 @@ func (c *client) references(ctx context.Context, patch *patchConfig) (map[string
 			if !validID(pkg.PackageID) || pkg.Version == "" {
 				return nil, errors.New("invalid Jamf title package reference")
 			}
-			// The declared association ends at the current record, whichever
-			// package holds it while planning.
-			if patch != nil && title.ID == patch.titleID && pkg.Version == patch.version {
+			// The declared association moves to the current record, whichever
+			// package holds it while planning, unless it waits for the title
+			// to define the version.
+			if patch != nil && !patch.waiting && title.ID == patch.titleID && pkg.Version == patch.version {
 				continue
 			}
 			referenced[pkg.PackageID] = true
 		}
 	}
 	return referenced, nil
-}
-
-func (c *client) readXML(ctx context.Context, path, root string) (*xmlNode, error) {
-	result, data, err := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationXML).GetBytes(path)
-	if err := requestError(ctx, result, err); err != nil {
-		return nil, err
-	}
-	return parseXML(data, root)
 }
