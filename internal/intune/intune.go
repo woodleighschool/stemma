@@ -257,42 +257,48 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 			return response, errors.New("intune creation response omitted app ID")
 		}
 	}
+	activated := ""
 	if contentChanged {
-		version, err := c.upload(ctx, appID, prepared)
+		pending := publication{identity: identity, payload: artifact.identity}
+		if published.payload == pending.payload {
+			pending.content = published.content
+		}
+		version, err := c.upload(ctx, current, pending, prepared)
 		if err != nil {
 			return response, err
 		}
+		// Graph drops every other property of the PATCH that first publishes an
+		// app, so activation goes alone and metadata follows publication.
+		activation := object{"@odata.type": c.appType, "committedContentVersion": version, "fileName": prepared.name}
+		if c.appType == win32Type {
+			activation["setupFilePath"] = artifact.setup
+		}
+		if err := c.request(ctx, abs.PATCH, c.app(appID), activation, nil); err != nil {
+			return response, err
+		}
+		activated = version
 		published = publication{identity: identity, payload: artifact.identity, content: version}
 	}
-	// Re-observe after potentially long uploads so nested omitted fields and
-	// notes changed by another administrator are preserved by the final PATCH.
-	if err := c.request(ctx, abs.GET, c.app(appID), nil, &current); err != nil {
+	// Waiting re-observes the app after potentially long uploads, so nested
+	// omitted fields and notes changed by another administrator are preserved.
+	if err := c.waitPublished(ctx, appID, activated, &current); err != nil {
 		return response, err
 	}
-	patch, _ := metadataPatch(current, desired, published)
-	activated := ""
-	if contentChanged {
-		// Activation travels with its marker so the notes never describe
-		// content other than the committed version.
-		activated = published.content
-		patch["committedContentVersion"] = activated
-		patch["notes"] = withMarker(noteText(current, desired), published)
-		patch["fileName"] = prepared.name
-		if c.appType == win32Type {
-			patch["setupFilePath"] = artifact.setup
-		}
-	}
-	if len(patch) > 0 {
+	if patch, _ := metadataPatch(current, desired, published); len(patch) > 0 {
 		patch["@odata.type"] = c.appType
 		if err := c.request(ctx, abs.PATCH, c.app(appID), patch, nil); err != nil {
 			return response, err
 		}
+		if err := c.waitPublished(ctx, appID, activated, &current); err != nil {
+			return response, err
+		}
 	}
-	if err := c.waitPublished(ctx, appID, activated, &current); err != nil {
-		return response, err
-	}
-	if residual, _ := metadataPatch(current, desired, published); len(residual) > 0 {
-		return response, errors.New("intune metadata readback differs from requested values")
+	if _, residual := metadataPatch(current, desired, published); len(residual) > 0 {
+		fields := make([]string, 0, len(residual))
+		for _, change := range residual {
+			fields = append(fields, change.Field)
+		}
+		return response, fmt.Errorf("intune metadata readback differs from requested values: %s", strings.Join(fields, ", "))
 	}
 	if _, err := c.reconcileIcon(ctx, req, current, true); err != nil {
 		return response, err

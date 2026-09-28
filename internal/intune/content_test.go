@@ -123,3 +123,26 @@ func TestSetupTreeRejectsChangedBytesAndUnsafeEntrypoints(t *testing.T) {
 		})
 	}
 }
+
+func TestUploadAlwaysCommitsBlocks(t *testing.T) {
+	for name, size := range map[string]int{"small payload": 17, "multiple blocks": 4<<20 + 17} {
+		t.Run(name, func(t *testing.T) {
+			fake, c := newGraphFixture(t)
+			data := bytes.Repeat([]byte{0x5a}, size)
+			file := filepath.Join(t.TempDir(), "encrypted")
+			if err := os.WriteFile(file, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			prepared := preparedArtifact{path: file, name: "fixture", raw: true}
+			prepared.metadata.EncryptedContentSize = int64(size)
+			if err := c.uploadBlob(t.Context(), fake.url+"/blob?sig=temporary", &prepared); err != nil {
+				t.Fatal(err)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if !fake.blockList || !bytes.Equal(fake.uploaded, data) {
+				t.Fatal("block list did not commit the complete payload")
+			}
+		})
+	}
+}

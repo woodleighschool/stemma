@@ -2,8 +2,10 @@ package intune
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -16,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/streaming"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	abs "github.com/microsoft/kiota-abstractions-go"
 	"github.com/woodleighschool/stemma/internal/archive"
@@ -218,51 +221,125 @@ func snapshotFile(ctx context.Context, artifact plugin.Artifact, source string) 
 	return nil
 }
 
-// upload commits a new content version; the caller activates it.
-func (c *client) upload(ctx context.Context, appID string, prepared *preparedArtifact) (version string, err error) {
+// upload records the payload's version before sending content. The marker only
+// describes active content once Graph activates that version.
+func (c *client) upload(ctx context.Context, current object, pending publication, prepared *preparedArtifact) (version string, err error) {
 	done := plugin.Stage(ctx, "Publishing Intune content", plugin.Detail(prepared.name))
 	defer func() { done(err) }()
-	var created object
-	if err := c.request(ctx, abs.POST, c.content(appID, "", "", ""), object{"@odata.type": "#microsoft.graph.mobileAppContent"}, &created); err != nil {
+	appID := text(current["id"])
+	first := text(current["committedContentVersion"]) == ""
+	version = pending.content
+	resuming := version != ""
+	if version == "" && first {
+		// Graph refuses another version before the first publication commits.
+		versions, err := c.list(ctx, c.content(appID, "", "", ""))
+		if err != nil {
+			return "", err
+		}
+		if len(versions) > 1 {
+			return "", fmt.Errorf("intune app %s has multiple unpublished content versions", appID)
+		}
+		if len(versions) == 1 {
+			version = text(versions[0]["id"])
+			if version == "" {
+				return "", errors.New("content version omitted ID")
+			}
+		}
+	}
+	if version == "" {
+		var created object
+		if err := c.request(ctx, abs.POST, c.content(appID, "", "", ""), object{"@odata.type": "#microsoft.graph.mobileAppContent"}, &created); err != nil {
+			return "", err
+		}
+		version = text(created["id"])
+		if version == "" {
+			return "", errors.New("content version creation omitted ID")
+		}
+	}
+	files, err := c.list(ctx, c.content(appID, version, "", ""))
+	if err != nil {
 		return "", err
 	}
-	version = text(created["id"])
-	if version == "" {
-		return "", errors.New("content version creation omitted ID")
+	if len(files) > 1 {
+		return "", fmt.Errorf("intune app %s content version %s has multiple files", appID, version)
 	}
 	var file object
-	body := object{"@odata.type": "#microsoft.graph.mobileAppContentFile", "name": prepared.name, "size": prepared.metadata.PlaintextSize, "sizeEncrypted": prepared.metadata.EncryptedContentSize, "isDependency": false}
-	if err := c.request(ctx, abs.POST, c.content(appID, version, "", ""), body, &file); err != nil {
-		return "", err
+	if len(files) == 1 {
+		file = files[0]
+		if pending.content != version || text(file["name"]) != prepared.name || file["size"] != float64(prepared.metadata.PlaintextSize) || file["sizeEncrypted"] != float64(prepared.metadata.EncryptedContentSize) {
+			return "", fmt.Errorf("intune app %s content version %s does not match the recorded upload", appID, version)
+		}
 	}
-	fileID := text(file["id"])
-	if fileID == "" {
-		return "", errors.New("content file creation omitted ID")
-	}
-	fileBuilder := c.content(appID, version, fileID, "")
-	if file, err = c.waitFile(ctx, fileBuilder, false); err != nil {
-		return "", err
-	}
-	expiry, _ := time.Parse(time.RFC3339, text(file["azureStorageUriExpirationDateTime"]))
-	if !expiry.IsZero() && time.Until(expiry) < 5*time.Minute {
-		if err := c.request(ctx, abs.POST, c.content(appID, version, fileID, "renewUpload"), object{}, nil); err != nil {
+	if pending.content != version {
+		pending.content = version
+		if err := c.request(ctx, abs.GET, c.app(appID), nil, &current); err != nil {
 			return "", err
 		}
-		if file, err = c.waitFile(ctx, fileBuilder, false); err != nil {
+		patch := object{"@odata.type": c.appType, "notes": withMarker(noteText(current, nil), pending)}
+		if err := c.request(ctx, abs.PATCH, c.app(appID), patch, nil); err != nil {
 			return "", err
 		}
 	}
-	if err := c.uploadBlob(ctx, text(file["azureStorageUri"]), prepared); err != nil {
-		return "", err
-	}
-	if err := c.request(ctx, abs.POST, c.content(appID, version, fileID, "commit"), object{"fileEncryptionInfo": prepared.metadata.EncryptionInfo}, nil); err != nil {
-		return "", err
-	}
-	if _, err := c.waitFile(ctx, fileBuilder, true); err != nil {
+	if err := c.uploadFile(ctx, appID, version, file, prepared); err != nil {
+		if _, rejected := errors.AsType[uploadStateError](err); rejected {
+			if first {
+				return "", fmt.Errorf("intune app %s cannot finish its first upload; delete the app to publish again: %w", appID, err)
+			}
+			if resuming {
+				pending.content = ""
+				return c.upload(ctx, current, pending, prepared)
+			}
+		}
 		return "", err
 	}
 	return version, nil
 }
+
+func (c *client) uploadFile(ctx context.Context, appID, version string, file object, prepared *preparedArtifact) error {
+	if file == nil {
+		body := object{"@odata.type": "#microsoft.graph.mobileAppContentFile", "name": prepared.name, "size": prepared.metadata.PlaintextSize, "sizeEncrypted": prepared.metadata.EncryptedContentSize, "isDependency": false}
+		if err := c.request(ctx, abs.POST, c.content(appID, version, "", ""), body, &file); err != nil {
+			return err
+		}
+	}
+	fileID := text(file["id"])
+	if fileID == "" {
+		return errors.New("content file omitted ID")
+	}
+	if file["isCommitted"] == true {
+		return nil
+	}
+	fileBuilder := c.content(appID, version, fileID, "")
+	if file["uploadState"] == "commitFilePending" {
+		_, err := c.waitFile(ctx, fileBuilder, true)
+		return err
+	}
+	file, err := c.waitFile(ctx, fileBuilder, false)
+	if err != nil {
+		return err
+	}
+	expiry, _ := time.Parse(time.RFC3339, text(file["azureStorageUriExpirationDateTime"]))
+	if !expiry.IsZero() && time.Until(expiry) < 5*time.Minute {
+		if err := c.request(ctx, abs.POST, c.content(appID, version, fileID, "renewUpload"), object{}, nil); err != nil {
+			return err
+		}
+		if file, err = c.waitFile(ctx, fileBuilder, false); err != nil {
+			return err
+		}
+	}
+	if err := c.uploadBlob(ctx, text(file["azureStorageUri"]), prepared); err != nil {
+		return err
+	}
+	if err := c.request(ctx, abs.POST, c.content(appID, version, fileID, "commit"), object{"fileEncryptionInfo": prepared.metadata.EncryptionInfo}, nil); err != nil {
+		return err
+	}
+	_, err = c.waitFile(ctx, fileBuilder, true)
+	return err
+}
+
+type uploadStateError string
+
+func (state uploadStateError) Error() string { return "intune upload state " + string(state) }
 
 func (c *client) waitFile(ctx context.Context, builder *abs.BaseRequestBuilder, committed bool) (result object, err error) {
 	done := plugin.Stage(ctx, "Waiting for Intune processing")
@@ -280,7 +357,7 @@ func (c *client) waitFile(ctx context.Context, builder *abs.BaseRequestBuilder, 
 			return file, nil
 		}
 		if state == "error" || strings.HasSuffix(state, "Failed") || strings.HasSuffix(state, "TimedOut") {
-			return nil, fmt.Errorf("intune upload state %s", state)
+			return nil, uploadStateError(state)
 		}
 		if err := c.pause(ctx); err != nil {
 			return nil, err
@@ -324,15 +401,45 @@ func (c *client) uploadBlob(ctx context.Context, sas string, prepared *preparedA
 	if err != nil {
 		return errors.New("cannot configure Azure upload")
 	}
-	_, err = blob.UploadStream(ctx, plugin.ProgressReader(ctx, reader, prepared.metadata.EncryptedContentSize), &blockblob.UploadStreamOptions{BlockSize: 4 << 20, Concurrency: 1})
-	if err != nil {
-		if ctx.Err() != nil {
-			return ctx.Err()
+	// Intune commits content only from a committed block list. The SDK's
+	// streaming upload sends a payload smaller than one block as a single Put
+	// Blob, which leaves the file in commitFileFailed.
+	body := plugin.ProgressReader(ctx, reader, prepared.metadata.EncryptedContentSize)
+	block := make([]byte, 4<<20)
+	var ids []string
+	for {
+		n, readErr := io.ReadFull(body, block)
+		if n > 0 {
+			id := base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "%08d", len(ids)))
+			if _, err := blob.StageBlock(ctx, id, streaming.NopCloser(bytes.NewReader(block[:n])), nil); err != nil {
+				return azureError(ctx, err)
+			}
+			ids = append(ids, id)
 		}
-		if responseErr, ok := errors.AsType[*azcore.ResponseError](err); ok {
-			return fmt.Errorf("azure upload HTTP status %d", responseErr.StatusCode)
+		if errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF) {
+			break
 		}
-		return errors.New("azure upload failed; SAS URL omitted from error")
+		if readErr != nil {
+			return readErr
+		}
+	}
+	if _, err := blob.CommitBlockList(ctx, ids, nil); err != nil {
+		return azureError(ctx, err)
 	}
 	return nil
+}
+
+// azureError describes a failed Azure upload request without the SAS URL that
+// the SDK's error text includes.
+func azureError(ctx context.Context, err error) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if responseErr, ok := errors.AsType[*azcore.ResponseError](err); ok {
+		if responseErr.ErrorCode != "" {
+			return fmt.Errorf("azure upload HTTP status %d (%s)", responseErr.StatusCode, responseErr.ErrorCode)
+		}
+		return fmt.Errorf("azure upload HTTP status %d", responseErr.StatusCode)
+	}
+	return errors.New("azure upload failed; SAS URL omitted from error")
 }

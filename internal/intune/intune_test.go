@@ -161,30 +161,119 @@ func TestAssignmentSettingsNeedAnIncludedWin32Target(t *testing.T) {
 	}
 }
 
-func TestInterruptedFirstPublicationIsRepeatedInTheSameApp(t *testing.T) {
+func TestPublicationSurvivesLostReply(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		update, activate bool
+	}{
+		{"first commit", false, false},
+		{"updated commit", true, false},
+		{"first activation", false, true},
+		{"updated activation", true, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fake, c := newGraphFixture(t)
+			req := fixtureRequest(t)
+			desired, err := compile(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if test.update {
+				if _, err := c.handle(t.Context(), req, desired); err != nil {
+					t.Fatal(err)
+				}
+				changePayload(t, &req, "second release")
+				want++
+			}
+			fake.failCommit, fake.failActivation = !test.activate, test.activate
+			if _, err := c.handle(t.Context(), req, desired); err == nil {
+				t.Fatal("expected interrupted commit")
+			}
+			if _, err := c.handle(t.Context(), req, desired); err != nil {
+				t.Fatal(err)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if fake.creates != 1 || fake.versions != want || fake.fileCreates != want || fake.blobLists != want || fake.commits != want || fake.app["committedContentVersion"] != strconv.Itoa(want) {
+				t.Fatalf("retry duplicated committed content: apps=%d versions=%d files=%d uploads=%d commits=%d active=%v", fake.creates, fake.versions, fake.fileCreates, fake.blobLists, fake.commits, fake.app["committedContentVersion"])
+			}
+		})
+	}
+}
+
+func TestInterruptedFirstUploadIsRetriedIntoItsFile(t *testing.T) {
 	fake, c := newGraphFixture(t)
-	fake.failCommit = true
+	fake.failBlob = true
 	req := fixtureRequest(t)
 	desired, err := compile(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.handle(t.Context(), req, desired); err == nil {
-		t.Fatal("expected interrupted commit")
-	}
-	if published := publishedMarker(t, fake); published.payload != "" || published.content != "" {
-		t.Fatalf("marker records content that was never activated: %+v", published)
+		t.Fatal("expected interrupted upload")
 	}
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
-	if published := publishedMarker(t, fake); published.content != "2" {
-		t.Fatalf("retry did not publish a fresh content version: %+v", published)
+	if published := publishedMarker(t, fake); published.content != "1" {
+		t.Fatalf("retry did not publish the first content version: %+v", published)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if fake.creates != 1 || fake.versions != 2 || fake.blobLists != 2 || fake.commits != 2 || fake.app["committedContentVersion"] != "2" {
-		t.Fatal("retry created another app or resumed the interrupted upload")
+	// Graph can neither delete the file an interrupted upload leaves nor
+	// activate its version while that file is uncommitted.
+	if fake.creates != 1 || fake.versions != 1 || fake.fileCreates != 1 || fake.app["committedContentVersion"] != "1" {
+		t.Fatalf("retry did not reuse the unfinished upload: %d versions, %d files", fake.versions, fake.fileCreates)
+	}
+}
+
+func TestExpiredFirstUploadNamesTheAppToDelete(t *testing.T) {
+	fake, c := newGraphFixture(t)
+	fake.failBlob = true
+	req := fixtureRequest(t)
+	desired, err := compile(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.handle(t.Context(), req, desired); err == nil {
+		t.Fatal("expected interrupted upload")
+	}
+	fake.mu.Lock()
+	fake.files["1"]["azureStorageUriExpirationDateTime"] = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+	fake.mu.Unlock()
+	_, err = c.handle(t.Context(), req, desired)
+	if err == nil || !strings.Contains(err.Error(), "intune app app-1 cannot finish its first upload; delete the app") {
+		t.Fatalf("stuck first upload: %v", err)
+	}
+	fake.mu.Lock()
+	defer fake.mu.Unlock()
+	if fake.versions != 1 || fake.fileCreates != 1 {
+		t.Fatalf("stuck first upload started another upload: %d versions, %d files", fake.versions, fake.fileCreates)
+	}
+}
+
+func TestFirstUploadReadFailureDoesNotRequireDeletion(t *testing.T) {
+	fake, c := newGraphFixture(t)
+	fake.failBlob = true
+	req := fixtureRequest(t)
+	desired, err := compile(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.handle(t.Context(), req, desired); err == nil {
+		t.Fatal("expected interrupted upload")
+	}
+	fake.failFileRead = true
+	if _, err := c.handle(t.Context(), req, desired); err == nil || strings.Contains(err.Error(), "delete the app") {
+		t.Fatalf("read failure: %v", err)
+	}
+	fake.failFileRead = false
+	if _, err := c.handle(t.Context(), req, desired); err != nil {
+		t.Fatal(err)
+	}
+	if fake.versions != 1 || fake.fileCreates != 1 {
+		t.Fatal("retry replaced the upload after a read failure")
 	}
 }
 
@@ -333,22 +422,14 @@ func TestPayloadChangeActivatesFreshVersionWithItsMarker(t *testing.T) {
 	if fake.creates != 1 || fake.versions != 2 || fake.app["committedContentVersion"] != "2" {
 		t.Fatal("payload change did not publish a fresh version in the same app")
 	}
-	// A marker written apart from activation could describe content that is not active.
-	activated := false
 	for _, patch := range fake.patches {
-		_, activates := patch["committedContentVersion"]
-		_, marks := patch["notes"]
-		if activates != marks {
-			t.Fatalf("activation and marker were written separately: %+v", fake.patches)
+		if patch["committedContentVersion"] != nil && patch["notes"] != nil {
+			t.Fatal("activation and metadata share a PATCH")
 		}
-		activated = activated || activates
-	}
-	if !activated {
-		t.Fatalf("no patch activated the new content: %+v", fake.patches)
 	}
 }
 
-func TestMarkerDriftRepublishesContent(t *testing.T) {
+func TestMarkerDriftRestoresContent(t *testing.T) {
 	for _, drift := range []string{"edited", "removed", "other version activated"} {
 		t.Run(drift, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
@@ -381,12 +462,16 @@ func TestMarkerDriftRepublishesContent(t *testing.T) {
 			if _, err := c.handle(t.Context(), req, desired); err != nil {
 				t.Fatal(err)
 			}
-			if restored := publishedMarker(t, fake); restored.content != "2" || restored.payload != published.payload {
+			want := "2"
+			if drift == "other version activated" {
+				want = "1"
+			}
+			if restored := publishedMarker(t, fake); restored.content != want || restored.payload != published.payload {
 				t.Fatalf("marker was not rewritten for fresh content: %+v", restored)
 			}
 			fake.mu.Lock()
 			writes := fake.writes
-			if fake.creates != 1 || fake.versions != 2 || !strings.HasPrefix(text(fake.app["notes"]), "Edited by an administrator\n") {
+			if fake.creates != 1 || fake.app["committedContentVersion"] != want || !strings.HasPrefix(text(fake.app["notes"]), "Edited by an administrator\n") {
 				t.Fatalf("drift was not repaired in place: %+v", fake.app["notes"])
 			}
 			fake.mu.Unlock()
@@ -467,8 +552,9 @@ type graphFixture struct {
 	uploaded    []byte
 	plaintext   []byte
 
-	creates, versions, blobLists, commits, assigns, appLists, writes int
-	failBlob, failCommit, failRelationships                          bool
+	creates, versions, blobLists, commits, assigns, appLists, writes      int
+	failBlob, failCommit, failActivation, failFileRead, failRelationships bool
+	blockList                                                             bool // the upload was committed as a block list
 
 	pendingAppReads    int
 	contentTypes       []string
@@ -477,11 +563,13 @@ type graphFixture struct {
 	relations          map[string][]object
 	relatedApps        map[string]object
 	relationshipWrites int
+	fileCreates        int
+	abandonedFiles     map[string]int // uncommitted files a newer file left behind, by content version
 }
 
 func newGraphFixture(t *testing.T) (*graphFixture, *client) {
 	t.Helper()
-	fake := &graphFixture{blocks: map[string][]byte{}, files: map[string]object{}, relations: map[string][]object{}, relatedApps: map[string]object{}}
+	fake := &graphFixture{blocks: map[string][]byte{}, files: map[string]object{}, relations: map[string][]object{}, relatedApps: map[string]object{}, abandonedFiles: map[string]int{}}
 	server := httptest.NewTLSServer(http.HandlerFunc(fake.serve))
 	t.Cleanup(server.Close)
 	fake.url = server.URL
@@ -540,7 +628,7 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		case "block":
 			f.blocks[r.URL.Query().Get("blockid")] = data
 		case "":
-			f.uploaded = data
+			f.uploaded, f.blockList = data, false
 			f.blobLists++
 		default:
 			var list struct {
@@ -550,7 +638,7 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "bad block list", http.StatusBadRequest)
 				return
 			}
-			f.uploaded = nil
+			f.uploaded, f.blockList = nil, true
 			for _, id := range list.Latest {
 				f.uploaded = append(f.uploaded, f.blocks[id]...)
 			}
@@ -639,14 +727,32 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		write(f.app)
 	case path == appsPath+"/app-1" && r.Method == http.MethodPatch:
 		f.patches = append(f.patches, body)
-		maps.Copy(f.app, body)
+		if version := text(body["committedContentVersion"]); version != "" && f.abandonedFiles[version] > 0 {
+			http.Error(w, "All AppFiles must be committed before committing an application.", http.StatusBadRequest)
+			return
+		}
+		if version := body["committedContentVersion"]; version != nil && f.app["publishingState"] != "published" {
+			// Graph drops every other property of the PATCH that first publishes an app.
+			f.app["committedContentVersion"] = version
+		} else {
+			maps.Copy(f.app, body)
+		}
 		if body["committedContentVersion"] != nil {
 			f.app["publishingState"] = "published"
+			if f.failActivation {
+				f.failActivation = false
+				http.Error(w, "activation reply failed", http.StatusBadRequest)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	case strings.HasSuffix(path, "/contentVersions") && r.Method == http.MethodPost:
 		if f.app == nil || !strings.Contains(path, "/"+strings.TrimPrefix(text(f.app["@odata.type"]), "#microsoft.")+"/contentVersions") {
 			http.Error(w, "wrong subtype content path", http.StatusBadRequest)
+			return
+		}
+		if f.app["committedContentVersion"] == nil && len(f.files) > 0 {
+			http.Error(w, "The mobile app content cannot be updated before the first content version is committed.", http.StatusBadRequest)
 			return
 		}
 		f.contentTypes = append(f.contentTypes, text(f.app["@odata.type"]))
@@ -664,6 +770,10 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		body["id"] = "file-1"
 		body["uploadState"] = "azureStorageUriRequestSuccess"
 		body["azureStorageUri"] = f.url + "/blob?sig=temporary"
+		if previous := f.files[version]; previous != nil && previous["isCommitted"] != true {
+			f.abandonedFiles[version]++
+		}
+		f.fileCreates++
 		f.files[version] = body
 		write(body)
 	case strings.HasSuffix(path, "/files") && r.Method == http.MethodGet:
@@ -672,10 +782,25 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 			items = append(items, file)
 		}
 		write(object{"value": items})
+	case strings.HasSuffix(path, "/renewUpload"):
+		// Graph renews no upload URL for a file an interrupted upload left behind.
+		f.files[version]["uploadState"] = "azureStorageUriRenewalFailed"
+		w.WriteHeader(http.StatusNoContent)
 	case strings.HasSuffix(path, "/files/file-1") && r.Method == http.MethodGet:
+		if f.failFileRead {
+			http.Error(w, "read denied", http.StatusForbidden)
+			return
+		}
 		write(f.files[version])
 	case strings.HasSuffix(path, "/commit"):
 		file := f.files[version]
+		if !f.blockList {
+			// Intune accepts the request but fails to commit content stored by a
+			// single Put Blob.
+			file["uploadState"] = "commitFileFailed"
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		info, ok := body["fileEncryptionInfo"].(object)
 		if !ok || len(f.uploaded) < 48 {
 			http.Error(w, "bad commit body", http.StatusBadRequest)

@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -25,41 +27,51 @@ func changePayload(t *testing.T, req *plugin.ReconcileRequest[Config], content s
 
 func committedFile() object { return object{"id": "file-1", "isCommitted": true} }
 
-func TestInterruptedUpdateIsRepublishedInAFreshVersion(t *testing.T) {
-	fake, c := newGraphFixture(t)
-	req := fixtureRequest(t)
-	desired, _ := compile(req)
-	delete(desired, "assignments")
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
-		t.Fatal(err)
-	}
-	first := publishedMarker(t, fake)
-	changePayload(t, &req, "second release")
-	fake.mu.Lock()
-	fake.failBlob = true
-	fake.mu.Unlock()
-	if _, err := c.handle(t.Context(), req, desired); err == nil {
-		t.Fatal("expected interrupted upload")
-	}
-	// The tenant now holds uncommitted version 2 while the app still runs version 1.
-	if published := publishedMarker(t, fake); published != first {
-		t.Fatalf("interrupted upload changed the marker: %+v", published)
-	}
-	fake.mu.Lock()
-	if fake.app["committedContentVersion"] != "1" || fake.files["2"]["isCommitted"] == true {
-		t.Fatalf("interrupted upload changed active content: %+v", fake.app)
-	}
-	fake.mu.Unlock()
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
-		t.Fatal(err)
-	}
-	if published := publishedMarker(t, fake); published.content != "3" || published.payload == first.payload {
-		t.Fatalf("retry did not publish fresh content: %+v", published)
-	}
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	if fake.versions != 3 || fake.creates != 1 {
-		t.Fatalf("retry did not publish in the same app: %d versions, %d apps", fake.versions, fake.creates)
+func TestInterruptedUpdateRecoversContent(t *testing.T) {
+	for name, expired := range map[string]bool{"valid upload URL": false, "expired upload URL": true} {
+		t.Run(name, func(t *testing.T) {
+			fake, c := newGraphFixture(t)
+			req := fixtureRequest(t)
+			desired, _ := compile(req)
+			delete(desired, "assignments")
+			if _, err := c.handle(t.Context(), req, desired); err != nil {
+				t.Fatal(err)
+			}
+			first := publishedMarker(t, fake)
+			changePayload(t, &req, "second release")
+			fake.mu.Lock()
+			fake.failBlob = true
+			fake.mu.Unlock()
+			if _, err := c.handle(t.Context(), req, desired); err == nil {
+				t.Fatal("expected interrupted upload")
+			}
+			// The tenant now holds uncommitted version 2 while the app still runs version 1.
+			pending := publishedMarker(t, fake)
+			if pending.content != "2" || pending.payload == first.payload {
+				t.Fatalf("marker lost the interrupted upload: %+v", pending)
+			}
+			fake.mu.Lock()
+			if fake.app["committedContentVersion"] != "1" || pending.active(fake.app) != "" || fake.files["2"]["isCommitted"] == true {
+				t.Fatalf("interrupted upload changed active content: %+v", fake.app)
+			}
+			want := "2"
+			if expired {
+				fake.files["2"]["azureStorageUriExpirationDateTime"] = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+				want = "3"
+			}
+			fake.mu.Unlock()
+			if _, err := c.handle(t.Context(), req, desired); err != nil {
+				t.Fatal(err)
+			}
+			if published := publishedMarker(t, fake); published.content != want || published.payload == first.payload {
+				t.Fatalf("retry did not publish fresh content: %+v", published)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			if strconv.Itoa(fake.versions) != want || fake.creates != 1 {
+				t.Fatalf("retry did not publish in the same app: %d versions, %d apps", fake.versions, fake.creates)
+			}
+		})
 	}
 }
 
