@@ -1253,7 +1253,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Include prereleases when discovering latest; select the newest published non-draft release. Explicit release tags are unchanged."
+              "description": "Include prereleases when discovering latest or a tag glob; select the newest published non-draft release. Explicit release tags are unchanged."
             },
             "release": {
               "anyOf": [
@@ -1265,7 +1265,7 @@
                   "type": "string"
                 }
               ],
-              "description": "GitHub release tag, or latest. Omitted or empty values select latest."
+              "description": "GitHub release tag, tag glob, or latest. Omitted or empty values select latest. A value containing *, ? or [ selects the newest published release whose tag matches, using doublestar semantics."
             },
             "repository": {
               "anyOf": [
@@ -7987,7 +7987,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Include prereleases when discovering latest; select the newest published non-draft release. Explicit release tags are unchanged."
+              "description": "Include prereleases when discovering latest or a tag glob; select the newest published non-draft release. Explicit release tags are unchanged."
             },
             "release": {
               "anyOf": [
@@ -7999,7 +7999,7 @@
                   "type": "string"
                 }
               ],
-              "description": "GitHub release tag, or latest. Omitted or empty values select latest."
+              "description": "GitHub release tag, tag glob, or latest. Omitted or empty values select latest. A value containing *, ? or [ selects the newest published release whose tag matches, using doublestar semantics."
             },
             "repository": {
               "anyOf": [

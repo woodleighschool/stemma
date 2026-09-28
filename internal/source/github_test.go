@@ -1,11 +1,13 @@
 package source
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -114,6 +116,55 @@ func TestGitHubAssetSelection(t *testing.T) {
 	}
 }
 
+func TestGitHubLookupReportsHTTPStatus(t *testing.T) {
+	store, err := cas.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(store, t.TempDir(), false)
+	m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(`{"message":"Not Found"}`)), Header: http.Header{}, Request: r}, nil
+	})
+	_, err = m.Resolve(t.Context(), plugin.Input{Resolver: "github", Config: map[string]any{"repository": "example/app", "release": "v9", "asset": "App.pkg"}})
+	if err == nil || !strings.Contains(err.Error(), "GitHub release lookup returned HTTP 404") {
+		t.Fatalf("missing release: %v", err)
+	}
+}
+
+func TestGitHubDiscoveryKeepsTokenAtAPIOrigin(t *testing.T) {
+	for _, target := range []string{"https://elsewhere.example/release", "http://api.github.com/release", "https://api.github.com/repositories/1/releases/latest"} {
+		t.Run(target, func(t *testing.T) {
+			m := New(nil, t.TempDir(), false)
+			requests := 0
+			m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				requests++
+				if r.URL.Host != "api.github.com" || r.URL.Scheme != "https" {
+					if r.Header.Get("Authorization") != "" {
+						t.Fatal("GitHub API token crossed its origin")
+					}
+					t.Fatal("GitHub discovery followed a redirect outside its origin")
+				}
+				if r.Header.Get("Authorization") != "Bearer synthetic-token" {
+					t.Fatal("API request lost authentication")
+				}
+				if requests == 1 {
+					return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": {target}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+				}
+				return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"message":"Not Found"}`)), Request: r}, nil
+			})
+			var observed nativeObservation
+			err := m.github(t.Context(), nativeConfig{Repository: "example/app", Asset: "App.pkg", Token: "synthetic-token"}, &observed)
+			if strings.HasPrefix(target, "https://api.github.com/") {
+				if requests != 2 || err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+					t.Fatalf("same-origin redirect: requests=%d, err=%v", requests, err)
+				}
+			} else if requests != 1 || err == nil || !strings.Contains(err.Error(), "origin") {
+				t.Fatalf("cross-origin redirect: requests=%d, err=%v", requests, err)
+			}
+		})
+	}
+}
+
 func TestGitHubLockedFetchVerification(t *testing.T) {
 	for _, test := range []struct{ name, address, body, failure string }{
 		{"origin", "https://github.com/other/app/releases/download/v1/App.pkg", "installer", "configured GitHub repository"},
@@ -166,7 +217,7 @@ func TestGitHubLockedFetchVerification(t *testing.T) {
 	}
 }
 
-func TestGitHubIncludesPrereleases(t *testing.T) {
+func TestGitHubReleaseDiscovery(t *testing.T) {
 	stable := `{"id":12,"tag_name":"v1","published_at":"2026-01-02T00:00:00Z","prerelease":false,"assets":[{"id":34,"name":"App.pkg","browser_download_url":"https://github.com/example/app/releases/download/v1/App.pkg"}]}`
 	preview := `{"id":13,"tag_name":"v2-beta","published_at":"2026-01-03T00:00:00Z","prerelease":true,"assets":[{"id":35,"name":"App.pkg","browser_download_url":"https://github.com/example/app/releases/download/v2-beta/App.pkg"}]}`
 	draft := `{"id":14,"tag_name":"draft","draft":true,"published_at":null}`
@@ -184,6 +235,13 @@ func TestGitHubIncludesPrereleases(t *testing.T) {
 		{name: "drafts only", include: true, body: "[" + draft + "]", failure: "no published GitHub releases"},
 		{name: "explicit draft", include: true, release: "draft", body: draft, failure: "draft releases are not supported"},
 		{name: "no asset fallback", include: true, body: "[" + stable + "," + strings.Replace(preview, "App.pkg", "Other.pkg", 1) + "]", failure: "has no asset matching"},
+		{name: "tag glob", release: "v1*", body: "[" + strings.Replace(preview, "true", "false", 1) + "," + stable + "]", tag: "v1"},
+		{name: "tag glob skips prereleases", release: "v*", body: "[" + preview + "," + draft + "," + stable + "]", tag: "v1"},
+		{name: "tag glob prereleases", include: true, release: "v*", body: "[" + stable + "," + preview + "]", tag: "v2-beta"},
+		{name: "tag glob pagination", release: "v1*", paginate: true, body: "[" + preview + "]", tag: "v1"},
+		{name: "tag glob no match", release: "v3*", body: "[" + stable + "," + preview + "]", failure: `no published GitHub release tag matches "v3*"`},
+		{name: "tag glob no asset fallback", release: "v*", body: "[" + strings.Replace(strings.Replace(preview, "true", "false", 1), "App.pkg", "Other.pkg", 1) + "," + stable + "]", failure: "has no asset matching"},
+		{name: "malformed tag glob", release: "v[", failure: "invalid GitHub release pattern"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, err := cas.Open(t.TempDir())
@@ -193,21 +251,25 @@ func TestGitHubIncludesPrereleases(t *testing.T) {
 			m := New(store, t.TempDir(), false)
 			discoveries, downloads := 0, 0
 			m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				body := "installer"
+				body, header := "installer", http.Header{}
 				if r.URL.Host == "api.github.com" {
 					discoveries++
 					endpoint := "/repos/example/app/releases/latest"
-					if test.release != "" && test.release != "latest" {
+					latest := test.release == "" || test.release == "latest"
+					listed := strings.ContainsAny(test.release, "*?[") || latest && test.include
+					if listed {
+						endpoint = "/repos/example/app/releases"
+					} else if !latest {
 						endpoint = "/repos/example/app/releases/tags/" + test.release
-					} else if test.include {
-						endpoint = fmt.Sprintf("/repos/example/app/releases?per_page=100&page=%d", discoveries)
 					}
-					if r.URL.RequestURI() != endpoint {
-						t.Fatalf("request %s, want %s", r.URL, endpoint)
+					query := r.URL.Query()
+					if r.URL.Path != endpoint || listed && (query.Get("per_page") != "100" || cmp.Or(query.Get("page"), "1") != strconv.Itoa(discoveries)) {
+						t.Fatalf("request %s, want page %d of %s", r.URL, discoveries, endpoint)
 					}
 					body = test.body
 					if test.paginate && discoveries == 1 {
 						body = "[" + strings.Repeat(draft+",", 99) + stable + "]"
+						header.Set("Link", `<https://api.github.com/repositories/1/releases?per_page=100&page=2>; rel="next", <https://api.github.com/repositories/1/releases?per_page=100&page=2>; rel="last"`)
 					}
 				} else {
 					downloads++
@@ -215,7 +277,7 @@ func TestGitHubIncludesPrereleases(t *testing.T) {
 						t.Fatalf("download %s", r.URL)
 					}
 				}
-				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: header, Request: r}, nil
 			})
 			input := plugin.Input{Resolver: "github", Config: map[string]any{"repository": "example/app", "asset": "App.pkg", "release": test.release, "include_prereleases": test.include}}
 			entry, err := m.Resolve(t.Context(), input)

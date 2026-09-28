@@ -51,20 +51,24 @@ asset in the selected release; zero or multiple matches fail. For example,
 `SafeExamBrowser-*.dmg` selects `SafeExamBrowser-3.7.1.dmg` without declaring a version.
 
 `release: latest` and an omitted or empty `release` select GitHub's latest release.
-Any other value selects that exact release tag. Draft releases are rejected.
+A value containing `*`, `?` or `[` is a tag glob with the same syntax as `asset`:
+discovery selects the newest published release whose tag matches, so
+`release: v3.*` follows one release line. Any other value selects that exact
+release tag. Draft releases are rejected.
 
-Set `include_prereleases: true` to select the newest published release across both
-stable releases and prereleases. Discovery compares `published_at` across all
-pages, skips drafts, and uses the higher release ID to break equal timestamps.
-An explicit `release` tag still selects that exact release. Asset matching applies
-to the selected release; a missing asset does not fall back to an older release.
-The lock continues to pin the concrete release and asset identities.
+Set `include_prereleases: true` to include prereleases: `latest` selects the newest
+published release across both stable releases and prereleases, and a tag glob also
+matches prereleases. Tag globs and prerelease discovery compare `published_at`
+across all pages, skip drafts, and use the higher release ID to break equal
+timestamps. An explicit `release` tag still selects that exact release. Asset
+matching applies to the selected release; a missing asset does not fall back to an
+older release. The lock continues to pin the concrete release and asset identities.
 
 ```yaml
 source:
   resolver: github
   repository: bambulab/BambuStudio
-  asset: Bambu_Studio_mac-*.dmg
+  asset: Bambu_Studio_mac_*.dmg
   include_prereleases: true
 ```
 
