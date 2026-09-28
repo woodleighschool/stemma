@@ -15,7 +15,7 @@ import (
 )
 
 // Verifier identifies the implementation whose supported subset produced a Result.
-const Verifier = "stemma.signature/2"
+const Verifier = "stemma.signature/3"
 
 // Schemes name the platform implementation that interprets a signer value.
 const (
@@ -131,6 +131,18 @@ type Result struct {
 	Authority string `json:"authority,omitempty"`
 	Target    string `json:"target,omitempty"`
 	Verifier  string `json:"verifier"`
+	// Replaced lists nested code the signature accepts through the
+	// requirement it recorded, not the exact code it sealed.
+	Replaced []Replacement `json:"replaced,omitempty"`
+}
+
+// Replacement is nested code that differs from the code its parent sealed and
+// satisfies the requirement the parent recorded for it. Path is relative to
+// the signed target.
+type Replacement struct {
+	Path     string   `json:"path"`
+	Sealed   string   `json:"sealed_cdhash"`
+	CDHashes []string `json:"cdhashes"`
 }
 
 // Check compares an observed signer with the expected one, unless deriving.

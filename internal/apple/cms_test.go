@@ -6,17 +6,20 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/binary"
 	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/deploymenttheory/go-macos-pkg/pkg/pkgsign"
 	"github.com/smallstep/pkcs7"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"howett.net/plist"
@@ -112,6 +115,40 @@ func TestCMSRejectsUnboundedAndTrailingEncoding(t *testing.T) {
 				t.Fatalf("unsafe CMS encoding reached the CMS parser: %v", err)
 			}
 		})
+	}
+}
+
+// Requirements name certificate 1 of the verified chain, so a Developer ID CA
+// marker elsewhere among the CMS certificates does not count.
+func TestDeveloperIDIntermediateComesFromTheVerifiedChain(t *testing.T) {
+	cms, err := verifyCMS(signedFixtureSignature(t, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := identify(cms.certificate, cms.certificates, time.Time{})
+	if err != nil || !identity.developerIDCA || !identity.application {
+		t.Fatalf("Developer ID chain: %+v, %v", identity, err)
+	}
+	for _, certificate := range cms.certificates {
+		certificate.Extensions = slices.DeleteFunc(certificate.Extensions, func(extension pkix.Extension) bool { return extension.Id.Equal(pkgsign.OIDDeveloperIDCA) })
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(2), Subject: pkix.Name{CommonName: "Unrelated authority"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true,
+		ExtraExtensions: []pkix.Extension{{Id: pkgsign.OIDDeveloperIDCA, Value: []byte{5, 0}}}}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoy, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err = identify(cms.certificate, append(cms.certificates, decoy), time.Time{})
+	if err != nil || identity.developerIDCA {
+		t.Fatalf("a marker outside the verified chain counted: %+v, %v", identity, err)
 	}
 }
 

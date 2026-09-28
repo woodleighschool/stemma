@@ -221,6 +221,9 @@ func signatureDetails(resource engine.ResourceReport) string {
 				text.WriteString("  Signing state: unsigned\n")
 			} else {
 				fmt.Fprintf(&text, "  Signer: %s (%s)\n", changes.Text(observed.Name), changes.Text(observed.Authority))
+				for _, replaced := range observed.Replaced {
+					fmt.Fprintf(&text, "  Replaced nested code: %s\n", changes.Text(replaced.Path))
+				}
 			}
 		}
 		for line := range strings.SplitSeq(strings.TrimSuffix(signature.Fragment(observations), "\n"), "\n") {

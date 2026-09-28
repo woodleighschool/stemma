@@ -247,9 +247,12 @@ publisher. Malformed, tampered, ad-hoc and unsupported signatures remain errors 
 both preparation and derivation.
 
 Apple verification covers every architecture's code, Info.plist, the resource
-envelope, symlinks and nested code by its exact recorded cdhash, chained to Apple's
-roots at the signature's trusted timestamp. Notarisation and Gatekeeper policy are
-not assessed. See [signature limits](limitations.md#signatures).
+envelope, symlinks and nested code, chained to Apple's roots at the signature's
+trusted timestamp. Nested code matches its exact recorded cdhash, or replaces the
+sealed code under the Developer ID requirement the app recorded for it: the same
+identifier, signed by the same team with a Developer ID Application certificate.
+`stemma signature` lists replaced nested code. Notarisation and Gatekeeper policy
+are not assessed. See [signature limits](limitations.md#signatures).
 
 ## Icons
 

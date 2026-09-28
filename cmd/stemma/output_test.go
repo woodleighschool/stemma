@@ -353,6 +353,7 @@ func TestSignatureDetailsKeepInputsApartFromPublishedSignatures(t *testing.T) {
 		want        []string
 	}{
 		{signature.Observation{Subject: plugin.SubjectSelector{Path: "."}, State: "signed", Signer: "apple:developer-id:UBF8T346G9", Name: "Microsoft Corporation", Authority: "Developer ID Installer"}, []string{"Subject: .", "Signer: Microsoft Corporation (Developer ID Installer)", "signatures:", `path: "."`, "signer: apple:developer-id:UBF8T346G9"}},
+		{signature.Observation{Subject: plugin.SubjectSelector{Path: "Example.app"}, State: "signed", Signer: "apple:developer-id:ABCDE12345", Name: "Example", Authority: "Developer ID Application", Replaced: []signature.Replacement{{Path: "Contents/Frameworks/helper.so", Sealed: "aa", CDHashes: []string{"bb"}}}}, []string{"Signer: Example (Developer ID Application)", "Replaced nested code: Contents/Frameworks/helper.so"}},
 		{signature.Observation{Input: "vendor", Subject: plugin.SubjectSelector{Path: "Install.app"}, State: "unsigned"}, []string{"Input: vendor", "Subject: Install.app", "Signing state: unsigned", `input: "vendor"`, "unsigned: true"}},
 	} {
 		evidence, err := json.Marshal([]signature.Observation{test.observation})

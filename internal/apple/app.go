@@ -87,14 +87,14 @@ func VerifyAppFS(ctx context.Context, fsys fs.ReadLinkFS, appPath string, want s
 }
 
 func (v *bundleVerifier) verifyApp(bundle fs.ReadLinkFS, name string, want signature.Signer) (signature.Result, error) {
-	identity, err := v.verifyContents(bundle, name)
+	identity, err := v.verifyContents(bundle, "", name)
 	if err != nil {
 		return signature.Result{}, err
 	}
 	if !identity.application {
 		return signature.Result{}, fmt.Errorf("%w: application is not signed with a Developer ID Application certificate", ErrUnsupported)
 	}
-	result := signature.Result{Signer: identity.signer().String(), Name: identity.name, Authority: "Developer ID Application", Target: name, Verifier: signature.Verifier}
+	result := signature.Result{Signer: identity.signer().String(), Name: identity.name, Authority: "Developer ID Application", Target: name, Verifier: signature.Verifier, Replaced: v.replaced}
 	if err := signature.Check(identity.signer(), want); err != nil {
 		return result, err
 	}

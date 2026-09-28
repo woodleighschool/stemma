@@ -162,7 +162,7 @@ func TestZIPSignatureVerifiesTheApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = image.Close() }()
-	if inside, err := apple.VerifyAppFS(t.Context(), image, "WoodSweep.app", signature.Signer{}); err != nil || inside != evidence[0].Result {
+	if inside, err := apple.VerifyAppFS(t.Context(), image, "WoodSweep.app", signature.Signer{}); err != nil || !reflect.DeepEqual(inside, evidence[0].Result) {
 		t.Fatalf("bundle in the image verifies as %+v, evidence is %+v: %v", inside, evidence, err)
 	}
 	workspace := t.TempDir()
@@ -394,7 +394,7 @@ func TestDMGSignatureVerifiesInsideTheImage(t *testing.T) {
 			if evidence[0].Signer != signer || evidence[0].Name != "Woodleigh School" || evidence[0].Target != "SignedFixture.app" {
 				t.Fatalf("signature evidence: %+v", evidence)
 			}
-			if local, err := apple.VerifyApp(t.Context(), app, signature.Signer{}); err != nil || local != evidence[0].Result {
+			if local, err := apple.VerifyApp(t.Context(), app, signature.Signer{}); err != nil || !reflect.DeepEqual(local, evidence[0].Result) {
 				t.Fatalf("evidence from the image %+v differs from the bundle on disk %+v: %v", evidence, local, err)
 			}
 			if _, err := Prepare(t.Context(), Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: "SignedFixture.app"}, Signer: "apple:developer-id:AAAAAAAAAA"}}}, Request{Input: input, Workspace: t.TempDir()}); !errors.Is(err, signature.ErrMismatch) {

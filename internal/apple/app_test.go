@@ -146,7 +146,7 @@ func bundleMutations() []bundleMutation {
 			writeTestFile(t, f, []byte(strings.Replace(string(readTestFile(t, f)), "<string>1.0</string>", "<string>9.0</string>", 1)), 0o644)
 		}, false, false, true},
 		// Same team, different code: a bundle binary is bound to its own Info.plist,
-		// a bundle to the exact sealed cdhash.
+		// and nested code under another identifier fails its recorded requirement.
 		{"framework binary swapped", replace("Contents/Frameworks/Nested.framework/Versions/A/Nested", "Contents/Frameworks/Shallow.framework/Shallow"), false, false, false},
 		{"helper swapped", replace("Contents/MacOS/helper", "Contents/Helpers/Helper.app/Contents/MacOS/Helper"), false, true, false},
 		{"nested app swapped", func(t *testing.T, app string) {
@@ -275,7 +275,7 @@ func TestResourceEnvelopeRequiresFiles2(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := v.verifyResources(contents, data, "MacOS/fixture", "Info.plist"); !errors.Is(err, ErrUnsupported) {
+		if err := v.verifyResources(contents, "Contents", data, "MacOS/fixture", "Info.plist"); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("%s envelope was not rejected as unsupported: %v", name, err)
 		}
 	}

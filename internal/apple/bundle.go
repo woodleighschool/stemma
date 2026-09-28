@@ -22,27 +22,30 @@ const maxCodeResources = 64 << 20
 
 // bundleVerifier checks a bundle against its files2 resource envelope: every
 // sealed file matches its recorded SHA-256, every sealed symlink its target,
-// every nested code item its exact cdhash, and nothing else is present.
+// every nested code item its exact cdhash or recorded requirement, and nothing
+// else is present. Locations are paths relative to the verified bundle.
 type bundleVerifier struct {
 	ctx      context.Context
 	buffer   []byte
 	entries  int
 	depth    int
 	progress time.Time
+	replaced []signature.Replacement
 }
 
 type resourceSeal struct {
-	kind     string
-	digest   []byte
-	target   string
-	cdhash   []byte
-	optional bool
-	seen     bool
+	kind        string
+	digest      []byte
+	target      string
+	cdhash      []byte
+	requirement string
+	optional    bool
+	seen        bool
 }
 
 // verifyContents verifies a Contents-style bundle and returns its main code
 // identity. Without CFBundleExecutable the executable is named after the bundle.
-func (v *bundleVerifier) verifyContents(bundle fs.ReadLinkFS, bundleName string) (codeIdentity, error) {
+func (v *bundleVerifier) verifyContents(bundle fs.ReadLinkFS, location, bundleName string) (codeIdentity, error) {
 	entries, err := fs.ReadDir(bundle, ".")
 	if err != nil {
 		return codeIdentity{}, err
@@ -62,7 +65,7 @@ func (v *bundleVerifier) verifyContents(bundle fs.ReadLinkFS, bundleName string)
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	return v.verifyCode(contents, "MacOS/"+executable, "Info.plist", info)
+	return v.verifyCode(contents, path.Join(location, "Contents"), "MacOS/"+executable, "Info.plist", info)
 }
 
 func bundleExecutable(info []byte, bundleName string) (string, error) {
@@ -96,7 +99,7 @@ func validateExecutable(executable string) error {
 
 // verifyFramework verifies a versioned framework. Only the current version is
 // code; the root may hold Versions and the conventional symlinks into it.
-func (v *bundleVerifier) verifyFramework(bundle fs.ReadLinkFS, bundleName string) (codeIdentity, error) {
+func (v *bundleVerifier) verifyFramework(bundle fs.ReadLinkFS, location, bundleName string) (codeIdentity, error) {
 	entries, err := fs.ReadDir(bundle, ".")
 	if err != nil {
 		return codeIdentity{}, err
@@ -146,12 +149,12 @@ func (v *bundleVerifier) verifyFramework(bundle fs.ReadLinkFS, bundleName string
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	return v.verifyCode(version, executable, infoPath, info)
+	return v.verifyCode(version, path.Join(location, "Versions", current), executable, infoPath, info)
 }
 
 // verifyShallow verifies a bundle whose signature, executable and resources
 // share its root, such as an unversioned framework.
-func (v *bundleVerifier) verifyShallow(bundle fs.ReadLinkFS, bundleName string) (codeIdentity, error) {
+func (v *bundleVerifier) verifyShallow(bundle fs.ReadLinkFS, location, bundleName string) (codeIdentity, error) {
 	infoPath := "Resources/Info.plist"
 	info, err := readRegular(bundle, infoPath, maxMetadata)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -165,12 +168,12 @@ func (v *bundleVerifier) verifyShallow(bundle fs.ReadLinkFS, bundleName string) 
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	return v.verifyCode(bundle, executable, infoPath, info)
+	return v.verifyCode(bundle, location, executable, infoPath, info)
 }
 
 // verifyCode authenticates the main executable within a resource root, whose
 // CodeDirectory seals Info.plist and CodeResources, then the envelope itself.
-func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, executable, infoPath string, info []byte) (codeIdentity, error) {
+func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, location, executable, infoPath string, info []byte) (codeIdentity, error) {
 	if err := realDirectory(root, "_CodeSignature"); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return codeIdentity{}, err
 	}
@@ -219,7 +222,7 @@ func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, executable, infoPath str
 	if err != nil {
 		return codeIdentity{}, fmt.Errorf("%s: %w", executable, err)
 	}
-	if err := v.verifyResources(root, resources, executable, infoPath); err != nil {
+	if err := v.verifyResources(root, location, resources, executable, infoPath); err != nil {
 		if errors.Is(err, signature.ErrUnsigned) {
 			return codeIdentity{}, errors.New("resource envelope contains unsigned nested code")
 		}
@@ -228,7 +231,7 @@ func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, executable, infoPath str
 	return identity, nil
 }
 
-func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, data []byte, executable, infoPath string) error {
+func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, location string, data []byte, executable, infoPath string) error {
 	var manifest struct {
 		Files map[string]any `plist:"files2"`
 	}
@@ -294,7 +297,7 @@ func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, data []byte, execut
 			if seal.kind != "nested" {
 				return fmt.Errorf("resource %q is a directory but sealed as a %s", name, seal.kind)
 			}
-			if err := v.verifyNested(root, name, seal.cdhash); err != nil {
+			if err := v.verifyNested(root, location, name, seal); err != nil {
 				return err
 			}
 			return fs.SkipDir
@@ -310,7 +313,7 @@ func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, data []byte, execut
 			case "file":
 				return v.verifySealedFile(root, name, seal.digest)
 			case "nested":
-				return v.verifyNested(root, name, seal.cdhash)
+				return v.verifyNested(root, location, name, seal)
 			default:
 				return fmt.Errorf("resource %q is a regular file but sealed as a %s", name, seal.kind)
 			}
@@ -348,8 +351,7 @@ func parseSeal(value any) (*resourceSeal, error) {
 		case "cdhash":
 			seal.cdhash, ok = field.([]byte)
 		case "requirement":
-			// Nested code is bound by its exact cdhash; requirement language is not evaluated.
-			_, ok = field.(string)
+			seal.requirement, ok = field.(string)
 		case "optional":
 			seal.optional, ok = field.(bool)
 		default:
@@ -365,6 +367,8 @@ func parseSeal(value any) (*resourceSeal, error) {
 			return nil, fmt.Errorf("%w: nested code seal", ErrUnsupported)
 		}
 		seal.kind = "nested"
+	case seal.requirement != "":
+		return nil, fmt.Errorf("%w: requirement without nested code", ErrUnsupported)
 	case seal.target != "":
 		if seal.digest != nil {
 			return nil, fmt.Errorf("%w: symlink seal", ErrUnsupported)
@@ -401,9 +405,10 @@ func (v *bundleVerifier) verifySealedFile(root fs.ReadLinkFS, name string, expec
 	return nil
 }
 
-// verifyNested authenticates nested code and binds it by its sealed cdhash,
-// so only the exact recorded code satisfies the envelope.
-func (v *bundleVerifier) verifyNested(root fs.ReadLinkFS, name string, cdhash []byte) error {
+// verifyNested authenticates nested code, then binds it to the envelope by its
+// sealed cdhash or, for code that replaced the sealed code, by the requirement
+// the envelope recorded for it. Invalid nested code fails either way.
+func (v *bundleVerifier) verifyNested(root fs.ReadLinkFS, location, name string, seal *resourceSeal) error {
 	if v.depth >= maxBundleDepth {
 		return fmt.Errorf("%w: nested code deeper than %d bundles", ErrUnsupported, maxBundleDepth)
 	}
@@ -411,17 +416,33 @@ func (v *bundleVerifier) verifyNested(root fs.ReadLinkFS, name string, cdhash []
 	if err != nil {
 		return err
 	}
-	identity, err := v.verifyNestedCode(root, name, info.IsDir())
+	location = path.Join(location, name)
+	identity, err := v.verifyNestedCode(root, location, name, info.IsDir())
 	if err != nil {
 		return fmt.Errorf("nested code %q: %w", name, err)
 	}
-	if !matchCDHash(identity, cdhash) {
+	if matchCDHash(identity, seal.cdhash) {
+		return nil
+	}
+	if seal.requirement == "" {
 		return fmt.Errorf("nested code %q does not match its sealed cdhash", name)
 	}
+	required, err := parseRequirement(seal.requirement)
+	if err != nil {
+		return fmt.Errorf("nested code %q does not match its sealed cdhash: %w", name, err)
+	}
+	if !required.satisfiedBy(identity) {
+		return fmt.Errorf("nested code %q matches neither its sealed cdhash nor its sealed requirement", name)
+	}
+	replacement := signature.Replacement{Path: location, Sealed: hex.EncodeToString(seal.cdhash)}
+	for _, cdhash := range identity.cdhashes {
+		replacement.CDHashes = append(replacement.CDHashes, hex.EncodeToString(cdhash))
+	}
+	v.replaced = append(v.replaced, replacement)
 	return nil
 }
 
-func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, name string, bundle bool) (codeIdentity, error) {
+func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, location, name string, bundle bool) (codeIdentity, error) {
 	if !bundle {
 		f, size, err := openRegular(root, name)
 		if err != nil {
@@ -438,11 +459,11 @@ func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, name string, bundl
 	defer func() { v.depth-- }()
 	switch {
 	case isDirectory(nested, "Contents"):
-		return v.verifyContents(nested, path.Base(name))
+		return v.verifyContents(nested, location, path.Base(name))
 	case isDirectory(nested, "Versions"):
-		return v.verifyFramework(nested, path.Base(name))
+		return v.verifyFramework(nested, location, path.Base(name))
 	case isDirectory(nested, "_CodeSignature"):
-		return v.verifyShallow(nested, path.Base(name))
+		return v.verifyShallow(nested, location, path.Base(name))
 	default:
 		return codeIdentity{}, fmt.Errorf("%w: nested code layout", ErrUnsupported)
 	}

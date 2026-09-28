@@ -50,9 +50,11 @@ This is distinct from preserving an existing vendor PKG or DMG unchanged.
 Each signed subject is verified independently against its expected publisher: Developer ID signatures over PKGs and application
 bundles, and Authenticode signatures over MSI and EXE files. Apple verification
 covers the shapes `codesign` writes today: `files2` envelopes, versioned and
-shallow frameworks, nested bundles and executables. Legacy envelopes, detached
-signature files and nested code replaced under Apple's requirement language are
-rejected rather than emulated, identically on every host. Signature absence is a
+shallow frameworks, nested bundles and executables. Of Apple's requirement
+language, only the Developer ID requirement `codesign` records by default is
+evaluated, and only for nested code that replaced the code its app sealed; other
+requirements accept only the sealed code. Legacy envelopes and detached signature
+files are rejected rather than emulated, identically on every host. Signature absence is a
 normal observation for supported formats; partial and ad-hoc signatures are not
 unsigned.
 Windows verification anchors at the issuing authority recorded in the signer

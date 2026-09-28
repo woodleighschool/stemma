@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/hex"
 	"errors"
@@ -32,12 +33,15 @@ type codeIdentity struct {
 	name        string
 	application bool
 	installer   bool
+	// developerIDCA reports that a verified chain's certificate 1 is a
+	// Developer ID Certification Authority.
+	developerIDCA bool
 	// cdhashes lists every CodeDirectory hash across architectures.
 	cdhashes [][]byte
 }
 
 func (c codeIdentity) same(other codeIdentity) bool {
-	return c.identifier == other.identifier && c.teamID == other.teamID && c.name == other.name && c.application == other.application && c.installer == other.installer
+	return c.identifier == other.identifier && c.teamID == other.teamID && c.name == other.name && c.application == other.application && c.installer == other.installer && c.developerIDCA == other.developerIDCA
 }
 
 func (c codeIdentity) signer() signature.Signer {
@@ -55,7 +59,8 @@ func identify(leaf *x509.Certificate, certificates []*x509.Certificate, at time.
 		}
 	}
 	acceptAppleExtensions(leaf)
-	if _, err := leaf.Verify(x509.VerifyOptions{Roots: pkgsign.AppleRoots(), Intermediates: intermediates, CurrentTime: at, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning}}); err != nil {
+	chains, err := leaf.Verify(x509.VerifyOptions{Roots: pkgsign.AppleRoots(), Intermediates: intermediates, CurrentTime: at, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning}})
+	if err != nil {
 		return codeIdentity{}, fmt.Errorf("signing certificate is not trusted by Apple's roots: %w", err)
 	}
 	if len(leaf.Subject.OrganizationalUnit) != 1 || leaf.Subject.OrganizationalUnit[0] == "" {
@@ -65,15 +70,18 @@ func identify(leaf *x509.Certificate, certificates []*x509.Certificate, at time.
 	if len(leaf.Subject.Organization) > 0 {
 		identity.name = leaf.Subject.Organization[0]
 	}
-	for _, extension := range leaf.Extensions {
-		switch {
-		case extension.Id.Equal(pkgsign.OIDDeveloperIDApplication):
-			identity.application = true
-		case extension.Id.Equal(pkgsign.OIDDeveloperIDInstaller):
-			identity.installer = true
+	identity.application = hasExtension(leaf, pkgsign.OIDDeveloperIDApplication)
+	identity.installer = hasExtension(leaf, pkgsign.OIDDeveloperIDInstaller)
+	for _, chain := range chains {
+		if len(chain) > 1 && hasExtension(chain[1], pkgsign.OIDDeveloperIDCA) {
+			identity.developerIDCA = true
 		}
 	}
 	return identity, nil
+}
+
+func hasExtension(certificate *x509.Certificate, id asn1.ObjectIdentifier) bool {
+	return slices.ContainsFunc(certificate.Extensions, func(extension pkix.Extension) bool { return extension.Id.Equal(id) })
 }
 
 func acceptAppleExtensions(certificate *x509.Certificate) {
