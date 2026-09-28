@@ -158,9 +158,6 @@ func decodeStrict(data []byte, value any) error {
 }
 
 func checkNode(n *yaml.Node) error {
-	if n.Kind == yaml.AliasNode || n.Anchor != "" {
-		return errors.New("YAML aliases are not supported; use software components")
-	}
 	if n.Kind == yaml.MappingNode {
 		seen := map[string]bool{}
 		for i := 0; i < len(n.Content); i += 2 {

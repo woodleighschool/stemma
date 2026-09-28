@@ -80,6 +80,28 @@ spec:
 	}
 }
 
+func TestAliasesRepeatAnchoredValues(t *testing.T) {
+	p, err := parseTest(t, []byte(projectFixture+"---\n"+resourceFixture+`  destinations:
+    repo:
+      publisher: &publisher Vendor
+      developer: *publisher
+      signing: &signing
+        team: ABCDE12345
+      verification: *signing
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := p.Resources["stemma/v1alpha1/MacSoftware/app"].Spec["destinations"].(map[string]any)["repo"].(map[string]any)
+	if metadata["developer"] != "Vendor" || metadata["verification"].(map[string]any)["team"] != "ABCDE12345" {
+		t.Fatalf("aliases did not repeat anchored values: %#v", metadata)
+	}
+	metadata["verification"].(map[string]any)["team"] = "edited"
+	if metadata["signing"].(map[string]any)["team"] != "ABCDE12345" {
+		t.Fatal("an alias shares its anchored value")
+	}
+}
+
 func TestRejectMalformedConfiguration(t *testing.T) {
 	base := projectFixture + "---\n" + resourceFixture
 	for name, document := range map[string]string{
@@ -89,7 +111,8 @@ func TestRejectMalformedConfiguration(t *testing.T) {
 		"nonfinite":            strings.Replace(base, "  imports:", "  destinations:\n    fixture:\n      operation: fixture.publish\n      config:\n        value: .nan\n  imports:", 1),
 		"old-connection-shape": strings.Replace(base, "  imports:", "  destinations:\n    fixture:\n      type: fixture.publish\n  imports:", 1),
 		"cycle":                strings.Replace(strings.Replace(base, "  imports:", "  components:\n    a:\n      extends: b\n    b:\n      extends: a\n  imports:", 1), "  source:", "  extends: a\n  source:", 1),
-		"yaml-alias":           strings.Replace(base, "  source:", "  source: &source", 1),
+		"merge-key":            strings.Replace(base, "  source:", "  <<: {}\n  source:", 1),
+		"cross-document-alias": strings.Replace(strings.Replace(base, "name: catalog", "name: &name catalog", 1), "name: app", "name: *name", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := parseTest(t, []byte(document)); err == nil {

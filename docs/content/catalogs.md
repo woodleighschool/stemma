@@ -127,6 +127,8 @@ spec:
 A resource uses `spec.extends: mac-software`. Maps merge recursively; supplied
 lists and explicit nulls replace inherited values. A component is optional. Keep
 values in the individual document when sharing them would obscure the app's intent.
+Within one document, YAML anchors and aliases repeat a value, such as a publisher
+name used for both `publisher: &publisher Vendor` and `developer: *publisher`.
 
 Inspect the result with `stemma validate --resolved`. Treat resolved output as
 configuration: it may contain values supplied through your environment.
