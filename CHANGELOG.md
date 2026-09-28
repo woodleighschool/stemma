@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/woodleighschool/stemma/compare/v0.7.0...v0.7.1) (2026-09-28)
+
+
+### Bug Fixes
+
+* **intune:** report minimum OS as a single version ([a49e9c3](https://github.com/woodleighschool/stemma/commit/a49e9c3b0184ecc097a4b76e2abf38708ee5c105))
+
 ## [0.7.0](https://github.com/woodleighschool/stemma/compare/0.6.0...v0.7.0) (2026-09-28)
 
 
