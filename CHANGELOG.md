@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.8.0](https://github.com/woodleighschool/stemma/compare/v0.7.1...v0.8.0) (2026-09-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **jamf:** manage software install and patch policies
+
+### Features
+
+* **config:** accept YAML anchors and aliases ([9ebd8a0](https://github.com/woodleighschool/stemma/commit/9ebd8a0d0ff82051ca38b5edf2bdc0a6dc85f6e9))
+* **jamf:** manage software install and patch policies ([9cff8af](https://github.com/woodleighschool/stemma/commit/9cff8af4b3a139b4710b69da9d323b3dfe72cb15))
+
+
+### Bug Fixes
+
+* **go:** update module github.com/modelcontextprotocol/go-sdk (e07f0c9 → a1b0a98) ([#61](https://github.com/woodleighschool/stemma/issues/61)) ([520dafc](https://github.com/woodleighschool/stemma/commit/520dafcdd893b163816f3ae4880200edce8e5eb8))
+* **jamf:** use merge patches for title updates ([c8b3624](https://github.com/woodleighschool/stemma/commit/c8b36248debc3f42dd2d23cafe6c3f4d33b0500a))
+* **reconcile:** acquire locked inputs and plan proposals once ([8df3773](https://github.com/woodleighschool/stemma/commit/8df3773c7b90b45eb91a9363f5c79fa5ad1d6b06))
+
+
+### Documentation
+
+* document Jamf and Intune permissions ([c50ae16](https://github.com/woodleighschool/stemma/commit/c50ae165f4d59b0f0460bf2f0fca88b36c90e99d))
+
+
+### Miscellaneous Chores
+
+* **mise:** update tool golangci-lint (2.13.2 → 2.14.0) ([#54](https://github.com/woodleighschool/stemma/issues/54)) ([a0eae13](https://github.com/woodleighschool/stemma/commit/a0eae130d56086b940110aad5fbc8ece9078dbec))
+
 ## [0.7.1](https://github.com/woodleighschool/stemma/compare/v0.7.0...v0.7.1) (2026-09-28)
 
 
