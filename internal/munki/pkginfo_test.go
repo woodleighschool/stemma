@@ -18,7 +18,7 @@ func TestPkginfoKeepsNativeSemanticsAndExactContent(t *testing.T) {
 	if _, err := plist.Unmarshal(encoded, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result["installer_item_hash"] != strings.Repeat("a", 64) || result["installer_item_size"] != uint64(2) {
+	if result["installer_item_hash"] != strings.Repeat("a", 64) || result["installer_item_size"] != uint64(1) {
 		t.Fatalf("content identity = %#v", result)
 	}
 	if result["unattended_install"] != false || len(result["blocking_applications"].([]any)) != 0 {

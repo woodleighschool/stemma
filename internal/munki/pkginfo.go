@@ -296,7 +296,8 @@ func Render(input Input) (map[string]any, error) {
 		}
 		values["installer_item_location"] = input.InstallerLocation
 		values["installer_item_hash"] = strings.ToLower(input.SHA256)
-		values["installer_item_size"] = input.Size/1024 + boolInt(input.Size%1024 != 0)
+		// makepkginfo truncates the installer size to whole KiB.
+		values["installer_item_size"] = input.Size / 1024
 		if input.InstallerType == "copy_from_dmg" {
 			if metadata.ItemsToCopy == nil || len(*metadata.ItemsToCopy) == 0 {
 				return nil, errors.New("copy_from_dmg requires items_to_copy")
@@ -362,11 +363,4 @@ func (metadata Metadata) Values() map[string]any {
 
 func safeLocation(location string) bool {
 	return !path.IsAbs(location) && !strings.Contains(location, "\\") && path.Clean(location) != ".." && !strings.HasPrefix(path.Clean(location), "../") && !strings.Contains(location, ":")
-}
-
-func boolInt(value bool) int64 {
-	if value {
-		return 1
-	}
-	return 0
 }
