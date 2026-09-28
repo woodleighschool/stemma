@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.6.0](https://github.com/woodleighschool/stemma/compare/0.5.0...0.6.0) (2026-09-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* compare preparation across plugin versions
+
+### Features
+
+* compare preparation across plugin versions ([462ae74](https://github.com/woodleighschool/stemma/commit/462ae740f942f0b20033a4dca31f4baff9f31099))
+* declare disk image and package compression ([cdd58b7](https://github.com/woodleighschool/stemma/commit/cdd58b7beca3650b53bb78de968f192f45b53bbd))
+* **go:** update module github.com/deploymenttheory/go-apfs-v2 (v0.11.3 → v0.13.0) ([#57](https://github.com/woodleighschool/stemma/issues/57)) ([a447d59](https://github.com/woodleighschool/stemma/commit/a447d59b2adb9316fd8a88e6a3a2466663b9e05c))
+
+
+### Bug Fixes
+
+* allow absent bundle executable declarations ([08f7fed](https://github.com/woodleighschool/stemma/commit/08f7fed32515a7bb5147fe73c23941a2d7f267e1))
+* **go:** update module github.com/deploymenttheory/go-apfs-v2 (v0.11.2 → v0.11.3) ([#31](https://github.com/woodleighschool/stemma/issues/31)) ([a9934e5](https://github.com/woodleighschool/stemma/commit/a9934e51b095c2063a513886057ca1af8a3bd006))
+* **go:** update module github.com/deploymenttheory/go-bindings-macosplatform (v0.20.1-0.20260927034632-71544a14f48a → v0.20.1) ([#56](https://github.com/woodleighschool/stemma/issues/56)) ([66a52ad](https://github.com/woodleighschool/stemma/commit/66a52ad80f75ec60a565665741beaef7ad703126))
+
+
+### Performance Improvements
+
+* **apple:** decode PBZX payloads with up to eight workers ([a387cff](https://github.com/woodleighschool/stemma/commit/a387cffe7b761c9e76203bbe8dad53be4a6c9ab0))
+* **pkgbuild:** compress payloads with klauspost gzip ([ab7694b](https://github.com/woodleighschool/stemma/commit/ab7694b0c8aba045a61bce4e358aead6d2c0c9f6))
+
+
+### Documentation
+
+* reorganize guides and refresh catalog documentation ([225888a](https://github.com/woodleighschool/stemma/commit/225888a30e3012d5d2f4e7469c6679f95a99329c))
+
+
+### Miscellaneous Chores
+
+* align formatter ignores and rebuild tool locks ([d11def5](https://github.com/woodleighschool/stemma/commit/d11def59e5de3a672b7702fe494a61ca7547f74f))
+* include dependency licenses in release artifacts ([d6b6c84](https://github.com/woodleighschool/stemma/commit/d6b6c84ec3bc887af12e56c92938f4db63dd8fd8))
+* remove release version bootstrap overrides ([927385a](https://github.com/woodleighschool/stemma/commit/927385a5e4b09d6673e7dba023fd5d3965d19922))
+* tidy modules directly in GoReleaser ([77e4ce7](https://github.com/woodleighschool/stemma/commit/77e4ce745672c5aa42e66c69d3b3a07f6433ad88))
+
 ## [0.5.0](https://github.com/woodleighschool/stemma/compare/0.4.0...0.5.0) (2026-09-27)
 
 
