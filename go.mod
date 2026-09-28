@@ -8,7 +8,7 @@ require (
 	cel.dev/cel-go v0.32.0
 	charm.land/bubbles/v2 v2.2.1
 	charm.land/bubbletea/v2 v2.0.10
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.2
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.1
 	github.com/antlr4-go/antlr/v4 v4.13.1
