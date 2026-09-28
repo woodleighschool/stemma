@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.7.0](https://github.com/woodleighschool/stemma/compare/0.6.0...v0.7.0) (2026-09-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **intune:** remove unsupported content retention
+
+### Features
+
+* **intune:** remove unsupported content retention ([cbf8e19](https://github.com/woodleighschool/stemma/commit/cbf8e19f5f9d030714aad0d0290fe73ffdf9a8f1))
+
+
+### Bug Fixes
+
+* **intune:** resume content publication ([8cae52d](https://github.com/woodleighschool/stemma/commit/8cae52d3fd4b1c52cc073e14de34a6bad5592609))
+* **munki:** truncate installer sizes to whole KiB ([0de624a](https://github.com/woodleighschool/stemma/commit/0de624aa2763b2073da958c9a1887094fe67eed9))
+
+
+### Continuous Integration
+
+* prefix release tags for Go module consumers ([6f986a8](https://github.com/woodleighschool/stemma/commit/6f986a89e0ec97f298d7cbe416bb8e4feceb066c))
+* skip checks for generated release commits ([e4466b0](https://github.com/woodleighschool/stemma/commit/e4466b041c0fa04ad863694495cb5ed1222eed6e))
+
 ## [0.6.0](https://github.com/woodleighschool/stemma/compare/0.5.0...0.6.0) (2026-09-28)
 
 
