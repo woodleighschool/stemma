@@ -453,7 +453,11 @@ func metadataPatch(current, desired object, published publication) (object, []pl
 			value = mergeItems(key, previous, value.([]any))
 		}
 		patch[key] = value
-		changes = append(changes, plugin.Change{Kind: "metadata", Field: reportName(key), Action: "set", Before: raw(current[key]), After: raw(value)})
+		before, after := current[key], value
+		if key == "minimumSupportedOperatingSystem" {
+			before, after = minimumOSChangeValue(before), minimumOSChangeValue(desired[key])
+		}
+		changes = append(changes, plugin.Change{Kind: "metadata", Field: reportName(key), Action: "set", Before: raw(before), After: raw(after)})
 	}
 	notes := withMarker(noteText(current, desired), published)
 	if notes != text(current["notes"]) {
@@ -461,6 +465,13 @@ func metadataPatch(current, desired object, published publication) (object, []pl
 		changes = append(changes, plugin.Change{Kind: "metadata", Field: "notes", Action: "set", Before: raw(current["notes"]), After: raw(notes)})
 	}
 	return patch, changes
+}
+
+func minimumOSChangeValue(value any) any {
+	if selected := selectedOS(value); selected != "" {
+		return strings.ReplaceAll(strings.TrimPrefix(selected, "v"), "_", ".")
+	}
+	return value
 }
 
 // validateCreation checks the fields Graph requires to create an app, named as

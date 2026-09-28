@@ -1,11 +1,54 @@
 package intune
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/changes"
 	"github.com/woodleighschool/stemma/plugin"
 )
+
+func TestMinimumOSChangeReportsSelection(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		current any
+		patch   object
+		before  string
+	}{
+		{"major version", object{"v14_0": false, "v15_0": true, "v26_0": false}, object{"v15_0": false, "v26_0": true}, `"15.0"`},
+		{"legacy version", object{"v10_15": true}, object{"v10_15": false, "v26_0": true}, `"10.15"`},
+		{"missing selection", nil, object{"v26_0": true}, `null`},
+		{"unchanged selection", object{"v14_0": false, "v15_0": false, "v26_0": true}, object{}, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			published := publication{identity: strings.Repeat("a", 64)}
+			current := object{"notes": withMarker("", published), "minimumSupportedOperatingSystem": test.current}
+			desired := object{"minimumSupportedOperatingSystem": object{"v26_0": true}}
+			patch, reported := metadataPatch(current, desired, published)
+			if len(test.patch) == 0 {
+				if len(patch) != 0 || len(reported) != 0 {
+					t.Fatalf("unchanged selection produced patch %s and changes %+v", raw(patch), reported)
+				}
+				return
+			}
+			if !reflect.DeepEqual(patch, object{"minimumSupportedOperatingSystem": test.patch}) {
+				t.Fatalf("patch = %s, want %s", raw(patch), raw(test.patch))
+			}
+			if len(reported) != 1 {
+				t.Fatalf("changes = %+v, want one minimum OS change", reported)
+			}
+			change := reported[0]
+			if change.Kind != "metadata" || change.Field != "minimum_os" || change.Action != "set" || string(change.Before) != test.before || string(change.After) != `"26.0"` {
+				t.Fatalf("unexpected semantic change: %+v", change)
+			}
+			want := "minimum_os: " + strings.Trim(test.before, `"`) + " -> 26.0"
+			if got := strings.Join(changes.Lines(change), "\n"); got != want {
+				t.Fatalf("report = %q, want %q", got, want)
+			}
+		})
+	}
+}
 
 func TestDerivedFieldWithoutArtifactValueIsClearedOrMustBeSet(t *testing.T) {
 	// An MSI need not declare an UpgradeCode or a manufacturer. Graph clears the
