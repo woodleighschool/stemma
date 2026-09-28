@@ -1,6 +1,6 @@
 {
-  "descriptionHash": "CE11CEE0DCFA4577BE1B457A0301D200BA807B920E465AFB44B5AE0DA00CA568AEB595DE6A5A4F394A61FCB522846D126AAE3739D13F783B7D4FABEC1DD758BF",
-  "descriptionLocation": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/0d13ff1/openapi/beta/openapi.yaml",
+  "descriptionHash": "151A7600BDC71980B9E82677B2CD8B75125EE468AAC2ECFE3256B1BBE6A16DF2EA867B32B7EC08721B28C7D066B1E540DE46B8504B381EC3CF21FD3B85A4AB6F",
+  "descriptionLocation": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/b8cbef9/openapi/beta/openapi.yaml",
   "lockFileVersion": "1.0.0",
   "kiotaVersion": "1.35.0",
   "clientClassName": "ApiClient",
