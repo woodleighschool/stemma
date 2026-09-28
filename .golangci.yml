@@ -102,6 +102,10 @@ linters:
         - no-unused-link
         - require-stdlib-doclink
 
+    gomoddirectives:
+      replace-allow-list:
+        - github.com/sassoftware/relic/v8
+
     govet:
       enable-all: true
       disable:

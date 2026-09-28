@@ -145,3 +145,5 @@ require (
 	google.golang.org/protobuf v1.36.11 // indirect
 	software.sslmate.com/src/go-pkcs12 v0.7.3 // indirect
 )
+
+replace github.com/sassoftware/relic/v8 => github.com/hydazz/relic/v8 v8.2.1-0.20260928222056-eefb65e5e1fa
