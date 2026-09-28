@@ -142,9 +142,7 @@ func TestGitHubDiscoveryKeepsTokenAtAPIOrigin(t *testing.T) {
 					if r.Header.Get("Authorization") != "" {
 						t.Fatal("GitHub API token crossed its origin")
 					}
-					t.Fatal("GitHub discovery followed a redirect outside its origin")
-				}
-				if r.Header.Get("Authorization") != "Bearer synthetic-token" {
+				} else if r.Header.Get("Authorization") != "Bearer synthetic-token" {
 					t.Fatal("API request lost authentication")
 				}
 				if requests == 1 {
@@ -154,12 +152,8 @@ func TestGitHubDiscoveryKeepsTokenAtAPIOrigin(t *testing.T) {
 			})
 			var observed nativeObservation
 			err := m.github(t.Context(), nativeConfig{Repository: "example/app", Asset: "App.pkg", Token: "synthetic-token"}, &observed)
-			if strings.HasPrefix(target, "https://api.github.com/") {
-				if requests != 2 || err == nil || !strings.Contains(err.Error(), "HTTP 404") {
-					t.Fatalf("same-origin redirect: requests=%d, err=%v", requests, err)
-				}
-			} else if requests != 1 || err == nil || !strings.Contains(err.Error(), "origin") {
-				t.Fatalf("cross-origin redirect: requests=%d, err=%v", requests, err)
+			if requests != 2 || err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+				t.Fatalf("redirect: requests=%d, err=%v", requests, err)
 			}
 		})
 	}

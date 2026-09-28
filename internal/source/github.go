@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"net/url"
 	"strings"
 
@@ -18,22 +17,7 @@ import (
 func (m *Manager) github(ctx context.Context, s nativeConfig, observed *nativeObservation) (err error) {
 	done := plugin.Stage(ctx, "Discovering GitHub release", plugin.Detail(s.Repository))
 	defer func() { done(err, plugin.Detail(observed.Release)) }()
-	api := *m.Client
-	// go-github adds its token in the transport, after CheckRedirect. Removing
-	// headers cannot protect an off-origin redirect from that transport.
-	api.CheckRedirect = func(req *http.Request, via []*http.Request) error {
-		if !sameOrigin(req.URL, via[0].URL) {
-			return errors.New("GitHub API redirect leaves its origin")
-		}
-		if m.Client.CheckRedirect != nil {
-			return m.Client.CheckRedirect(req, via)
-		}
-		if len(via) >= 10 {
-			return errors.New("too many redirects")
-		}
-		return nil
-	}
-	options := []github.ClientOptionsFunc{github.WithHTTPClient(&api), github.WithUserAgent(userAgent)}
+	options := []github.ClientOptionsFunc{github.WithHTTPClient(m.Client), github.WithUserAgent(userAgent)}
 	if s.Token != "" {
 		options = append(options, github.WithAuthToken(s.Token))
 	}
