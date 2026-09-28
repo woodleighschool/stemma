@@ -104,6 +104,29 @@ func (stage *layout) content(ctx context.Context, name string, source io.Reader,
 	return nil
 }
 
+// checkSignatureAttributes rejects signing metadata the payload would discard.
+func checkSignatureAttributes(ctx context.Context, node contents.Node, file fs.File) error {
+	if local, ok := file.(*os.File); ok {
+		return archive.CheckXattrs(ctx, local)
+	}
+	attributes, ok := node.FS.(interface {
+		Xattrs(name string) (map[string][]byte, error)
+	})
+	if !ok {
+		return nil
+	}
+	xattrs, err := attributes.Xattrs(node.Path)
+	if err != nil {
+		return err
+	}
+	for name := range xattrs {
+		if strings.HasPrefix(name, "com.apple.cs.") {
+			return fmt.Errorf("%s keeps its code signature in extended attributes, which a package payload cannot carry", node.Path)
+		}
+	}
+	return nil
+}
+
 func (stage *layout) copy(ctx context.Context, node contents.Node, destination string, attrs pkgbuild.EntryMetadata) error {
 	info, err := node.Stat()
 	if err != nil {
@@ -170,6 +193,9 @@ func (stage *layout) copyNode(ctx context.Context, node contents.Node, destinati
 	}
 	defer func() { _ = file.Close() }()
 	if !info.IsDir() {
+		if err := checkSignatureAttributes(ctx, node, file); err != nil {
+			return err
+		}
 		return stage.content(ctx, destination, file, info.Size(), attrs, info.Mode())
 	}
 	if attrs.Mode == nil {

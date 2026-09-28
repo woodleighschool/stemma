@@ -41,16 +41,20 @@ provide a sandbox or guarantee bounded resource use for deliberately adversarial
 files.
 
 New payload trees and application DMGs retain bytes, modes and confined relative
-symlinks, which is what a Git checkout carries. Extended attributes, ACLs and resource forks are left
-behind, and AppleDouble sidecars in vendor archives are skipped.
-This is distinct from preserving an existing vendor PKG or DMG unchanged.
+symlinks. Extended attributes, ACLs and resource forks are omitted. Local file
+imports, archive extraction and payload creation reject code signatures stored in
+extended attributes before discarding them. Existing vendor PKGs and DMGs retain
+their original bytes.
 
 ## Signatures
 
 Each signed subject is verified independently against its expected publisher: Developer ID signatures over PKGs and application
 bundles, and Authenticode signatures over MSI and EXE files. Apple verification
 covers the shapes `codesign` writes today: `files2` envelopes, versioned and
-shallow frameworks, nested bundles and executables. Of Apple's requirement
+shallow frameworks, nested bundles and executables, and nested generic code, such
+as scripts and data files, whose signature `codesign` keeps in extended
+attributes. Generic code verifies inside a vendor DMG; archives and local trees
+don't carry those attributes, so it is unsupported there. Of Apple's requirement
 language, only the Developer ID requirement `codesign` records by default is
 evaluated, and only for nested code that replaced the code its app sealed; other
 requirements accept only the sealed code. Legacy envelopes and detached signature

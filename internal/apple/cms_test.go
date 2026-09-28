@@ -62,7 +62,7 @@ func TestCMSSignatureAllocationIsNotCode(t *testing.T) {
 	// The fat header gives the first architecture's offset and allocated size.
 	base := int(binary.BigEndian.Uint32(data[16:20]))
 	size := int(binary.BigEndian.Uint32(data[20:24]))
-	start := base + int(signedFixtureSignature(t, 0).codeOffset)
+	start := base + int(signedFixtureSignature(t, 0).codeSize)
 	end := start + int(binary.BigEndian.Uint32(data[start+4:start+8]))
 	if end >= base+size {
 		t.Fatal("fixture has no unused signature allocation")

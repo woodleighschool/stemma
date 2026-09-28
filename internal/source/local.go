@@ -196,6 +196,9 @@ func (m *Manager) readLocal(ctx context.Context, s nativeConfig) (content Conten
 		content.Artifact, err = m.importTree(ctx, tree, nil, s.SHA256)
 		return content, err
 	case info.Mode().IsRegular():
+		if err := archive.CheckXattrs(ctx, f); err != nil {
+			return content, err
+		}
 		content.Artifact, err = m.Store.Import(ctx, f, s.SHA256)
 		return content, err
 	}

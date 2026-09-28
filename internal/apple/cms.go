@@ -53,7 +53,7 @@ func verifyCMS(signature *codeSignature) (*cmsSignature, error) {
 	cd := signature.directories[0]
 	blob := signature.blobs[0x10000]
 	if len(blob) <= 8 {
-		return nil, fmt.Errorf("Mach-O has no CMS signature; ad-hoc hashes do not authenticate a signer")
+		return nil, fmt.Errorf("code has no CMS signature; ad-hoc hashes do not authenticate a signer")
 	}
 	if binary.BigEndian.Uint32(blob[:4]) != 0xfade0b01 {
 		return nil, fmt.Errorf("invalid CMS signature blob")

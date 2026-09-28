@@ -43,7 +43,7 @@ type machoSlice struct {
 }
 
 type codeSignature struct {
-	codeOffset  int64
+	codeSize    int64
 	blobs       map[uint32][]byte
 	directories [][]byte
 }
@@ -154,8 +154,15 @@ func (m machoSlice) verify(external map[uint32][]byte) (codeIdentity, error) {
 			external[1] = embedded
 		}
 	}
+	return verifySignature(m.r, sig, external)
+}
+
+// verifySignature authenticates a signature over code: every CodeDirectory
+// seals the code and its special slots, and the CMS signature over them chains
+// to Apple at the signature's trusted time.
+func verifySignature(code io.ReaderAt, sig *codeSignature, external map[uint32][]byte) (codeIdentity, error) {
 	for _, cd := range sig.directories {
-		if err := m.verifyCodeDirectory(cd, sig, external); err != nil {
+		if err := verifyCodeDirectory(code, cd, sig, external); err != nil {
 			return codeIdentity{}, err
 		}
 	}
@@ -393,7 +400,7 @@ func (m machoSlice) signature() (*codeSignature, error) {
 	// LC_CODE_SIGNATURE bounds an allocation; the SuperBlob length bounds the
 	// signature. Unused allocation bytes still contribute to artifact identity.
 	data = data[:blobSize]
-	sig := &codeSignature{codeOffset: offset, blobs: make(map[uint32][]byte)}
+	sig := &codeSignature{codeSize: offset, blobs: make(map[uint32][]byte)}
 	type span struct{ start, end uint32 }
 	var spans []span
 	for i := range blobCount {
@@ -488,7 +495,7 @@ func codeString(cd []byte, offset uint32) (string, error) {
 	return string(value), nil
 }
 
-func (m machoSlice) verifyCodeDirectory(cd []byte, sig *codeSignature, external map[uint32][]byte) error {
+func verifyCodeDirectory(r io.ReaderAt, cd []byte, sig *codeSignature, external map[uint32][]byte) error {
 	if err := validateCodeDirectory(cd); err != nil {
 		return err
 	}
@@ -503,10 +510,10 @@ func (m machoSlice) verifyCodeDirectory(cd []byte, sig *codeSignature, external 
 	if binary.BigEndian.Uint32(cd[8:12]) >= 0x20300 && limit == 0 {
 		limit = binary.BigEndian.Uint64(cd[56:64])
 	}
-	if limit != uint64(sig.codeOffset) { //nolint:gosec // codeOffset holds the uint32 LC_CODE_SIGNATURE offset.
-		return fmt.Errorf("%w: CodeDirectory does not seal all bytes before signature", ErrUnsupported)
+	if limit != uint64(sig.codeSize) { //nolint:gosec // codeSize is a non-negative file size or signature offset.
+		return fmt.Errorf("%w: CodeDirectory code limit differs from content size", ErrUnsupported)
 	}
-	code := io.NewSectionReader(m.r, 0, sig.codeOffset)
+	code := io.NewSectionReader(r, 0, sig.codeSize)
 	pageSize := code.Size()
 	if cd[39] != 0 {
 		if cd[39] > 30 {

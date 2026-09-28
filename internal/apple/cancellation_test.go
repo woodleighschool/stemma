@@ -75,7 +75,7 @@ func TestExecutableVerificationStopsBetweenPages(t *testing.T) {
 	defer cancel()
 	input := &cancelingReaderAt{reader: slice.r, cancel: cancel}
 	slice.r = contextReaderAt{ctx, input}
-	if err := slice.verifyCodeDirectory(signature.directories[0], signature, nil); !errors.Is(err, context.Canceled) {
+	if err := verifyCodeDirectory(slice.r, signature.directories[0], signature, nil); !errors.Is(err, context.Canceled) {
 		t.Fatalf("verification: %v", err)
 	}
 	if input.reads != 1 {

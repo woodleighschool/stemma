@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 	"github.com/mholt/archives"
 	"github.com/woodleighschool/stemma/internal/fileio"
 )
@@ -53,9 +54,15 @@ func Extract(ctx context.Context, input, destination string) (err error) {
 	}
 	err = reader.Extract(ctx, stream, func(_ context.Context, entry archives.FileInfo) error {
 		if appleDouble(entry.NameInArchive) {
-			return nil
+			return sidecarSignature(entry)
 		}
 		if header, ok := entry.Header.(*tar.Header); ok {
+			for key := range header.PAXRecords {
+				// GNU tar and libarchive name extended attributes in PAX records.
+				if strings.HasPrefix(key, "SCHILY.xattr."+codeSignature) || strings.HasPrefix(key, "LIBARCHIVE.xattr."+codeSignature) {
+					return fmt.Errorf("%s keeps its code signature in extended attributes, which extraction would discard", entry.NameInArchive)
+				}
+			}
 			switch header.Typeflag {
 			case tar.TypeReg, tar.TypeDir, tar.TypeSymlink:
 			default:
@@ -98,6 +105,49 @@ type extractor struct {
 	total    int64
 	links    []link
 	dirs     []directory
+}
+
+// codeSignature prefixes the extended attributes where codesign keeps the
+// signature of code that is not a Mach-O.
+const codeSignature = "com.apple.cs."
+
+const maxSidecar = 64 << 20
+
+// sidecarSignature refuses an AppleDouble sidecar that holds a code signature,
+// which extraction would leave behind with the rest of the sidecar.
+func sidecarSignature(entry archives.FileInfo) error {
+	owner, sidecar := appledouble.OwnerName(entry.NameInArchive)
+	if !sidecar || !entry.Mode().IsRegular() {
+		return nil
+	}
+	if entry.Size() > maxSidecar {
+		return fmt.Errorf("AppleDouble sidecar %s exceeds %d bytes", entry.NameInArchive, maxSidecar)
+	}
+	f, err := entry.Open()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxSidecar+1))
+	if err != nil {
+		return err
+	}
+	if len(data) > maxSidecar {
+		return fmt.Errorf("AppleDouble sidecar %s exceeds %d bytes", entry.NameInArchive, maxSidecar)
+	}
+	if !appledouble.Sniff(data) {
+		return nil
+	}
+	attributes, err := appledouble.Decode(data)
+	if err != nil {
+		return fmt.Errorf("AppleDouble sidecar %s: %w", entry.NameInArchive, err)
+	}
+	for name := range attributes.Xattrs() {
+		if strings.HasPrefix(name, codeSignature) {
+			return fmt.Errorf("%s keeps its code signature in extended attributes, which extraction would discard", strings.TrimPrefix(owner, "__MACOSX/"))
+		}
+	}
+	return nil
 }
 
 // appleDouble reports the sidecar entries macOS archivers add for extended

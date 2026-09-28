@@ -82,7 +82,8 @@ func VerifyAppFS(ctx context.Context, fsys fs.ReadLinkFS, appPath string, want s
 	if err != nil {
 		return signature.Result{}, err
 	}
-	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10)}
+	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10), base: appPath}
+	v.attributes, _ = fsys.(xattrFS)
 	return v.verifyApp(bundle, path.Base(appPath), want)
 }
 

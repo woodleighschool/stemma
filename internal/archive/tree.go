@@ -125,6 +125,10 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 			if err != nil {
 				return err
 			}
+			if err := CheckXattrs(ctx, f); err != nil {
+				_ = f.Close()
+				return err
+			}
 			n, err := io.Copy(w, io.LimitReader(fileio.Reader{Context: ctx, Reader: f}, info.Size()+1))
 			closeErr := f.Close()
 			if err != nil {

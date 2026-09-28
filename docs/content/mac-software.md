@@ -251,7 +251,9 @@ envelope, symlinks and nested code, chained to Apple's roots at the signature's
 trusted timestamp. Nested code matches its exact recorded cdhash, or replaces the
 sealed code under the Developer ID requirement the app recorded for it: the same
 identifier, signed by the same team with a Developer ID Application certificate.
-`stemma signature` lists replaced nested code. Notarisation and Gatekeeper policy
+`stemma signature` lists replaced nested code. Nested scripts and data files that
+`codesign` signs in extended attributes verify inside a vendor DMG, which Stemma
+publishes unchanged. Notarisation and Gatekeeper policy
 are not assessed. See [signature limits](limitations.md#signatures).
 
 ## Icons

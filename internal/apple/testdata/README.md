@@ -62,3 +62,34 @@ codesign --force --timestamp --sign "$identity" \
 codesign --force --sign - --timestamp=none -i "$helper" replacements/adhoc
 rm -rf "$work"
 ```
+
+`generic.dmg` (HFS+) and `generic-apfs.dmg` hold GenericFixture.app, whose
+`Contents/MacOS/share` text files are generic code: `codesign` keeps their
+signatures in extended attributes, which only the images carry. `other.txt` also
+has an alternate SHA-256 CodeDirectory.
+
+```sh
+work=$(mktemp -d)
+identity='Developer ID Application: Woodleigh School (SMLKBTR495)'
+app="$work/src/GenericFixture.app/Contents"
+mkdir -p "$app/MacOS/share"
+printf 'int main(void) { return 0; }\n' > "$work/main.c"
+clang -arch arm64 -mmacosx-version-min=13.0 -o "$app/MacOS/fixture" "$work/main.c"
+plutil -create xml1 "$app/Info.plist"
+plutil -insert CFBundleIdentifier -string au.edu.vic.woodleigh.stemma.generic "$app/Info.plist"
+plutil -insert CFBundleName -string 'Stemma Generic Fixture' "$app/Info.plist"
+plutil -insert CFBundleExecutable -string fixture "$app/Info.plist"
+plutil -insert CFBundlePackageType -string APPL "$app/Info.plist"
+plutil -insert CFBundleShortVersionString -string 1.2.3 "$app/Info.plist"
+plutil -insert CFBundleVersion -string 42 "$app/Info.plist"
+plutil -insert LSMinimumSystemVersion -string 13.0 "$app/Info.plist"
+printf 'sealed message\n' > "$app/MacOS/share/message.txt"
+printf 'other message\n' > "$app/MacOS/share/other.txt"
+codesign --force --timestamp --sign "$identity" "$app/MacOS/share/message.txt"
+codesign --force --timestamp --digest-algorithm=sha1,sha256 --sign "$identity" \
+  "$app/MacOS/share/other.txt"
+codesign --force --timestamp --sign "$identity" "$work/src/GenericFixture.app"
+hdiutil create -srcfolder "$work/src" -fs HFS+ -format UDZO -volname Generic generic.dmg
+hdiutil create -srcfolder "$work/src" -fs APFS -format UDZO -volname Generic generic-apfs.dmg
+rm -rf "$work"
+```

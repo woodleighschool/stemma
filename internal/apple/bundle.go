@@ -31,6 +31,10 @@ type bundleVerifier struct {
 	depth    int
 	progress time.Time
 	replaced []signature.Replacement
+	// attributes reads extended attributes from the filesystem that holds the
+	// verified bundle at base, when that filesystem has them.
+	attributes xattrFS
+	base       string
 }
 
 type resourceSeal struct {
@@ -449,6 +453,13 @@ func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, location, name str
 			return codeIdentity{}, err
 		}
 		defer func() { _ = f.Close() }()
+		machO, err := isMachO(f, size)
+		if err != nil {
+			return codeIdentity{}, err
+		}
+		if !machO {
+			return v.verifyGeneric(location, f, size)
+		}
 		return verifyMachO(v.ctx, f, size, nil)
 	}
 	nested, err := subtree(root, name)

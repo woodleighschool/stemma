@@ -3,6 +3,7 @@ package testdiskimage
 
 import (
 	"os"
+	"path"
 	"path/filepath"
 	"testing"
 
@@ -13,16 +14,30 @@ import (
 // Write creates a zlib-compressed HFSX DMG containing sourceDir's children.
 func Write(t testing.TB, filename, sourceDir string) {
 	t.Helper()
+	WriteXattrs(t, filename, sourceDir, nil)
+}
+
+// WriteXattrs is Write with extended attributes for the files at slash-separated
+// paths relative to sourceDir.
+func WriteXattrs(t testing.TB, filename, sourceDir string, xattrs map[string]map[string][]byte) {
+	t.Helper()
 	root, _, err := hfsplus.EntryTreeFromDir(sourceDir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for entries := []*hfsplus.Entry{root}; len(entries) > 0; entries = entries[1:] {
-		entry := entries[0]
+	type located struct {
+		entry *hfsplus.Entry
+		path  string
+	}
+	for entries := []located{{root, "."}}; len(entries) > 0; entries = entries[1:] {
+		entry := entries[0].entry
 		if entry.Mode&os.ModeSymlink != 0 {
 			entry.Data = []byte(filepath.ToSlash(string(entry.Data)))
 		}
-		entries = append(entries, entry.Children...)
+		entry.Xattrs = xattrs[entries[0].path]
+		for _, child := range entry.Children {
+			entries = append(entries, located{child, path.Join(entries[0].path, child.Name)})
+		}
 	}
 	volume, err := os.Create(filepath.Join(t.TempDir(), "volume"))
 	if err != nil {

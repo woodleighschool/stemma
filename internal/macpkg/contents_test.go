@@ -235,3 +235,32 @@ func packageArchive(t *testing.T, filename, member string) (map[string]string, m
 	t.Fatalf("package has no %s", member)
 	return nil, nil
 }
+
+// A payload carries bytes and modes, so code signed in extended attributes
+// would install with a signature that fails.
+func TestBuildRefusesSignaturesInAttributes(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "installer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "installer", "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{Package: Package{Identifier: "org.example.wrapper", Version: "1.0"}, Payload: map[string]Entry{"/Library/Example": {Input: "vendor", Path: "installer"}}}
+	for _, test := range []struct {
+		attribute string
+		refused   bool
+	}{
+		{"com.apple.quarantine", false},
+		{"com.apple.cs.CodeSignature", true},
+	} {
+		t.Run(test.attribute, func(t *testing.T) {
+			image := filepath.Join(t.TempDir(), "vendor.dmg")
+			testdiskimage.WriteXattrs(t, image, root, map[string]map[string][]byte{"installer/run.sh": {test.attribute: []byte("value")}})
+			_, err := Build(t.Context(), spec, map[string]plugin.Artifact{"vendor": {Path: image, Filename: "vendor.dmg"}}, t.TempDir())
+			if test.refused != (err != nil) || test.refused && !strings.Contains(err.Error(), "installer/run.sh keeps its code signature") {
+				t.Fatalf("refused = %v, want %v: %v", err != nil, test.refused, err)
+			}
+		})
+	}
+}

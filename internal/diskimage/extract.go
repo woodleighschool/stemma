@@ -78,6 +78,9 @@ type filesystem interface {
 	fs.StatFS
 	fs.ReadDirFS
 	Readlink(string) (string, error)
+	// Xattrs returns a file's extended attributes, where codesign keeps the
+	// signature of code that is not a Mach-O.
+	Xattrs(string) (map[string][]byte, error)
 }
 
 func openVolume(reader io.ReaderAt, size int64) (filesystem, func(), error) {
