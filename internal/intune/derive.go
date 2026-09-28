@@ -43,7 +43,7 @@ func Derive(req plugin.ReconcileRequest[Config]) (plugin.ReconcileRequest[Config
 }
 
 // deriveMac supplies the minimum OS from the software's effective requirement
-// and detection from its applications or PKG receipts.
+// and detection from its selected application or PKG receipts.
 func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string]string) (object, error) {
 	lob := m["@odata.type"] == lobType
 	if lob {
@@ -82,15 +82,12 @@ func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string
 			return nil, errors.New("macos.application evidence requires an application subject")
 		}
 	}
-	apps, origin := detectedApps(req.Artifact.Facts, selected, text(m["@odata.type"]))
-	if len(apps) == 0 {
-		return nil, errors.New("the artifact has no application or package receipt to detect it; set included_apps")
+	apps, origin, err := detectedApps(req.Artifact.Facts, selected, text(m["@odata.type"]))
+	if err != nil {
+		return nil, err
 	}
 	// The primary fields describe the first included app.
 	first := apps[0]
-	if first.version == "" {
-		return nil, errors.New("the selected application has no CFBundleShortVersionString; set included_apps")
-	}
 	list := make([]any, len(apps))
 	for i, app := range apps {
 		if lob {
@@ -110,49 +107,37 @@ type detectedApp struct {
 	id, version, build string
 }
 
-// detectedApps lists the applications that identify an installation, the
-// selected one first, or the receipts of a PKG without applications.
-// Only the selected application may lack a version, which fails its detection.
-func detectedApps(facts plugin.Facts, selected *plugin.Subject, appType string) ([]detectedApp, string) {
-	apps := map[string]bool{}
-	for _, subject := range facts.Subjects {
-		if subject.App != nil {
-			apps[subject.ID] = true
+// detectedApps lists what detects an installation: the selected application,
+// or the receipts of a PKG that selects none. Other applications an installer
+// carries only detect it when included_apps declares them.
+func detectedApps(facts plugin.Facts, selected *plugin.Subject, appType string) ([]detectedApp, string, error) {
+	if selected != nil {
+		app := selected.App
+		switch {
+		case app.BundleID == "":
+			return nil, "", errors.New("the selected application has no CFBundleIdentifier; set included_apps")
+		case app.Version == "":
+			return nil, "", errors.New("the selected application has no CFBundleShortVersionString; set included_apps")
+		case (appType == dmgType || appType == lobType) && !strings.HasPrefix(path.Clean(selected.InstalledPath), "/Applications/"):
+			return nil, "", errors.New("the selected application does not install under /Applications, as DMG and line-of-business apps require; select another application or set included_apps")
 		}
+		return []detectedApp{{id: app.BundleID, version: app.Version, build: cmp.Or(app.Build, app.Version)}}, "app.bundle_id", nil
 	}
-	eligible := func(app plugin.Subject) bool {
-		return appType != lobType || strings.HasPrefix(app.InstalledPath, "/Applications/")
-	}
-	var candidates []plugin.Subject
-	if selected != nil && eligible(*selected) {
-		candidates = append(candidates, *selected)
-	}
-	for _, subject := range facts.Subjects {
-		if subject.App != nil && !apps[subject.Parent] && eligible(subject) {
-			candidates = append(candidates, subject)
-		}
+	if appType != pkgType {
+		return nil, "", errors.New("the artifact has no selected application to detect it; set included_apps")
 	}
 	var detected []detectedApp
 	seen := map[string]bool{}
-	for _, app := range candidates {
-		id := app.App.BundleID
-		if id == "" || seen[id] || app.App.Version == "" && (selected == nil || app.ID != selected.ID) {
-			continue
-		}
-		seen[id] = true
-		build := cmp.Or(app.App.Build, app.App.Version)
-		detected = append(detected, detectedApp{id: id, version: app.App.Version, build: build})
-	}
-	if len(detected) > 0 || appType != pkgType {
-		return detected, "installer.apps"
-	}
 	for _, subject := range facts.Subjects {
 		if receipt := subject.Package; receipt != nil && receipt.Identifier != "" && receipt.Version != "" && !seen[receipt.Identifier] {
 			seen[receipt.Identifier] = true
 			detected = append(detected, detectedApp{id: receipt.Identifier, version: receipt.Version, build: receipt.Version})
 		}
 	}
-	return detected, "installer.receipts"
+	if len(detected) == 0 {
+		return nil, "", errors.New("the artifact has no selected application or package receipt to detect it; set included_apps")
+	}
+	return detected, "installer.receipts", nil
 }
 
 // lobLimit is Intune's size limit for a line-of-business PKG.

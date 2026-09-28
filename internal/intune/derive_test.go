@@ -87,7 +87,8 @@ func TestApplicationDiskImageDerivesADmgApp(t *testing.T) {
 	}
 }
 
-func TestDiskImageIncludesEveryApplicationSelectedFirst(t *testing.T) {
+// An installer's other applications don't decide whether it installed.
+func TestDiskImageDetectsTheSelectedApplication(t *testing.T) {
 	layout := plugin.Subject{ID: "SketchUp 2026/LayOut.app", Parent: ".", Kind: "app", App: &plugin.AppFacts{BundleID: "com.trimble.layout", Version: "26.0", MinimumOS: "13.0"}}
 	sketchup := plugin.Subject{ID: "SketchUp 2026/SketchUp.app", Parent: ".", Kind: "app", InstalledPath: "/Applications/SketchUp 2026/SketchUp.app", App: &plugin.AppFacts{BundleID: "com.trimble.sketchup", Version: "26.1", Name: "SketchUp", MinimumOS: "13.0"}}
 	derived, origins, err := Derive(macRequest(object{"type": "dmg"}, &sketchup, plugin.Subject{ID: ".", Path: ".", Kind: "container"}, layout, sketchup))
@@ -99,17 +100,18 @@ func TestDiskImageIncludesEveryApplicationSelectedFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	apps := m["includedApps"].([]any)
-	if len(apps) != 2 || apps[0].(object)["bundleId"] != "com.trimble.sketchup" || apps[1].(object)["bundleId"] != "com.trimble.layout" || m["primaryBundleId"] != "com.trimble.sketchup" || m["primaryBundleVersion"] != "26.1" || origins["included_apps"] != "installer.apps" {
+	if len(apps) != 1 || apps[0].(object)["bundleId"] != "com.trimble.sketchup" || m["primaryBundleId"] != "com.trimble.sketchup" || m["primaryBundleVersion"] != "26.1" || origins["included_apps"] != "app.bundle_id" {
 		t.Fatalf("included apps: %+v / %+v", m, origins)
 	}
 }
 
-func TestPackageDetectionUsesApplicationsOrReceipts(t *testing.T) {
+func TestPackageDetectionUsesTheSelectedApplicationOrReceipts(t *testing.T) {
 	root := plugin.Subject{ID: ".", Path: ".", Kind: "container", Installer: &plugin.InstallerFacts{MinimumOS: "11.0"}}
 	receipt := plugin.Subject{ID: "PackageInfo", Parent: ".", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.exporter", Version: "1.4.0", HasPayload: true}}
 	scripts := plugin.Subject{ID: "scripts.pkg/PackageInfo", Parent: ".", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.exporter.scripts", Version: "1.4.0"}}
 	helper := plugin.Subject{ID: "Payload/Helper.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Library/Application Support/Example/Helper.app", App: &plugin.AppFacts{BundleID: "org.example.helper", Version: "1.4.0"}}
-	req := macRequest(object{"display_name": "Exporter"}, nil, root, receipt, scripts, helper)
+	updater := plugin.Subject{ID: "Payload/Updater.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Library/Application Support/Example/Updater.app", App: &plugin.AppFacts{BundleID: "org.example.updater", Version: "9.0"}}
+	req := macRequest(object{"display_name": "Exporter"}, &helper, root, receipt, scripts, helper, updater)
 	req.MinimumOS = &plugin.MinimumOS{Version: "11.0", Origin: "installer.minimum_os"}
 	derived, origins, err := Derive(req)
 	if err != nil {
@@ -120,11 +122,13 @@ func TestPackageDetectionUsesApplicationsOrReceipts(t *testing.T) {
 		t.Fatal(err)
 	}
 	apps := m["includedApps"].([]any)
-	if len(apps) != 1 || apps[0].(object)["bundleId"] != "org.example.helper" || m["primaryBundleVersion"] != "1.4.0" || selectedOS(m["minimumSupportedOperatingSystem"]) != "v11_0" || origins["included_apps"] != "installer.apps" || m["displayName"] != "Exporter" {
+	if len(apps) != 1 || apps[0].(object)["bundleId"] != "org.example.helper" || m["primaryBundleVersion"] != "1.4.0" || selectedOS(m["minimumSupportedOperatingSystem"]) != "v11_0" || origins["included_apps"] != "app.bundle_id" || m["displayName"] != "Exporter" {
 		t.Fatalf("application detection: %+v / %+v", m, origins)
 	}
-	for _, component := range []plugin.Subject{receipt, scripts} {
-		req.Artifact.Facts.Subjects = []plugin.Subject{root, component, component}
+	// Without a selection, the receipts detect the PKG, not the applications it carries.
+	delete(req.Artifact.Evidence, "macos.application")
+	for _, subjects := range [][]plugin.Subject{{root, receipt, receipt}, {root, scripts}, {root, receipt, helper, updater}} {
+		req.Artifact.Facts.Subjects = subjects
 		derived, origins, err = Derive(req)
 		if err != nil {
 			t.Fatal(err)
@@ -134,7 +138,8 @@ func TestPackageDetectionUsesApplicationsOrReceipts(t *testing.T) {
 			t.Fatal(err)
 		}
 		apps = m["includedApps"].([]any)
-		if len(apps) != 1 || apps[0].(object)["bundleId"] != component.Package.Identifier || apps[0].(object)["bundleVersion"] != "1.4.0" || m["primaryBundleId"] != component.Package.Identifier || m["primaryBundleVersion"] != "1.4.0" || origins["included_apps"] != "installer.receipts" {
+		component := subjects[1].Package
+		if len(apps) != 1 || apps[0].(object)["bundleId"] != component.Identifier || apps[0].(object)["bundleVersion"] != "1.4.0" || m["primaryBundleId"] != component.Identifier || m["primaryBundleVersion"] != "1.4.0" || origins["included_apps"] != "installer.receipts" {
 			t.Fatalf("receipt detection: %+v / %+v", m, origins)
 		}
 	}
@@ -144,11 +149,43 @@ func TestPackageDetectionUsesApplicationsOrReceipts(t *testing.T) {
 	}
 }
 
+// A selected application that can't detect the installation fails instead of
+// falling back to other applications or receipts.
+func TestSelectedApplicationDetectionFailsWithoutFallback(t *testing.T) {
+	receipt := plugin.Subject{ID: "PackageInfo", Parent: ".", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.exporter", Version: "1.4", HasPayload: true}}
+	other := plugin.Subject{ID: "Payload/Other.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Applications/Other.app", App: &plugin.AppFacts{BundleID: "org.example.other", Version: "1.4"}}
+	app := plugin.Subject{ID: "Payload/Exporter.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Applications/Exporter.app", App: &plugin.AppFacts{BundleID: "org.example.exporter.app", Version: "1.4"}}
+	for _, test := range []struct {
+		name, appType, rejection string
+		change                   func(*plugin.Subject)
+	}{
+		{"no bundle identifier", "pkg", "CFBundleIdentifier", func(app *plugin.Subject) { app.App.BundleID = "" }},
+		{"no version", "pkg", "CFBundleShortVersionString", func(app *plugin.Subject) { app.App.Version = "" }},
+		{"DMG outside Applications", "dmg", "does not install under /Applications", func(app *plugin.Subject) { app.InstalledPath = "/Library/Exporter/Exporter.app" }},
+		{"DMG without install path", "dmg", "does not install under /Applications", func(app *plugin.Subject) { app.InstalledPath = "" }},
+		{"outside Applications", "lob", "does not install under /Applications", func(app *plugin.Subject) { app.InstalledPath = "/Library/Exporter/Exporter.app" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			selected := app
+			facts := *app.App
+			selected.App = &facts
+			test.change(&selected)
+			req := lobRequest(object{"type": test.appType}, &selected, plugin.Subject{ID: ".", Path: ".", Kind: "container"}, receipt, other, selected)
+			if _, _, err := Derive(req); err == nil || !strings.Contains(err.Error(), test.rejection) {
+				t.Fatalf("got %v, want %s", err, test.rejection)
+			}
+		})
+	}
+}
+
 // lobRequest describes a signed flat PKG prepared for a line-of-business app.
-func lobRequest(metadata object, subjects ...plugin.Subject) plugin.ReconcileRequest[Config] {
-	req := macRequest(metadata, nil, subjects...)
+func lobRequest(metadata object, selected *plugin.Subject, subjects ...plugin.Subject) plugin.ReconcileRequest[Config] {
+	req := macRequest(metadata, selected, subjects...)
 	req.Artifact.Path, req.Artifact.Filename, req.Artifact.Format, req.Artifact.Size = "leased.pkg", "exporter-1.4.0.pkg", "pkg", 4096
-	req.Artifact.Evidence = map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/2"}]`)}
+	if req.Artifact.Evidence == nil {
+		req.Artifact.Evidence = map[string]json.RawMessage{}
+	}
+	req.Artifact.Evidence["signatures"] = json.RawMessage(`[{"subject":{"path":"."},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/2"}]`)
 	return req
 }
 
@@ -156,7 +193,7 @@ func TestLineOfBusinessAppListsChildApps(t *testing.T) {
 	root := plugin.Subject{ID: ".", Path: ".", Kind: "container"}
 	receipt := plugin.Subject{ID: "PackageInfo", Parent: ".", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.exporter", Version: "1.4.0", HasPayload: true}}
 	app := plugin.Subject{ID: "Payload/Exporter.app", Parent: "PackageInfo", Kind: "app", InstalledPath: "/Applications/Exporter.app", App: &plugin.AppFacts{BundleID: "org.example.exporter.app", Version: "1.4", Build: "140"}}
-	derived, origins, err := Derive(lobRequest(object{"type": "lob", "install_as_managed": true}, root, receipt, app))
+	derived, origins, err := Derive(lobRequest(object{"type": "lob", "install_as_managed": true}, &app, root, receipt, app))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,13 +202,13 @@ func TestLineOfBusinessAppListsChildApps(t *testing.T) {
 		t.Fatal(err)
 	}
 	child := m["childApps"].([]any)[0].(object)
-	if m["@odata.type"] != lobType || m["bundleId"] != "org.example.exporter.app" || m["buildNumber"] != "1.4" || m["versionNumber"] != "140" || child["bundleId"] != "org.example.exporter.app" || child["buildNumber"] != "1.4" || child["versionNumber"] != "140" || origins["included_apps"] != "installer.apps" || m["installAsManaged"] != true {
+	if m["@odata.type"] != lobType || m["bundleId"] != "org.example.exporter.app" || m["buildNumber"] != "1.4" || m["versionNumber"] != "140" || child["bundleId"] != "org.example.exporter.app" || child["buildNumber"] != "1.4" || child["versionNumber"] != "140" || origins["included_apps"] != "app.bundle_id" || m["installAsManaged"] != true {
 		t.Fatalf("application detection: %+v / %+v", m, origins)
 	}
 	if _, exists := m["includedApps"]; exists {
 		t.Fatalf("line-of-business app kept PKG detection: %+v", m)
 	}
-	if derived, _, err = Derive(lobRequest(object{"type": "lob", "included_apps": []any{object{"id": "org.example.declared", "version": "2.0"}}}, root, receipt, app)); err != nil {
+	if derived, _, err = Derive(lobRequest(object{"type": "lob", "included_apps": []any{object{"id": "org.example.declared", "version": "2.0"}}}, &app, root, receipt, app)); err != nil {
 		t.Fatal(err)
 	}
 	if m, err = decodeObject(derived.Metadata); err != nil {
@@ -198,7 +235,7 @@ func TestLineOfBusinessIncludedAppsAreApplications(t *testing.T) {
 		{"application outside Applications", "org.example.helper", "not installed under /Applications"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			req := lobRequest(object{"type": "lob", "included_apps": []any{object{"id": test.id, "version": "1.4"}}}, root, tools, helper, bundle, app)
+			req := lobRequest(object{"type": "lob", "included_apps": []any{object{"id": test.id, "version": "1.4"}}}, nil, root, tools, helper, bundle, app)
 			_, _, err := Derive(req)
 			if test.rejection == "" && err != nil || test.rejection != "" && (err == nil || !strings.Contains(err.Error(), test.rejection)) {
 				t.Fatalf("included app %s: %v", test.id, err)
@@ -240,29 +277,31 @@ func TestLineOfBusinessUploadRequirements(t *testing.T) {
 	elsewhere.InstalledPath = "/Library/Exporter/Exporter.app"
 	managed := object{"type": "lob", "install_as_managed": true}
 	for _, test := range []struct {
-		name     string
-		metadata object
-		subjects []plugin.Subject
-		change   func(*plugin.ReconcileRequest[Config])
+		name      string
+		metadata  object
+		selected  *plugin.Subject
+		subjects  []plugin.Subject
+		rejection string
+		change    func(*plugin.ReconcileRequest[Config])
 	}{
-		{"disk image", object{"type": "lob"}, []plugin.Subject{root, receipt}, func(req *plugin.ReconcileRequest[Config]) {
+		{"disk image", object{"type": "lob"}, nil, []plugin.Subject{root, receipt}, "requires a flat PKG", func(req *plugin.ReconcileRequest[Config]) {
 			req.Artifact.Filename, req.Artifact.Format = "exporter.dmg", "dmg"
 		}},
-		{"unsigned", object{"type": "lob"}, []plugin.Subject{root, receipt}, func(req *plugin.ReconcileRequest[Config]) { delete(req.Artifact.Evidence, "signatures") }},
-		{"oversized", object{"type": "lob"}, []plugin.Subject{root, receipt}, func(req *plugin.ReconcileRequest[Config]) { req.Artifact.Size = lobLimit + 1 }},
-		{"no payload", object{"type": "lob"}, []plugin.Subject{root, scripts}, nil},
-		{"no application", object{"type": "lob"}, []plugin.Subject{root, receipt}, nil},
-		{"declared detection without an application", object{"type": "lob", "included_apps": []any{object{"id": "org.example.exporter", "version": "1.4.0"}}}, []plugin.Subject{root, receipt}, nil},
-		{"application outside Applications", object{"type": "lob"}, []plugin.Subject{root, receipt, elsewhere}, nil},
-		{"managed with two components", managed, []plugin.Subject{root, receipt, helper, app}, nil},
+		{"unsigned", object{"type": "lob"}, nil, []plugin.Subject{root, receipt}, "Developer ID Installer signature", func(req *plugin.ReconcileRequest[Config]) { delete(req.Artifact.Evidence, "signatures") }},
+		{"oversized", object{"type": "lob"}, nil, []plugin.Subject{root, receipt}, "at most 2 GiB", func(req *plugin.ReconcileRequest[Config]) { req.Artifact.Size = lobLimit + 1 }},
+		{"no payload", object{"type": "lob"}, nil, []plugin.Subject{root, scripts}, "requires a payload", nil},
+		{"no application", object{"type": "lob"}, nil, []plugin.Subject{root, receipt}, "application under /Applications", nil},
+		{"declared detection without an application", object{"type": "lob", "included_apps": []any{object{"id": "org.example.exporter", "version": "1.4.0"}}}, nil, []plugin.Subject{root, receipt}, "application under /Applications", nil},
+		{"application outside Applications", object{"type": "lob"}, &elsewhere, []plugin.Subject{root, receipt, elsewhere}, "application under /Applications", nil},
+		{"managed with two components", managed, &app, []plugin.Subject{root, receipt, helper, app}, "install_as_managed requires", nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			req := lobRequest(test.metadata, test.subjects...)
+			req := lobRequest(test.metadata, test.selected, test.subjects...)
 			if test.change != nil {
 				test.change(&req)
 			}
-			if _, _, err := Derive(req); err == nil {
-				t.Fatal("Intune would reject this line-of-business upload")
+			if _, _, err := Derive(req); err == nil || !strings.Contains(err.Error(), test.rejection) {
+				t.Fatalf("got %v, want %s", err, test.rejection)
 			}
 		})
 	}
@@ -370,7 +409,7 @@ func TestLOBRequiresThePublishedRootInstallerObservation(t *testing.T) {
 			t.Fatalf("accepted wrong signature evidence: %v", err)
 		}
 	}
-	req := lobRequest(object{"type": "pkg"}, plugin.Subject{ID: "receipt", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.autopkg", Version: "1.0"}})
+	req := lobRequest(object{"type": "pkg"}, nil, plugin.Subject{ID: "receipt", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.autopkg", Version: "1.0"}})
 	req.Artifact.Evidence = map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/2"}]`)}
 	if _, _, err := Derive(req); err != nil {
 		t.Fatalf("ordinary PKG rejected unsigned root: %v", err)

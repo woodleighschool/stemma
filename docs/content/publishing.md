@@ -187,14 +187,17 @@ categories:
   - Productivity
 ```
 
-For macOS, detection uses application bundle identifiers and versions, with the selected
-application first. PKG apps can detect applications outside `/Applications`, and
-use package receipt identifiers and versions when a package installs no
-applications, as a payloadless package does. Line-of-business apps require
-applications under `/Applications`. Set `included_apps` to replace the derived list
-when static inspection cannot determine the installed applications or an installer
-chooses them conditionally. A PKG app accepts receipts there too, so it can be
-detected by its package even when it installs an application. `display_name`,
+For macOS, detection uses the selected application's bundle identifier and version.
+Intune reports an installation only when every included app is present, so other
+applications an installer carries, such as a bundled updater, are left out. PKG
+apps can detect an application outside `/Applications`, and use package receipt
+identifiers and versions when a package selects no application, as a payloadless
+package does. DMG and line-of-business apps require the application under `/Applications`.
+Set `included_apps` to replace the derived list, for example to require every
+application of a suite, or when static inspection cannot determine the installed
+application or an installer chooses it conditionally. A PKG app accepts receipts
+there too, so it can be detected by its package even when it installs an
+application. `display_name`,
 `description` and `publisher` are always set; the artifact never supplies them.
 
 A PKG can also publish as a line-of-business app, so that is the one `type` to

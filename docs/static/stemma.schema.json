@@ -4759,7 +4759,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Identifiers and versions that detect the installation; the first identifies the app. A PKG app accepts package receipts as well as applications. Derived from applications, selected first, or from receipts when a PKG installs no applications, as a payloadless package does. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
+              "description": "Identifiers and versions that detect the installation; every entry must be installed and the first identifies the app. A PKG app accepts package receipts as well as applications. Derived from the selected application, or from receipts when a PKG selects no application, as a payloadless package does. DMG and line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
             },
             "information_url": {
               "anyOf": [
@@ -5239,7 +5239,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Identifiers and versions that detect the installation; the first identifies the app. A PKG app accepts package receipts as well as applications. Derived from applications, selected first, or from receipts when a PKG installs no applications, as a payloadless package does. Line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
+              "description": "Identifiers and versions that detect the installation; every entry must be installed and the first identifies the app. A PKG app accepts package receipts as well as applications. Derived from the selected application, or from receipts when a PKG selects no application, as a payloadless package does. DMG and line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
             },
             "information_url": {
               "anyOf": [
