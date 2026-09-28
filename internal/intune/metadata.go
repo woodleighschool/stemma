@@ -83,8 +83,8 @@ var appTypes = map[string]string{"win32": win32Type, "pkg": pkgType, "dmg": dmgT
 // name concepts in snake_case, while Graph property names, OData types and enum
 // casing stay inside the destination. Omitted fields stay omitted and supported
 // nulls clear, so the object keeps the declaration's presence. app_id,
-// retention, dependencies, supersedes and msi_properties belong to the
-// destination and pass through unchanged.
+// dependencies, supersedes and msi_properties belong to the destination and
+// pass through unchanged.
 func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 	declared, err := decodeObject(req.Metadata)
 	if err != nil {
@@ -102,9 +102,6 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 	for key, value := range declared {
 		switch key {
 		case "type":
-			continue
-		case "retention":
-			m[key] = value
 			continue
 		case "app_id":
 			if text(value) == "" {

@@ -34,7 +34,7 @@ func generate() error {
 		versions := base + "/{mobileApp-id}/graph." + appType + "/contentVersions"
 		files := versions + "/{mobileAppContent-id}/files"
 		file := files + "/{mobileAppContentFile-id}"
-		paths = append(paths, versions+"#GET", versions+"#POST", versions+"/{mobileAppContent-id}#DELETE", files+"#GET", files+"#POST", file+"#GET", file+"/commit#POST", file+"/renewUpload#POST")
+		paths = append(paths, versions+"#GET", versions+"#POST", files+"#GET", files+"#POST", file+"#GET", file+"/commit#POST", file+"/renewUpload#POST")
 	}
 	args := []string{
 		"generate", "--language", "Go",

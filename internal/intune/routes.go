@@ -26,19 +26,6 @@ func (c *client) updateRelationships(id string) *abs.BaseRequestBuilder {
 	return &c.beta.MobileApps().ByMobileAppId(id).UpdateRelationships().BaseRequestBuilder
 }
 
-func (c *client) contentVersion(appID, versionID string) *abs.BaseRequestBuilder {
-	switch c.appType {
-	case pkgType:
-		return &c.beta.MobileApps().ByMobileAppId(appID).GraphMacOSPkgApp().ContentVersions().ByMobileAppContentId(versionID).BaseRequestBuilder
-	case dmgType:
-		return &c.beta.MobileApps().ByMobileAppId(appID).GraphMacOSDmgApp().ContentVersions().ByMobileAppContentId(versionID).BaseRequestBuilder
-	case lobType:
-		return &c.beta.MobileApps().ByMobileAppId(appID).GraphMacOSLobApp().ContentVersions().ByMobileAppContentId(versionID).BaseRequestBuilder
-	default:
-		return &c.beta.MobileApps().ByMobileAppId(appID).GraphWin32LobApp().ContentVersions().ByMobileAppContentId(versionID).BaseRequestBuilder
-	}
-}
-
 // Every app type shares the content protocol under its own type cast.
 func (c *client) content(appID, versionID, fileID, action string) *abs.BaseRequestBuilder {
 	switch c.appType {

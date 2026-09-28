@@ -23,102 +23,13 @@ func changePayload(t *testing.T, req *plugin.ReconcileRequest[Config], content s
 	req.Artifact.Size = int64(len(data))
 }
 
-// retentionChanges lists, in order, the content versions a response deletes.
-func retentionChanges(response plugin.ReconcileResponse) []string {
-	var versions []string
-	for _, change := range response.Changes {
-		if change.Kind == "retention" {
-			var version string
-			_ = json.Unmarshal(change.Before, &version)
-			versions = append(versions, version)
-		}
-	}
-	return versions
-}
-
 func committedFile() object { return object{"id": "file-1", "isCommitted": true} }
 
-func TestRetentionKeepsActiveAndNewestPublicationsByVersionNumber(t *testing.T) {
-	fake, c := newGraphFixture(t)
-	// The tenant already holds publications from before this run. Numbering new
-	// versions from 10 makes a lexical order disagree with the numeric one.
-	fake.versionBase = 9
-	fake.files["8"], fake.files["9"] = committedFile(), committedFile()
-	req := fixtureRequest(t)
-	desired, _ := compile(req)
-	delete(desired, "assignments")
-	desired["retention"] = object{"keep": float64(3)}
-	response, err := c.handle(t.Context(), req, desired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if deleted := retentionChanges(response); len(deleted) != 0 {
-		t.Fatalf("retention deleted publications within its limit: %v", deleted)
-	}
-	desired["retention"] = object{"keep": float64(2)}
-	changePayload(t, &req, "second release")
-	fake.mu.Lock()
-	writes := fake.writes
-	fake.mu.Unlock()
-	req.Method = "plan"
-	response, err = c.handle(t.Context(), req, desired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Publishing makes version 10 the newest earlier publication.
-	if planned := retentionChanges(response); !slices.Equal(planned, []string{"8", "9"}) {
-		t.Fatalf("plan predicted deleting %v", planned)
-	}
-	fake.mu.Lock()
-	if fake.writes != writes || len(fake.files) != 3 {
-		t.Fatal("planning mutated content")
-	}
-	fake.mu.Unlock()
-	req.Method = "apply"
-	response, err = c.handle(t.Context(), req, desired)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if deleted := retentionChanges(response); !slices.Equal(deleted, []string{"8", "9"}) {
-		t.Fatalf("apply deleted %v", deleted)
-	}
-	fake.mu.Lock()
-	if !slices.Equal(fake.deletedVersions, []string{"8", "9"}) || fake.app["committedContentVersion"] != "11" || len(fake.files) != 2 || fake.creates != 1 {
-		t.Fatalf("retention kept the wrong publications: deleted %v, remaining %v", fake.deletedVersions, fake.files)
-	}
-	writes = fake.writes
-	fake.mu.Unlock()
-	response, err = c.handle(t.Context(), req, desired)
-	if err != nil || len(response.Changes) != 0 {
-		t.Fatalf("settled retention: %+v, %v", response.Changes, err)
-	}
-	fake.mu.Lock()
-	if fake.writes != writes {
-		t.Fatal("settled retention wrote to the tenant")
-	}
-	fake.mu.Unlock()
-	// Tightening retention prunes without publishing anything.
-	desired["retention"] = object{"keep": float64(1)}
-	for _, method := range []string{"plan", "apply"} {
-		req.Method = method
-		response, err = c.handle(t.Context(), req, desired)
-		if err != nil || !slices.Equal(retentionChanges(response), []string{"10"}) {
-			t.Fatalf("%s with tighter retention: %+v, %v", method, response.Changes, err)
-		}
-	}
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	if fake.versions != 2 || len(fake.files) != 1 || fake.app["committedContentVersion"] != "11" {
-		t.Fatalf("tighter retention published or kept content: %v", fake.files)
-	}
-}
-
-func TestInterruptedUploadIsAbandonedAndPruned(t *testing.T) {
+func TestInterruptedUpdateIsRepublishedInAFreshVersion(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
 	desired, _ := compile(req)
 	delete(desired, "assignments")
-	desired["retention"] = object{"keep": float64(2)}
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
@@ -135,16 +46,10 @@ func TestInterruptedUploadIsAbandonedAndPruned(t *testing.T) {
 		t.Fatalf("interrupted upload changed the marker: %+v", published)
 	}
 	fake.mu.Lock()
-	if fake.app["committedContentVersion"] != "1" || fake.files["2"]["isCommitted"] == true || len(fake.deletedVersions) != 0 {
+	if fake.app["committedContentVersion"] != "1" || fake.files["2"]["isCommitted"] == true {
 		t.Fatalf("interrupted upload changed active content: %+v", fake.app)
 	}
 	fake.mu.Unlock()
-	req.Method = "plan"
-	response, err := c.handle(t.Context(), req, desired)
-	if err != nil || !slices.Equal(retentionChanges(response), []string{"2"}) {
-		t.Fatalf("plan after interruption: %+v, %v", response.Changes, err)
-	}
-	req.Method = "apply"
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
@@ -153,35 +58,16 @@ func TestInterruptedUploadIsAbandonedAndPruned(t *testing.T) {
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	// An abandoned upload is never kept in place of the earlier publication.
-	if !slices.Equal(fake.deletedVersions, []string{"2"}) || len(fake.files) != 2 || fake.versions != 3 || fake.creates != 1 {
-		t.Fatalf("abandoned upload was not pruned: deleted %v, remaining %v", fake.deletedVersions, fake.files)
+	if fake.versions != 3 || fake.creates != 1 {
+		t.Fatalf("retry did not publish in the same app: %d versions, %d apps", fake.versions, fake.creates)
 	}
 }
 
-func TestRetentionRefusesUnorderedContentVersions(t *testing.T) {
+func TestReferenceRetryDoesNotUploadAgain(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
 	desired, _ := compile(req)
 	delete(desired, "assignments")
-	desired["retention"] = object{"keep": float64(1)}
-	fake.files["draft"] = committedFile()
-	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), `"draft" is not a version number`) {
-		t.Fatalf("ordered content by an ID that is not a version number: %v", err)
-	}
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	if len(fake.deletedVersions) != 0 {
-		t.Fatal("deleted content without a publication order")
-	}
-}
-
-func TestRetentionWaitsForReferencesAndRetryDoesNotUploadAgain(t *testing.T) {
-	fake, c := newGraphFixture(t)
-	req := fixtureRequest(t)
-	desired, _ := compile(req)
-	delete(desired, "assignments")
-	desired["retention"] = object{"keep": float64(1)}
 	if _, err := c.handle(t.Context(), req, desired); err != nil {
 		t.Fatal(err)
 	}
@@ -196,8 +82,8 @@ func TestRetentionWaitsForReferencesAndRetryDoesNotUploadAgain(t *testing.T) {
 		t.Fatal("expected relationship failure")
 	}
 	fake.mu.Lock()
-	if len(fake.deletedVersions) != 0 || fake.versions != 2 {
-		t.Fatal("failed reference update pruned content")
+	if fake.versions != 2 {
+		t.Fatal("failed reference update did not publish content first")
 	}
 	fake.failRelationships = false
 	fake.mu.Unlock()
@@ -208,8 +94,8 @@ func TestRetentionWaitsForReferencesAndRetryDoesNotUploadAgain(t *testing.T) {
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if fake.versions != 2 || !slices.Equal(fake.deletedVersions, []string{"1"}) || fake.relationshipWrites != 2 {
-		t.Fatal("retry repeated content upload or failed to finish retention")
+	if fake.versions != 2 || fake.relationshipWrites != 2 {
+		t.Fatal("retry repeated content upload or skipped the references")
 	}
 }
 

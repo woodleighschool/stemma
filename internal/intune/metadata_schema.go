@@ -27,7 +27,6 @@ func MetadataSchema() *jsonschema.Schema {
 			"privacy_url":     textSchema("Publisher privacy information URL."),
 			"featured":        {Type: "boolean", Description: "Show the app as featured. Explicit false is managed."},
 			"assignments":     assignmentSchema(),
-			"retention":       objectSchema(map[string]*jsonschema.Schema{"keep": {Type: "integer", Minimum: "1", Description: "Keep the active content version and the N-1 newest other committed versions of this app, ordered by version number. Every other version is deleted, including uploads that never committed a file."}}, "keep"),
 		}
 	}
 	win32 := common()

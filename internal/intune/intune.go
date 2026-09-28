@@ -129,7 +129,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 	}
 	pinned := text(desired["app_id"])
 	desired = maps.Clone(desired)
-	for _, key := range []string{"app_id", "retention", "dependencies", "supersedes"} {
+	for _, key := range []string{"app_id", "dependencies", "supersedes"} {
 		delete(desired, key)
 	}
 	typedClient := *c
@@ -228,20 +228,9 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		}
 	}
 	if req.Method == "plan" {
-		if lifecycle.Retention == nil || current == nil {
-			return response, nil
-		}
-		// Publishing activates a new version, so every existing version then
-		// competes as an earlier publication.
-		active := text(current["committedContentVersion"])
-		if contentChanged {
-			active = ""
-		}
-		changes, err := c.pruneContent(ctx, appID, active, lifecycle.Retention.Keep, false)
-		response.Changes = append(response.Changes, changes...)
-		return response, err
+		return response, nil
 	}
-	if len(response.Changes) == 0 && lifecycle.Retention == nil && current["publishingState"] == "published" {
+	if len(response.Changes) == 0 && current["publishingState"] == "published" {
 		return response, nil
 	}
 	var prepared *preparedArtifact
@@ -367,13 +356,6 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		}
 		if !sameRelationships(readback, expected) {
 			return response, errors.New("intune relationship readback differs from requested references")
-		}
-	}
-	if lifecycle.Retention != nil {
-		changes, err := c.pruneContent(ctx, appID, text(current["committedContentVersion"]), lifecycle.Retention.Keep, true)
-		response.Changes = append(response.Changes, changes...)
-		if err != nil {
-			return response, err
 		}
 	}
 	return response, nil

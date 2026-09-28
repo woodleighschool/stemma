@@ -463,7 +463,6 @@ type graphFixture struct {
 	app         object
 	assignments []any
 	files       map[string]object // content version ID to its file, nil until an upload creates one
-	versionBase int               // numbers new content versions after history a test seeds
 	blocks      map[string][]byte
 	uploaded    []byte
 	plaintext   []byte
@@ -475,7 +474,6 @@ type graphFixture struct {
 	contentTypes       []string
 	paths              []string
 	patches            []object
-	deletedVersions    []string
 	relations          map[string][]object
 	relatedApps        map[string]object
 	relationshipWrites int
@@ -653,7 +651,7 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		f.contentTypes = append(f.contentTypes, text(f.app["@odata.type"]))
 		f.versions++
-		id := strconv.Itoa(f.versionBase + f.versions)
+		id := strconv.Itoa(f.versions)
 		f.files[id] = nil
 		write(object{"id": id})
 	case strings.HasSuffix(path, "/contentVersions") && r.Method == http.MethodGet:
@@ -662,14 +660,6 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 			items = append(items, object{"id": id})
 		}
 		write(object{"value": items})
-	case strings.Contains(path, "/contentVersions/") && r.Method == http.MethodDelete:
-		if version == f.app["committedContentVersion"] {
-			http.Error(w, "cannot delete active content", http.StatusBadRequest)
-			return
-		}
-		delete(f.files, version)
-		f.deletedVersions = append(f.deletedVersions, version)
-		w.WriteHeader(http.StatusNoContent)
 	case strings.HasSuffix(path, "/files") && r.Method == http.MethodPost:
 		body["id"] = "file-1"
 		body["uploadState"] = "azureStorageUriRequestSuccess"

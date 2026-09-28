@@ -4130,41 +4130,6 @@
               ],
               "description": "Publisher name. Required for creation."
             },
-            "retention": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "keep": {
-                      "anyOf": [
-                        {
-                          "minimum": 1,
-                          "type": "integer"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Keep the active content version and the N-1 newest other committed versions of this app, ordered by version number. Every other version is deleted, including uploads that never committed a file."
-                    }
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "required": [
-                    "keep"
-                  ],
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ]
-            },
             "return_codes": {
               "anyOf": [
                 {
@@ -4827,41 +4792,6 @@
               ],
               "description": "Publisher name. Required for creation."
             },
-            "retention": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "keep": {
-                      "anyOf": [
-                        {
-                          "minimum": 1,
-                          "type": "integer"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Keep the active content version and the N-1 newest other committed versions of this app, ordered by version number. Every other version is deleted, including uploads that never committed a file."
-                    }
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "required": [
-                    "keep"
-                  ],
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ]
-            },
             "type": {
               "anyOf": [
                 {
@@ -5328,41 +5258,6 @@
                 }
               ],
               "description": "Publisher name. Required for creation."
-            },
-            "retention": {
-              "anyOf": [
-                {
-                  "additionalProperties": false,
-                  "properties": {
-                    "keep": {
-                      "anyOf": [
-                        {
-                          "minimum": 1,
-                          "type": "integer"
-                        },
-                        {
-                          "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                          "type": "string"
-                        }
-                      ],
-                      "description": "Keep the active content version and the N-1 newest other committed versions of this app, ordered by version number. Every other version is deleted, including uploads that never committed a file."
-                    }
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "required": [
-                    "keep"
-                  ],
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ]
             },
             "type": {
               "anyOf": [

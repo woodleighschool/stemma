@@ -278,7 +278,6 @@ func TestStaticValidationAcceptsReferencesWithoutContent(t *testing.T) {
 			"type":         "win32",
 			"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": true}},
 			"supersedes":   []any{object{"resource": object{"kind": "WindowsSoftware", "name": "previous"}, "uninstall_previous": false}},
-			"retention":    object{"keep": 2},
 		}),
 	}
 	response, err := Handle(t.Context(), req)
@@ -316,14 +315,15 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 		{"Windows assignment notifications", "WindowsSoftware", object{"type": "win32", "assignments": []any{object{"intent": "required", "all_devices": true, "notifications": "hide_all"}}}, true},
 		{"Mac assignment notifications", "MacSoftware", object{"type": "pkg", "assignments": []any{object{"intent": "required", "all_devices": true, "notifications": "hide_all"}}}, false},
 		{"Mac LOB assignment notifications", "MacSoftware", object{"type": "lob", "assignments": []any{object{"intent": "required", "all_devices": true, "notifications": "hide_all"}}}, false},
-		{"references", "WindowsSoftware", object{"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": true}}, "retention": object{"keep": 1}}, true},
+		{"references", "WindowsSoftware", object{"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": true}}}, true},
 		{"external relationship", "WindowsSoftware", object{"dependencies": []any{object{"app_id": "existing-app", "auto_install": true}}}, true},
 		{"ambiguous relationship", "WindowsSoftware", object{"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "app_id": "existing-app", "auto_install": true}}}, false},
 		{"old software syntax", "WindowsSoftware", object{"dependencies": []any{object{"software": "runtime", "auto_install": true}}}, false},
 		{"missing reference kind", "WindowsSoftware", object{"dependencies": []any{object{"resource": object{"name": "runtime"}, "auto_install": true}}}, false},
 		{"publication output", "WindowsSoftware", object{"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime", "output": "installer"}, "auto_install": true}}}, false},
 		{"Graph property name", "WindowsSoftware", object{"displayName": "Example"}, false},
-		{"bad retention", "WindowsSoftware", object{"retention": object{"keep": 0}}, false},
+		// Graph cannot delete content versions, so Intune has no retention.
+		{"retention", "WindowsSoftware", object{"retention": object{"keep": 1}}, false},
 		{"mac dependency", "MacSoftware", object{"type": "pkg", "dependencies": []any{}}, false},
 		{"missing relationship policy", "WindowsSoftware", object{"dependencies": []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}}}}, false},
 		{"script context", "WindowsSoftware", object{"detection": []any{object{"type": "script", "script": "exit 0", "run_as": "system"}}}, false},

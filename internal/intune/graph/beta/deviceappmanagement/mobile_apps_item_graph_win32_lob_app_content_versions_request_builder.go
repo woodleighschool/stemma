@@ -33,7 +33,7 @@ type MobileAppsItemGraphWin32LobAppContentVersionsRequestBuilderGetQueryParamete
 	Top *int32 "uriparametername:\"%24top\""
 }
 
-// ByMobileAppContentId provides operations to manage the contentVersions property of the microsoft.graph.mobileLobApp entity.
+// ByMobileAppContentId gets an item from the github.com/woodleighschool/stemma/internal/intune/graph/beta.deviceAppManagement.mobileApps.item.graphWin32LobApp.contentVersions.item collection
 // returns a *MobileAppsItemGraphWin32LobAppContentVersionsMobileAppContentItemRequestBuilder when successful
 func (m *MobileAppsItemGraphWin32LobAppContentVersionsRequestBuilder) ByMobileAppContentId(mobileAppContentId string) *MobileAppsItemGraphWin32LobAppContentVersionsMobileAppContentItemRequestBuilder {
 	urlTplParams := make(map[string]string)

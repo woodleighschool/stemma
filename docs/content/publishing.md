@@ -225,7 +225,8 @@ Exactly one of `resource` and `app_id` is required. Cycles, unpublished referenc
 and incompatible app types fail. The provider permits up to 99 declared
 dependencies and 9 supersedence targets, subject to the service's graph limits.
 
-An ordinary update publishes new content to the same app ID. Supersedence relates
+An ordinary update publishes new content to the same app ID, and the app keeps its
+earlier content versions. Supersedence relates
 separate apps explicitly; it does not create a new app for every release or retire
 the old app automatically. Omitted relationship categories are left unchanged;
 `dependencies: []` clears that outgoing category.
@@ -313,16 +314,13 @@ destination holds for the same software, including ones published before Stemma,
 plus anything still needed by native references. Protected publications do not
 consume those N slots.
 
-| Destination | Family and order                                              | Cleanup                                                            |
-| ----------- | ------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Intune      | The app's committed content versions, by version number       | Inactive content versions and abandoned uploads; never app objects |
-| Jamf        | Packages carrying the identity marker, by package ID          | Unreferenced package records and their content                     |
-| Munki       | Items sharing the name and declared architectures, by version | Pkginfo, catalog entries, unreferenced installers                  |
+| Destination | Family and order                                              | Cleanup                                           |
+| ----------- | ------------------------------------------------------------- | ------------------------------------------------- |
+| Jamf        | Packages carrying the identity marker, by package ID          | Unreferenced package records and their content    |
+| Munki       | Items sharing the name and declared architectures, by version | Pkginfo, catalog entries, unreferenced installers |
 
 Cleanup follows successful publication and intended reference updates. Incomplete
 reference reads block cleanup. Munki also preserves referenced items whose
 catalogs or installation requirements differ from the current publication.
 
-Keeping older content is not a rollback guarantee. Intune's current commands and
-detection are not versioned with historical content; uninstall files must remain
-available through the current deployment.
+Keeping older content is not a rollback guarantee.
