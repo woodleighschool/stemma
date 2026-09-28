@@ -5,11 +5,9 @@
 [![Go](https://img.shields.io/github/go-mod/go-version/woodleighschool/stemma?logo=go)](go.mod)
 [![License](https://img.shields.io/github/license/woodleighschool/stemma)](LICENSE)
 
-Stemma is a cross-platform software artifact pipeline.
+Stemma is a cross-platform software artifact pipeline for preparing and publishing software.
 
-It downloads software, prepares installers and publishes them to Munki, Intune,
-Jamf or a destination provided by a plugin. Catalogs describe the software and its
-destination settings in YAML.
+Build macOS packages from Windows, create Intune `intunewin` files from macOS or Linux, and publish software to Munki, Intune or Jamf. Catalogs define the software Stemma manages, while plugins can extend the pipeline with additional sources, processing and destinations.
 
 > [!WARNING]
 > This project may be unstable or have bugs, use with caution.
@@ -18,12 +16,13 @@ destination settings in YAML.
 ## 🌱 What's inside
 
 - Build macOS packages and Intune `intunewin` files on macOS, Linux or Windows
-- Download software and lock its inputs
-- Extract application metadata and icons
+- Download software from upstream sources and lock resolved inputs
+- Extract application metadata, versions and icons
+- Prepare artifacts for different deployment platforms
 - Publish to Munki, Intune and Jamf
 - Preview destination changes before applying them
-- Keep a catalog repository published and propose updates as pull requests on a schedule
-- Add sources, builders and destinations through plugins
+- Reconcile a catalog on a schedule, publishing reviewed changes and proposing upstream updates as pull requests
+- Extend sources, processing and destinations through plugins
 
 ## 🚀 Usage
 
