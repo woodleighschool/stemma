@@ -28,12 +28,10 @@ import (
 var ErrIntegrity = errors.New("intune content integrity verification failed")
 
 func encrypt(ctx context.Context, plain, encrypted *os.File, m *Info) error {
-	key, macKey, iv := make([]byte, 32), make([]byte, 32), make([]byte, 16)
-	for _, value := range [][]byte{key, macKey, iv} {
-		if _, err := rand.Read(value); err != nil {
-			return err
-		}
-	}
+	key, macKey, iv := make([]byte, 32), make([]byte, 32), make([]byte, aes.BlockSize)
+	rand.Read(key)
+	rand.Read(macKey)
+	rand.Read(iv)
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return err
