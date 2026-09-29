@@ -69,171 +69,215 @@ func interruptContext() (context.Context, context.CancelFunc) {
 	return ctx, cancel
 }
 
+// cli is what every command shares: the project and cache flags, and the
+// output that renders progress and reports.
+type cli struct {
+	out, errOut                   io.Writer
+	display                       *commandOutput
+	rootDir, configPath, cacheDir string
+}
+
 func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
-	var rootDir, configPath, cacheDir, stateDir string
-	root := &cobra.Command{Use: "stemma", Short: "Resolve, prepare and publish reviewed software artifacts", SilenceErrors: true, SilenceUsage: true, Version: version}
 	display := newCommandOutput(out, errOut)
-	out = finalWriter{Writer: out, output: display}
+	c := &cli{out: finalWriter{Writer: out, output: display}, errOut: errOut, display: display}
+	root := &cobra.Command{Use: "stemma", Short: "Resolve, prepare and publish reviewed software artifacts", SilenceErrors: true, SilenceUsage: true, Version: version}
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		return display.start(cmd)
 	}
-	root.SetOut(out)
+	root.SetOut(c.out)
 	root.SetErr(errOut)
-	root.PersistentFlags().StringVar(&rootDir, "root", "", "Stemma project directory (discovered from the current directory)")
-	root.PersistentFlags().StringVar(&configPath, "config", "", "Path to stemma.yaml")
-	root.PersistentFlags().StringVar(&cacheDir, "cache-dir", os.Getenv("STEMMA_CACHE_DIR"), "Disposable content cache directory")
-	resolve := func() (string, error) { return findConfig(rootDir, configPath) }
-	build := &cobra.Command{Use: "version", Short: "Print build information", Args: cobra.NoArgs}
-	buildJSON := jsonFlag(build)
-	build.RunE = func(_ *cobra.Command, _ []string) error {
-		if *buildJSON {
-			return writeJSON(out, map[string]string{"version": version, "commit": commit, "date": date})
+	root.PersistentFlags().StringVar(&c.rootDir, "root", "", "Stemma project directory (discovered from the current directory)")
+	root.PersistentFlags().StringVar(&c.configPath, "config", "", "Path to stemma.yaml")
+	root.PersistentFlags().StringVar(&c.cacheDir, "cache-dir", os.Getenv("STEMMA_CACHE_DIR"), "Disposable content cache directory")
+	root.AddCommand(c.versionCommand(), c.schemaCommand(), c.validateCommand(), c.mcpCommand())
+	for _, method := range []string{"update", "prepare", "signature", "icon", "plan", "apply"} {
+		root.AddCommand(c.runCommand(method))
+	}
+	root.AddCommand(c.artifactCommand(), c.reconcileCommand(), c.inspectCommand(), packageCommand(c.out), c.cacheCommand(), c.pluginsCommand())
+	return root, display.finish
+}
+
+func (c *cli) project() (string, error) { return findConfig(c.rootDir, c.configPath) }
+
+func (c *cli) versionCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "version", Short: "Print build information", Args: cobra.NoArgs}
+	asJSON := jsonFlag(cmd)
+	cmd.RunE = func(_ *cobra.Command, _ []string) error {
+		if *asJSON {
+			return writeJSON(c.out, map[string]string{"version": version, "commit": commit, "date": date})
 		}
-		_, err := fmt.Fprintf(out, "stemma %s (commit %s, built %s)\n", version, commit, date)
+		_, err := fmt.Fprintf(c.out, "stemma %s (commit %s, built %s)\n", version, commit, date)
 		return err
 	}
-	root.AddCommand(build)
-	var schemaOutput string
-	var schemaOffline, schemaBuiltins bool
-	schema := &cobra.Command{Use: "schema --output-file PATH", Short: "Write the catalog JSON Schema for the loaded plugin registry", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		if schemaOutput == "" {
+	return cmd
+}
+
+func (c *cli) schemaCommand() *cobra.Command {
+	var output string
+	var offline, builtins bool
+	cmd := &cobra.Command{Use: "schema --output-file PATH", Short: "Write the catalog JSON Schema for the loaded plugin registry", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if output == "" {
 			return errors.New("output path is required; use --output-file - for stdout")
 		}
 		var data []byte
 		var err error
-		if schemaBuiltins {
+		if builtins {
 			data, err = engine.BuiltinSchema()
 		} else {
-			path, resolveErr := resolve()
+			path, resolveErr := c.project()
 			if resolveErr != nil {
 				return resolveErr
 			}
-			data, err = engine.ProjectSchema(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Lock: lockfile.Options{Offline: schemaOffline}})
+			data, err = engine.ProjectSchema(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}})
 		}
 		if err != nil {
 			return err
 		}
-		if schemaOutput == "-" {
-			_, err = out.Write(data)
+		if output == "-" {
+			_, err = c.out.Write(data)
 			return err
 		}
-		return fileio.Write(schemaOutput, data, 0o644)
+		return fileio.Write(output, data, 0o644)
 	}}
-	schema.Flags().StringVar(&schemaOutput, "output-file", "", "Required output path; - writes to stdout")
-	_ = schema.MarkFlagRequired("output-file")
-	schema.Flags().BoolVar(&schemaBuiltins, "builtins", false, "Describe built-in operations without loading a project")
-	schema.Flags().BoolVar(&schemaOffline, "offline", false, "Require verified cached plugin bundles")
-	schema.MarkFlagsMutuallyExclusive("builtins", "offline")
-	root.AddCommand(schema)
-	var resolved, validateOffline bool
-	validate := &cobra.Command{Use: "validate", Short: "Validate the catalog as written, without environment values or software acquisition", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		path, err := resolve()
+	cmd.Flags().StringVar(&output, "output-file", "", "Required output path; - writes to stdout")
+	_ = cmd.MarkFlagRequired("output-file")
+	cmd.Flags().BoolVar(&builtins, "builtins", false, "Describe built-in operations without loading a project")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Require verified cached plugin bundles")
+	cmd.MarkFlagsMutuallyExclusive("builtins", "offline")
+	return cmd
+}
+
+func (c *cli) validateCommand() *cobra.Command {
+	var resolved, offline bool
+	cmd := &cobra.Command{Use: "validate", Short: "Validate the catalog as written, without environment values or software acquisition", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		path, err := c.project()
 		if err != nil {
 			return err
 		}
-		p, err := engine.ValidateProject(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Lock: lockfile.Options{Offline: validateOffline}}, resolved)
+		p, err := engine.ValidateProject(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}}, resolved)
 		if err != nil {
 			return err
 		}
 		if resolved {
-			return writeJSON(out, p)
+			return writeJSON(c.out, p)
 		}
-		_, err = fmt.Fprintln(out, "Configuration is valid.")
+		_, err = fmt.Fprintln(c.out, "Configuration is valid.")
 		return err
 	}}
-	validate.Flags().BoolVar(&resolved, "resolved", false, "Evaluate environment values as runs do and print the resolved composition as JSON")
-	validate.Flags().BoolVar(&validateOffline, "offline", false, "Require verified cached plugin bundles")
-	root.AddCommand(validate)
-	root.AddCommand(&cobra.Command{Use: "mcp", Short: "Serve this project's tools to agents over MCP on standard input and output", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		path, err := resolve()
+	cmd.Flags().BoolVar(&resolved, "resolved", false, "Evaluate environment values as runs do and print the resolved composition as JSON")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Require verified cached plugin bundles")
+	return cmd
+}
+
+func (c *cli) mcpCommand() *cobra.Command {
+	return &cobra.Command{Use: "mcp", Short: "Serve this project's tools to agents over MCP on standard input and output", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		path, err := c.project()
 		if err != nil {
 			return err
 		}
 		// Standard output carries the protocol, so diagnostics go to stderr.
-		logger := slog.New(slog.NewTextHandler(errOut, &slog.HandlerOptions{Level: slog.LevelWarn}))
-		return mcpserver.Run(plugin.WithLogger(cmd.Context(), logger), mcpserver.Options{ConfigPath: path, CacheDir: cacheDir, Version: version})
-	}})
-	for _, method := range []string{"update", "prepare", "signature", "icon", "plan", "apply"} {
-		var offline bool
-		var icons engine.IconOptions
-		var presentation, changedSince string
-		cmd := &cobra.Command{Use: method + " [Kind/name...]"}
-		jsonFlag(cmd)
-		cmd.Short = map[string]string{"update": "Resolve current sources and atomically update the lockfile", "prepare": "Prepare resources from the lockfile without publication", "signature": "Derive signed or unsigned expectations for each signing subject", "icon": "Create declared icon assets from the artwork prepared software carries", "plan": "Observe destinations and report changes without writing them", "apply": "Re-observe and reconcile destinations once"}[method]
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			path, err := resolve()
-			if err != nil {
-				return err
-			}
-			if method == "icon" {
-				if icons.Presentation, err = icon.ParsePresentation(presentation); err != nil {
-					return err
-				}
-			}
-			report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Method: method, Resources: args, ChangedSince: changedSince, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error {
-				return display.resourceDone(method, resource)
-			}, Lock: lockfile.Options{Offline: offline}})
-			if err := display.report(out, method, report, runErr); err != nil {
-				if runErr != nil {
-					runErr = fmt.Errorf("%s: %w", method, runErr)
-				}
-				return errors.Join(runErr, fmt.Errorf("write report: %w", err))
-			}
-			return runErr
-		}
+		logger := slog.New(slog.NewTextHandler(c.errOut, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		return mcpserver.Run(plugin.WithLogger(cmd.Context(), logger), mcpserver.Options{ConfigPath: path, CacheDir: c.cacheDir, Version: version})
+	}}
+}
 
-		cmd.Flags().Bool("all", false, "Include unchanged resources in the report")
-		cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
-		if method == "prepare" {
-			cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the whole lockfile, then prepare only resources whose preparation changed since the Git revision `REV`")
+var runShort = map[string]string{
+	"update":    "Resolve current sources and atomically update the lockfile",
+	"prepare":   "Prepare resources from the lockfile without publication",
+	"signature": "Derive signed or unsigned expectations for each signing subject",
+	"icon":      "Create declared icon assets from the artwork prepared software carries",
+	"plan":      "Observe destinations and report changes without writing them",
+	"apply":     "Re-observe and reconcile destinations once",
+}
+
+func (c *cli) runCommand(method string) *cobra.Command {
+	var offline bool
+	var icons engine.IconOptions
+	var presentation, changedSince string
+	cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: runShort[method]}
+	jsonFlag(cmd)
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		path, err := c.project()
+		if err != nil {
+			return err
 		}
 		if method == "icon" {
-			cmd.Flags().BoolVar(&icons.Force, "force", false, "Replace icon assets that already exist")
-			cmd.Flags().StringVar(&presentation, "presentation", string(icon.Auto), "Icon presentation: auto (glassy on macOS, raw elsewhere), raw or glassy")
-			cmd.Flags().IntVar(&icons.Size, "size", icon.Size, "Glassy icon width and height in pixels")
+			if icons.Presentation, err = icon.ParsePresentation(presentation); err != nil {
+				return err
+			}
 		}
-		root.AddCommand(cmd)
+		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: method, Resources: args, ChangedSince: changedSince, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error {
+			return c.display.resourceDone(method, resource)
+		}, Lock: lockfile.Options{Offline: offline}})
+		if err := c.display.report(c.out, method, report, runErr); err != nil {
+			if runErr != nil {
+				runErr = fmt.Errorf("%s: %w", method, runErr)
+			}
+			return errors.Join(runErr, fmt.Errorf("write report: %w", err))
+		}
+		return runErr
 	}
+	cmd.Flags().Bool("all", false, "Include unchanged resources in the report")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
+	if method == "prepare" {
+		cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the whole lockfile, then prepare only resources whose preparation changed since the Git revision `REV`")
+	}
+	if method == "icon" {
+		cmd.Flags().BoolVar(&icons.Force, "force", false, "Replace icon assets that already exist")
+		cmd.Flags().StringVar(&presentation, "presentation", string(icon.Auto), "Icon presentation: auto (glassy on macOS, raw elsewhere), raw or glassy")
+		cmd.Flags().IntVar(&icons.Size, "size", icon.Size, "Glassy icon width and height in pixels")
+	}
+	return cmd
+}
+
+func (c *cli) artifactCommand() *cobra.Command {
 	var output string
-	var artifactOffline, noInputLock bool
-	artifact := &cobra.Command{Use: "artifact Kind/name", Short: "Prepare one resource from the lockfile and print the path of its artifact", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		path, err := resolve()
+	var offline, noInputLock bool
+	cmd := &cobra.Command{Use: "artifact Kind/name", Short: "Prepare one resource from the lockfile and print the path of its artifact", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		path, err := c.project()
 		if err != nil {
 			return err
 		}
-		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Method: "artifact", Resources: args, Output: output, ResourceDone: func(resource engine.ResourceReport) error {
-			return display.resourceDone("artifact", resource)
-		}, Lock: lockfile.Options{Offline: artifactOffline, IgnoreInputs: noInputLock}})
+		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: "artifact", Resources: args, Output: output, ResourceDone: func(resource engine.ResourceReport) error {
+			return c.display.resourceDone("artifact", resource)
+		}, Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(out, report.Artifact)
+		_, err = fmt.Fprintln(c.out, report.Artifact)
 		return err
 	}}
-	artifact.Flags().StringVar(&output, "output", "installer", "Resource output to materialize")
-	artifact.Flags().BoolVar(&artifactOffline, "offline", false, "Use verified cached locked inputs without source network access")
-	artifact.Flags().BoolVar(&noInputLock, "no-input-lock", false, "Resolve inputs from their sources now instead of their lock entries; plugins stay locked")
-	artifact.MarkFlagsMutuallyExclusive("offline", "no-input-lock")
-	root.AddCommand(artifact)
-	reconciler := &cobra.Command{Use: "reconcile", Short: "Apply the reviewed branch of this checkout and propose lock updates as pull requests", Args: cobra.NoArgs}
-	jsonFlag(reconciler)
-	reconciler.Flags().Bool("all", false, "Include unchanged resources and proposals in the report")
-	reconciler.Flags().StringVar(&stateDir, "state-dir", os.Getenv("STEMMA_STATE_DIR"), "Directory recording the last reviewed commit applied in full")
-	reconciler.RunE = func(cmd *cobra.Command, _ []string) error {
-		path, err := resolve()
+	cmd.Flags().StringVar(&output, "output", "installer", "Resource output to materialize")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
+	cmd.Flags().BoolVar(&noInputLock, "no-input-lock", false, "Resolve inputs from their sources now instead of their lock entries; plugins stay locked")
+	cmd.MarkFlagsMutuallyExclusive("offline", "no-input-lock")
+	return cmd
+}
+
+func (c *cli) reconcileCommand() *cobra.Command {
+	var stateDir string
+	cmd := &cobra.Command{Use: "reconcile", Short: "Apply the reviewed branch of this checkout and propose lock updates as pull requests", Args: cobra.NoArgs}
+	jsonFlag(cmd)
+	cmd.Flags().Bool("all", false, "Include unchanged resources and proposals in the report")
+	cmd.Flags().StringVar(&stateDir, "state-dir", os.Getenv("STEMMA_STATE_DIR"), "Directory recording the last reviewed commit applied in full")
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		path, err := c.project()
 		if err != nil {
 			return err
 		}
-		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: cacheDir, StateDir: stateDir, ResourceDone: display.resourceDone, ApplyDone: display.applyDone, ProposalDone: display.proposalDone})
-		if err := display.reconciled(out, report, runErr); err != nil {
+		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: c.cacheDir, StateDir: stateDir, ResourceDone: c.display.resourceDone, ApplyDone: c.display.applyDone, ProposalDone: c.display.proposalDone})
+		if err := c.display.reconciled(c.out, report, runErr); err != nil {
 			return errors.Join(runErr, err)
 		}
 		return runErr
 	}
-	root.AddCommand(reconciler)
-	inspect := &cobra.Command{Use: "inspect PATH", Short: "Describe a local file or directory without executing it", Args: cobra.ExactArgs(1)}
-	inspectJSON := jsonFlag(inspect)
-	inspect.RunE = func(cmd *cobra.Command, args []string) error {
+	return cmd
+}
+
+func (c *cli) inspectCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "inspect PATH", Short: "Describe a local file or directory without executing it", Args: cobra.ExactArgs(1)}
+	asJSON := jsonFlag(cmd)
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if strings.EqualFold(filepath.Ext(args[0]), ".intunewin") {
 			done := plugin.Stage(cmd.Context(), "Inspecting artifact", plugin.Detail(filepath.Base(args[0])))
 			envelope, err := intunewin.Inspect(cmd.Context(), args[0])
@@ -241,93 +285,95 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 			if err != nil {
 				return err
 			}
-			if *inspectJSON {
-				return writeJSON(out, envelope)
+			if *asJSON {
+				return writeJSON(c.out, envelope)
 			}
-			_, err = io.WriteString(out, renderEnvelope(display.outStyle, filepath.Base(args[0]), envelope))
+			_, err = io.WriteString(c.out, renderEnvelope(c.display.outStyle, filepath.Base(args[0]), envelope))
 			return err
 		}
 		inspection, err := engine.Inspect(cmd.Context(), args[0])
 		if err != nil {
 			return err
 		}
-		if *inspectJSON {
-			return writeJSON(out, inspection)
+		if *asJSON {
+			return writeJSON(c.out, inspection)
 		}
-		_, err = io.WriteString(out, renderInspection(display.outStyle, inspection))
+		_, err = io.WriteString(c.out, renderInspection(c.display.outStyle, inspection))
 		return err
 	}
-	root.AddCommand(inspect)
-	root.AddCommand(packageCommand(out))
-	cache := &cobra.Command{Use: "cache", Short: "Manage disposable cached content"}
-	cache.AddCommand(&cobra.Command{Use: "path", Short: "Print the cache location", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
-		store, err := cas.Open(cacheDir)
+	return cmd
+}
+
+func (c *cli) cacheCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "cache", Short: "Manage disposable cached content"}
+	cmd.AddCommand(&cobra.Command{Use: "path", Short: "Print the cache location", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
+		store, err := cas.Open(c.cacheDir)
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(out, store.Dir)
+		_, err = fmt.Fprintln(c.out, store.Dir)
 		return err
 	}})
-	cache.AddCommand(&cobra.Command{Use: "prune", Short: "Remove cached objects after active runs finish", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) (runErr error) {
+	cmd.AddCommand(&cobra.Command{Use: "prune", Short: "Remove cached objects after active runs finish", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) (runErr error) {
 		done := plugin.Stage(cmd.Context(), "Pruning cache")
 		defer func() { done(runErr) }()
-		store, err := cas.Open(cacheDir)
+		store, err := cas.Open(c.cacheDir)
 		if err != nil {
 			return err
 		}
 		return store.Prune(cmd.Context())
 	}})
-	root.AddCommand(cache)
-	plugins := &cobra.Command{Use: "plugins", Short: "Inspect, update and publish executable plugins"}
-	var listOffline bool
+	return cmd
+}
+
+func (c *cli) pluginsCommand() *cobra.Command {
+	cmd := &cobra.Command{Use: "plugins", Short: "Inspect, update and publish executable plugins"}
+	var offline bool
 	list := &cobra.Command{Use: "list", Short: "Load each plugin from its lock entry and describe what it offers", Args: cobra.NoArgs}
 	listJSON := jsonFlag(list)
-	list.Flags().BoolVar(&listOffline, "offline", false, "Require verified cached plugin bundles")
+	list.Flags().BoolVar(&offline, "offline", false, "Require verified cached plugin bundles")
 	list.RunE = func(cmd *cobra.Command, _ []string) error {
-		path, err := resolve()
+		path, err := c.project()
 		if err != nil {
 			return err
 		}
-		reports, listErr := engine.ListPlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir, Lock: lockfile.Options{Offline: listOffline}})
+		reports, listErr := engine.ListPlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}})
 		if listErr != nil && !errors.Is(listErr, engine.ErrPluginsFailed) {
 			return listErr
 		}
 		if *listJSON {
-			err = writeJSON(out, reports)
+			err = writeJSON(c.out, reports)
 		} else {
-			err = printPlugins(out, reports)
+			err = printPlugins(c.out, reports)
 		}
 		if err != nil {
 			return errors.Join(listErr, fmt.Errorf("write report: %w", err))
 		}
 		return listErr
 	}
-	plugins.AddCommand(list)
-	updatePlugins := &cobra.Command{Use: "update [NAME...]", Short: "Lock plugins to the code their declarations select now", Args: cobra.ArbitraryArgs}
-	updateJSON := jsonFlag(updatePlugins)
-	updatePlugins.RunE = func(cmd *cobra.Command, args []string) error {
-		path, err := resolve()
+	update := &cobra.Command{Use: "update [NAME...]", Short: "Lock plugins to the code their declarations select now", Args: cobra.ArbitraryArgs}
+	updateJSON := jsonFlag(update)
+	update.RunE = func(cmd *cobra.Command, args []string) error {
+		path, err := c.project()
 		if err != nil {
 			return err
 		}
-		update, updateErr := engine.UpdatePlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: cacheDir}, args)
+		result, updateErr := engine.UpdatePlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir}, args)
 		if updateErr != nil && !errors.Is(updateErr, engine.ErrPluginsFailed) {
 			return updateErr
 		}
 		if *updateJSON {
-			err = writeJSON(out, update)
+			err = writeJSON(c.out, result)
 		} else {
-			err = printPluginUpdate(out, update)
+			err = printPluginUpdate(c.out, result)
 		}
 		if err != nil {
 			return errors.Join(updateErr, fmt.Errorf("write report: %w", err))
 		}
 		return updateErr
 	}
-	plugins.AddCommand(updatePlugins)
-	plugins.AddCommand(publishCommand(out))
-	root.AddCommand(plugins)
-	return root, display.finish
+	cmd.AddCommand(list, update, publishCommand(c.out))
+	return cmd
 }
 
 func publishCommand(out io.Writer) *cobra.Command {
