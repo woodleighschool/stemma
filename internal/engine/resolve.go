@@ -69,45 +69,28 @@ func (c Candidate) Dependents(key string) []string {
 // ResourceDone receives each resource's input changes as it finishes. Plugins
 // load from the lockfile: their code runs before anything is observed.
 func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr error) {
-	opts.Lock = lockfile.Options{Refresh: true}
+	// Observing inputs is an update that publishes nothing and commits nothing.
+	opts.Method, opts.Lock = "update", lockfile.Options{Refresh: true}
 	s, err := open(ctx, opts, false)
 	if err != nil {
 		return candidate, err
 	}
 	defer s.close()
-	done := plugin.Stage(ctx, "Validating operation contracts")
-	defer func() { done(runErr) }()
-	roots, err := selectResources(s.project.Resources, nil)
-	if err != nil {
-		return candidate, err
-	}
-	// Observing inputs publishes nothing, so destinations stay unchecked.
-	plans, selected, err := discoverClosure(ctx, s.project, s.ops, roots, true, false)
-	if err != nil {
-		return candidate, err
-	}
-	if err := preflight(plans, selected, s.project, s.ops, false); err != nil {
-		return candidate, err
-	}
-	if err := registerResolvers(s.manager, s.ops, s.work); err != nil {
-		return candidate, err
-	}
-	locked, err := lockfile.Begin(ctx, s.root, declarations(plans, selected), s.ops.plugins, s.manager, opts.Lock)
-	if err != nil {
+	e := &execution{opts: opts, session: s}
+	if err := e.begin(ctx); err != nil {
 		return candidate, err
 	}
 	candidate.Lock, err = lockfile.Load(lockfile.Filename(s.root))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return candidate, err
 	}
-	done(nil)
 	candidate.Plugins = s.ops.plugins
 	candidate.Resources = map[string]CandidateResource{}
-	for _, key := range selected {
+	for _, key := range e.selected {
 		if err := ctx.Err(); err != nil {
 			return candidate, err
 		}
-		plan := plans[key]
+		plan := e.plans[key]
 		resource := CandidateResource{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Producers: producers(plan)}
 		for _, producer := range resource.Producers {
 			if candidate.Resources[producer].Error != "" {
@@ -119,7 +102,7 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 			resource.Error = "blocked by " + strings.Join(resource.BlockedBy, ", ")
 		} else {
 			ctx := resourceContext(ctx, plan.Resource)
-			entries, hits, err := locked.Acquire(ctx, key)
+			entries, hits, err := e.locked.Acquire(ctx, key)
 			if ctx.Err() != nil {
 				return candidate, ctx.Err()
 			}
@@ -130,7 +113,7 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 				if len(entries) > 0 {
 					resource.Inputs = entries
 				}
-				report.Inputs, report.InputCacheHits = locked.Changes(key), hits
+				report.Inputs, report.InputCacheHits = e.locked.Changes(key), hits
 			}
 		}
 		candidate.Resources[key] = resource

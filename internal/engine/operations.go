@@ -75,9 +75,6 @@ func ValidateProject(ctx context.Context, opts Options, resolved bool) (result c
 	if err != nil {
 		return p, err
 	}
-	if err := Validate(ctx, p); err != nil {
-		return p, err
-	}
 	done := plugin.Stage(ctx, "Validating project")
 	defer func() { done(err) }()
 	ops, cleanup, err := projectOperations(ctx, p, opts)

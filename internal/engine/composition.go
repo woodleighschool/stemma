@@ -28,16 +28,38 @@ type destinationPlan struct {
 	environment bool
 }
 
+// planDestinations checks the publication graph and the selected publications.
 // Unselected peers contribute metadata without becoming part of the run.
 // Environment evaluates metadata that reads env values now; otherwise its
 // provider validation waits for publication, as metadata reading facts does.
 func planDestinations(ctx context.Context, project config.Project, plans map[string]resourcePlan, ops *operations, root string, selected []string, environment bool) (map[destinationRef]destinationPlan, error) {
-	dests := map[destinationRef]destinationPlan{}
 	// Validate the declared graph, even when only some publications are selected.
+	graph, err := publicationGraph(plans)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkAcyclic(plans, graph); err != nil {
+		return nil, err
+	}
+	result := map[destinationRef]destinationPlan{}
+	for _, key := range selected {
+		for _, destination := range sortedKeys(plans[key].Destinations) {
+			node := destinationRef{key, destination}
+			plan, err := checkPublication(ctx, project, plans, ops, root, selected, environment, node, graph[node])
+			if err != nil {
+				return nil, err
+			}
+			result[node] = plan
+		}
+	}
+	return result, nil
+}
+
+func publicationGraph(plans map[string]resourcePlan) (map[destinationRef]destinationPlan, error) {
+	graph := map[destinationRef]destinationPlan{}
 	for _, key := range sortedKeys(plans) {
 		software := plans[key]
 		for _, destination := range sortedKeys(software.Destinations) {
-			node := destinationRef{key, destination}
 			plan := destinationPlan{peers: map[string]json.RawMessage{}}
 			references, err := publicationReferences(destinationMetadata(software.Destinations[destination]))
 			if err != nil {
@@ -61,9 +83,13 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 					plan.requires = append(plan.requires, ref)
 				}
 			}
-			dests[node] = plan
+			graph[destinationRef{key, destination}] = plan
 		}
 	}
+	return graph, nil
+}
+
+func checkAcyclic(plans map[string]resourcePlan, graph map[destinationRef]destinationPlan) error {
 	visited, visiting := map[destinationRef]bool{}, map[destinationRef]bool{}
 	var visit func(destinationRef) error
 	visit = func(node destinationRef) error {
@@ -74,7 +100,7 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 			return nil
 		}
 		visiting[node] = true
-		for _, required := range dests[node].requires {
+		for _, required := range graph[node].requires {
 			if err := visit(required); err != nil {
 				return err
 			}
@@ -86,90 +112,88 @@ func planDestinations(ctx context.Context, project config.Project, plans map[str
 	for _, key := range sortedKeys(plans) {
 		for _, destination := range sortedKeys(plans[key].Destinations) {
 			if err := visit(destinationRef{key, destination}); err != nil {
-				return nil, err
+				return err
 			}
 		}
 	}
-	result := map[destinationRef]destinationPlan{}
-	for _, key := range selected {
-		software := plans[key]
-		for _, destination := range sortedKeys(software.Destinations) {
-			node := destinationRef{key, destination}
-			plan := dests[node]
-			plan.requires = slices.DeleteFunc(plan.requires, func(ref destinationRef) bool { return !slices.Contains(selected, ref.Resource) })
-			connection := project.Destinations[destination]
-			native := destinationMetadata(software.Destinations[destination])
-			metadata, err := json.Marshal(native)
-			if err != nil {
-				return nil, err
-			}
-			op, err := ops.operation(connection.Operation)
-			if err != nil {
-				return nil, err
-			}
-			declaredSchema, err := config.ExpressionSchema(op.MetadataSchema)
-			if err != nil {
-				return nil, err
-			}
-			if len(declaredSchema) > 0 {
-				if err := plugin.ValidateSchema(declaredSchema, metadata); err != nil {
-					return nil, fmt.Errorf("%s/%s metadata: %w", key, destination, err)
-				}
-			}
-			roots, err := expression.Roots(native)
-			if err != nil {
-				return nil, fmt.Errorf("%s/%s metadata: %w", key, destination, err)
-			}
-			deferred := slices.Contains(roots, "facts") || slices.Contains(roots, "evidence")
-			plan.environment = slices.Contains(roots, "env")
-			for _, peer := range sortedKeys(plan.peers) {
-				if len(declaredSchema) > 0 {
-					if err := plugin.ValidateSchema(declaredSchema, plan.peers[peer]); err != nil {
-						return nil, fmt.Errorf("%s/%s peer %s metadata: %w", key, destination, peer, err)
-					}
-				}
-				roots, err := expression.Roots(destinationMetadata(plans[peer].Destinations[destination]))
-				if err != nil {
-					return nil, fmt.Errorf("%s/%s peer %s metadata: %w", key, destination, peer, err)
-				}
-				if slices.Contains(roots, "facts") || slices.Contains(roots, "evidence") {
-					if !slices.Contains(selected, peer) {
-						return nil, fmt.Errorf("%s/%s: peer %s metadata requires preparation", key, destination, peer)
-					}
-					deferred = true
-				}
-				plan.environment = plan.environment || slices.Contains(roots, "env")
-			}
-			if deferred || plan.environment && !environment {
-				result[node] = plan
-				continue
-			}
-			// Provider validation only receives evaluated metadata. Preparation
-			// supplies contexts for declarations that depend on artifact evidence.
-			resolved, _, err := resolveMetadata(software.ResourceResult, native, plugin.Facts{}, nil)
-			if err != nil {
-				return nil, fmt.Errorf("%s/%s metadata: %w", key, destination, err)
-			}
-			metadata, err = json.Marshal(resolved)
-			if err != nil {
-				return nil, err
-			}
-			peers, err := resolvePeerMetadata(ctx, plans, destination, plan.peers, nil, op.MetadataSchema)
-			if err != nil {
-				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
-			}
-			minimum, err := minimumOS(plugin.Artifact{}, software.MinimumOS)
-			if err != nil {
-				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
-			}
-			request := plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: project.Project, Resource: software.Resource.Reference(), Destination: destination}, Root: root, Metadata: metadata, MinimumOS: minimum, Peers: peers}
-			if err := ops.call(ctx, connection.Operation, "validate", request, nil); err != nil {
-				return nil, fmt.Errorf("%s/%s: %w", key, destination, err)
-			}
-			result[node] = plan
+	return nil
+}
+
+// checkPublication checks one selected publication's metadata against its
+// operation's schema and, when nothing defers it, validates it with the
+// provider. The returned plan requires only selected publications.
+func checkPublication(ctx context.Context, project config.Project, plans map[string]resourcePlan, ops *operations, root string, selected []string, environment bool, node destinationRef, plan destinationPlan) (destinationPlan, error) {
+	key, destination := node.Resource, node.Destination
+	software := plans[key]
+	plan.requires = slices.DeleteFunc(plan.requires, func(ref destinationRef) bool { return !slices.Contains(selected, ref.Resource) })
+	connection := project.Destinations[destination]
+	native := destinationMetadata(software.Destinations[destination])
+	metadata, err := json.Marshal(native)
+	if err != nil {
+		return plan, err
+	}
+	op, err := ops.operation(connection.Operation)
+	if err != nil {
+		return plan, err
+	}
+	declaredSchema, err := config.ExpressionSchema(op.MetadataSchema)
+	if err != nil {
+		return plan, err
+	}
+	if len(declaredSchema) > 0 {
+		if err := plugin.ValidateSchema(declaredSchema, metadata); err != nil {
+			return plan, fmt.Errorf("%s/%s metadata: %w", key, destination, err)
 		}
 	}
-	return result, nil
+	roots, err := expression.Roots(native)
+	if err != nil {
+		return plan, fmt.Errorf("%s/%s metadata: %w", key, destination, err)
+	}
+	deferred := slices.Contains(roots, "facts") || slices.Contains(roots, "evidence")
+	plan.environment = slices.Contains(roots, "env")
+	for _, peer := range sortedKeys(plan.peers) {
+		if len(declaredSchema) > 0 {
+			if err := plugin.ValidateSchema(declaredSchema, plan.peers[peer]); err != nil {
+				return plan, fmt.Errorf("%s/%s peer %s metadata: %w", key, destination, peer, err)
+			}
+		}
+		roots, err := expression.Roots(destinationMetadata(plans[peer].Destinations[destination]))
+		if err != nil {
+			return plan, fmt.Errorf("%s/%s peer %s metadata: %w", key, destination, peer, err)
+		}
+		if slices.Contains(roots, "facts") || slices.Contains(roots, "evidence") {
+			if !slices.Contains(selected, peer) {
+				return plan, fmt.Errorf("%s/%s: peer %s metadata requires preparation", key, destination, peer)
+			}
+			deferred = true
+		}
+		plan.environment = plan.environment || slices.Contains(roots, "env")
+	}
+	if deferred || plan.environment && !environment {
+		return plan, nil
+	}
+	// Provider validation only receives evaluated metadata. Preparation
+	// supplies contexts for declarations that depend on artifact evidence.
+	resolved, _, err := resolveMetadata(software.ResourceResult, native, plugin.Facts{}, nil)
+	if err != nil {
+		return plan, fmt.Errorf("%s/%s metadata: %w", key, destination, err)
+	}
+	if metadata, err = json.Marshal(resolved); err != nil {
+		return plan, err
+	}
+	peers, err := resolvePeerMetadata(ctx, plans, destination, plan.peers, nil, op.MetadataSchema)
+	if err != nil {
+		return plan, fmt.Errorf("%s/%s: %w", key, destination, err)
+	}
+	minimum, err := minimumOS(plugin.Artifact{}, software.MinimumOS)
+	if err != nil {
+		return plan, fmt.Errorf("%s/%s: %w", key, destination, err)
+	}
+	request := plugin.ReconcileRequest[json.RawMessage]{Method: "validate", Identity: plugin.Identity{Project: project.Project, Resource: software.Resource.Reference(), Destination: destination}, Root: root, Metadata: metadata, MinimumOS: minimum, Peers: peers}
+	if err := ops.call(ctx, connection.Operation, "validate", request, nil); err != nil {
+		return plan, fmt.Errorf("%s/%s: %w", key, destination, err)
+	}
+	return plan, nil
 }
 
 func resolvePeerMetadata(ctx context.Context, plans map[string]resourcePlan, destination string, peers map[string]json.RawMessage, prepared map[string]preparedResource, schema json.RawMessage) (map[string]json.RawMessage, error) {

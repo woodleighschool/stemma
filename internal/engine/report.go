@@ -1,6 +1,85 @@
 package engine
 
-import "strings"
+import (
+	"errors"
+	"strings"
+
+	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/plugin"
+)
+
+// Report distinguishes source, preparation and each destination's work.
+type Report struct {
+	// LockChanged reports whether update wrote the lockfile.
+	LockChanged *bool `json:"lock_changed,omitempty"`
+	// RemovedInputs are lock entries of resources the catalog no longer declares.
+	RemovedInputs []lockfile.InputChange `json:"removed_inputs,omitempty"`
+	// Plugins are the plugin lock entries an update changed.
+	Plugins   []lockfile.PluginChange `json:"plugins,omitempty"`
+	Warnings  []string                `json:"warnings,omitempty"`
+	Summary   Summary                 `json:"summary"`
+	Error     string                  `json:"error,omitempty"`
+	Resources []ResourceReport        `json:"resources"`
+	// Artifact is where the artifact method materialized the selected output.
+	Artifact string `json:"artifact,omitempty"`
+}
+
+// ResourceReport separates immutable outputs from destination reconciliation.
+type ResourceReport struct {
+	Name           string          `json:"name"`
+	Kind           string          `json:"kind"`
+	Key            string          `json:"key"`
+	InputCacheHits map[string]bool `json:"input_cache_hits,omitempty"`
+	// Inputs are the lock changes this run commits for the resource, or would
+	// commit when it ignores input locks.
+	Inputs       []lockfile.InputChange `json:"inputs,omitempty"`
+	Artifacts    map[string]Prepared    `json:"artifacts,omitempty"`
+	Cached       bool                   `json:"cached"`
+	Destinations []DestinationReport    `json:"destinations,omitempty"`
+	// Icon reports what the icon method did for the resource's declared asset.
+	Icon  string `json:"icon,omitempty"`
+	Error string `json:"error,omitempty"`
+	// BlockedBy names the resources whose unavailable outputs prevented execution.
+	BlockedBy []string `json:"blocked_by,omitempty"`
+}
+
+// DestinationReport describes semantic drift independently of cache hits.
+type DestinationReport struct {
+	Name    string            `json:"name"`
+	Origins map[string]string `json:"origins,omitempty"`
+	Changes []plugin.Change   `json:"changes"`
+	Applied bool              `json:"applied"`
+	Error   string            `json:"error,omitempty"`
+}
+
+// ResourceError identifies a resource failure independently of command-wide failures.
+type ResourceError struct {
+	Resource string
+	Err      error
+}
+
+func (e ResourceError) Error() string { return e.Resource + ": " + e.Err.Error() }
+func (e ResourceError) Unwrap() error { return e.Err }
+
+// Unreported is the part of a run's error that its report does not carry with
+// a resource, or nil. Joined errors are split; a wrapped error keeps its
+// context whole.
+func Unreported(err error) error {
+	if _, ok := err.(ResourceError); ok { //nolint:errorlint // A wrapped resource failure has context the report lacks.
+		return nil
+	}
+	joined, ok := err.(interface{ Unwrap() []error })
+	if !ok {
+		return err
+	}
+	var rest []error
+	for _, child := range joined.Unwrap() {
+		if child := Unreported(child); child != nil {
+			rest = append(rest, child)
+		}
+	}
+	return errors.Join(rest...)
+}
 
 // Summary counts the entire run, including resources omitted from its presentation.
 type Summary struct {

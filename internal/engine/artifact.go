@@ -84,8 +84,10 @@ var outputName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 func safeOutputName(name string) bool {
 	return outputName.MatchString(name) && name != "." && name != ".."
 }
+
+// On Windows, IsLocal also rejects reserved device names.
 func safeFilename(name string) bool {
-	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, "/\\:") && strings.IndexFunc(name, unicode.IsControl) < 0
+	return name != "" && name != "." && name != ".." && !strings.ContainsAny(name, "/\\:") && strings.IndexFunc(name, unicode.IsControl) < 0 && filepath.IsLocal(name)
 }
 func within(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
