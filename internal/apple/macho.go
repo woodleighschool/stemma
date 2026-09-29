@@ -7,34 +7,17 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"maps"
-	"os"
 	"sort"
 
 	"github.com/woodleighschool/stemma/internal/signature"
 )
 
 const maxSignature = 64 << 20
-
-// MachOFacts reports claimed CodeDirectory values without authenticating them.
-type MachOFacts struct {
-	Architectures []Architecture `json:"architectures"`
-}
-
-// Architecture describes one independently signed Mach-O slice.
-type Architecture struct {
-	CPU                 uint32 `json:"cpu"`
-	Identifier          string `json:"identifier"`
-	TeamID              string `json:"team_id,omitempty"`
-	AdHoc               bool   `json:"ad_hoc"`
-	HasCMS              bool   `json:"has_cms"`
-	CodeDirectorySHA256 string `json:"code_directory_sha256"`
-}
 
 type machoSlice struct {
 	r    io.ReaderAt
@@ -46,53 +29,6 @@ type codeSignature struct {
 	codeSize    int64
 	blobs       map[uint32][]byte
 	directories [][]byte
-}
-
-// InspectMachO reads all architecture signatures without treating their claimed
-// identifiers, Team IDs or recorded code hashes as proof of identity.
-func InspectMachO(filePath string) (MachOFacts, error) {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return MachOFacts{}, err
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return MachOFacts{}, err
-	}
-	slices, err := machoSlices(f, info.Size())
-	if err != nil {
-		return MachOFacts{}, err
-	}
-	var facts MachOFacts
-	for _, slice := range slices {
-		signature, err := slice.signature()
-		if err != nil {
-			return facts, err
-		}
-		cd := signature.directories[0]
-		if err := validateCodeDirectory(cd); err != nil {
-			return facts, err
-		}
-		h := sha256.Sum256(cd)
-		entry := Architecture{CPU: slice.cpu, AdHoc: binary.BigEndian.Uint32(cd[12:16])&2 != 0,
-			HasCMS: len(signature.blobs[0x10000]) > 8, CodeDirectorySHA256: hex.EncodeToString(h[:])}
-		entry.Identifier, err = codeString(cd, binary.BigEndian.Uint32(cd[20:24]))
-		if err != nil {
-			return facts, err
-		}
-		if binary.BigEndian.Uint32(cd[8:12]) >= 0x20200 {
-			teamOffset := binary.BigEndian.Uint32(cd[48:52])
-			if teamOffset != 0 {
-				entry.TeamID, err = codeString(cd, teamOffset)
-				if err != nil {
-					return facts, err
-				}
-			}
-		}
-		facts.Architectures = append(facts.Architectures, entry)
-	}
-	return facts, nil
 }
 
 // verifyMachO authenticates every architecture of a signed Mach-O: each

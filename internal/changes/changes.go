@@ -55,11 +55,6 @@ func Lines(change plugin.Change) []string {
 	}
 }
 
-// Difference compares arbitrary JSON values without interpreting their vocabulary.
-func Difference(field string, before, after json.RawMessage) []string {
-	return difference(Text(field), decode(before), decode(after))
-}
-
 type missing struct{}
 
 func decode(data json.RawMessage) any {

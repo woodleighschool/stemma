@@ -49,7 +49,7 @@ func TestBuildIntegrityReproducibilityAndInputChanges(t *testing.T) {
 	if err := Build(t.Context(), root, output, opts); err != nil {
 		t.Fatal(err)
 	}
-	facts, err := apple.InspectPackage(output)
+	facts, err := apple.InspectPackageContents(t.Context(), output)
 	if err != nil || len(facts.Packages) != 1 {
 		t.Fatalf("inspection: %+v: %v", facts, err)
 	}
@@ -354,7 +354,7 @@ func TestScriptsOnlyPackageMetadata(t *testing.T) {
 	if err := Build(t.Context(), root, output, opts); err != nil {
 		t.Fatal(err)
 	}
-	facts, err := apple.InspectPackage(output)
+	facts, err := apple.InspectPackageContents(t.Context(), output)
 	if err != nil {
 		t.Fatal(err)
 	}

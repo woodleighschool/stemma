@@ -20,14 +20,6 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// Build assembles a private layout from leased inputs and writes one unsigned
-// component package. Input files and packaged endpoint scripts are never run.
-func Build(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string) (plugin.Artifact, error) {
-	sources := newSources(inputs, workspace)
-	defer sources.close()
-	return build(ctx, spec, sources, workspace)
-}
-
 func build(ctx context.Context, spec Spec, sources *sources, workspace string) (plugin.Artifact, error) {
 	spec.Inputs = make(map[string]plugin.Input, len(sources.inputs))
 	for name := range sources.inputs {

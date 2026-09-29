@@ -26,7 +26,7 @@ func TestSemanticChanges(t *testing.T) {
 		{"unchanged", "field", `{"a":1}`, `{"a":1}`, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			got := Difference(test.field, json.RawMessage(test.before), json.RawMessage(test.after))
+			got := compare(test.field, json.RawMessage(test.before), json.RawMessage(test.after))
 			if strings.Join(got, "\n") != strings.Join(test.want, "\n") {
 				t.Fatalf("got %q want %q", got, test.want)
 			}
@@ -60,14 +60,14 @@ func TestTextEscapesTerminalControlsAndKeepsPrintableText(t *testing.T) {
 func TestHashesWithSamePrefixRemainDistinguishable(t *testing.T) {
 	before := strings.Repeat("a", 64)
 	after := strings.Repeat("a", 63) + "b"
-	got := Difference("sha256", json.RawMessage(`"`+before+`"`), json.RawMessage(`"`+after+`"`))
+	got := compare("sha256", json.RawMessage(`"`+before+`"`), json.RawMessage(`"`+after+`"`))
 	if len(got) != 1 || !strings.Contains(got[0], before+" -> "+after) {
 		t.Fatalf("hidden difference: %v", got)
 	}
 }
 
 func TestCollectionReorderIsVisible(t *testing.T) {
-	got := strings.Join(Difference("assignments", json.RawMessage(`["a","b"]`), json.RawMessage(`["b","a"]`)), "\n")
+	got := strings.Join(compare("assignments", json.RawMessage(`["a","b"]`), json.RawMessage(`["b","a"]`)), "\n")
 	if !strings.Contains(got, "  + ") || !strings.Contains(got, "  - ") {
 		t.Fatalf("reorder hidden: %s", got)
 	}
@@ -90,7 +90,7 @@ func TestMultilineValuesShowSizeWithoutContents(t *testing.T) {
 }
 
 func TestAddedInstallHasReadableValues(t *testing.T) {
-	installs := strings.Join(Difference("package.installs", json.RawMessage(`[]`), json.RawMessage(`[{"path":"/Applications/Example.app","type":"application","CFBundleShortVersionString":"2"}]`)), "\n")
+	installs := strings.Join(compare("package.installs", json.RawMessage(`[]`), json.RawMessage(`[{"path":"/Applications/Example.app","type":"application","CFBundleShortVersionString":"2"}]`)), "\n")
 	for _, want := range []string{"package.installs[/Applications/Example.app] (added)", "CFBundleShortVersionString: 2", "type: application"} {
 		if !strings.Contains(installs, want) {
 			t.Fatalf("missing %q: %s", want, installs)
@@ -103,7 +103,7 @@ func TestCollectionDiffRetainsTypesAndFullHashIdentity(t *testing.T) {
 		{`["1"]`, `[1]`},
 		{`["` + strings.Repeat("a", 64) + `"]`, `["` + strings.Repeat("a", 63) + `b"]`},
 	} {
-		got := strings.Join(Difference("values", json.RawMessage(pair[0]), json.RawMessage(pair[1])), "\n")
+		got := strings.Join(compare("values", json.RawMessage(pair[0]), json.RawMessage(pair[1])), "\n")
 		if !strings.Contains(got, "  - ") || !strings.Contains(got, "  + ") {
 			t.Fatalf("hidden change: %s", got)
 		}
@@ -111,7 +111,7 @@ func TestCollectionDiffRetainsTypesAndFullHashIdentity(t *testing.T) {
 }
 
 func TestReceiptReorderingDoesNotEraseAReportedChange(t *testing.T) {
-	got := strings.Join(Difference("package.receipts", json.RawMessage(`[{"packageid":"a","version":"1"},{"packageid":"b","version":"1"}]`), json.RawMessage(`[{"packageid":"b","version":"1"},{"packageid":"a","version":"1"}]`)), "\n")
+	got := strings.Join(compare("package.receipts", json.RawMessage(`[{"packageid":"a","version":"1"},{"packageid":"b","version":"1"}]`), json.RawMessage(`[{"packageid":"b","version":"1"},{"packageid":"a","version":"1"}]`)), "\n")
 	if !strings.Contains(got, "  - ") || !strings.Contains(got, "  + ") {
 		t.Fatalf("reported change erased: %s", got)
 	}
@@ -121,4 +121,8 @@ func TestOperationWithoutValueDiffRemainsVisible(t *testing.T) {
 	if got := strings.Join(Lines(plugin.Change{Kind: "metadata", Action: "reconcile", Field: "catalogs/testing"}), "\n"); got != "reconcile catalogs/testing" {
 		t.Fatalf("operation lost: %s", got)
 	}
+}
+
+func compare(field string, before, after json.RawMessage) []string {
+	return difference(Text(field), decode(before), decode(after))
 }

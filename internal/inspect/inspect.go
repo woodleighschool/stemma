@@ -48,7 +48,7 @@ func Read(ctx context.Context, name string) (plugin.Facts, error) {
 			}
 			return plugin.Facts{Version: plugin.FactsVersion, Subjects: append([]plugin.Subject{{ID: ".", Kind: "directory", Path: "."}}, subjects...)}, nil
 		}
-		app, err := apple.InspectApp(name)
+		app, err := apple.InspectApp(ctx, name)
 		if err != nil {
 			return plugin.Facts{}, fmt.Errorf("inspect app: %w", err)
 		}

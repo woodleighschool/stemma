@@ -42,11 +42,11 @@ func fixture(t *testing.T) (Spec, map[string]plugin.Artifact) {
 
 func TestBuildMappedPayloadIsReproducibleAndScriptsAreNotRun(t *testing.T) {
 	spec, inputs := fixture(t)
-	first, err := Build(t.Context(), spec, inputs, t.TempDir())
+	first, err := buildPackage(t.Context(), spec, inputs, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := Build(t.Context(), spec, inputs, t.TempDir())
+	second, err := buildPackage(t.Context(), spec, inputs, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestBuildMappedPayloadIsReproducibleAndScriptsAreNotRun(t *testing.T) {
 	if _, err := apple.VerifyPackage(t.Context(), first.Path, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "not signed") {
 		t.Fatalf("built package claimed a signer: %v", err)
 	}
-	facts, err := apple.InspectPackage(first.Path)
+	facts, err := apple.InspectPackageContents(t.Context(), first.Path)
 	if err != nil || len(facts.Packages) != 1 || facts.Packages[0].Identifier != spec.Package.Identifier {
 		t.Fatalf("receipt=%+v: %v", facts, err)
 	}
@@ -78,7 +78,7 @@ func TestBuildCompressesThePayloadAsDeclared(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			spec, inputs := fixture(t)
 			spec.Package.Compression = test.compression
-			artifact, err := Build(t.Context(), spec, inputs, t.TempDir())
+			artifact, err := buildPackage(t.Context(), spec, inputs, t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,7 +136,7 @@ func TestBuildRejectsUnsafeLayout(t *testing.T) {
 				cancel()
 			}
 			work := t.TempDir()
-			if _, err := Build(ctx, spec, inputs, work); err == nil {
+			if _, err := buildPackage(ctx, spec, inputs, work); err == nil {
 				t.Fatal("invalid layout accepted")
 			}
 			files, err := os.ReadDir(work)
@@ -145,4 +145,11 @@ func TestBuildRejectsUnsafeLayout(t *testing.T) {
 			}
 		})
 	}
+}
+
+// buildPackage assembles a package from leased inputs the way preparation does.
+func buildPackage(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, workspace string) (plugin.Artifact, error) {
+	sources := newSources(inputs, workspace)
+	defer sources.close()
+	return build(ctx, spec, sources, workspace)
 }

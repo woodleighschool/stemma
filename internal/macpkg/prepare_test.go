@@ -81,7 +81,7 @@ func TestPrepareEvaluatesAndCopiesTreeAndZIPWithoutChangingSources(t *testing.T)
 			if result.Version != "1.2.3-r2" || result.Filename != "Fixture-1.2.3-r2.pkg" {
 				t.Fatalf("wrong derived package identity: %+v", result)
 			}
-			receipts, err := apple.InspectPackage(result.Path)
+			receipts, err := apple.InspectPackageContents(t.Context(), result.Path)
 			if err != nil || len(receipts.Packages) != 1 || receipts.Packages[0].Version != result.Version {
 				t.Fatalf("wrong resolved receipt: %+v, %v", receipts, err)
 			}

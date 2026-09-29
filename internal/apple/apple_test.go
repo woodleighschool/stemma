@@ -25,24 +25,12 @@ import (
 )
 
 func TestAppFixtureInspection(t *testing.T) {
-	facts, err := InspectApp("testdata/Fixture.app")
+	facts, err := InspectApp(t.Context(), "testdata/Fixture.app")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if facts.BundleID != "au.edu.vic.woodleigh.stemma.fixture" || facts.Version != "1.2.3" || facts.Build != "42" {
 		t.Fatalf("wrong app facts: %+v", facts)
-	}
-	macho, err := InspectMachO("testdata/Fixture.app/Contents/MacOS/fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(macho.Architectures) != 2 {
-		t.Fatalf("expected two architecture signatures: %+v", macho)
-	}
-	for _, arch := range macho.Architectures {
-		if !arch.AdHoc || arch.HasCMS || arch.Identifier != facts.BundleID {
-			t.Fatalf("wrong signature facts: %+v", arch)
-		}
 	}
 }
 
@@ -50,15 +38,6 @@ func TestSignedFixtures(t *testing.T) {
 	app, err := VerifyApp(t.Context(), "testdata/SignedFixture.app", signature.Signer{})
 	if err != nil || app.Signer != fixtureSigner || app.Name != "Woodleigh School" || app.Authority != "Developer ID Application" || app.Verifier != signature.Verifier {
 		t.Fatalf("signed app: %+v: %v", app, err)
-	}
-	facts, err := InspectMachO("testdata/SignedFixture.app/Contents/MacOS/fixture")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, arch := range facts.Architectures {
-		if !arch.HasCMS || arch.AdHoc || arch.TeamID != "SMLKBTR495" {
-			t.Fatalf("wrong company signature facts: %+v", arch)
-		}
 	}
 	pkg, err := VerifyPackage(t.Context(), "testdata/fixture.pkg", signature.Signer{Scheme: signature.AppleDeveloperID, Value: "SMLKBTR495"})
 	if err != nil || pkg.Signer != fixtureSigner || pkg.Name != "Woodleigh School" || pkg.Authority != "Developer ID Installer" || pkg.Target != "fixture.pkg" {
@@ -77,7 +56,7 @@ func TestBinaryPlistMetadataAndExecutableTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(app, "Contents/Info.plist"), data, 0644)
-	got, err := InspectApp(app)
+	got, err := InspectApp(t.Context(), app)
 	if err != nil || got != facts {
 		t.Fatalf("binary plist: %+v: %v", got, err)
 	}
@@ -87,7 +66,7 @@ func TestBinaryPlistMetadataAndExecutableTraversal(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTestFile(t, filepath.Join(app, "Contents/Info.plist"), data, 0644)
-	if _, err := InspectApp(app); err == nil {
+	if _, err := InspectApp(t.Context(), app); err == nil {
 		t.Fatal("accepted executable traversal")
 	}
 }
@@ -102,7 +81,7 @@ func TestPackageXMLRejectsAmbiguity(t *testing.T) {
 
 func TestPackageInspectionAndIntegrity(t *testing.T) {
 	before := readTestFile(t, "testdata/fixture.pkg")
-	facts, err := InspectPackage("testdata/fixture.pkg")
+	facts, err := InspectPackageContents(t.Context(), "testdata/fixture.pkg")
 	if err != nil {
 		t.Fatal(err)
 	}

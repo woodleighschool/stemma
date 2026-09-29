@@ -133,3 +133,21 @@ func TestProductIconReadsTheIconTableStream(t *testing.T) {
 		t.Fatalf("installer without ARPPRODUCTICON: ok=%v %v", ok, err)
 	}
 }
+
+func TestMetadataStreamRejectsSectorCycle(t *testing.T) {
+	data, err := os.ReadFile("testdata/test.msi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sectorSize := 1 << binary.LittleEndian.Uint16(data[30:])
+	miniFAT := (int(binary.LittleEndian.Uint32(data[60:])) + 1) * sectorSize
+	// The string data starts at mini sector zero and spans several sectors.
+	binary.LittleEndian.PutUint32(data[miniFAT:], 0)
+	db, err := newDatabase(bytes.NewReader(data), int64(len(data)))
+	if err == nil {
+		_, _, err = db.decoded("_StringData")
+	}
+	if err == nil {
+		t.Fatal("accepted a metadata stream that repeats its first sector")
+	}
+}

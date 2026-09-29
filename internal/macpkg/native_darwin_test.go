@@ -15,7 +15,7 @@ import (
 
 func TestNativeMetadataMatchesPayloadDeclaration(t *testing.T) {
 	spec, inputs := fixture(t)
-	artifact, err := Build(t.Context(), spec, inputs, t.TempDir())
+	artifact, err := buildPackage(t.Context(), spec, inputs, t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

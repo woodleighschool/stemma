@@ -20,7 +20,7 @@ func TestBuildRefusesNativeSignatureAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 	spec := Spec{Package: Package{Identifier: "org.example.wrapper", Version: "1.0"}, Payload: map[string]Entry{"/Library/Example": {Input: "vendor", Path: "."}}}
-	_, err := Build(t.Context(), spec, map[string]plugin.Artifact{"vendor": {Path: root, Tree: true}}, t.TempDir())
+	_, err := buildPackage(t.Context(), spec, map[string]plugin.Artifact{"vendor": {Path: root, Tree: true}}, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "code signature in extended attributes") {
 		t.Fatalf("signature discarded: %v", err)
 	}

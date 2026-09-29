@@ -60,12 +60,6 @@ type xarArchive struct {
 	files   map[string]*xar.File
 }
 
-// InspectPackage reads a flat PKG/XAR table of contents and component receipt
-// metadata. It preserves the installer and does not expand Payload or Scripts.
-func InspectPackage(filePath string) (PackageFacts, error) {
-	return InspectPackageMetadata(context.Background(), filePath)
-}
-
 // VerifyPackage verifies a flat package's entry checksums and Developer ID
 // Installer signature and reports its signer. A zero want derives the signer.
 func VerifyPackage(ctx context.Context, filePath string, want signature.Signer) (signature.Result, error) {

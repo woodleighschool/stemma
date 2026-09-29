@@ -50,20 +50,10 @@ type PackageApp struct {
 
 // InspectPackageContents reads receipts and application Info.plists in flat
 // packages. Payloads support ODC CPIO, optionally compressed with gzip, XZ or
-// 16 MiB PBZX chunks decoded concurrently with bounded read-ahead. Unsupported
-// layouts fail without returning partial facts.
+// 16 MiB PBZX chunks decoded concurrently with bounded read-ahead.
+// Unsupported layouts fail without returning partial facts.
 // Inspection never extracts payloads, executes scripts or consults target paths.
 func InspectPackageContents(ctx context.Context, filePath string) (PackageFacts, error) {
-	return inspectPackage(ctx, filePath, true)
-}
-
-// InspectPackageMetadata reads bounded component receipts without reading
-// payload contents or asserting that a package's complete contents are supported.
-func InspectPackageMetadata(ctx context.Context, filePath string) (PackageFacts, error) {
-	return inspectPackage(ctx, filePath, false)
-}
-
-func inspectPackage(ctx context.Context, filePath string, contents bool) (PackageFacts, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return PackageFacts{}, err
@@ -76,10 +66,10 @@ func inspectPackage(ctx context.Context, filePath string, contents bool) (Packag
 	if !info.Mode().IsRegular() || info.Size() > maxEntrySize {
 		return PackageFacts{}, fmt.Errorf("PKG input must be a regular file no larger than 16 GiB")
 	}
-	return inspectPackageReader(ctx, f, info.Size(), contents)
+	return inspectPackageReader(ctx, f, info.Size())
 }
 
-func inspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64, contents bool) (PackageFacts, error) {
+func inspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64) (PackageFacts, error) {
 	if size < 0 || size > maxEntrySize {
 		return PackageFacts{}, fmt.Errorf("PKG exceeds size limit")
 	}
@@ -103,7 +93,7 @@ func inspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64, c
 			return PackageFacts{}, fmt.Errorf("%s: %w", entry.Path, err)
 		}
 		facts.Packages = append(facts.Packages, metadata)
-		if !contents || !metadata.HasPayload {
+		if !metadata.HasPayload {
 			continue
 		}
 		payloadPath := path.Join(path.Dir(entry.Path), "Payload")
@@ -131,7 +121,7 @@ func inspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64, c
 				return PackageFacts{}, fmt.Errorf("package metadata exceeds read limit")
 			}
 			budget.metadata -= entry.Size
-			declared, err := archive.distribution(entry.Path, contents)
+			declared, err := archive.distribution(entry.Path)
 			if err != nil {
 				return PackageFacts{}, err
 			}
@@ -139,9 +129,6 @@ func inspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64, c
 				distribution = true
 				facts.Version, facts.MinimumOS, facts.RestartAction = declared.Version, declared.MinimumOS, declared.RestartAction
 			}
-		}
-		if !contents {
-			continue
 		}
 		if path.Base(entry.Path) == "Payload" && !payloads[entry.Path] {
 			return PackageFacts{}, fmt.Errorf("%w: payload %q has no component receipt", ErrUnsupported, entry.Path)
@@ -246,7 +233,7 @@ func strongerRestartAction(current, declared string) string {
 // distribution reads a Distribution's static product declarations. Installer's
 // restart query uses every pkg-ref onConclusion, including deselected choices,
 // and ignores onConclusionScript.
-func (a *xarArchive) distribution(name string, confine bool) (PackageFacts, error) {
+func (a *xarArchive) distribution(name string) (PackageFacts, error) {
 	var data bytes.Buffer
 	if err := a.readEntry(name, &data, maxMetadata); err != nil {
 		return PackageFacts{}, err
@@ -306,7 +293,7 @@ func (a *xarArchive) distribution(name string, confine bool) (PackageFacts, erro
 		if err := decoder.DecodeElement(&reference, &element); err != nil {
 			return PackageFacts{}, err
 		}
-		if reference = strings.TrimSpace(reference); confine && reference != "" {
+		if reference = strings.TrimSpace(reference); reference != "" {
 			if err := a.confineReference(name, reference); err != nil {
 				return PackageFacts{}, err
 			}

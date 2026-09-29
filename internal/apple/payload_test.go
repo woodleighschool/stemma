@@ -278,7 +278,7 @@ func TestPackageRestartActions(t *testing.T) {
 	} {
 		t.Run(test.action, func(t *testing.T) {
 			metadata := fmt.Sprintf(`<pkg-info identifier="org.example.app" version="1" postinstall-action="%s"/>`, test.action)
-			facts, err := InspectPackageMetadata(t.Context(), writePayloadPackage(t, []payloadMember{{"PackageInfo", []byte(metadata)}}))
+			facts, err := InspectPackageContents(t.Context(), writePayloadPackage(t, []payloadMember{{"PackageInfo", []byte(metadata)}}))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -303,14 +303,12 @@ func TestDistributionDeclarations(t *testing.T) {
 		{"Two.pkg/PackageInfo", []byte(`<pkg-info identifier="org.example.two" version="7"/>`)},
 		{"Distribution", []byte(distribution)},
 	})
-	for _, contents := range []bool{false, true} {
-		facts, err := inspectPackage(t.Context(), name, contents)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if facts.Version != "9.4" || facts.MinimumOS != "14.2" || facts.RestartAction != "RequireLogout" {
-			t.Fatalf("contents=%v: version %q, minimum OS %q, restart %q", contents, facts.Version, facts.MinimumOS, facts.RestartAction)
-		}
+	facts, err := InspectPackageContents(t.Context(), name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts.Version != "9.4" || facts.MinimumOS != "14.2" || facts.RestartAction != "RequireLogout" {
+		t.Fatalf("version %q, minimum OS %q, restart %q", facts.Version, facts.MinimumOS, facts.RestartAction)
 	}
 }
 
@@ -323,7 +321,7 @@ func TestPackageMinimumOSFallsBackToPayloadReceipts(t *testing.T) {
 		{"Three.pkg/Payload", cpioPayload(t, nil)},
 		{"Distribution", []byte(`<installer-gui-script><pkg-ref id="org.example.one">#One.pkg</pkg-ref><pkg-ref id="org.example.two">#Two.pkg</pkg-ref><pkg-ref id="org.example.three">#Three.pkg</pkg-ref></installer-gui-script>`)},
 	})
-	facts, err := InspectPackageMetadata(t.Context(), name)
+	facts, err := InspectPackageContents(t.Context(), name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +491,7 @@ func TestPackageRepeatedResources(t *testing.T) {
 				{"Resources/background.png", []byte("artwork")},
 				{"Resources/background.png", []byte(repeated)},
 			})
-			facts, err := InspectPackage(name)
+			facts, err := InspectPackageContents(t.Context(), name)
 			if repeated != "artwork" {
 				if err == nil {
 					t.Fatal("conflicting resources accepted")
@@ -510,7 +508,7 @@ func TestPackageRepeatedResources(t *testing.T) {
 			data := readTestFile(t, name)
 			data[len(data)-1] ^= 1
 			writeTestFile(t, name, data, 0o600)
-			if _, err := InspectPackage(name); err == nil {
+			if _, err := InspectPackageContents(t.Context(), name); err == nil {
 				t.Fatal("corrupt duplicate escaped verification")
 			}
 		})
@@ -618,5 +616,23 @@ func TestPackageContentsAllowsUndeclaredHelperExecutable(t *testing.T) {
 	app := facts.Applications[1]
 	if app.App.Executable != "" || app.App.BundleID != "org.example.helper" || app.InstalledPath != "/Applications/Example.app/Contents/Frameworks/Helper.app" {
 		t.Fatalf("helper facts: %+v", app)
+	}
+}
+
+func TestPayloadRejectsIncompleteHeadersAndTrailingContent(t *testing.T) {
+	payload := cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")})
+	trailer := bytes.Index(payload, []byte("TRAILER!!!")) - 76
+	if trailer < 0 {
+		t.Fatal("fixture has no ODC trailer")
+	}
+	for name, data := range map[string][]byte{
+		"partial header":   payload[:trailer+3],
+		"trailing content": append(bytes.Clone(payload), []byte("unexpected content")...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(data)), newPayloadBudget(), false); err == nil {
+				t.Fatal("accepted incomplete payload")
+			}
+		})
 	}
 }

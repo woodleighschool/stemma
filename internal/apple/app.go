@@ -32,14 +32,13 @@ type AppFacts struct {
 }
 
 // InspectApp reads XML or binary Info.plist metadata in a Contents-style bundle.
-func InspectApp(appPath string) (AppFacts, error) {
+func InspectApp(ctx context.Context, appPath string) (AppFacts, error) {
 	root, err := os.OpenRoot(appPath)
 	if err != nil {
 		return AppFacts{}, err
 	}
 	defer func() { _ = root.Close() }()
-	bundle := rootFS(root)
-	return InspectAppFS(context.Background(), bundle, ".")
+	return InspectAppFS(ctx, rootFS(root), ".")
 }
 
 // InspectAppFS reads conventional application metadata where the bundle lies
