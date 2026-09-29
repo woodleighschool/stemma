@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.8.2](https://github.com/woodleighschool/stemma/compare/v0.8.1...v0.8.2) (2026-09-29)
+
+
+### Features
+
+* **apple:** accept nested code under Developer ID requirements ([737d54b](https://github.com/woodleighschool/stemma/commit/737d54bd50df6ad0d4086a9a5feac7cfa3fedcd2))
+* **apple:** verify xattr signatures and reject lossy copies ([beb0bbf](https://github.com/woodleighschool/stemma/commit/beb0bbf39d27c6373f5fe18739a6f09dad327dcc))
+* **intune:** detect Mac apps by the selected application ([3c10aaf](https://github.com/woodleighschool/stemma/commit/3c10aaf4c38c0a8d5b953ab192b915d834db4d29))
+* **source:** select GitHub releases by tag pattern ([7781209](https://github.com/woodleighschool/stemma/commit/7781209fe0cb03cc4c285114205e7bd4fd7ecb7b))
+
+
+### Bug Fixes
+
+* enable windows arm64 releases ([7e92a41](https://github.com/woodleighschool/stemma/commit/7e92a41e0eb965fc1cbee433301e6f42cddd9de0))
+* **go:** update module github.com/azure/azure-sdk-for-go/sdk/azcore (v1.23.1 → v1.23.2) ([#67](https://github.com/woodleighschool/stemma/issues/67)) ([a214c8e](https://github.com/woodleighschool/stemma/commit/a214c8ee56de39839f4d33b350c4a28cb87f0ccc))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (7cb505c → 463c760) ([#66](https://github.com/woodleighschool/stemma/issues/66)) ([b46306f](https://github.com/woodleighschool/stemma/commit/b46306fd29483706d0de3ab0bf63a25f1ce28916))
+* **go:** update module github.com/pb33f/ordered-map/v2 (v2.3.1 → v2.3.2) ([#65](https://github.com/woodleighschool/stemma/issues/65)) ([f5c44b5](https://github.com/woodleighschool/stemma/commit/f5c44b52cd74cc398eee0e5991d23af8c63b5cb4))
+* **source:** use upstream GitHub credential isolation ([33e775a](https://github.com/woodleighschool/stemma/commit/33e775a2bc8b4b8e97535369a4ed6a0399ed3a6d))
+
+
+### Code Refactoring
+
+* **cli:** construct commands separately ([c7c3ccf](https://github.com/woodleighschool/stemma/commit/c7c3ccf8822be8c9de733879bc689b5096751f47))
+* **destinations:** separate metadata and publication steps ([e7c2656](https://github.com/woodleighschool/stemma/commit/e7c2656426ed41113c12c74c40009ca24c9ade01))
+* **engine:** give each run its execution state ([ac5da9b](https://github.com/woodleighschool/stemma/commit/ac5da9bf50856cfdf251f46f4975cb586350baea))
+* **reconcile:** use GitHub clients and separate proposals ([cebc88d](https://github.com/woodleighschool/stemma/commit/cebc88d0a4c22627d9823e68b2d3b6bc6550b61b))
+* **source:** separate lock entries from acquisition ([6010de4](https://github.com/woodleighschool/stemma/commit/6010de4ef2df04799e72e8dfa845ff4270a93ef1))
+* trim inspection and packaging entry points ([083fc82](https://github.com/woodleighschool/stemma/commit/083fc828a4d7246b3ad04d9f8a66cc95a136e774))
+
 ## [0.8.1](https://github.com/woodleighschool/stemma/compare/v0.8.0...v0.8.1) (2026-09-28)
 
 
