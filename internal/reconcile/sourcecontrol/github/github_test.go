@@ -19,21 +19,21 @@ import (
 func TestNewBindsOriginsAndValidatesConfig(t *testing.T) {
 	token := map[string]any{"token": "secret"}
 	for remote, want := range map[string][3]string{
-		"https://github.com/example/catalog.git":     {"https://api.github.com", "example", "catalog"},
-		"git@github.com:example/catalog.git":         {"https://api.github.com", "example", "catalog"},
-		"ssh://git@ghe.example.com/example/catalog":  {"https://ghe.example.com/api/v3", "example", "catalog"},
-		"http://127.0.0.1:8080/example/catalog.git/": {"http://127.0.0.1:8080/api/v3", "example", "catalog"},
+		"https://github.com/example/catalog.git":     {"", "example", "catalog"},
+		"git@github.com:example/catalog.git":         {"", "example", "catalog"},
+		"ssh://git@ghe.example.com/example/catalog":  {"https://ghe.example.com", "example", "catalog"},
+		"http://127.0.0.1:8080/example/catalog.git/": {"http://127.0.0.1:8080", "example", "catalog"},
 	} {
-		client, err := New(remote, token)
+		client, err := New(t.Context(), remote, token)
 		if err != nil {
 			t.Fatalf("%s: %v", remote, err)
 		}
-		if got := [3]string{client.api, client.owner, client.repository}; got != want {
+		if got := [3]string{client.server, client.owner, client.repository}; got != want {
 			t.Fatalf("%s: %v", remote, got)
 		}
 	}
 	for _, remote := range []string{"https://github.com/example", "example/catalog", "/srv/git/catalog.git", "https://github.com/example/group/catalog.git"} {
-		if _, err := New(remote, token); err == nil {
+		if _, err := New(t.Context(), remote, token); err == nil {
 			t.Fatalf("accepted origin %q", remote)
 		}
 	}
@@ -46,7 +46,7 @@ func TestNewBindsOriginsAndValidatesConfig(t *testing.T) {
 		"zero-installation": {"client_id": "Iv1.x", "installation_id": 0, "private_key": fixtureKey(t)},
 		"unparseable-key":   {"client_id": "Iv1.x", "installation_id": 7, "private_key": "not a key"},
 	} {
-		if _, err := New("https://github.com/example/catalog.git", settings); err == nil || !strings.HasPrefix(err.Error(), "github: ") {
+		if _, err := New(t.Context(), "https://github.com/example/catalog.git", settings); err == nil || !strings.HasPrefix(err.Error(), "github: ") {
 			t.Fatalf("%s: %v", name, err)
 		}
 	}
@@ -95,7 +95,7 @@ func TestIdentityFollowsTheCredentials(t *testing.T) {
 	t.Cleanup(server.Close)
 	remote := server.URL + "/example/catalog.git"
 
-	app, err := New(remote, map[string]any{"client_id": "Iv1.fixture", "installation_id": 7, "private_key": fixtureKey(t)})
+	app, err := New(t.Context(), remote, map[string]any{"client_id": "Iv1.fixture", "installation_id": 7, "private_key": fixtureKey(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestIdentityFollowsTheCredentials(t *testing.T) {
 		t.Fatalf("minted %d installation tokens", minted.Load())
 	}
 
-	user, err := New(remote, map[string]any{"token": "secret"})
+	user, err := New(t.Context(), remote, map[string]any{"token": "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,4 +130,29 @@ func fixtureKey(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+}
+
+func TestAppCredentialsStayOnTheirOrigin(t *testing.T) {
+	var leaked atomic.Bool
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked.Store(r.Header.Get("Authorization") != "")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": "redirected", "expires_at": time.Now().Add(time.Hour)})
+	}))
+	t.Cleanup(other.Close)
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/token", http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(origin.Close)
+	client, err := New(t.Context(), origin.URL+"/example/catalog.git", map[string]any{"client_id": "Iv1.fixture", "installation_id": 7, "private_key": fixtureKey(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = client.Credentials(t.Context())
+	if leaked.Load() {
+		t.Fatal("sent an App assertion to the redirect destination")
+	}
+	if err == nil {
+		t.Fatal("accepted a token from another origin")
+	}
 }
