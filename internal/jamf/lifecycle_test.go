@@ -719,14 +719,14 @@ func (n *nativeServer) handle(s *fakeServer, w http.ResponseWriter, r *http.Requ
 			titleData["packages"] = []any{}
 		}
 		writeJSON(s.t, w, titleData)
-	case r.URL.Path == "/api/v1/buildings" || r.URL.Path == "/api/v1/departments" || r.URL.Path == "/api/v1/computers-inventory":
+	case r.URL.Path == "/api/v1/buildings" || r.URL.Path == "/api/v1/departments" || r.URL.Path == "/api/v4/computers-inventory":
 		objects := map[string]map[string]string{
 			"/api/v1/buildings":           {"21": "Senior Campus", "22": "Junior Campus"},
 			"/api/v1/departments":         {"31": "Science"},
-			"/api/v1/computers-inventory": {"41": "LAB-01", "42": "LAB-02"},
+			"/api/v4/computers-inventory": {"41": "LAB-01", "42": "LAB-02"},
 		}[r.URL.Path]
 		field := "name"
-		if r.URL.Path == "/api/v1/computers-inventory" {
+		if r.URL.Path == "/api/v4/computers-inventory" {
 			field = "general.name"
 			if r.URL.Query().Get("section") != "GENERAL" {
 				s.t.Error("computer lookup omitted its name section")

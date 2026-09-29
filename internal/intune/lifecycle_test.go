@@ -160,7 +160,7 @@ func TestRelationshipsPreserveOmittedCategoriesAndInboundReferences(t *testing.T
 // peerNotes are the notes of the app another software document publishes to the
 // same destination.
 func peerNotes(req plugin.ReconcileRequest[Config], software string) string {
-	return withMarker("", publication{identity: markerIdentity(plugin.Identity{Project: req.Identity.Project, Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: software}, Destination: req.Identity.Destination})})
+	return withMarker("", publication{identity: plugin.Identity{Project: req.Identity.Project, Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: software}, Destination: req.Identity.Destination}.Digest()})
 }
 
 func TestRelationshipPeersResolveByExplicitAppOrMarker(t *testing.T) {
@@ -195,12 +195,12 @@ func TestRelationshipPeersResolveByExplicitAppOrMarker(t *testing.T) {
 				// Publication uses an explicit API version; the reference defaults it.
 				identity := req.Identity
 				identity.Resource = plugin.ResourceReference{APIVersion: "stemma/v1alpha1", Kind: "WindowsSoftware", Name: "runtime"}
-				fake.relatedApps["marked"] = published("marked", withMarker("", publication{identity: markerIdentity(identity)}))
+				fake.relatedApps["marked"] = published("marked", withMarker("", publication{identity: identity.Digest()}))
 			}
 			// Same name, other kind is a different publication.
 			identity := req.Identity
 			identity.Resource = plugin.ResourceReference{Kind: "MacSoftware", Name: "runtime"}
-			fake.relatedApps["other-kind"] = published("other-kind", withMarker("", publication{identity: markerIdentity(identity)}))
+			fake.relatedApps["other-kind"] = published("other-kind", withMarker("", publication{identity: identity.Digest()}))
 			if test.duplicate {
 				fake.relatedApps["copy"] = published("copy", peerNotes(req, "runtime"))
 			}

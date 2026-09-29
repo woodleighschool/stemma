@@ -39,7 +39,7 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	published := publishedMarker(t, fake)
-	if published.identity != markerIdentity(req.Identity) || published.content != "1" || published.payload == "" {
+	if published.identity != req.Identity.Digest() || published.content != "1" || published.payload == "" {
 		t.Fatalf("incomplete marker: %+v", published)
 	}
 	fake.mu.Lock()
@@ -520,7 +520,7 @@ func TestDuplicateMarkerAppsAreAmbiguous(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	notes := withMarker("", publication{identity: markerIdentity(req.Identity)})
+	notes := withMarker("", publication{identity: req.Identity.Digest()})
 	for _, id := range []string{"first-copy", "second-copy"} {
 		fake.relatedApps[id] = object{"id": id, "@odata.type": win32Type, "notes": notes}
 	}

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 
+	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/constants"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -111,7 +112,7 @@ func (c *client) references(ctx context.Context, patch *patchConfig, installs []
 			referenced[id] = true
 		}
 	}
-	prestages, err := c.listObjects(ctx, "/api/v3/computer-prestages", nil)
+	prestages, err := c.listObjects(ctx, constants.EndpointJamfProComputerPrestagesV3, nil)
 	if err != nil {
 		return nil, err
 	}

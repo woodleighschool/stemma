@@ -78,7 +78,7 @@ func relationshipApp(ctx context.Context, req plugin.ReconcileRequest[Config], t
 		return declared.AppID, nil
 	}
 	identity := plugin.Identity{Project: req.Identity.Project, Resource: *ref.Resource, Destination: req.Identity.Destination}
-	id, err := tenant.find(ctx, markerIdentity(identity))
+	id, err := tenant.find(ctx, identity.Digest())
 	if err != nil {
 		return "", fmt.Errorf("intune relationship resource %s: %w", key, err)
 	}
@@ -269,6 +269,68 @@ func validateRelationshipGraph(root string, edges []relationshipEdge) error {
 				break
 			}
 		}
+	}
+	return nil
+}
+
+func (c *client) planRelationships(ctx context.Context, req plugin.ReconcileRequest[Config], tenant *tenantApps, l lifecycle, current object) (*plugin.Change, error) {
+	appID := text(current["id"])
+	wanted, err := c.desiredRelationships(ctx, req, tenant, l, appID)
+	if err != nil {
+		return nil, err
+	}
+	var existing []object
+	if current != nil {
+		if existing, err = c.list(ctx, c.relationships(appID)); err != nil {
+			return nil, err
+		}
+	}
+	relationships, changed, err := mergeRelationships(existing, wanted, l)
+	if err != nil || !changed {
+		return nil, err
+	}
+	if err := c.checkRelationships(ctx, appID, relationships, existing); err != nil {
+		return nil, err
+	}
+	return &plugin.Change{Kind: "relationships", Field: "relationships", Action: "replace", Before: raw(existing), After: raw(relationships)}, nil
+}
+
+// applyRelationships writes the declared relationships over the app's and
+// verifies them by readback. It reads the app's relationships afresh, so those
+// changed during a long content upload survive.
+func (c *client) applyRelationships(ctx context.Context, req plugin.ReconcileRequest[Config], tenant *tenantApps, l lifecycle, appID string) error {
+	existing, err := c.list(ctx, c.relationships(appID))
+	if err != nil {
+		return err
+	}
+	wanted, err := c.desiredRelationships(ctx, req, tenant, l, appID)
+	if err != nil {
+		return err
+	}
+	relationships, changed, err := mergeRelationships(existing, wanted, l)
+	if err != nil {
+		return err
+	}
+	if err := c.checkRelationships(ctx, appID, relationships, existing); err != nil {
+		return err
+	}
+	if changed {
+		if err := c.request(ctx, abs.POST, c.updateRelationships(appID), object{"relationships": relationships}, nil); err != nil {
+			return err
+		}
+	}
+	readback, err := c.list(ctx, c.relationships(appID))
+	if err != nil {
+		return err
+	}
+	expected := slices.Clone(relationships)
+	for _, item := range existing {
+		if item["targetType"] == "parent" {
+			expected = append(expected, item)
+		}
+	}
+	if !sameRelationships(readback, expected) {
+		return errors.New("intune relationship readback differs from requested references")
 	}
 	return nil
 }

@@ -123,11 +123,6 @@ func ownedEqual(current any, desired any) bool {
 	return reflect.DeepEqual(current, desired)
 }
 
-func assignmentKey(value object) string {
-	target, _ := value["target"].(object)
-	return string(raw([]any{value["intent"], target["@odata.type"], target["groupId"]}))
-}
-
 func mergeItems(field string, current, desired []any) []any {
 	key := func(item object) string {
 		if field == "returnCodes" {
@@ -147,27 +142,4 @@ func mergeItems(field string, current, desired []any) []any {
 		result = append(result, mergeOwned(previous[key(value)], value))
 	}
 	return result
-}
-
-func reconcileAssignments(current, desired []any) ([]any, bool) {
-	byKey := map[string]object{}
-	for _, item := range current {
-		if v, ok := item.(object); ok {
-			byKey[assignmentKey(v)] = v
-		}
-	}
-	result := make([]any, 0, len(desired))
-	changed := len(current) != len(desired)
-	for _, item := range desired {
-		v := item.(object)
-		previous, ok := byKey[assignmentKey(v)]
-		if !ok || !ownedEqual(previous, v) {
-			changed = true
-		}
-		merged := mergeOwned(previous, v)
-		delete(merged, "id")
-		delete(merged, "@odata.context")
-		result = append(result, merged)
-	}
-	return result, changed
 }

@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/classic_api/network_segments"
 	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/constants"
+	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/jamf_pro_api/computer_groups"
 	titles "github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/jamf_pro_api/patch_software_title_configurations"
 	"github.com/invopop/jsonschema"
 )
@@ -84,14 +87,14 @@ func (c *client) objectID(ctx context.Context, kind, name string) (string, error
 	var err error
 	switch kind {
 	case "category", "building", "department":
-		path := map[string]string{"category": "/api/v1/categories", "building": "/api/v1/buildings", "department": "/api/v1/departments"}[kind]
+		path := map[string]string{"category": constants.EndpointJamfProCategoriesV1, "building": constants.EndpointJamfProBuildingsV1, "department": constants.EndpointJamfProDepartmentsV1}[kind]
 		objects, err = c.filtered(ctx, path, "name", name, func(data json.RawMessage) (named, error) {
 			var object named
 			err := json.Unmarshal(data, &object)
 			return object, err
 		})
 	case "computer":
-		objects, err = c.filtered(ctx, "/api/v1/computers-inventory", "general.name", name, func(data json.RawMessage) (named, error) {
+		objects, err = c.filtered(ctx, constants.EndpointJamfProComputerInventoryV4, "general.name", name, func(data json.RawMessage) (named, error) {
 			var computer struct {
 				ID      string `json:"id"`
 				General struct {
@@ -115,9 +118,11 @@ func (c *client) objectID(ctx context.Context, kind, name string) (string, error
 }
 
 // filtered lists the objects a Jamf Pro collection holds under an exact name.
+// The SDK's list methods cannot confirm a complete enumeration, which a name's
+// uniqueness depends on.
 func (c *client) filtered(ctx context.Context, path, field, name string, decode func(json.RawMessage) (named, error)) ([]named, error) {
 	query := map[string]string{"filter": rsql(field, name)}
-	if path == "/api/v1/computers-inventory" {
+	if path == constants.EndpointJamfProComputerInventoryV4 {
 		query["section"] = "GENERAL"
 	}
 	rows, err := c.listObjects(ctx, path, query)
@@ -136,32 +141,32 @@ func (c *client) filtered(ctx context.Context, path, field, name string, decode 
 }
 
 func (c *client) computerGroups(ctx context.Context) ([]named, error) {
-	result, data, err := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationJSON).GetBytes("/api/v1/computer-groups")
+	groups, result, err := computer_groups.NewComputerGroups(c.transport).ListAllV1(ctx)
 	if err := requestError(ctx, result, err); err != nil {
 		return nil, err
 	}
-	var groups []named
-	if err := json.Unmarshal(data, &groups); err != nil {
-		return nil, errors.New("invalid Jamf computer group collection")
-	}
-	return groups, nil
-}
-
-func (c *client) networkSegments(ctx context.Context) ([]named, error) {
-	segments, err := c.readXML(ctx, "/JSSResource/networksegments", "network_segments")
-	if err != nil {
-		return nil, err
-	}
-	var objects []named
-	for _, segment := range segments.Children {
-		if segment.XMLName.Local == "network_segment" {
-			objects = append(objects, named{ID: segment.value("id"), Name: segment.value("name")})
-		}
+	objects := make([]named, 0, len(groups))
+	for _, group := range groups {
+		objects = append(objects, named{ID: group.ID, Name: group.Name})
 	}
 	return objects, nil
 }
 
-// listTitles lists every patch software title configuration.
+func (c *client) networkSegments(ctx context.Context) ([]named, error) {
+	segments, result, err := network_segments.NewNetworkSegments(c.transport).List(ctx)
+	if err := requestError(ctx, result, err); err != nil {
+		return nil, err
+	}
+	objects := make([]named, 0, len(segments.Results))
+	for _, segment := range segments.Results {
+		objects = append(objects, named{ID: strconv.Itoa(segment.ID), Name: segment.Name})
+	}
+	return objects, nil
+}
+
+// listTitles lists every patch software title configuration. The SDK's list
+// reads a null collection as empty, which would let retention delete a package
+// a title uses.
 func (c *client) listTitles(ctx context.Context) ([]titles.ResourcePatchSoftwareTitleConfiguration, error) {
 	result, data, err := c.transport.NewRequest(ctx).SetHeader("Accept", constants.ApplicationJSON).GetBytes(titlePath)
 	if err := requestError(ctx, result, err); err != nil {

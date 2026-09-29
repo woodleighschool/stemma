@@ -594,3 +594,12 @@ func raw(t *testing.T, value any) json.RawMessage {
 	}
 	return data
 }
+
+// Destinations record the digest in the objects they publish, so it must not
+// change for an identity.
+func TestIdentityDigestIsStable(t *testing.T) {
+	identity := plugin.Identity{Project: "catalog", Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "firefox"}, Destination: "jamf"}
+	if got, want := identity.Digest(), "5168eb4696e1eb85cd086ef1f1d8412367f432432c699fb8babf61e98cf2538e"; got != want {
+		t.Fatalf("digest = %s, want %s", got, want)
+	}
+}

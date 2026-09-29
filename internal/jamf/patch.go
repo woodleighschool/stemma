@@ -16,8 +16,11 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-const titlePath = "/api/v3/patch-software-title-configurations"
-const policyPath = "/JSSResource/patchpolicies"
+const (
+	titlePath = constants.EndpointJamfProPatchSoftwareTitleConfigurationsV3
+	// policyPath is the Classic API patch policy collection, which the SDK does not cover.
+	policyPath = "/JSSResource/patchpolicies"
+)
 
 // patchConfig declares patch deployment: an existing title, found by its
 // display name, and an optional patch policy. The version it deploys is the
@@ -404,7 +407,7 @@ func sameAssociations(a, b []titles.SubsetPackage) bool {
 }
 
 func (c *client) listPatchPolicies(ctx context.Context, filter string) ([]patch_policies.ResourcePatchPolicySummary, error) {
-	objects, err := c.listObjects(ctx, "/api/v2/patch-policies", map[string]string{"filter": filter})
+	objects, err := c.listObjects(ctx, constants.EndpointJamfProPatchPoliciesV2, map[string]string{"filter": filter})
 	if err != nil {
 		return nil, err
 	}

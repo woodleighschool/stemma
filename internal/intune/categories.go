@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	abs "github.com/microsoft/kiota-abstractions-go"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 // Missing categories have no ID until apply creates them.
@@ -106,4 +107,28 @@ func categoryList(categories []object) []string {
 	}
 	slices.Sort(names)
 	return names
+}
+
+func (c *client) planCategories(ctx context.Context, current object, names []any) ([]plugin.Change, bool, error) {
+	categories, err := c.resolveCategories(ctx, names)
+	if err != nil {
+		return nil, false, err
+	}
+	var changes []plugin.Change
+	for _, category := range categories {
+		if text(category["id"]) == "" {
+			changes = append(changes, plugin.Change{Kind: "categories", Field: "category", Action: "create", After: raw(category["displayName"])})
+		}
+	}
+	var existing []object
+	if current != nil {
+		if existing, err = c.list(ctx, c.appCategories(text(current["id"]))); err != nil {
+			return nil, false, err
+		}
+	}
+	if sameCategories(existing, categoryIDs(categories)) {
+		return changes, false, nil
+	}
+	changes = append(changes, plugin.Change{Kind: "categories", Field: "categories", Action: "replace", Before: raw(categoryList(existing)), After: raw(categoryList(categories))})
+	return changes, true, nil
 }

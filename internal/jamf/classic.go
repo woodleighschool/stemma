@@ -24,7 +24,7 @@ type classic struct {
 }
 
 var (
-	policies      = classic{"/JSSResource/policies", "policy", "policy"}
+	policies      = classic{constants.EndpointClassicPolicies, "policy", "policy"}
 	patchPolicies = classic{policyPath, "patch_policy", "patch policy"}
 )
 

@@ -4,8 +4,6 @@ package intune
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -30,13 +28,6 @@ type publication struct {
 }
 
 var markerPattern = regexp.MustCompile(`(?m)^\[stemma:v1 id=([0-9a-f]{64}) payload=([0-9a-f]*) content=([A-Za-z0-9-]*)\]$`)
-
-// markerIdentity is the marker id of a logical identity. It finds this app and
-// the apps of referenced software in the tenant.
-func markerIdentity(id plugin.Identity) string {
-	sum := sha256.Sum256(raw([]string{id.Project, id.Resource.Key(), id.Destination}))
-	return hex.EncodeToString(sum[:])
-}
 
 // active returns the payload the app's committed content version holds, or ""
 // when the marker does not describe that version.
@@ -142,13 +133,12 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		return response, err
 	}
 	tenant := &tenantApps{client: c}
-	identity := markerIdentity(req.Identity)
+	identity := req.Identity.Digest()
 	current, err := c.observe(ctx, tenant, pinned, identity)
 	if err != nil {
 		return response, err
 	}
 	published := publication{identity: identity}
-	appID := text(current["id"])
 	if current != nil {
 		if current["@odata.type"] != c.appType {
 			return response, errors.New("intune app has a different native subtype")
@@ -184,70 +174,34 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 	if current != nil {
 		response.Changes = append(response.Changes, changes...)
 	}
-	var assignments []any
+	declaredAssignments, assigning := desired["assignments"].([]any)
 	assignmentChanged := false
-	if value, owned := desired["assignments"]; owned {
-		var existing []any
-		if current != nil {
-			items, err := c.list(ctx, c.assignments(appID))
-			if err != nil {
-				return response, err
-			}
-			for _, item := range items {
-				existing = append(existing, item)
-			}
+	if assigning {
+		change, err := c.planAssignments(ctx, current, declaredAssignments)
+		if err != nil {
+			return response, err
 		}
-		assignments, assignmentChanged = reconcileAssignments(existing, value.([]any))
-		if assignmentChanged {
-			response.Changes = append(response.Changes, plugin.Change{Kind: "assignments", Field: "assignments", Action: "replace", Before: raw(existing), After: raw(assignments)})
+		if assignmentChanged = change != nil; assignmentChanged {
+			response.Changes = append(response.Changes, *change)
 		}
 	}
+	categoryNames, categorizing := desired["categories"].([]any)
 	categoryChanged := false
-	if names, owned := desired["categories"]; owned {
-		categories, err := c.resolveCategories(ctx, names.([]any))
-		if err != nil {
+	if categorizing {
+		var categoryChanges []plugin.Change
+		if categoryChanges, categoryChanged, err = c.planCategories(ctx, current, categoryNames); err != nil {
 			return response, err
 		}
-		for _, category := range categories {
-			if text(category["id"]) == "" {
-				response.Changes = append(response.Changes, plugin.Change{Kind: "categories", Field: "category", Action: "create", After: raw(category["displayName"])})
-			}
-		}
-		var existing []object
-		if current != nil {
-			existing, err = c.list(ctx, c.appCategories(appID))
-			if err != nil {
-				return response, err
-			}
-		}
-		if !sameCategories(existing, categoryIDs(categories)) {
-			categoryChanged = true
-			response.Changes = append(response.Changes, plugin.Change{Kind: "categories", Field: "categories", Action: "replace", Before: raw(categoryList(existing)), After: raw(categoryList(categories))})
-		}
+		response.Changes = append(response.Changes, categoryChanges...)
 	}
-	var relationships []object
-	var relationshipChanged bool
-	if lifecycle.Dependencies != nil || lifecycle.Supersedes != nil {
-		wanted, err := c.desiredRelationships(ctx, req, tenant, lifecycle, appID)
+	relating := lifecycle.Dependencies != nil || lifecycle.Supersedes != nil
+	if relating {
+		change, err := c.planRelationships(ctx, req, tenant, lifecycle, current)
 		if err != nil {
 			return response, err
 		}
-		var existing []object
-		if current != nil {
-			existing, err = c.list(ctx, c.relationships(appID))
-			if err != nil {
-				return response, err
-			}
-		}
-		relationships, relationshipChanged, err = mergeRelationships(existing, wanted, lifecycle)
-		if err != nil {
-			return response, err
-		}
-		if relationshipChanged {
-			if err := c.checkRelationships(ctx, appID, relationships, existing); err != nil {
-				return response, err
-			}
-			response.Changes = append(response.Changes, plugin.Change{Kind: "relationships", Field: "relationships", Action: "replace", Before: raw(existing), After: raw(relationships)})
+		if change != nil {
+			response.Changes = append(response.Changes, *change)
 		}
 	}
 	if req.Method == "plan" {
@@ -265,138 +219,108 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		defer prepared.close()
 	}
 	if current == nil {
-		// Graph refuses notes updates until publication, so record the first
-		// payload when creating the app.
+		// Graph refuses notes updates until publication, so the app records its
+		// first payload when it is created.
 		published.payload = artifact.identity
-		body := mergeOwned(nil, desired)
-		delete(body, "assignments")
-		delete(body, "categories")
-		body["notes"] = withMarker(text(body["notes"]), published)
-		body["fileName"] = prepared.name
-		if c.appType == win32Type {
-			body["setupFilePath"] = prepared.setup
-		}
-		if err := c.request(ctx, abs.POST, c.apps(), body, &current); err != nil {
+		if current, err = c.create(ctx, desired, published, prepared); err != nil {
 			return response, err
 		}
-		appID = text(current["id"])
-		if appID == "" {
-			return response, errors.New("intune creation response omitted app ID")
-		}
 	}
+	appID := text(current["id"])
 	activated := ""
 	if contentChanged {
 		pending := publication{identity: identity, payload: artifact.identity}
 		if published.payload == pending.payload {
 			pending.content = published.content
 		}
-		version, err := c.upload(ctx, current, pending, prepared)
-		if err != nil {
+		if activated, err = c.activate(ctx, current, pending, prepared, artifact.setup); err != nil {
 			return response, err
 		}
-		// Graph drops every other property of the PATCH that first publishes an
-		// app, so activation goes alone and metadata follows publication.
-		activation := object{"@odata.type": c.appType, "committedContentVersion": version, "fileName": prepared.name}
-		if c.appType == win32Type {
-			activation["setupFilePath"] = artifact.setup
-		}
-		if err := c.request(ctx, abs.PATCH, c.app(appID), activation, nil); err != nil {
-			return response, err
-		}
-		activated = version
-		published = publication{identity: identity, payload: artifact.identity, content: version}
+		published = publication{identity: identity, payload: artifact.identity, content: activated}
 	}
 	// Waiting re-observes the app after potentially long uploads, so nested
 	// omitted fields and notes changed by another administrator are preserved.
 	if err := c.waitPublished(ctx, appID, activated, &current); err != nil {
 		return response, err
 	}
-	if patch, _ := metadataPatch(current, desired, published); len(patch) > 0 {
-		patch["@odata.type"] = c.appType
-		if err := c.request(ctx, abs.PATCH, c.app(appID), patch, nil); err != nil {
-			return response, err
-		}
-		if err := c.waitPublished(ctx, appID, activated, &current); err != nil {
-			return response, err
-		}
-	}
-	if _, residual := metadataPatch(current, desired, published); len(residual) > 0 {
-		fields := make([]string, 0, len(residual))
-		for _, change := range residual {
-			fields = append(fields, change.Field)
-		}
-		return response, fmt.Errorf("intune metadata readback differs from requested values: %s", strings.Join(fields, ", "))
+	if err := c.applyMetadata(ctx, appID, activated, &current, desired, published); err != nil {
+		return response, err
 	}
 	if _, err := c.reconcileIcon(ctx, req, current, true); err != nil {
 		return response, err
 	}
 	if assignmentChanged {
-		items, err := c.list(ctx, c.assignments(appID))
-		if err != nil {
+		if err := c.applyAssignments(ctx, appID, declaredAssignments); err != nil {
 			return response, err
-		}
-		existing := make([]any, 0, len(items))
-		for _, item := range items {
-			existing = append(existing, item)
-		}
-		assignments, _ = reconcileAssignments(existing, desired["assignments"].([]any))
-		if err := c.request(ctx, abs.POST, c.assign(appID), object{"mobileAppAssignments": assignments}, nil); err != nil {
-			return response, err
-		}
-		items, err = c.list(ctx, c.assignments(appID))
-		if err != nil {
-			return response, err
-		}
-		existing = existing[:0]
-		for _, item := range items {
-			existing = append(existing, item)
-		}
-		if _, changed := reconcileAssignments(existing, desired["assignments"].([]any)); changed {
-			return response, errors.New("intune assignments readback differs from requested targeting")
 		}
 	}
 	if categoryChanged {
-		if err := c.reconcileCategories(ctx, appID, desired["categories"].([]any)); err != nil {
+		if err := c.reconcileCategories(ctx, appID, categoryNames); err != nil {
 			return response, err
 		}
 	}
-	if lifecycle.Dependencies != nil || lifecycle.Supersedes != nil {
-		// Preserve omitted categories against changes during a long content upload.
-		existing, err := c.list(ctx, c.relationships(appID))
-		if err != nil {
+	if relating {
+		if err := c.applyRelationships(ctx, req, tenant, lifecycle, appID); err != nil {
 			return response, err
-		}
-		wanted, err := c.desiredRelationships(ctx, req, tenant, lifecycle, appID)
-		if err != nil {
-			return response, err
-		}
-		relationships, changed, err := mergeRelationships(existing, wanted, lifecycle)
-		if err != nil {
-			return response, err
-		}
-		if err := c.checkRelationships(ctx, appID, relationships, existing); err != nil {
-			return response, err
-		}
-		if changed {
-			if err := c.request(ctx, abs.POST, c.updateRelationships(appID), object{"relationships": relationships}, nil); err != nil {
-				return response, err
-			}
-		}
-		readback, err := c.list(ctx, c.relationships(appID))
-		if err != nil {
-			return response, err
-		}
-		expected := slices.Clone(relationships)
-		for _, item := range existing {
-			if item["targetType"] == "parent" {
-				expected = append(expected, item)
-			}
-		}
-		if !sameRelationships(readback, expected) {
-			return response, errors.New("intune relationship readback differs from requested references")
 		}
 	}
 	return response, nil
+}
+
+func (c *client) create(ctx context.Context, desired object, published publication, prepared *preparedArtifact) (object, error) {
+	body := mergeOwned(nil, desired)
+	delete(body, "assignments")
+	delete(body, "categories")
+	body["notes"] = withMarker(text(body["notes"]), published)
+	body["fileName"] = prepared.name
+	if c.appType == win32Type {
+		body["setupFilePath"] = prepared.setup
+	}
+	var created object
+	if err := c.request(ctx, abs.POST, c.apps(), body, &created); err != nil {
+		return nil, err
+	}
+	if text(created["id"]) == "" {
+		return nil, errors.New("intune creation response omitted app ID")
+	}
+	return created, nil
+}
+
+func (c *client) activate(ctx context.Context, current object, pending publication, prepared *preparedArtifact, setup string) (string, error) {
+	version, err := c.upload(ctx, current, pending, prepared)
+	if err != nil {
+		return "", err
+	}
+	// Graph drops every other property of the PATCH that first publishes an
+	// app, so activation goes alone and metadata follows publication.
+	activation := object{"@odata.type": c.appType, "committedContentVersion": version, "fileName": prepared.name}
+	if c.appType == win32Type {
+		activation["setupFilePath"] = setup
+	}
+	if err := c.request(ctx, abs.PATCH, c.app(text(current["id"])), activation, nil); err != nil {
+		return "", err
+	}
+	return version, nil
+}
+
+func (c *client) applyMetadata(ctx context.Context, appID, activated string, current *object, desired object, published publication) error {
+	if patch, _ := metadataPatch(*current, desired, published); len(patch) > 0 {
+		patch["@odata.type"] = c.appType
+		if err := c.request(ctx, abs.PATCH, c.app(appID), patch, nil); err != nil {
+			return err
+		}
+		if err := c.waitPublished(ctx, appID, activated, current); err != nil {
+			return err
+		}
+	}
+	if _, residual := metadataPatch(*current, desired, published); len(residual) > 0 {
+		fields := make([]string, 0, len(residual))
+		for _, change := range residual {
+			fields = append(fields, change.Field)
+		}
+		return fmt.Errorf("intune metadata readback differs from requested values: %s", strings.Join(fields, ", "))
+	}
+	return nil
 }
 
 // observe reads the app this identity manages: the one a declared app_id pins,

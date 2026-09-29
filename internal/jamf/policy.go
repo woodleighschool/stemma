@@ -405,7 +405,8 @@ func (c *client) findPolicy(ctx context.Context, name string) (string, *xmlNode,
 }
 
 // listPolicies requires a complete enumeration before a name is considered free
-// or a package is considered unreferenced.
+// or a package is considered unreferenced. The SDK's list model reads a missing
+// count as zero, so the document is read as it arrived.
 func (c *client) listPolicies(ctx context.Context) ([]named, error) {
 	listed, err := c.readXML(ctx, policies.path, "policies")
 	if err != nil {

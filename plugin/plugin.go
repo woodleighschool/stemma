@@ -3,6 +3,8 @@ package plugin
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 )
@@ -45,6 +47,15 @@ type Identity struct {
 	Project     string            `json:"project"`
 	Resource    ResourceReference `json:"resource"`
 	Destination string            `json:"destination"`
+}
+
+// Digest is the hex SHA-256 of the identity's project, resource key and
+// destination. Destinations record it in the objects they publish, so a run
+// finds them again with no state of its own.
+func (i Identity) Digest() string {
+	data, _ := json.Marshal([]string{i.Project, i.Resource.Key(), i.Destination})
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // Artifact is an immutable file or tree leased by the engine, never a writable
