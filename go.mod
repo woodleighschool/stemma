@@ -10,7 +10,7 @@ require (
 	charm.land/bubbletea/v2 v2.0.10
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.2
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
-	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.1
+	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.2
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/deploymenttheory/go-apfs-v2 v0.13.0
@@ -66,6 +66,7 @@ require (
 	cel.dev/expr v0.25.1 // indirect
 	charm.land/lipgloss/v2 v2.0.6 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/storage/internal v0.1.0 // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.9.0 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/ProtonMail/go-crypto v1.5.0 // indirect
