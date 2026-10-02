@@ -255,11 +255,18 @@ func TestBuildRefusesSignaturesInAttributes(t *testing.T) {
 		{"com.apple.cs.CodeSignature", true},
 	} {
 		t.Run(test.attribute, func(t *testing.T) {
-			image := filepath.Join(t.TempDir(), "vendor.dmg")
-			testdiskimage.WriteXattrs(t, image, root, map[string]map[string][]byte{"installer/run.sh": {test.attribute: []byte("value")}})
-			_, err := buildPackage(t.Context(), spec, map[string]plugin.Artifact{"vendor": {Path: image, Filename: "vendor.dmg"}}, t.TempDir())
-			if test.refused != (err != nil) || test.refused && !strings.Contains(err.Error(), "installer/run.sh keeps its code signature") {
-				t.Fatalf("refused = %v, want %v: %v", err != nil, test.refused, err)
+			attributes := map[string]map[string][]byte{"installer/run.sh": {test.attribute: []byte("value")}}
+			for _, format := range []string{"dmg", "zip"} {
+				image := filepath.Join(t.TempDir(), "vendor."+format)
+				if format == "dmg" {
+					testdiskimage.WriteXattrs(t, image, root, attributes)
+				} else {
+					testarchive.ZipWithAttributes(t, image, root, attributes)
+				}
+				_, err := buildPackage(t.Context(), spec, map[string]plugin.Artifact{"vendor": {Path: image, Filename: "vendor." + format}}, t.TempDir())
+				if test.refused != (err != nil) || test.refused && !strings.Contains(err.Error(), "installer/run.sh keeps its code signature") {
+					t.Fatalf("%s refused = %v, want %v: %v", format, err != nil, test.refused, err)
+				}
 			}
 		})
 	}

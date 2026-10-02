@@ -101,17 +101,15 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 // archive or tree application alone in a new one.
 func publishApplication(ctx context.Context, spec Spec, request Request, source *contents.Source, inventory plugin.Facts, app plugin.Subject) (plugin.Artifact, *plugin.Subject, []signature.Observation, error) {
 	input := request.Input
-	name, local := path.Base(app.Path), input.Path
-	var node contents.Node
+	selection := app.Path
 	if app.ID == "." {
-		name = filepath.Base(input.Path)
-	} else {
-		var err error
-		if node, err = source.At(ctx, app.Path); err != nil {
-			return plugin.Artifact{}, nil, nil, err
-		}
-		local = node.Local
+		selection = ""
 	}
+	node, err := source.At(ctx, selection)
+	if err != nil {
+		return plugin.Artifact{}, nil, nil, err
+	}
+	name := path.Base(node.Path)
 	if options := spec.Application; options != nil && options.InstalledPath != "" {
 		app.InstalledPath = options.InstalledPath
 	}
@@ -134,7 +132,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 			if source.IsImage() {
 				result, err = apple.VerifySubject(ctx, source, subject, request.Workspace)
 			} else {
-				result, err = apple.VerifyApp(ctx, local, signature.Signer{})
+				result, err = apple.VerifyAppFS(ctx, node.FS, node.Path, signature.Signer{})
 			}
 			return result, err
 		})
@@ -143,7 +141,6 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 		}
 	}
 	var installer plugin.Artifact
-	var err error
 	if source.IsImage() {
 		if installer, err = retain(ctx, input.Path, input.Filename, request.Workspace); err != nil {
 			return plugin.Artifact{}, nil, nil, err
@@ -158,7 +155,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 			}
 		}
 	} else {
-		if installer, err = writeImage(ctx, local, request.Workspace, spec.DiskImage.compression()); err != nil {
+		if installer, err = writeImage(ctx, node, request.Workspace, spec.DiskImage.compression()); err != nil {
 			return plugin.Artifact{}, nil, nil, err
 		}
 		app.ID, app.Path, app.Parent = name, name, "."
@@ -220,9 +217,9 @@ func publishPackage(ctx context.Context, spec Spec, request Request, source *con
 // image. The image is our container around the publisher's software and carries
 // no signature of its own. A fixed date keeps the image a function of the
 // application and compression alone.
-func writeImage(ctx context.Context, app, workspace string, compression diskimage.Compression) (plugin.Artifact, error) {
-	output := filepath.Join(workspace, strings.TrimSuffix(filepath.Base(app), filepath.Ext(app))+".dmg")
-	if err := diskimage.WriteApplication(ctx, app, output, compression, time.Unix(0, 0).UTC()); err != nil {
+func writeImage(ctx context.Context, node contents.Node, workspace string, compression diskimage.Compression) (plugin.Artifact, error) {
+	output := filepath.Join(workspace, strings.TrimSuffix(path.Base(node.Path), path.Ext(node.Path))+".dmg")
+	if err := diskimage.WriteApplication(ctx, node.FS, node.Path, output, compression, time.Unix(0, 0).UTC()); err != nil {
 		return plugin.Artifact{}, err
 	}
 	return describeArtifact(ctx, output, "dmg")

@@ -22,7 +22,7 @@ func TestNativeMountVerifiesSignedApplication(t *testing.T) {
 				t.Fatal(err)
 			}
 			image := filepath.Join(t.TempDir(), "NestedFixture.dmg")
-			if err := WriteApplication(t.Context(), app, image, compression, imageTime); err != nil {
+			if err := writeApplication(t.Context(), app, image, compression, imageTime); err != nil {
 				t.Fatal(err)
 			}
 			native(t, "/usr/bin/hdiutil", "verify", image)
@@ -52,7 +52,7 @@ func TestNativeMountReadsIncompressibleContent(t *testing.T) {
 				t.Fatal(err)
 			}
 			image := filepath.Join(t.TempDir(), "Example.dmg")
-			if err := WriteApplication(t.Context(), app, image, compression, imageTime); err != nil {
+			if err := writeApplication(t.Context(), app, image, compression, imageTime); err != nil {
 				t.Fatal(err)
 			}
 			got, err := os.ReadFile(filepath.Join(mount(t, image), "Example.app/Contents/Resources/random.bin"))
@@ -101,7 +101,7 @@ func TestNativeMountReadsPOSIXNames(t *testing.T) {
 		}
 	}
 	image := filepath.Join(t.TempDir(), "NamedFixture.dmg")
-	if err := WriteApplication(t.Context(), app, image, LZFSE, imageTime); err != nil {
+	if err := writeApplication(t.Context(), app, image, LZFSE, imageTime); err != nil {
 		t.Fatal(err)
 	}
 	native(t, "/usr/bin/hdiutil", "verify", image)

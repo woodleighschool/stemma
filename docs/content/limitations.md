@@ -40,11 +40,12 @@ entry and output limits catch malformed or unexpectedly large inputs; they do no
 provide a sandbox or guarantee bounded resource use for deliberately adversarial
 files.
 
-New payload trees and application DMGs retain bytes, modes and confined relative
-symlinks. Extended attributes, ACLs and resource forks are omitted. Local file
-imports, archive extraction and payload creation reject code signatures stored in
-extended attributes before discarding them. Existing vendor PKGs and DMGs retain
-their original bytes.
+New application DMGs retain bytes, modes, confined relative symlinks and archive
+extended attributes, including resource forks. Archive metadata must identify an
+exact existing entry; conflicting attributes and symlink parents are rejected.
+New PKG payloads omit extended attributes, ACLs and resource forks and reject code
+signatures stored in those attributes. Local tree imports also reject these
+signatures. Existing vendor PKGs and DMGs retain their original bytes.
 
 ## Signatures
 
@@ -53,8 +54,8 @@ bundles, and Authenticode signatures over MSI and EXE files. Apple verification
 covers the shapes `codesign` writes today: `files2` envelopes, versioned and
 shallow frameworks, nested bundles and executables, and nested generic code, such
 as scripts and data files, whose signature `codesign` keeps in extended
-attributes. Generic code verifies inside a vendor DMG; archives and local trees
-don't carry those attributes, so it is unsupported there. Of Apple's requirement
+attributes. Generic code verifies inside vendor DMGs and archives carrying AppleDouble or
+PAX attributes. Local trees without those attributes cannot verify generic code. Of Apple's requirement
 language, only the Developer ID requirement `codesign` records by default is
 evaluated, and only for nested code that replaced the code its app sealed; other
 requirements accept only the sealed code. Legacy envelopes and detached signature

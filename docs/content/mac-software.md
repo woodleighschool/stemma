@@ -60,8 +60,10 @@ spec:
         description: Example application.
 ```
 
-The image holds the application and nothing else: its files, permission bits and
-symlinks, dated from the locked source, so the same source prepares the same bytes
+The image holds the application: its files, permission bits, symlinks and archive
+extended attributes, including resource forks. AppleDouble sidecars and PAX
+attributes stay associated with their files without being applied to the runner.
+Ownership and dates are normalized, so the same source prepares the same bytes
 on any runner. Munki copies the application with `copy_from_dmg` and Intune
 publishes the image as `type: dmg`. The application installs to
 `/Applications/<name>.app` unless `application.installed_path` says otherwise.
@@ -252,8 +254,9 @@ trusted timestamp. Nested code matches its exact recorded cdhash, or replaces th
 sealed code under the Developer ID requirement the app recorded for it: the same
 identifier, signed by the same team with a Developer ID Application certificate.
 `stemma signature` lists replaced nested code. Nested scripts and data files that
-`codesign` signs in extended attributes verify inside a vendor DMG, which Stemma
-publishes unchanged. Notarisation and Gatekeeper policy
+`codesign` signs in extended attributes verify inside vendor DMGs and archives
+that carry those attributes. Generated images preserve them; vendor DMGs are
+published unchanged. Notarisation and Gatekeeper policy
 are not assessed. See [signature limits](limitations.md#signatures).
 
 ## Icons

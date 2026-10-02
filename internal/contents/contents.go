@@ -24,7 +24,7 @@ type Source struct {
 	original  *os.Root
 	tree      *os.Root
 	image     *diskimage.Image
-	expanded  string
+	archive   *archive.Tree
 }
 
 // Node is a selected file or tree. FS does not outlive its Source.
@@ -63,8 +63,8 @@ func (s *Source) Close() error {
 		err = errors.Join(err, s.image.Close())
 	}
 	err = errors.Join(err, s.original.Close())
-	if s.expanded != "" {
-		err = errors.Join(err, os.RemoveAll(s.expanded))
+	if s.archive != nil {
+		err = errors.Join(err, s.archive.Close())
 	}
 	return err
 }
@@ -121,6 +121,9 @@ func (s *Source) isImage() bool {
 }
 
 func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
+	if s.archive != nil {
+		return s.archive, s.archive.Name(), nil
+	}
 	if s.tree != nil {
 		return localFS{s.tree.FS().(fs.ReadLinkFS)}, s.tree.Name(), nil
 	}
@@ -140,18 +143,14 @@ func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
 		if !IsArchive(s.input) {
 			return nil, "", nil
 		}
-		work, err := os.MkdirTemp(s.workspace, ".contents-*")
-		if err != nil {
-			return nil, "", err
-		}
-		s.expanded = work
-		local = filepath.Join(work, "tree")
 		done := plugin.Stage(ctx, "Extracting archive", plugin.Detail(filepath.Base(s.input.Path)))
-		err = archive.Extract(ctx, s.input.Path, local)
+		var err error
+		s.archive, err = archive.Open(ctx, s.input.Path, s.workspace)
 		done(err)
 		if err != nil {
 			return nil, "", err
 		}
+		return s.archive, s.archive.Name(), nil
 	}
 	var err error
 	s.tree, err = os.OpenRoot(local)

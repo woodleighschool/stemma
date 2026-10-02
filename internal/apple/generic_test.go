@@ -10,10 +10,55 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 )
+
+type unreadAttribute struct{ size int64 }
+
+func (v unreadAttribute) Size() int64 { return v.size }
+func (unreadAttribute) ReadAt([]byte, int64) (int, error) {
+	return 0, errors.New("attribute must not be read")
+}
+
+type selectiveAttributes struct {
+	*diskimage.Image
+
+	name  string
+	value appledouble.Value
+}
+
+func (s selectiveAttributes) XattrValues(name string) (map[string]appledouble.Value, error) {
+	values, err := s.Image.XattrValues(name)
+	if err == nil {
+		values[s.name] = s.value
+	}
+	return values, err
+}
+
+func TestGenericSignatureReadsOnlyBoundedSignatureAttributes(t *testing.T) {
+	image, err := diskimage.Open(t.Context(), "testdata/generic.dmg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = image.Close() }()
+	for _, test := range []struct {
+		name, rejection string
+		size            int64
+	}{
+		{appledouble.ResourceForkName, "", 1 << 40},
+		{"com.apple.cs.CodeSignature", "exceeds its size limit", maxSignature + 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := VerifyAppFS(t.Context(), selectiveAttributes{image, test.name, unreadAttribute{test.size}}, genericApp, signature.Signer{})
+			if test.rejection == "" && err != nil || test.rejection != "" && (err == nil || !strings.Contains(err.Error(), test.rejection)) {
+				t.Fatalf("got %v, want %q", err, test.rejection)
+			}
+		})
+	}
+}
 
 const (
 	genericApp     = "GenericFixture.app"

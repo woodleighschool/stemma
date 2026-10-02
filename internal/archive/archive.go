@@ -17,6 +17,7 @@ import (
 	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 	"github.com/mholt/archives"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"golang.org/x/text/unicode/norm"
 )
 
 const maxBytes int64 = 16 << 30
@@ -24,7 +25,11 @@ const maxEntries = 100000
 
 // Extract writes a new directory and removes partial outputs on failure.
 // Device nodes, hard links and escaping paths are rejected.
-func Extract(ctx context.Context, input, destination string) (err error) {
+func Extract(ctx context.Context, input, destination string) error {
+	return extractArchive(ctx, input, destination, nil)
+}
+
+func extractArchive(ctx context.Context, input, destination string, metadata *Tree) (err error) {
 	if err := os.Mkdir(destination, 0o700); err != nil {
 		return err
 	}
@@ -53,13 +58,18 @@ func Extract(ctx context.Context, input, destination string) (err error) {
 		return fmt.Errorf("%s is not a supported archive", input)
 	}
 	err = reader.Extract(ctx, stream, func(_ context.Context, entry archives.FileInfo) error {
-		if appleDouble(entry.NameInArchive) {
+		if metadata == nil && appleDouble(entry.NameInArchive) {
 			return sidecarSignature(entry)
 		}
 		if header, ok := entry.Header.(*tar.Header); ok {
+			if metadata != nil {
+				if err := metadata.pax(ctx, entry.NameInArchive, header.PAXRecords); err != nil {
+					return err
+				}
+			}
 			for key := range header.PAXRecords {
 				// GNU tar and libarchive name extended attributes in PAX records.
-				if strings.HasPrefix(key, "SCHILY.xattr."+codeSignature) || strings.HasPrefix(key, "LIBARCHIVE.xattr."+codeSignature) {
+				if metadata == nil && (strings.HasPrefix(key, "SCHILY.xattr."+codeSignature) || strings.HasPrefix(key, "LIBARCHIVE.xattr."+codeSignature)) {
 					return fmt.Errorf("%s keeps its code signature in extended attributes, which extraction would discard", entry.NameInArchive)
 				}
 			}
@@ -72,6 +82,12 @@ func Extract(ctx context.Context, input, destination string) (err error) {
 		if entry.Size() < 0 || entry.Size() > maxBytes {
 			return errors.New("archive entry exceeds size limit")
 		}
+		if metadata != nil && entry.Size() > maxBytes-x.total-metadata.bytes {
+			return errors.New("archive exceeds expanded size limit")
+		}
+		if metadata != nil && entry.IsDir() && (entry.NameInArchive == "__MACOSX/" || strings.HasPrefix(entry.NameInArchive, "__MACOSX/")) {
+			return nil
+		}
 		if entry.IsDir() || entry.Mode()&os.ModeSymlink != 0 {
 			return x.write(entry.NameInArchive, entry.Mode(), entry.Size(), entry.LinkTarget, strings.NewReader(""))
 		}
@@ -79,7 +95,17 @@ func Extract(ctx context.Context, input, destination string) (err error) {
 		if err != nil {
 			return err
 		}
-		writeErr := x.write(entry.NameInArchive, entry.Mode(), entry.Size(), entry.LinkTarget, data)
+		var writeErr error
+		if metadata != nil && appledouble.IsSidecarName(entry.NameInArchive) {
+			var handled bool
+			var content io.Reader
+			handled, content, writeErr = metadata.sidecar(ctx, entry.NameInArchive, data, entry.Size())
+			if writeErr == nil && !handled {
+				writeErr = x.write(entry.NameInArchive, entry.Mode(), entry.Size(), entry.LinkTarget, content)
+			}
+		} else {
+			writeErr = x.write(entry.NameInArchive, entry.Mode(), entry.Size(), entry.LinkTarget, data)
+		}
 		closeErr := data.Close()
 		if writeErr != nil {
 			return writeErr
@@ -88,6 +114,18 @@ func Extract(ctx context.Context, input, destination string) (err error) {
 	})
 	if err != nil {
 		return err
+	}
+	if metadata != nil {
+		for key, attrs := range metadata.attributes {
+			if key == "." {
+				continue
+			}
+			actual := x.spelling[strings.ToLower(key)]
+			if norm.NFD.String(actual) != key {
+				return fmt.Errorf("metadata owner %s has no exact archive entry", attrs.owner)
+			}
+			attrs.owner = actual
+		}
 	}
 	return x.finish()
 }
@@ -202,10 +240,10 @@ func (x *extractor) write(name string, mode fs.FileMode, size int64, target stri
 	if len(x.seen) >= maxEntries {
 		return errors.New("archive exceeds entry limit")
 	}
-	folded := strings.ToLower(name)
+	folded := strings.ToLower(norm.NFD.String(name))
 	for prefix := name; prefix != "."; prefix = path.Dir(prefix) {
-		key := strings.ToLower(prefix)
-		if prior, exists := x.spelling[key]; exists && prior != prefix {
+		key := strings.ToLower(norm.NFD.String(prefix))
+		if prior, exists := x.spelling[key]; exists && norm.NFD.String(prior) != norm.NFD.String(prefix) {
 			return fmt.Errorf("case-conflicting archive paths %q and %q", prior, prefix)
 		}
 		x.spelling[key] = prefix

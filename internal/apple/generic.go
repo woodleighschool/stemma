@@ -8,6 +8,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 	"github.com/woodleighschool/stemma/internal/signature"
 )
 
@@ -18,7 +19,7 @@ import (
 
 // xattrFS reports extended attributes, as a disk image does.
 type xattrFS interface {
-	Xattrs(name string) (map[string][]byte, error)
+	XattrValues(name string) (map[string]appledouble.Value, error)
 }
 
 const signatureAttribute = "com.apple.cs."
@@ -61,14 +62,14 @@ func isMachO(r io.ReaderAt, size int64) (bool, error) {
 // bundle from the signature in its extended attributes.
 func (v *bundleVerifier) verifyGeneric(location string, r io.ReaderAt, size int64) (codeIdentity, error) {
 	if v.attributes == nil {
-		return codeIdentity{}, fmt.Errorf("%w: generic code keeps its signature in extended attributes, which only a disk image input carries", ErrUnsupported)
+		return codeIdentity{}, fmt.Errorf("%w: generic code requires extended attributes from its source", ErrUnsupported)
 	}
-	xattrs, err := v.attributes.Xattrs(path.Join(v.base, location))
+	xattrs, err := v.attributes.XattrValues(path.Join(v.base, location))
 	if err != nil {
 		return codeIdentity{}, err
 	}
 	sig := &codeSignature{codeSize: size, blobs: map[uint32][]byte{}}
-	for name, blob := range xattrs {
+	for name, value := range xattrs {
 		slotName, ok := strings.CutPrefix(name, signatureAttribute)
 		if !ok {
 			continue
@@ -77,8 +78,12 @@ func (v *bundleVerifier) verifyGeneric(location string, r io.ReaderAt, size int6
 		if !ok {
 			return codeIdentity{}, fmt.Errorf("%w: signature attribute %s", ErrUnsupported, name)
 		}
-		if len(blob) > maxSignature {
+		if value == nil || value.Size() < 0 || value.Size() > maxSignature {
 			return codeIdentity{}, fmt.Errorf("signature attribute %s exceeds its size limit", name)
+		}
+		blob := make([]byte, int(value.Size()))
+		if _, err := io.ReadFull(io.NewSectionReader(contextReaderAt{v.ctx, value}, 0, value.Size()), blob); err != nil {
+			return codeIdentity{}, fmt.Errorf("signature attribute %s: %w", name, err)
 		}
 		if slot == 0x10000 {
 			// The CMS signature is stored bare; an embedded signature wraps it.

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/deploymenttheory/go-apfs-v2/pkg/apfs"
+	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 	"github.com/deploymenttheory/go-apfs-v2/pkg/hfsplus"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/fileio"
@@ -81,6 +82,7 @@ type filesystem interface {
 	// Xattrs returns a file's extended attributes, where codesign keeps the
 	// signature of code that is not a Mach-O.
 	Xattrs(string) (map[string][]byte, error)
+	XattrValues(string) (map[string]appledouble.Value, error)
 }
 
 func openVolume(reader io.ReaderAt, size int64) (filesystem, func(), error) {

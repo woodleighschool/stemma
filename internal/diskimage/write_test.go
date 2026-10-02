@@ -53,7 +53,7 @@ func TestWriteApplicationPreservesTheBundle(t *testing.T) {
 		t.Run(string(compression), func(t *testing.T) {
 			app := bundleFixture(t)
 			output := filepath.Join(t.TempDir(), "Example.dmg")
-			if err := WriteApplication(t.Context(), app, output, compression, imageTime); err != nil {
+			if err := writeApplication(t.Context(), app, output, compression, imageTime); err != nil {
 				t.Fatal(err)
 			}
 			image, err := Open(t.Context(), output)
@@ -127,11 +127,38 @@ func TestWriteApplicationPreservesTheBundle(t *testing.T) {
 	}
 }
 
+func TestWriteApplicationPreservesZeroPermissions(t *testing.T) {
+	if os.PathSeparator == '\\' {
+		t.Skip("Windows does not represent zero Unix permissions")
+	}
+	app := bundleFixture(t)
+	name := filepath.Join(app, "Contents/Resources/empty")
+	if err := os.WriteFile(name, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(name, 0); err != nil {
+		t.Fatal(err)
+	}
+	imagePath := filepath.Join(t.TempDir(), "Example.dmg")
+	if err := writeApplication(t.Context(), app, imagePath, Zlib, imageTime); err != nil {
+		t.Fatal(err)
+	}
+	image, err := Open(t.Context(), imagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = image.Close() }()
+	info, err := image.Lstat("Example.app/Contents/Resources/empty")
+	if err != nil || info.Mode().Perm() != 0 {
+		t.Fatalf("zero permissions replaced by defaults: %v: %v", info, err)
+	}
+}
+
 func TestWriteApplicationIsReproducible(t *testing.T) {
 	digest := func(app string, compression Compression, timestamp time.Time) [sha256.Size]byte {
 		t.Helper()
 		output := filepath.Join(t.TempDir(), "Example.dmg")
-		if err := WriteApplication(t.Context(), app, output, compression, timestamp); err != nil {
+		if err := writeApplication(t.Context(), app, output, compression, timestamp); err != nil {
 			t.Fatal(err)
 		}
 		data, err := os.ReadFile(output)
@@ -181,7 +208,7 @@ func TestWriteApplicationRejectsUnsupportedInput(t *testing.T) {
 		"cancelled context":   {cancelled, app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := WriteApplication(test.ctx, test.app, test.output, test.compression, test.timestamp); err == nil {
+			if err := writeApplication(test.ctx, test.app, test.output, test.compression, test.timestamp); err == nil {
 				t.Fatal("accepted")
 			}
 			entries, err := os.ReadDir(filepath.Dir(test.output))
@@ -205,7 +232,7 @@ func TestWriteApplicationRejectsWhatTheVolumeCannotHold(t *testing.T) {
 		if info, err := os.Lstat(filename); err != nil || info.Mode()&fs.ModeSetuid == 0 {
 			t.Skip("host does not record setuid")
 		}
-		if err := WriteApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime); err == nil {
+		if err := writeApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime); err == nil {
 			t.Fatal("setuid executable accepted")
 		}
 	})
@@ -219,7 +246,7 @@ func TestWriteApplicationRejectsWhatTheVolumeCannotHold(t *testing.T) {
 		if entries, err := os.ReadDir(filepath.Join(app, "Contents/Resources")); err != nil || len(entries) != 3 {
 			t.Skip("host folds case")
 		}
-		if err := WriteApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime); err == nil {
+		if err := writeApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime); err == nil {
 			t.Fatal("case-conflicting names accepted")
 		}
 	})
@@ -228,9 +255,19 @@ func TestWriteApplicationRejectsWhatTheVolumeCannotHold(t *testing.T) {
 		if err := os.Symlink("../../../outside", filepath.Join(app, "Contents/Resources/outside")); err != nil {
 			t.Skip(err)
 		}
-		err := WriteApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime)
+		err := writeApplication(t.Context(), app, filepath.Join(t.TempDir(), "Example.dmg"), LZFSE, imageTime)
 		if err == nil || errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("escaping symlink accepted: %v", err)
 		}
 	})
+}
+
+// Local fixtures use the same logical filesystem boundary as archive inputs.
+func writeApplication(ctx context.Context, app, output string, compression Compression, timestamp time.Time) error {
+	root, err := os.OpenRoot(filepath.Dir(app))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return WriteApplication(ctx, root.FS().(fs.ReadLinkFS), filepath.Base(app), output, compression, timestamp)
 }

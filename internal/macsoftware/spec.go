@@ -15,7 +15,7 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-const Version = "stemma.macsoftware/11"
+const Version = "stemma.macsoftware/12"
 
 // Spec declares a macOS installer, how preparation selects from it and how
 // destinations publish it.

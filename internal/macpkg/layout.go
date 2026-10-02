@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/fileio"
@@ -106,16 +107,16 @@ func (stage *layout) content(ctx context.Context, name string, source io.Reader,
 
 // checkSignatureAttributes rejects signing metadata the payload would discard.
 func checkSignatureAttributes(ctx context.Context, node contents.Node, file fs.File) error {
-	if local, ok := file.(*os.File); ok {
-		return archive.CheckXattrs(ctx, local)
-	}
 	attributes, ok := node.FS.(interface {
-		Xattrs(name string) (map[string][]byte, error)
+		XattrValues(name string) (map[string]appledouble.Value, error)
 	})
 	if !ok {
+		if local, ok := file.(*os.File); ok {
+			return archive.CheckXattrs(ctx, local)
+		}
 		return nil
 	}
-	xattrs, err := attributes.Xattrs(node.Path)
+	xattrs, err := attributes.XattrValues(node.Path)
 	if err != nil {
 		return err
 	}
