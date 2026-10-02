@@ -340,6 +340,12 @@ the provider. See [retention](publishing.md#identity-and-retention).
 
 ## Protocol and runtime
 
+Plugins inherit the host process environment. Use system HTTPS trust and honour
+the runner's `SSL_CERT_FILE` and `SSL_CERT_DIR` overrides; keep CA configuration
+out of operation schemas. Go 1.27+ HTTP clients provide this behaviour by default.
+Clients in other runtimes must honour the same contract. See
+[HTTPS trust](commands.md#https-trust).
+
 The host launches an executable for one request: one JSON object on stdin,
 ending at EOF. The last stdout line is the response, with optional `output` and
 optional `error`. Before it, a plugin may emit newline-delimited messages

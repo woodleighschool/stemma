@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -31,6 +33,41 @@ func TestExecutableProtocol(t *testing.T) {
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build fixture: %v\n%s", err, output)
 	}
+	t.Run("HTTPS trust follows the runner environment", func(t *testing.T) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		t.Cleanup(server.Close)
+		caPath := filepath.Join(t.TempDir(), "ca.pem")
+		if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		emptyPath := filepath.Join(t.TempDir(), "empty.pem")
+		if err := os.WriteFile(emptyPath, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("SSL_CERT_DIR", t.TempDir())
+		request := reconcileRequest(t, plugin.ReconcileRequest[json.RawMessage]{Method: "plan", Config: raw(t, map[string]string{"wait_url": server.URL})})
+		for _, test := range []struct {
+			name, file string
+			trusted    bool
+		}{
+			{"untrusted", emptyPath, false},
+			{"trusted", caPath, true},
+			{"removed", emptyPath, false},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				t.Setenv("SSL_CERT_FILE", test.file)
+				_, err := plugin.Run(t.Context(), binary, request)
+				if test.trusted && err != nil {
+					t.Fatal(err)
+				}
+				if !test.trusted && (err == nil || !strings.Contains(err.Error(), "certificate signed by unknown authority")) {
+					t.Fatalf("untrusted HTTPS error = %v", err)
+				}
+			})
+		}
+	})
 	t.Run("logs stream before completion and obey the caller level", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()

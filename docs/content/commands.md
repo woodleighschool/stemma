@@ -3,6 +3,25 @@
 Run commands from a catalog. Stemma discovers its Git root and `stemma.yaml`.
 `--root` selects another project directory; `--config` selects a Project file.
 
+## HTTPS trust
+
+HTTPS uses the runner's system trust store, including Keychain trust on macOS
+and the certificate store on Windows. Install private CAs there for ordinary use.
+Trust belongs to the runner environment, outside catalog and destination settings.
+
+To supply a PEM trust bundle for a run, set `SSL_CERT_FILE` before starting Stemma:
+
+```sh
+SSL_CERT_FILE=/absolute/path/ca-bundle.pem stemma plan
+```
+
+`SSL_CERT_DIR` selects certificate directories. These are Go's standard trust
+overrides, inherited by plugin processes. With Go 1.27+, setting either also
+replaces native certificate verification on macOS and Windows. Supply all roots
+the run needs, including public CAs when it connects to public services; a private
+CA file does not extend the native trust store. See
+[Go's certificate loading rules](https://pkg.go.dev/crypto/x509#SystemCertPool).
+
 ## Catalog workflow
 
 | Command                           | Purpose                                                                   |

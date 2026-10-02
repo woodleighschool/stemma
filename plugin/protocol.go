@@ -58,7 +58,8 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, registry *Registry)
 }
 
 // Run invokes an explicitly selected executable without a shell or a
-// sandbox. Cancellation ends the process. Partial output survives
+// sandbox, inheriting the caller's environment, including HTTPS trust overrides.
+// Cancellation ends the process. Partial output survives
 // operation/process errors.
 func Run(ctx context.Context, executable string, request Request) (Response, error) {
 	if err := validateRequest(request); err != nil {

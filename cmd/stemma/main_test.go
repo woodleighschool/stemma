@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"maps"
 	"net/http"
@@ -112,8 +113,14 @@ func TestCompiledProjectLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	var downloads atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { downloads.Add(1); _, _ = w.Write(installer) }))
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { downloads.Add(1); _, _ = w.Write(installer) }))
 	defer server.Close()
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("SSL_CERT_FILE", caPath)
+	t.Setenv("SSL_CERT_DIR", t.TempDir())
 	project := t.TempDir()
 	cache := t.TempDir()
 	manifest := fmt.Sprintf(`apiVersion: stemma/v1alpha1
