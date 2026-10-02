@@ -13,7 +13,6 @@ import (
 	"hash/crc32"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -289,7 +288,7 @@ func wingetTestSource(t *testing.T, manifest []byte) map[string][]byte {
 	digest := sha256.Sum256(versions)
 	versionHash := hex.EncodeToString(digest[:])
 	filename := filepath.Join(t.TempDir(), "index.db")
-	db, err := sql.Open("sqlite3", (&url.URL{Scheme: "file", Path: filename}).String())
+	db, err := sql.Open("sqlite3", filename)
 	if err != nil {
 		t.Fatal(err)
 	}
