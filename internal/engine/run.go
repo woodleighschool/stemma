@@ -429,7 +429,7 @@ func (e *execution) inputs(plan resourcePlan, entries map[string]source.Entry) (
 			if err != nil {
 				return nil, err
 			}
-			inputs[name] = Prepared{Payload: ref, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, InputsHash: entry.Content.SHA256, Evidence: entry.Evidence}
+			inputs[name] = Prepared{Payload: ref, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, Version: entry.InputVersion, ContentRoot: entry.ContentRoot, InputsHash: entry.Content.SHA256, Evidence: entry.Evidence}
 			continue
 		}
 		producer := e.prepared[ref.Key()]

@@ -445,6 +445,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			observed.SuppliedFacts = true
 		}
 		observed.EntryPoint = artifact.EntryPoint
+		observed.ContentRoot = artifact.ContentRoot
 		observed.Evidence = artifact.Evidence
 		observed.InputsHash = config.Fingerprint(struct {
 			Artifacts map[string]plugin.Artifact

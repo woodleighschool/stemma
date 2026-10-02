@@ -58,7 +58,7 @@ func registerResolvers(manager *source.Manager, ops *operations, work string) er
 			},
 			Discover: func(ctx context.Context, input plugin.Input) (source.Discovery, error) {
 				response, err := call(ctx, "discover", input, nil, "")
-				result := source.Discovery{Observation: response.Observation, Immutable: response.Immutable, Download: response.Download, Evidence: response.Evidence}
+				result := source.Discovery{Observation: response.Observation, Immutable: response.Immutable, Download: response.Download, Evidence: response.Evidence, Version: response.Version, ContentRoot: response.ContentRoot}
 				if response.Content != nil {
 					result.Content = &source.Content{SHA256: response.Content.SHA256, Filename: response.Content.Filename, Mode: response.Content.Mode, Tree: response.Content.Tree}
 				}

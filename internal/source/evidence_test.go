@@ -16,9 +16,10 @@ import (
 func TestEntryEvidenceRoundTripAndEquality(t *testing.T) {
 	entry := Entry{
 		Version: 1, Resolver: "vendor.release", ResolverVersion: "1", Declaration: strings.Repeat("a", 64),
-		Observation: json.RawMessage(`{}`),
-		Content:     Content{SHA256: strings.Repeat("b", 64), Filename: "input.pkg", Mode: 0o644},
-		Evidence:    map[string]json.RawMessage{"vendor.release": json.RawMessage(`{ "version": "1.2", "id": 9007199254740993, "enabled": false }`)},
+		Observation:  json.RawMessage(`{}`),
+		InputVersion: "1.2", ContentRoot: "vendor/1.2",
+		Content:  Content{SHA256: strings.Repeat("b", 64), Filename: "input.pkg", Mode: 0o644},
+		Evidence: map[string]json.RawMessage{"vendor.release": json.RawMessage(`{ "version": "1.2", "id": 9007199254740993, "enabled": false }`)},
 	}
 	data, err := yaml.Marshal(entry)
 	if err != nil {
@@ -30,6 +31,16 @@ func TestEntryEvidenceRoundTripAndEquality(t *testing.T) {
 	}
 	if err := decoded.Validate(); err != nil {
 		t.Fatal(err)
+	}
+	for _, change := range []func(*Entry){
+		func(e *Entry) { e.InputVersion = "1.3" },
+		func(e *Entry) { e.ContentRoot = "vendor/1.3" },
+	} {
+		changed := decoded
+		change(&changed)
+		if changed.Equal(decoded) || changed.Content != decoded.Content {
+			t.Fatal("input interpretation must change lock state without changing content identity")
+		}
 	}
 	if got := string(decoded.Evidence["vendor.release"]); got != `{"enabled":false,"id":9007199254740993,"version":"1.2"}` || !decoded.Equal(entry) {
 		t.Fatalf("evidence changed across YAML: %s", got)

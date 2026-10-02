@@ -16,7 +16,7 @@ import (
 )
 
 // Version changes when the layout or package derivation changes.
-const Version = "stemma.macpkg/8"
+const Version = "stemma.macpkg/9"
 
 type Spec struct {
 	Inputs     map[string]plugin.Input      `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema_description:"Named source artifacts leased into the build. Refer to them with $input in payload and scripts."`

@@ -132,7 +132,7 @@ func (m *Manager) discoverNative(ctx context.Context, input plugin.Input) (Disco
 		return Discovery{}, err
 	}
 	data, err := json.Marshal(observed)
-	found := Discovery{Observation: data, Immutable: s.Type == "github"}
+	found := Discovery{Observation: data, Immutable: s.Type == "github", Version: observed.Release}
 	digest := s.SHA256
 	if observed.SHA256 != "" {
 		if digest != "" && digest != observed.SHA256 {

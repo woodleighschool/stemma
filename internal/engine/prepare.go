@@ -22,6 +22,7 @@ type Prepared struct {
 	Filename      string                     `json:"filename"`
 	Format        string                     `json:"format"`
 	Version       string                     `json:"version,omitempty"`
+	ContentRoot   string                     `json:"content_root,omitempty"`
 	Tree          bool                       `json:"tree,omitempty"`
 	Facts         plugin.Facts               `json:"facts"`
 	SuppliedFacts bool                       `json:"supplied_facts,omitempty"`

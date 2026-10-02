@@ -229,7 +229,7 @@ func selectWinget(data []byte, config wingetConfig, version string) (Discovery, 
 	if err != nil {
 		return Discovery{}, err
 	}
-	return Discovery{Content: &Content{SHA256: digest, Filename: filename, Mode: 0o644}, Download: &plugin.Download{URL: address}, Observation: observation, Immutable: true, Evidence: map[string]json.RawMessage{"winget.installer": encoded}}, nil
+	return Discovery{Version: version, Content: &Content{SHA256: digest, Filename: filename, Mode: 0o644}, Download: &plugin.Download{URL: address}, Observation: observation, Immutable: true, Evidence: map[string]json.RawMessage{"winget.installer": encoded}}, nil
 }
 
 var wingetInheritedFields = strings.Fields(`InstallerType PackageFamilyName ProductCode InstallerLocale Platform MinimumOSVersion Scope InstallModes InstallerSwitches InstallerSuccessCodes UpgradeBehavior Commands Protocols FileExtensions Dependencies Capabilities RestrictedCapabilities InstallerAbortsTerminal InstallLocationRequired RequireExplicitUpgrade ReleaseDate UnsupportedOSArchitectures ElevationRequirement Markets AppsAndFeaturesEntries ExpectedReturnCodes UnsupportedArguments DisplayInstallWarnings NestedInstallerType NestedInstallerFiles InstallationMetadata DownloadCommandProhibited RepairBehavior ArchiveBinariesDependOnPath Authentication DesiredStateConfiguration`)

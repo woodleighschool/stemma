@@ -248,6 +248,8 @@ type Download struct {
 // the host reuses content it fetched for it before instead of calling run.
 type ResolveResponse struct {
 	Content     *SourceContent             `json:"content,omitempty"`
+	Version     string                     `json:"version,omitempty"`
+	ContentRoot string                     `json:"content_root,omitempty"`
 	Download    *Download                  `json:"download,omitempty"`
 	Evidence    map[string]json.RawMessage `json:"evidence,omitzero"`
 	Observation json.RawMessage            `json:"observation,omitempty"`

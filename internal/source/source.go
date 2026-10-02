@@ -23,6 +23,8 @@ import (
 // observation always fetches the same bytes.
 type Discovery struct {
 	Content     *Content
+	Version     string
+	ContentRoot string
 	Download    *plugin.Download
 	Evidence    map[string]json.RawMessage
 	Observation json.RawMessage
@@ -188,7 +190,7 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 	if err != nil {
 		return Entry{}, false, err
 	}
-	entry := Entry{Version: 1, Resolver: input.Resolver, ResolverVersion: version, Declaration: declaration, Download: found.Download}
+	entry := Entry{Version: 1, Resolver: input.Resolver, ResolverVersion: version, Declaration: declaration, Download: found.Download, InputVersion: found.Version, ContentRoot: found.ContentRoot}
 	entry.Evidence, err = canonicalEvidence(found.Evidence)
 	if err != nil {
 		return Entry{}, false, err
@@ -236,7 +238,7 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 		if found.Evidence == nil {
 			entry.Evidence = locked.Evidence
 		}
-		return entry, m.Store.HasDigest(locked.Content.SHA256), nil
+		return entry, m.Store.HasDigest(locked.Content.SHA256), entry.Validate()
 	}
 	var previous *record
 	if recalled {

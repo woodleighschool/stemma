@@ -106,6 +106,12 @@ The same declaration works when `vendor` is a directory, TAR or DMG containing
 An ordinary file permits only itself; PKGs retain their package semantics and
 cannot be traversed as a generic directory.
 
+A resolver can select a useful content root. Homebrew formula inputs start at
+the formula's files: omit `path` to copy them all, or use `path: libexec` to select
+that directory. The package still declares where those files belong and which
+commands to expose. `{{ inputs.tool.version }}` uses the resolved input version;
+Homebrew includes both formula revision and bottle rebuild in this value.
+
 The lock always identifies the original input. Selecting another member changes
 the build, not the source lock. ZIP/TAR contents expand once per input in the
 build workspace. DMG members are read through the disk-image reader without

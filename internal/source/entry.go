@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
+	"strings"
 
 	"github.com/woodleighschool/stemma/plugin"
 	"go.yaml.in/yaml/v4"
@@ -31,6 +33,8 @@ type Entry struct {
 	Observation     json.RawMessage            `json:"observation" yaml:"observation"`
 	Download        *plugin.Download           `json:"download,omitempty" yaml:"download,omitempty"`
 	Content         Content                    `json:"content" yaml:"content"`
+	InputVersion    string                     `json:"input_version,omitempty" yaml:"input_version,omitempty"`
+	ContentRoot     string                     `json:"content_root,omitempty" yaml:"content_root,omitempty"`
 	Evidence        map[string]json.RawMessage `json:"evidence,omitempty" yaml:"evidence,omitempty"`
 }
 
@@ -48,6 +52,9 @@ func (entry Entry) Validate() error {
 	}
 	if !entry.Content.valid() {
 		return errors.New("invalid locked input content")
+	}
+	if entry.ContentRoot != "" && (!fs.ValidPath(entry.ContentRoot) || strings.ContainsAny(entry.ContentRoot, "\\\x00\r\n\t")) {
+		return errors.New("invalid locked input content root")
 	}
 	if len(entry.Observation) == 0 {
 		return errors.New("missing resolver observation")
@@ -69,6 +76,9 @@ func (content Content) valid() bool {
 
 // Equal compares semantic lock state, including JSON observations and evidence.
 func (entry Entry) Equal(other Entry) bool {
+	if entry.InputVersion != other.InputVersion || entry.ContentRoot != other.ContentRoot {
+		return false
+	}
 	if entry.Version != other.Version || entry.Resolver != other.Resolver || entry.ResolverVersion != other.ResolverVersion || entry.Declaration != other.Declaration || entry.Content != other.Content || !equalDownload(entry.Download, other.Download) || !sameJSON(entry.Observation, other.Observation) {
 		return false
 	}

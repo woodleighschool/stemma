@@ -270,10 +270,18 @@ through `inputs.<name>.evidence`. Fresh discovery evidence replaces the prior ev
 Changing evidence invalidates preparation even
 when the bytes are unchanged.
 
+Discovery can also return `version` and `content_root`. The version is available
+as `inputs.<name>.version`. A content root is a relative directory within the
+input tree, archive or disk image; it scopes `$input` selections, including an
+omitted `path`. Keep source-format knowledge here and installation layout in the
+consuming resource. Both values are reviewed in the lock and reused on frozen
+runs. They do not replace the digest of the original bytes.
+
 Observation remains private to the resolver. A locked fetch verifies bytes and
 uses the lock's saved evidence, ignoring evidence returned by the fetch. Resolver
-artifact versions, formats and typed facts are not persisted; resource kinds own
-their interpretation of the downloaded content. Keep credentials and temporary
+artifact formats and typed facts are not persisted; resource kinds own
+their interpretation of the downloaded content. Supply the input version during
+discovery. Keep credentials and temporary
 URLs out of evidence as well as observations.
 
 ## Destinations

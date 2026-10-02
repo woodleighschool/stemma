@@ -40,6 +40,9 @@ func Open(input plugin.Artifact, workspace string) (*Source, error) {
 	if !filepath.IsAbs(input.Path) || !filepath.IsAbs(workspace) {
 		return nil, errors.New("contents require absolute input and workspace paths")
 	}
+	if input.ContentRoot != "" && (!fs.ValidPath(input.ContentRoot) || strings.ContainsAny(input.ContentRoot, "\\\x00\r\n\t")) {
+		return nil, errors.New("invalid resolved content root")
+	}
 	info, err := os.Lstat(input.Path)
 	if err != nil {
 		return nil, err
@@ -73,15 +76,19 @@ func (s *Source) whole() Node {
 	return Node{FS: localFS{s.original.FS().(fs.ReadLinkFS)}, Path: filepath.Base(s.input.Path), Local: s.input.Path}
 }
 
-// At selects an exact path in the logical contents. An omitted path retains the
-// original artifact; "." selects the contents root of a tree, archive or DMG.
+// At selects an exact path in the logical contents. A resolver-selected root
+// scopes every selection. Otherwise an omitted path retains the original
+// artifact and "." selects the contents root of a tree, archive or DMG.
 // Scalar files, including PKGs, allow only themselves to be selected.
 func (s *Source) At(ctx context.Context, name string) (Node, error) {
 	if err := ctx.Err(); err != nil {
 		return Node{}, err
 	}
-	if name == "" {
+	if name == "" && s.input.ContentRoot == "" {
 		return s.whole(), nil
+	}
+	if name == "" {
+		name = "."
 	}
 	if !fs.ValidPath(name) || strings.ContainsAny(name, "\\\x00\r\n\t") {
 		return Node{}, fmt.Errorf("invalid content path %q", name)
@@ -91,10 +98,24 @@ func (s *Source) At(ctx context.Context, name string) (Node, error) {
 		return Node{}, err
 	}
 	if tree == nil {
+		if s.input.ContentRoot != "" {
+			return Node{}, errors.New("resolved content root requires a tree, archive or disk image")
+		}
 		if name != "." {
 			return Node{}, errors.New("cannot traverse a scalar input (PKGs remain package artifacts)")
 		}
 		return s.whole(), nil
+	}
+	if s.input.ContentRoot != "" {
+		root := Node{FS: tree, Path: s.input.ContentRoot}
+		info, err := root.Stat()
+		if err != nil {
+			return Node{}, fmt.Errorf("resolved content root: %w", err)
+		}
+		if !info.IsDir() {
+			return Node{}, errors.New("resolved content root must be a directory, not a symlink or file")
+		}
+		name = path.Join(s.input.ContentRoot, name)
 	}
 	node := Node{FS: tree, Path: name, image: s.image}
 	if local != "" {

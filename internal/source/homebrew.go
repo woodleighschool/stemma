@@ -329,6 +329,11 @@ func (m *Manager) discoverHomebrew(ctx context.Context, input plugin.Input) (Dis
 	observation, _ := json.Marshal(observed)
 	claims, _ := json.Marshal(evidence)
 	found := Discovery{Observation: observation, Evidence: map[string]json.RawMessage{"homebrew." + kind: claims}}
+	found.Version = evidence.Version
+	if observed.Bottle {
+		found.Version = fmt.Sprintf("%s.%d.%d", evidence.Version, *evidence.Revision, *evidence.Rebuild)
+		found.ContentRoot = evidence.PayloadRoot
+	}
 	if observed.SHA256 != "" {
 		found.Content = &Content{SHA256: observed.SHA256, Filename: observed.Filename, Mode: 0o644}
 	}

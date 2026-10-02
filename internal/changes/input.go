@@ -58,6 +58,12 @@ func inputValue(entry *source.Entry, comparing bool) map[string]any {
 		"filename": entry.Content.Filename,
 		"sha256":   entry.Content.SHA256,
 	}
+	if entry.InputVersion != "" || comparing {
+		fields["version"] = entry.InputVersion
+	}
+	if entry.ContentRoot != "" || comparing {
+		fields["content_root"] = entry.ContentRoot
+	}
 	if entry.Content.Mode != 0 && entry.Content.Mode != 0o644 || comparing {
 		fields["mode"] = fmt.Sprintf("%04o", entry.Content.Mode)
 	}

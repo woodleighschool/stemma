@@ -169,7 +169,7 @@ func download(ctx context.Context, request plugin.ResolveRequest[downloadConfig]
 		_ = response.Body.Close()
 		observed.Revision = response.Header.Get("X-Fixture-Revision")
 		observation, err := json.Marshal(observed)
-		return plugin.ResolveResponse{Observation: observation}, err
+		return plugin.ResolveResponse{Observation: observation, Version: response.Header.Get("X-Fixture-Version"), ContentRoot: response.Header.Get("X-Fixture-Content-Root")}, err
 	}
 	if err := json.Unmarshal(request.Observation, &observed); err != nil {
 		return plugin.ResolveResponse{}, err

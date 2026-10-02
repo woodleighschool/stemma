@@ -61,17 +61,18 @@ func (i Identity) Digest() string {
 // Artifact is an immutable file or tree leased by the engine, never a writable
 // cache object. Version is selected by a consumer; Facts retain observed versions.
 type Artifact struct {
-	Mode       uint32                     `json:"mode,omitempty"`
-	EntryPoint string                     `json:"entry_point,omitempty"`
-	Evidence   map[string]json.RawMessage `json:"evidence,omitempty"`
-	Path       string                     `json:"path"`
-	SHA256     string                     `json:"sha256"`
-	Size       int64                      `json:"size"`
-	Filename   string                     `json:"filename"`
-	Format     string                     `json:"format,omitempty"`
-	Tree       bool                       `json:"tree,omitempty"`
-	Version    string                     `json:"version,omitempty"`
-	Facts      Facts                      `json:"facts,omitzero"`
+	ContentRoot string                     `json:"content_root,omitempty"`
+	Mode        uint32                     `json:"mode,omitempty"`
+	EntryPoint  string                     `json:"entry_point,omitempty"`
+	Evidence    map[string]json.RawMessage `json:"evidence,omitempty"`
+	Path        string                     `json:"path"`
+	SHA256      string                     `json:"sha256"`
+	Size        int64                      `json:"size"`
+	Filename    string                     `json:"filename"`
+	Format      string                     `json:"format,omitempty"`
+	Tree        bool                       `json:"tree,omitempty"`
+	Version     string                     `json:"version,omitempty"`
+	Facts       Facts                      `json:"facts,omitzero"`
 }
 
 // ReconcileRequest carries native desired state. Raw JSON retains absent, null,

@@ -114,6 +114,12 @@ layout, including support files and command links, then publish that package
 with `MacSoftware`. `MacSoftware` requires an application or installer; it does
 not choose an installation location for a command-line tool.
 
+In a build, `inputs.<name>.version` includes the upstream version, formula
+revision and bottle rebuild, for example `1.56.1.0.0`. `$input` selects the
+formula's content root, so `path: libexec` works without knowing the bottle's
+archive layout. Omitting `path` copies that whole root. Detailed Homebrew claims
+remain available in `inputs.<name>.evidence`.
+
 ## Follow WinGet releases
 
 WinGet also supplies installer hashes: checking for updates does not require

@@ -27,7 +27,7 @@ func TestHomebrewSelectsMetadataWithoutDownloading(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry.Content.SHA256 != strings.Repeat("a", 64) || entry.Content.Filename != "Example-arm.dmg" || requests != 1 {
+	if entry.Content.SHA256 != strings.Repeat("a", 64) || entry.Content.Filename != "Example-arm.dmg" || entry.InputVersion != "2.0" || entry.ContentRoot != "" || requests != 1 {
 		t.Fatalf("entry %+v requests=%d", entry, requests)
 	}
 	input.Config["architecture"] = "x86_64"
@@ -43,6 +43,8 @@ func TestHomebrewSelectsMetadataWithoutDownloading(t *testing.T) {
 func TestHomebrewBottleConstraintsAndFrozenReplay(t *testing.T) {
 	for _, test := range []struct{ name, patch, failure string }{
 		{"standalone", ``, ``},
+		{"formula revision", `,"revision":2`, ``},
+		{"bottle rebuild", `,"bottle":{"stable":{"rebuild":3,"files":{"arm64_golden_gate":{"cellar":":any_skip_relocation","url":"https://ghcr.io/v2/homebrew/core/example/blobs/sha256:HASH","sha256":"HASH"}}}}`, ``},
 		{"relocation", `,"bottle":{"stable":{"files":{"arm64_golden_gate":{"cellar":":any","url":"https://ghcr.io/v2/homebrew/core/example/blobs/sha256:HASH","sha256":"HASH"}}}}`, "relocation"},
 		{"dependencies", `,"dependencies":["ncurses"]`, "dependencies"},
 		{"post-install", `,"post_install_defined":true`, "post-install"},
@@ -77,6 +79,16 @@ func TestHomebrewBottleConstraintsAndFrozenReplay(t *testing.T) {
 			}
 			if downloads != 0 || entry.Content.SHA256 != sum {
 				t.Fatalf("update downloaded: %+v", entry)
+			}
+			version, root := "1.0.0.0", "example/1.0"
+			if test.name == "formula revision" {
+				version, root = "1.0.2.0", "example/1.0_2"
+			}
+			if test.name == "bottle rebuild" {
+				version = "1.0.0.3"
+			}
+			if entry.InputVersion != version || entry.ContentRoot != root {
+				t.Fatalf("incorrect bottle identity/root: %+v", entry)
 			}
 			if _, err = m.FetchLocked(t.Context(), input, entry); err != nil {
 				t.Fatal(err)

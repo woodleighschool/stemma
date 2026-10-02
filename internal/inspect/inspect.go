@@ -142,6 +142,9 @@ func readTree(ctx context.Context, name string) ([]plugin.Subject, error) {
 // its open contents; a local tree or file is read in place.
 func Source(ctx context.Context, source *contents.Source) (plugin.Facts, error) {
 	input := source.Artifact()
+	if input.ContentRoot != "" {
+		return Selection(ctx, source, ".")
+	}
 	if input.Tree || !source.Traversable() {
 		return Read(ctx, input.Path)
 	}
@@ -256,8 +259,11 @@ func isDMG(f *os.File, size int64) bool {
 // Selection inventories only the subtree a consumer copies, retaining paths
 // relative to the source. Unselected siblings do not participate in inspection.
 func Selection(ctx context.Context, source *contents.Source, selection string) (plugin.Facts, error) {
-	if selection == "" || selection == "." {
+	if (selection == "" || selection == ".") && source.Artifact().ContentRoot == "" {
 		return Source(ctx, source)
+	}
+	if selection == "" {
+		selection = "."
 	}
 	node, err := source.At(ctx, selection)
 	if err != nil {

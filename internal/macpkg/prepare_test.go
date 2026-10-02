@@ -140,6 +140,45 @@ func TestPrepareUsesOnlyTheRequestEnvironment(t *testing.T) {
 	}
 }
 
+func TestPrepareResolvedRootAndVersion(t *testing.T) {
+	root, original := prepareApplication(t, "tool/1.2/Example.app")
+	packed := filepath.Join(t.TempDir(), "tool.zip")
+	testarchive.Zip(t, packed, root)
+	input := plugin.Artifact{Path: packed, Filename: "tool.zip", Version: "1.2.2.3", ContentRoot: "tool/1.2"}
+	for _, selected := range []string{"", "Example.app"} {
+		t.Run(selected, func(t *testing.T) {
+			config := map[string]any{
+				"package": map[string]any{"identifier": "org.example.tool", "version": "{{ inputs.tool.version }}"},
+				"payload": map[string]any{"/usr/local/libexec/tool": map[string]any{"$input": "tool", "path": selected}},
+			}
+			artifact, err := Prepare(t.Context(), prepareRequest(t, config, map[string]plugin.Artifact{"tool": input}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if artifact.Version != "1.2.2.3" {
+				t.Fatalf("version=%s", artifact.Version)
+			}
+			files, _ := packageArchive(t, artifact.Path, "Payload")
+			name := "usr/local/libexec/tool/Contents/Info.plist"
+			if selected == "" {
+				name = "usr/local/libexec/tool/Example.app/Contents/Info.plist"
+			}
+			if files[name] != original["tool/1.2/Example.app/Contents/Info.plist"] {
+				t.Fatal("package did not use resolved content root")
+			}
+			if _, ok := files["usr/local/libexec/tool/tenant.json"]; ok {
+				t.Fatal("unselected sibling entered package")
+			}
+			sources := newSources(map[string]plugin.Artifact{"tool": input}, t.TempDir())
+			defer sources.close()
+			facts, err := inputFacts(t.Context(), sources, "tool")
+			if err != nil || len(facts) != 2 || facts["Example.app"].Path != "Example.app" {
+				t.Fatalf("facts escaped resolved root: %+v %v", facts, err)
+			}
+		})
+	}
+}
+
 func TestPrepareRejectsWrongResolvedTypesAndMissingInputMetadata(t *testing.T) {
 	for _, test := range []struct {
 		name    string

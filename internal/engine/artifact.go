@@ -47,7 +47,7 @@ func (o *operations) check(name string, preparation bool) error {
 }
 
 func (p Prepared) artifact() plugin.Artifact {
-	return plugin.Artifact{Mode: p.Mode, Path: p.Path, SHA256: p.Payload.SHA256, Size: p.Payload.Size, Filename: p.Filename, Format: p.Format, Version: p.Version, Tree: p.Tree, Facts: p.Facts, EntryPoint: p.EntryPoint, Evidence: p.Evidence}
+	return plugin.Artifact{Mode: p.Mode, Path: p.Path, SHA256: p.Payload.SHA256, Size: p.Payload.Size, Filename: p.Filename, Format: p.Format, Version: p.Version, ContentRoot: p.ContentRoot, Tree: p.Tree, Facts: p.Facts, EntryPoint: p.EntryPoint, Evidence: p.Evidence}
 }
 
 func importPath(ctx context.Context, store *cas.Store, path string, tree bool, work string) (cas.Ref, error) {
