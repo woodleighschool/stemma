@@ -133,7 +133,7 @@ func verifyInputs(ctx context.Context, sources *sources, spec Spec, derive bool)
 	}
 	var observations []signature.Observation
 	for _, name := range slices.Sorted(maps.Keys(selections)) {
-		source, err := sources.get(name)
+		source, err := sources.get(ctx, name)
 		if err != nil {
 			return nil, err
 		}

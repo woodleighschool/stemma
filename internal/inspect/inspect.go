@@ -94,8 +94,8 @@ func Read(ctx context.Context, name string) (plugin.Facts, error) {
 		root.MSI = &plugin.MSIFacts{ProductCode: metadata.ProductCode, ProductVersion: metadata.ProductVersion, ProductName: metadata.ProductName, Manufacturer: metadata.Manufacturer, UpgradeCode: metadata.UpgradeCode, PackageCode: metadata.PackageCode, Properties: metadata.Properties}
 	case ext == ".pkg" || ext == ".msi" || ext == ".app":
 		return plugin.Facts{}, fmt.Errorf("inspect: malformed %s artifact", ext)
-	case ext == ".dmg" || isDMG(f, info.Size()):
-		if !isDMG(f, info.Size()) {
+	case ext == ".dmg" || diskimage.HasTrailer(f, info.Size()):
+		if !diskimage.HasTrailer(f, info.Size()) {
 			return plugin.Facts{}, fmt.Errorf("inspect: malformed DMG artifact")
 		}
 		root.Kind = "container"
@@ -245,15 +245,6 @@ func packageSubjects(pkg apple.PackageFacts) ([]plugin.Subject, error) {
 
 func appFacts(app apple.AppFacts) *plugin.AppFacts {
 	return &plugin.AppFacts{BundleID: app.BundleID, Name: app.Name, Version: app.Version, Build: app.Build, Executable: app.Executable, IconFile: app.IconFile, IconName: app.IconName, MinimumOS: app.MinimumOS}
-}
-
-func isDMG(f *os.File, size int64) bool {
-	if size < 512 {
-		return false
-	}
-	var trailer [4]byte
-	_, err := f.ReadAt(trailer[:], size-512)
-	return err == nil && string(trailer[:]) == "koly"
 }
 
 // Selection inventories only the subtree a consumer copies, retaining paths

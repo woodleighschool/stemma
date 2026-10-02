@@ -23,6 +23,44 @@ import (
 const maxBytes int64 = 16 << 30
 const maxEntries = 100000
 
+// IsArchive recognizes ZIP and TAR contents without relying on a download URL's
+// filename. A format claimed by the name is still opened, so malformed archives
+// fail extraction instead of silently becoming scalar inputs.
+func IsArchive(ctx context.Context, name string) (bool, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = f.Close() }()
+	format, _, err := identify(ctx, name, f)
+	if errors.Is(err, archives.NoMatch) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	switch format := format.(type) {
+	case archives.Zip, archives.Tar:
+		return true, nil
+	case archives.CompressedArchive:
+		_, tar := format.Extraction.(archives.Tar)
+		return tar, nil
+	}
+	return false, nil
+}
+
+func identify(ctx context.Context, name string, f *os.File) (archives.Format, io.Reader, error) {
+	format, _, err := archives.Identify(ctx, "", fileio.Reader{Context: ctx, Reader: io.LimitReader(f, 1<<20)})
+	if _, seekErr := f.Seek(0, io.SeekStart); seekErr != nil {
+		return nil, nil, seekErr
+	}
+	if errors.Is(err, archives.NoMatch) {
+		// Empty TAR archives have no member header to identify by content.
+		format, _, err = archives.Identify(ctx, name, nil)
+	}
+	return format, f, err
+}
+
 // Extract writes a new directory and removes partial outputs on failure.
 // Device nodes, hard links and escaping paths are rejected.
 func Extract(ctx context.Context, input, destination string) error {
@@ -49,7 +87,7 @@ func extractArchive(ctx context.Context, input, destination string, metadata *Tr
 		return err
 	}
 	defer func() { _ = f.Close() }()
-	format, stream, err := archives.Identify(ctx, input, f)
+	format, stream, err := identify(ctx, input, f)
 	if err != nil {
 		return err
 	}

@@ -124,7 +124,7 @@ func (stage *layout) script(ctx context.Context, name string, script Script, sou
 }
 
 func (stage *layout) input(ctx context.Context, name, inputName, selection string, sources *sources, attrs pkgbuild.EntryMetadata) error {
-	source, err := sources.get(inputName)
+	source, err := sources.get(ctx, inputName)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func (s *sources) inventory(ctx context.Context, name string) (plugin.Facts, err
 	if facts, ok := s.facts[name]; ok {
 		return facts, nil
 	}
-	source, err := s.get(name)
+	source, err := s.get(ctx, name)
 	if err != nil {
 		return plugin.Facts{}, err
 	}
@@ -169,7 +169,7 @@ func (s *sources) inventory(ctx context.Context, name string) (plugin.Facts, err
 	return facts, nil
 }
 
-func (s *sources) get(name string) (*contents.Source, error) {
+func (s *sources) get(ctx context.Context, name string) (*contents.Source, error) {
 	if source := s.open[name]; source != nil {
 		return source, nil
 	}
@@ -177,7 +177,7 @@ func (s *sources) get(name string) (*contents.Source, error) {
 	if !ok {
 		return nil, fmt.Errorf("unknown input %q", name)
 	}
-	source, err := contents.Open(input, s.workspace)
+	source, err := contents.Open(ctx, input, s.workspace)
 	if err != nil {
 		return nil, fmt.Errorf("input %q: %w", name, err)
 	}

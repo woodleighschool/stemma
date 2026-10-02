@@ -235,12 +235,21 @@ func TestDMGApplicationRetainsVendorBytes(t *testing.T) {
 	}
 }
 
-func TestPrepareRejectsUnrecognizedContainerFormat(t *testing.T) {
+func TestPrepareRecognizesOpaqueDiskImage(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "download.bin")
 	testdiskimage.Write(t, filename, applicationFixture(t))
-	_, err := Prepare(t.Context(), Spec{}, Request{Input: plugin.Artifact{Path: filename, Filename: "download.bin"}, Workspace: t.TempDir()})
-	if err == nil {
-		t.Fatal("disk image was accepted as a scalar PKG")
+	outputs, err := Prepare(t.Context(), Spec{}, Request{Input: plugin.Artifact{Path: filename, Filename: "download.bin"}, Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := outputs["installer"]
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(data)
+	if artifact.Format != "dmg" || artifact.SHA256 != hex.EncodeToString(sum[:]) || artifact.Version != "1.2" {
+		t.Fatalf("disk image = %+v", artifact)
 	}
 }
 

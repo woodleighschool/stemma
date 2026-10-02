@@ -46,7 +46,7 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	if !filepath.IsAbs(workspace) || !filepath.IsAbs(input.Path) {
 		return nil, errors.New("preparation requires absolute workspace and leased input paths")
 	}
-	source, err := contents.Open(input, workspace)
+	source, err := contents.Open(ctx, input, workspace)
 	if err != nil {
 		return nil, err
 	}

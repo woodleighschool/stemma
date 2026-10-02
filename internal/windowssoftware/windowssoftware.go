@@ -16,7 +16,6 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/authenticode"
-	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/icon"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
@@ -111,7 +110,13 @@ func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, 
 		return nil, err
 	}
 	// An archive holds a setup directory, never an installer to run as is.
-	archived := !source.Tree && contents.IsArchive(source)
+	archived := false
+	if !source.Tree {
+		archived, err = archive.IsArchive(ctx, source.Path)
+		if err != nil {
+			return nil, fmt.Errorf("identify source: %w", err)
+		}
+	}
 	if !source.Tree && !archived && (!relative(source.Filename) || path.Base(source.Filename) != source.Filename) {
 		return nil, errors.New("vendor installer requires a safe base filename")
 	}

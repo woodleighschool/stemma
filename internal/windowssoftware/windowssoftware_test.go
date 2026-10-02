@@ -375,3 +375,23 @@ func TestUnsignedSetupExpectationsUsePreparedPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestOpaqueArchiveSelectsInstaller(t *testing.T) {
+	msi, err := os.ReadFile("../msi/testdata/test.msi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vendor := writeZip(t, map[string]string{"bin/vendor.msi": string(msi)})
+	opaque := filepath.Join(filepath.Dir(vendor), "latest")
+	if err := os.Rename(vendor, opaque); err != nil {
+		t.Fatal(err)
+	}
+	outputs, err := Prepare(t.Context(), Spec{}, map[string]plugin.Artifact{"source": {Path: opaque, Filename: "latest"}}, t.TempDir(), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := outputs["installer"]
+	if !artifact.Tree || artifact.EntryPoint != "bin/vendor.msi" || artifact.Version != "1.2.3" {
+		t.Fatalf("installer = %+v", artifact)
+	}
+}

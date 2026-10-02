@@ -22,6 +22,7 @@ type Source struct {
 	input     plugin.Artifact
 	workspace string
 	original  *os.Root
+	container string
 	tree      *os.Root
 	image     *diskimage.Image
 	archive   *archive.Tree
@@ -36,7 +37,10 @@ type Node struct {
 	image *diskimage.Image
 }
 
-func Open(input plugin.Artifact, workspace string) (*Source, error) {
+func Open(ctx context.Context, input plugin.Artifact, workspace string) (*Source, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !filepath.IsAbs(input.Path) || !filepath.IsAbs(workspace) {
 		return nil, errors.New("contents require absolute input and workspace paths")
 	}
@@ -54,7 +58,25 @@ func Open(input plugin.Artifact, workspace string) (*Source, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Source{input: input, workspace: workspace, original: root}, nil
+	source := &Source{input: input, workspace: workspace, original: root}
+	if !input.Tree {
+		file, err := root.Open(filepath.Base(input.Path))
+		if err != nil {
+			_ = root.Close()
+			return nil, err
+		}
+		image := diskimage.HasTrailer(file, info.Size())
+		_ = file.Close()
+		if image || input.Format == "dmg" || strings.EqualFold(filepath.Ext(input.Filename), ".dmg") {
+			source.container = "dmg"
+		} else if archived, err := archive.IsArchive(ctx, input.Path); err != nil {
+			_ = root.Close()
+			return nil, fmt.Errorf("identify input: %w", err)
+		} else if archived {
+			source.container = "archive"
+		}
+	}
+	return source, nil
 }
 
 func (s *Source) Close() error {
@@ -131,15 +153,7 @@ func (s *Source) At(ctx context.Context, name string) (Node, error) {
 func (s *Source) Artifact() plugin.Artifact { return s.input }
 
 func (s *Source) IsImage() bool     { return s.image != nil }
-func (s *Source) Traversable() bool { return s.input.Tree || s.isImage() || IsArchive(s.input) }
-
-func (s *Source) isImage() bool {
-	name := s.input.Filename
-	if name == "" {
-		name = filepath.Base(s.input.Path)
-	}
-	return !s.input.Tree && (s.input.Format == "dmg" || strings.EqualFold(filepath.Ext(name), ".dmg"))
-}
+func (s *Source) Traversable() bool { return s.input.Tree || s.container != "" }
 
 func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
 	if s.archive != nil {
@@ -151,7 +165,7 @@ func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
 	if s.image != nil {
 		return s.image, "", nil
 	}
-	if s.isImage() {
+	if s.container == "dmg" {
 		var err error
 		s.image, err = diskimage.Open(ctx, s.input.Path)
 		if err != nil {
@@ -161,7 +175,7 @@ func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
 	}
 	local := s.input.Path
 	if !s.input.Tree {
-		if !IsArchive(s.input) {
+		if s.container != "archive" {
 			return nil, "", nil
 		}
 		done := plugin.Stage(ctx, "Extracting archive", plugin.Detail(filepath.Base(s.input.Path)))
@@ -179,15 +193,6 @@ func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
 		return nil, "", err
 	}
 	return localFS{s.tree.FS().(fs.ReadLinkFS)}, local, nil
-}
-
-// IsArchive reports whether input is a ZIP or TAR archive by its format or filename.
-func IsArchive(input plugin.Artifact) bool {
-	name := strings.ToLower(input.Filename)
-	if name == "" {
-		name = strings.ToLower(filepath.Base(input.Path))
-	}
-	return input.Format == "zip" || input.Format == "tar" || strings.HasSuffix(name, ".zip") || strings.HasSuffix(name, ".tar") || strings.HasSuffix(name, ".tar.gz") || strings.HasSuffix(name, ".tgz")
 }
 
 // Stat rejects traversal through links. A selected link itself is returned so

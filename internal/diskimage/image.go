@@ -21,6 +21,17 @@ type Image struct {
 	closeVolume func()
 }
 
+// HasTrailer recognizes a UDIF disk image independently of its filename.
+// Open validates the complete image before exposing its contents.
+func HasTrailer(source io.ReaderAt, size int64) bool {
+	if size < 512 {
+		return false
+	}
+	var trailer [4]byte
+	_, err := source.ReadAt(trailer[:], size-512)
+	return err == nil && string(trailer[:]) == "koly"
+}
+
 // Open reads DMG metadata and opens its single filesystem. Data chunks are
 // decompressed by filesystem reads, without creating a raw filesystem image.
 func Open(ctx context.Context, filename string) (*Image, error) {

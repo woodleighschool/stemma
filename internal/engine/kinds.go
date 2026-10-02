@@ -29,7 +29,7 @@ func registerKinds(ops *operations) error {
 	}
 	ops.identity["build.mac.pkg"] = macpkg.Version
 	ops.identity["software.mac"] = macsoftware.Version
-	ops.identity["software.windows"] = "windowssoftware/2"
+	ops.identity["software.windows"] = "windowssoftware/3"
 	return nil
 }
 
