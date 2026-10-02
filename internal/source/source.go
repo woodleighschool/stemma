@@ -98,6 +98,8 @@ func (m *Manager) resolver(name string) (Resolver, error) {
 		return resolver, nil
 	}
 	switch name {
+	case "homebrew":
+		return m.homebrewResolver(), nil
 	case "http", "github":
 		return Resolver{Version: "1"}, nil
 	case "file", "local":
@@ -341,6 +343,9 @@ func (m *Manager) acquire(ctx context.Context, resolver Resolver, input plugin.I
 // fetch acquires the content an observation names. Only native HTTP uses the
 // previous record, reusing it when the server confirms it still stands.
 func (m *Manager) fetch(ctx context.Context, resolver Resolver, input plugin.Input, observation json.RawMessage, previous *record) (record, bool, error) {
+	if input.Resolver == "homebrew" {
+		return m.fetchHomebrew(ctx, observation, previous)
+	}
 	if resolver.Discover == nil {
 		return m.fetchNative(ctx, input, observation, previous)
 	}

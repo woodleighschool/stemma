@@ -10,6 +10,7 @@ import (
 	"path"
 	"strings"
 
+	"github.com/oras-project/oras-go/v3/registry/remote/auth"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -49,7 +50,12 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, address string, 
 			req.Header.Set("If-Modified-Since", previous.LastModified)
 		}
 	}
-	res, err := m.Client.Do(req)
+	do := m.Client.Do
+	if s.Type == "homebrew" {
+		client := &auth.Client{Client: m.Client, Cache: auth.NewCache()}
+		do = client.Do
+	}
+	res, err := do(req)
 	if err != nil {
 		return record{}, false, transportError("download", err)
 	}

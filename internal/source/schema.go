@@ -11,11 +11,17 @@ import (
 
 // Resolvers names the built-in resolvers. A url alone selects http and a path
 // alone selects file.
-func Resolvers() []string { return []string{"http", "github", "file", "local"} }
+func Resolvers() []string { return []string{"http", "github", "file", "local", "homebrew"} }
 
 // ResolverSchema describes a built-in resolver's settings beside the resolver
 // field, or returns nil for a name that is not built in.
 func ResolverSchema(resolver string) *jsonschema.Schema {
+	if resolver == "homebrew" {
+		config := (&jsonschema.Reflector{DoNotReference: true}).Reflect(homebrewConfig{})
+		config.Version, config.ID = "", ""
+		config.OneOf = []*jsonschema.Schema{{Required: []string{"cask"}, Not: &jsonschema.Schema{Required: []string{"formula"}}}, {Required: []string{"formula"}, Not: &jsonschema.Schema{Required: []string{"cask"}}}}
+		return config
+	}
 	fields, ok := nativeFields[resolver]
 	if !ok {
 		return nil

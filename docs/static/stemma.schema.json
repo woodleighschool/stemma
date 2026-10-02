@@ -1507,6 +1507,110 @@
             "resolver"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "not": {
+                "required": [
+                  "formula"
+                ]
+              },
+              "required": [
+                "cask"
+              ]
+            },
+            {
+              "not": {
+                "required": [
+                  "cask"
+                ]
+              },
+              "required": [
+                "formula"
+              ]
+            }
+          ],
+          "properties": {
+            "architecture": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "arm64",
+                    "x86_64"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Target architecture. Defaults to arm64, independently of the runner."
+            },
+            "cask": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Homebrew cask token. Selects its vendor download; no cask actions run."
+            },
+            "formula": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Homebrew core formula token. Selects a standalone bottle requiring no relocation, runtime formula dependencies or post-install actions. No source-build fallback."
+            },
+            "language": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Cask language alias. Omit for the cask's declared default language."
+            },
+            "macos": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Target macOS major version. Omit for the current supported release (27). Update locks the concrete target and selected variant."
+            },
+            "resolver": {
+              "const": "homebrew",
+              "description": "Built-in resolver selecting this input."
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "\\{\\{"
+            }
+          },
+          "required": [
+            "resolver"
+          ],
+          "type": "object"
         }
       ],
       "type": "object"
@@ -8217,6 +8321,101 @@
                 }
               ],
               "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "\\{\\{"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "formula"
+                ]
+              }
+            },
+            {
+              "not": {
+                "required": [
+                  "cask"
+                ]
+              }
+            }
+          ],
+          "properties": {
+            "architecture": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "arm64",
+                    "x86_64"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Target architecture. Defaults to arm64, independently of the runner."
+            },
+            "cask": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Homebrew cask token. Selects its vendor download; no cask actions run."
+            },
+            "formula": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Homebrew core formula token. Selects a standalone bottle requiring no relocation, runtime formula dependencies or post-install actions. No source-build fallback."
+            },
+            "language": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Cask language alias. Omit for the cask's declared default language."
+            },
+            "macos": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Target macOS major version. Omit for the current supported release (27). Update locks the concrete target and selected variant."
+            },
+            "resolver": {
+              "const": "homebrew",
+              "description": "Built-in resolver selecting this input."
             }
           },
           "propertyNames": {

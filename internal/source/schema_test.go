@@ -24,6 +24,10 @@ func TestNativeInputSchemaAndValidation(t *testing.T) {
 		{"GitHub prereleases", `{"resolver":"github","repository":"company/application","asset":"App.pkg","include_prereleases":true}`, true},
 		{"GitHub prereleases string", `{"resolver":"github","repository":"company/application","asset":"App.pkg","include_prereleases":"true"}`, false},
 		{"HTTP prereleases", `{"url":"https://example.test/App.pkg","include_prereleases":true}`, false},
+		{"Homebrew cask", `{"resolver":"homebrew","cask":"vlc"}`, true},
+		{"Homebrew formula", `{"resolver":"homebrew","formula":"mole","macos":"27"}`, true},
+		{"Homebrew missing selection", `{"resolver":"homebrew"}`, false},
+		{"Homebrew both", `{"resolver":"homebrew","formula":"mole","cask":"vlc"}`, false},
 		{"GitHub missing asset", `{"resolver":"github","repository":"company/application"}`, false},
 		{"GitHub empty asset", `{"resolver":"github","repository":"company/application","asset":""}`, false},
 		{"GitHub foreign regex", `{"resolver":"github","repository":"company/application","asset":"App.pkg","match":""}`, false},
@@ -43,7 +47,7 @@ func TestNativeInputSchemaAndValidation(t *testing.T) {
 			var input plugin.Input
 			err := json.Unmarshal(data, &input)
 			if err == nil {
-				_, err = native(input)
+				err = ValidateInput(input)
 			}
 			if (err == nil) != test.valid {
 				t.Errorf("runtime: %v, want valid=%v", err, test.valid)
@@ -84,7 +88,7 @@ func TestSourceDocumentationExamples(t *testing.T) {
 			t.Fatal(err)
 		}
 		if input.Resource == nil {
-			if _, err := native(input); err != nil {
+			if err := ValidateInput(input); err != nil {
 				t.Fatalf("example runtime: %v", err)
 			}
 		}

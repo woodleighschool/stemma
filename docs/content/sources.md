@@ -83,6 +83,36 @@ repeat discovery or reapply the pattern. Credentials remain confined to the
 configured source origin. Discovery belongs to the resolver; the software kind still receives
 one file. External plugins can supply other [resolvers](writing-plugins.md#resolvers).
 
+## Homebrew metadata
+
+```yaml
+source:
+  resolver: homebrew
+  cask: vlc
+```
+
+A cask selects the vendor download. `architecture` defaults to `arm64` and
+`macos` to the current supported release, macOS 27. Both describe the target;
+runner architecture and OS do not participate. Set `architecture: x86_64` or a
+supported macOS major version explicitly when needed. `language` selects a cask
+language alias; omission uses its declared default.
+
+Use `formula: mole` instead of `cask` to select a Homebrew core bottle. Formula
+sources require `any_skip_relocation`, no runtime formula dependencies and no
+post-install actions. An older bottle of the same architecture can satisfy a
+newer target. There is no source-build fallback or Homebrew prefix emulation.
+
+The lock records the selected target, variant, digest and replay URL. Evidence
+under `homebrew.cask` or `homebrew.formula` carries the version and payload hints;
+formula evidence also supplies `payload_root`, revision and bottle rebuild.
+Cask lifecycle actions are never executed. Hashless and `no_check` casks still
+check their vendor bytes during update, even when the cask metadata is unchanged.
+
+A bottle remains a source archive. Use `BuildMacPkg` to declare the installed
+layout, including support files and command links, then publish that package
+with `MacSoftware`. `MacSoftware` requires an application or installer; it does
+not choose an installation location for a command-line tool.
+
 ## Use local files
 
 ```yaml
@@ -197,6 +227,11 @@ stemma prepare --offline
 `--offline` requires verified cached network inputs and still checks local files.
 It controls source and plugin acquisition; **it does not disable destination
 network access for `plan` or `apply`**.
+
+Discovery responses are shared within a run and revalidated with HTTP validators
+on later runs. Authentication and request headers partition the response cache.
+A failed refresh never falls back to stale metadata. These responses are separate
+from reviewed lock evidence and verified artifact bytes.
 
 The disposable cache lives under `stemma` in the system's user cache directory
 by default, outside the catalog. `stemma cache path` prints the effective location.
