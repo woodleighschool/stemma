@@ -58,6 +58,10 @@ discovery selects the newest published release whose tag matches, so
 `release: v3.*` follows one release line. Any other value selects that exact
 release tag. Draft releases are rejected.
 
+For GitHub, `inputs.<name>.version` is the raw release tag, such as `v1.2.3` or
+`Audacity-3.7.3`. Select or transform it explicitly when a package requires a
+numeric version.
+
 Set `include_prereleases: true` to include prereleases: `latest` selects the newest
 published release across both stable releases and prereleases, and a tag glob also
 matches prereleases. Tag globs and prerelease discovery compare `published_at`

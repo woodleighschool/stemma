@@ -266,9 +266,9 @@ Return registry metadata in namespaced discovery `evidence`, for example
 `{"vendor.release":{"version":"1.2"}}`. Evidence is reviewed in the source lock
 and passed to resource inputs; destination metadata can reference it with
 `{{ evidence['vendor.release'].version }}`. A builder reads the same evidence
-through `inputs.<name>.evidence`. Fresh discovery evidence replaces the prior evidence independently of cached bytes.
-Changing evidence invalidates preparation even
-when the bytes are unchanged.
+through `inputs.<name>.evidence`. Fresh discovery evidence replaces the prior
+evidence independently of cached bytes. Changing evidence invalidates preparation
+even when the bytes are unchanged.
 
 Discovery can also return `version` and `content_root`. The version is available
 as `inputs.<name>.version`. A content root is a relative directory within the
@@ -281,8 +281,8 @@ Observation remains private to the resolver. A locked fetch verifies bytes and
 uses the lock's saved evidence, ignoring evidence returned by the fetch. Resolver
 artifact formats and typed facts are not persisted; resource kinds own
 their interpretation of the downloaded content. Supply the input version during
-discovery. Keep credentials and temporary
-URLs out of evidence as well as observations.
+discovery. Keep credentials and temporary URLs out of evidence as well as
+observations.
 
 ## Destinations
 
@@ -351,7 +351,7 @@ is always answered:
 The output is a `Descriptor`: provider `name` and `version`, the VCS `revision`
 recorded in the executable's build information, `interfaces` and `operations`.
 `interfaces` names the version of each operation kind the plugin implements,
-such as `{"resolve": 1}`; the SDK fills it in. Stemma uses a kind's operations
+such as `{"resolve": 2}`; the SDK fills it in. Stemma uses a kind's operations
 only while that version matches its own. Operations of a kind at another version
 are unavailable: commands that do not use them are unaffected, and those that do
 fail naming both versions. The describe exchange, those identity fields and each

@@ -230,6 +230,25 @@ func TestExecutableProtocol(t *testing.T) {
 			t.Fatalf("unavailable operations = %+v", description.Unavailable)
 		}
 	})
+	t.Run("legacy acquisition and resource contracts are unavailable", func(t *testing.T) {
+		t.Setenv("STEMMA_ECHO_RESPONSE", string(raw(t, map[string]any{"output": map[string]any{
+			"name": "legacy", "version": "1.0.0", "interfaces": map[string]int{"resolve": 1, "resource": 1},
+			"operations": []any{echoResolver("legacy.download"), map[string]any{"name": "legacy.build", "kind": "resource", "resource": map[string]string{"apiVersion": "example.test/v1", "kind": "LegacyBuild"}}},
+		}})))
+		description, err := plugin.Describe(t.Context(), binary)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(description.Operations) != 0 || len(description.Unavailable) != 2 {
+			t.Fatalf("legacy operations = %+v", description)
+		}
+		for _, operation := range description.Unavailable {
+			if !strings.Contains(operation.Reason, "interface 1; this Stemma uses 2") {
+				t.Fatalf("unclear incompatibility: %s", operation.Reason)
+			}
+		}
+	})
+
 	t.Run("unavailable operations still require valid identities", func(t *testing.T) {
 		for _, operation := range []any{
 			nil,
