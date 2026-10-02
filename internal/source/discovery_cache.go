@@ -53,7 +53,7 @@ func (transport metadataTransport) RoundTrip(req *http.Request) (*http.Response,
 		return nil, err
 	}
 	cache := m.metadata
-	value, err, _ := cache.requests.Do(key, func() (any, error) {
+	result := cache.requests.DoChan(key, func() (any, error) {
 		cache.mu.Lock()
 		saved, ok := cache.responses[key]
 		cache.mu.Unlock()
@@ -117,10 +117,16 @@ func (transport metadataTransport) RoundTrip(req *http.Request) (*http.Response,
 		cache.mu.Unlock()
 		return current, nil
 	})
-	if err != nil {
-		return nil, err
+	var received singleflight.Result
+	select {
+	case <-req.Context().Done():
+		return nil, req.Context().Err()
+	case received = <-result:
 	}
-	stored := value.(metadataResponse)
+	if received.Err != nil {
+		return nil, received.Err
+	}
+	stored := received.Val.(metadataResponse)
 	address, err := url.Parse(stored.URL)
 	if err != nil {
 		return nil, err

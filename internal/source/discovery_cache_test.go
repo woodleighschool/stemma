@@ -1,12 +1,16 @@
 package source
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestDiscoveryCacheSharesAndRevalidatesByCredential(t *testing.T) {
@@ -65,5 +69,48 @@ func TestDiscoveryCacheSharesAndRevalidatesByCredential(t *testing.T) {
 	fresh := New(m.Store, m.Root, false)
 	if _, err := read(fresh, "first"); err == nil {
 		t.Fatal("failed refresh silently reused stale metadata")
+	}
+}
+
+func TestDiscoveryCacheWaiterCanCancel(t *testing.T) {
+	m := manager(t)
+	started, release := make(chan struct{}), make(chan struct{})
+	m.Client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		close(started)
+		select {
+		case <-req.Context().Done():
+			return nil, req.Context().Err()
+		case <-release:
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("metadata"))}, nil
+	})
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://vendor.test/meta", nil)
+	first := make(chan error, 1)
+	go func() {
+		res, err := m.metadataClient().Do(req)
+		if res != nil {
+			_ = res.Body.Close()
+		}
+		first <- err
+	}()
+	defer func() { close(release); <-first }()
+	<-started
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	done := make(chan error, 1)
+	go func() {
+		res, err := m.metadataClient().Do(req.Clone(ctx))
+		if res != nil {
+			_ = res.Body.Close()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("waiter cancellation: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled follower waited for the other request")
 	}
 }

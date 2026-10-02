@@ -249,7 +249,7 @@ type Download struct {
 type ResolveResponse struct {
 	Content     *SourceContent             `json:"content,omitempty"`
 	Download    *Download                  `json:"download,omitempty"`
-	Evidence    map[string]json.RawMessage `json:"evidence"`
+	Evidence    map[string]json.RawMessage `json:"evidence,omitzero"`
 	Observation json.RawMessage            `json:"observation,omitempty"`
 	Immutable   bool                       `json:"immutable,omitempty"`
 	Artifact    Artifact                   `json:"artifact,omitzero"`

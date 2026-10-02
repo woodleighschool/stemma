@@ -136,17 +136,17 @@ type brewDocument struct {
 }
 
 type homebrewEvidence struct {
-	Name         string                       `json:"name"`
-	Version      string                       `json:"version"`
-	Architecture string                       `json:"architecture"`
-	MacOS        string                       `json:"macos"`
-	Language     string                       `json:"language,omitempty"`
-	Artifacts    []map[string]json.RawMessage `json:"artifacts,omitempty"`
-	Revision     *int                         `json:"revision,omitempty"`
-	BottleTag    string                       `json:"bottle_tag,omitempty"`
-	Rebuild      *int                         `json:"rebuild,omitempty"`
-	Cellar       string                       `json:"cellar,omitempty"`
-	PayloadRoot  string                       `json:"payload_root,omitempty"`
+	Name               string                       `json:"name"`
+	Version            string                       `json:"version"`
+	TargetArchitecture string                       `json:"target_architecture"`
+	MacOS              string                       `json:"macos"`
+	Language           string                       `json:"language,omitempty"`
+	Artifacts          []map[string]json.RawMessage `json:"artifacts,omitempty"`
+	Revision           *int                         `json:"revision,omitempty"`
+	BottleTag          string                       `json:"bottle_tag,omitempty"`
+	Rebuild            *int                         `json:"rebuild,omitempty"`
+	Cellar             string                       `json:"cellar,omitempty"`
+	PayloadRoot        string                       `json:"payload_root,omitempty"`
 }
 
 func (m *Manager) discoverHomebrew(ctx context.Context, input plugin.Input) (Discovery, error) {
@@ -186,7 +186,7 @@ func (m *Manager) discoverHomebrew(ctx context.Context, input plugin.Input) (Dis
 	if doc.Disabled {
 		return Discovery{}, errors.New("homebrew entry is disabled")
 	}
-	evidence := homebrewEvidence{Name: name, Architecture: s.Architecture, MacOS: s.MacOS}
+	evidence := homebrewEvidence{Name: name, TargetArchitecture: s.Architecture, MacOS: s.MacOS}
 	observed := homebrewObservation{}
 	headers := map[string]string{}
 	if kind == "cask" {
@@ -209,11 +209,32 @@ func (m *Manager) discoverHomebrew(ctx context.Context, input plugin.Input) (Dis
 		if !selected {
 			return Discovery{}, fmt.Errorf("cask %s has no language %q", name, s.Language)
 		}
+		var options map[string]json.RawMessage
+		if err := json.Unmarshal(fields["url_specs"], &options); err != nil && fields["url_specs"] != nil {
+			return Discovery{}, err
+		}
+		for key := range options {
+			if !slices.Contains([]string{"user_agent", "referer", "cookies", "using", "verified"}, key) {
+				return Discovery{}, fmt.Errorf("unsupported cask download option %q", key)
+			}
+		}
 		if doc.URLSpecs.Using != "" && doc.URLSpecs.Using != "curl" {
 			return Discovery{}, fmt.Errorf("unsupported cask download strategy %q", doc.URLSpecs.Using)
 		}
 		if doc.URLSpecs.UserAgent != "" {
-			headers["User-Agent"] = doc.URLSpecs.UserAgent
+			switch doc.URLSpecs.UserAgent {
+			case ":browser", ":fake":
+				headers["User-Agent"] = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Safari/605.1.15"
+			case ":curl":
+				headers["User-Agent"] = "curl"
+			case ":default":
+				headers["User-Agent"] = userAgent
+			default:
+				if strings.HasPrefix(doc.URLSpecs.UserAgent, ":") {
+					return Discovery{}, fmt.Errorf("unsupported cask user agent %q", doc.URLSpecs.UserAgent)
+				}
+				headers["User-Agent"] = doc.URLSpecs.UserAgent
+			}
 		}
 		if doc.URLSpecs.Referer != "" {
 			headers["Referer"] = doc.URLSpecs.Referer

@@ -125,3 +125,32 @@ func TestHomebrewLanguagesAndMutableCasks(t *testing.T) {
 		t.Fatal("unknown language accepted")
 	}
 }
+
+func TestHomebrewDownloadRequirements(t *testing.T) {
+	for _, test := range []struct{ name, specs, failure string }{
+		{"browser", `{"user_agent":":browser"}`, ""},
+		{"git checkout", `{"branch":"main","only_path":"fonts/example"}`, "unsupported cask download option"},
+		{"post", `{"data":{"key":"value"}}`, "unsupported cask download option"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := manager(t)
+			m.Client.Transport = roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+				body := `{"token":"example","name":["Example"],"version":"1","url":"https://vendor.test/example.dmg","sha256":"` + strings.Repeat("a", 64) + `","supported_platforms":["arm64_golden_gate"],"url_specs":` + test.specs + `}`
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+			})
+			entry, err := m.Resolve(t.Context(), plugin.Input{Resolver: "homebrew", Config: map[string]any{"cask": "example"}})
+			if test.failure != "" {
+				if err == nil || !strings.Contains(err.Error(), test.failure) {
+					t.Fatalf("wanted %s: %v", test.failure, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(entry.Download.Headers["User-Agent"], "Mozilla/") {
+				t.Fatalf("browser request requirement lost: %+v", entry.Download)
+			}
+		})
+	}
+}

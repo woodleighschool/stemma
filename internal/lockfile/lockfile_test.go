@@ -180,6 +180,10 @@ func TestReleaseObservationChangesKeepContentIdentity(t *testing.T) {
 	previous := entry(first)
 	release := "v1.2.4"
 	currentRelease.Store(release)
+	// Each invocation shares discovery within the run and revalidates on the next.
+	client := m.Client
+	m = source.New(m.Store, m.Root, false)
+	m.Client = client
 	current, err := prepare(t, m, inputs, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
