@@ -126,7 +126,7 @@ func TestRegistryCredentialsPinnedRecoveryAndIntegrity(t *testing.T) {
 	if err := target.Tag(t.Context(), replacement, "v1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cache.Prune(t.Context()); err != nil {
+	if _, err := cache.Prune(t.Context(), cas.Policy{}, cas.PruneOptions{All: true}); err != nil {
 		t.Fatal(err)
 	}
 	corrupt.Store(true)
@@ -215,7 +215,7 @@ func TestPinnedPlatformBundleSurvivesTagMovementAndCacheLoss(t *testing.T) {
 		t.Fatal("offline cache corruption went unnoticed")
 	}
 	s.offline = false
-	if err := cache.Prune(ctx); err != nil {
+	if _, err := cache.Prune(ctx, cas.Policy{}, cas.PruneOptions{All: true}); err != nil {
 		t.Fatal(err)
 	}
 	if cold, err := s.Acquire(ctx, image, indexDigest); err != nil || !reflect.DeepEqual(cold, bundle) {

@@ -169,12 +169,12 @@ func withPluginWorkspace(ctx context.Context, cacheDir string, run func(*cas.Sto
 	if err != nil {
 		return err
 	}
-	defer func() { _ = release() }()
+	defer func() { cleanupError(ctx, release()) }()
 	work, err := os.MkdirTemp(filepath.Join(store.Dir, "work"), "plugins-*")
 	if err != nil {
 		return err
 	}
-	defer func() { _ = os.RemoveAll(work) }()
+	defer func() { cleanupError(ctx, os.RemoveAll(work)) }()
 	return run(store, work)
 }
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -35,11 +34,14 @@ type Ref struct {
 
 // Store contains content-addressed objects and disposable source and
 // derivation indexes.
-type Store struct{ Dir string }
+type Store struct {
+	Dir string
+	now func() time.Time
+}
 
 // dirs are the cache's disposable directories. Materialized copies of prepared
 // artifacts are for the operator; no run reads them back.
-var dirs = []string{"objects", "work", "sources", "derivations", "materialized"}
+var dirs = []string{"objects", "work", "sources", "derivations", "materialized", "uses"}
 
 // Open creates the cache directories. Call Lease while using cache objects.
 func Open(dir string) (*Store, error) {
@@ -54,12 +56,28 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// #nosec G703 -- The operator explicitly selects the cache root; subdirectories are fixed.
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
 	for _, sub := range dirs {
-		if err := os.MkdirAll(filepath.Join(dir, sub), 0o700); err != nil {
+		if err := root.MkdirAll(sub, 0o700); err != nil {
 			return nil, err
 		}
+		info, err := root.Lstat(sub)
+		if err != nil {
+			return nil, err
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("cache directory %s is not a directory", sub)
+		}
 	}
-	return &Store{Dir: dir}, nil
+	return &Store{Dir: dir, now: time.Now}, nil
 }
 
 // Lease prevents garbage collection while a run is active. OS locks release after crashes.
@@ -122,6 +140,16 @@ func (s *Store) HasDigest(digest string) bool {
 	return err == nil
 }
 
+// Reuse records metadata-only reuse of an available object, such as an unchanged
+// source observation. It does not certify bytes; consumers still call Verify.
+func (s *Store) Reuse(ctx context.Context, digest string) bool {
+	if !s.HasDigest(digest) {
+		return false
+	}
+	s.touch(ctx, "objects", digest)
+	return true
+}
+
 // Verify hashes actual stored bytes instead of trusting file existence or size.
 func (s *Store) Verify(ctx context.Context, ref Ref) error {
 	path, err := s.Path(ref)
@@ -141,6 +169,7 @@ func (s *Store) Verify(ctx context.Context, ref Ref) error {
 	if n != ref.Size || hex.EncodeToString(h.Sum(nil)) != ref.SHA256 {
 		return fmt.Errorf("cache object %s failed integrity verification", ref.SHA256)
 	}
+	s.touch(ctx, "objects", ref.SHA256)
 	return nil
 }
 
@@ -195,6 +224,7 @@ func (s *Store) Import(ctx context.Context, r io.Reader, expected string) (Ref, 
 			return Ref{}, err
 		}
 	}
+	s.touch(ctx, "objects", ref.SHA256)
 	return ref, nil
 }
 
@@ -241,82 +271,4 @@ func (s *Store) Materialize(ctx context.Context, ref Ref, path string) error {
 		err = closeErr
 	}
 	return err
-}
-
-// Recall reads a derivation result only if the referenced object still verifies.
-func (s *Store) Recall(ctx context.Context, key string) (Ref, bool) {
-	if !validDigest(key) {
-		return Ref{}, false
-	}
-	data, err := os.ReadFile(filepath.Join(s.Dir, "derivations", key))
-	if err != nil {
-		return Ref{}, false
-	}
-	var ref Ref
-	if json.Unmarshal(data, &ref) != nil || s.Verify(ctx, ref) != nil {
-		return Ref{}, false
-	}
-	return ref, true
-}
-
-// Remember indexes a completed derivation. Configuration keys exclude destination metadata.
-func (s *Store) Remember(key string, ref Ref) error {
-	if !validDigest(key) {
-		return errors.New("invalid derivation key")
-	}
-	data, err := json.Marshal(ref)
-	if err != nil {
-		return err
-	}
-	return fileio.Write(filepath.Join(s.Dir, "derivations", key), data, 0o600)
-}
-
-// RecallSource reads the source index record for key into record.
-func (s *Store) RecallSource(key string, record any) bool {
-	if !validDigest(key) {
-		return false
-	}
-	data, err := os.ReadFile(filepath.Join(s.Dir, "sources", key))
-	return err == nil && json.Unmarshal(data, record) == nil
-}
-
-// RememberSource records what fetching a source produced. The index saves
-// work only; locks never depend on it.
-func (s *Store) RememberSource(key string, record any) error {
-	if !validDigest(key) {
-		return errors.New("invalid source key")
-	}
-	data, err := json.Marshal(record)
-	if err != nil {
-		return err
-	}
-	return fileio.Write(filepath.Join(s.Dir, "sources", key), data, 0o600)
-}
-
-// Prune removes disposable cache contents only when no run holds a lease.
-func (s *Store) Prune(ctx context.Context) error {
-	l := flock.New(filepath.Join(s.Dir, "cache.lock"))
-	ok, err := l.TryLock()
-	if err == nil && !ok {
-		done := plugin.Stage(ctx, "Waiting for active runs")
-		ok, err = l.TryLockContext(ctx, 50*time.Millisecond)
-		done(err)
-	}
-	if err != nil {
-		return err
-	}
-	if !ok {
-		return ctx.Err()
-	}
-	defer func() { _ = l.Close() }()
-	for _, sub := range dirs {
-		path := filepath.Join(s.Dir, sub)
-		if err := os.RemoveAll(path); err != nil {
-			return err
-		}
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			return err
-		}
-	}
-	return nil
 }

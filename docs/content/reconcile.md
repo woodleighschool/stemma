@@ -127,6 +127,10 @@ enough.
 The cache defaults to the system's user cache directory; `STEMMA_CACHE_DIR` or
 `--cache-dir` overrides it. It is disposable and shared by the reviewed branch and every proposal;
 proposal planning and publication reuse verified inputs and prepared artifacts.
+The invocation maintains the cache once around the whole run; no separate cleanup
+job is needed. `STEMMA_CACHE_MAX_SIZE` / `--cache-max-size` sets the soft budget
+(default `32GiB`, `0` disables eviction), with 24-hour recent-use protection.
+See [cache and offline runs](sources.md#cache-and-offline-runs).
 Cache warmth is not part of review approval: the reviewed lock determines which
 content publication may use. The state directory holds only
 `reconcile.json`, the applied marker. It defaults to `.stemma/state` under the

@@ -7,12 +7,14 @@ import (
 	"context"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/woodleighschool/stemma/internal/cas"
 )
 
 // Options locate the project a server works on.
 type Options struct {
-	ConfigPath string
-	CacheDir   string
+	ConfigPath  string
+	CacheDir    string
+	CachePolicy cas.Policy
 	// Version names the Stemma build to clients.
 	Version string
 }
@@ -27,6 +29,19 @@ func Run(ctx context.Context, opts Options) error {
 
 func newServer(opts Options) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "stemma", Version: opts.Version}, &mcp.ServerOptions{Instructions: instructions})
+	server.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (result mcp.Result, err error) {
+			if method != "tools/call" {
+				return next(ctx, method, req)
+			}
+			err = cas.Run(ctx, opts.CacheDir, opts.CachePolicy, false, func(ctx context.Context) error {
+				var callErr error
+				result, callErr = next(ctx, method, req)
+				return callErr
+			})
+			return result, err
+		}
+	})
 	tools := catalog{config: opts.ConfigPath, cache: opts.CacheDir}
 	openWorld := true
 	mcp.AddTool(server, &mcp.Tool{

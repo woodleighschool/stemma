@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"maps"
 	"os"
 	"os/signal"
@@ -17,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/caarlos0/env/v11"
 	"github.com/dustin/go-humanize"
 	"github.com/spf13/cobra"
 	"github.com/woodleighschool/stemma/internal/cas"
@@ -72,28 +72,41 @@ func interruptContext() (context.Context, context.CancelFunc) {
 // cli is what every command shares: the project and cache flags, and the
 // output that renders progress and reports.
 type cli struct {
-	out, errOut                   io.Writer
+	out                           io.Writer
 	display                       *commandOutput
 	rootDir, configPath, cacheDir string
+	cacheSize                     string
+	cachePolicy                   cas.Policy
 }
 
 func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
+	settings, settingsErr := env.ParseAs[cacheSettings]()
 	display := newCommandOutput(out, errOut)
-	c := &cli{out: finalWriter{Writer: out, output: display}, errOut: errOut, display: display}
+	c := &cli{out: finalWriter{Writer: out, output: display}, display: display}
 	root := &cobra.Command{Use: "stemma", Short: "Resolve, prepare and publish reviewed software artifacts", SilenceErrors: true, SilenceUsage: true, Version: version}
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
+		if settingsErr != nil {
+			return settingsErr
+		}
+		policy, err := parseCachePolicy(c.cacheSize)
+		if err != nil {
+			return err
+		}
+		c.cachePolicy = policy
 		return display.start(cmd)
 	}
 	root.SetOut(c.out)
 	root.SetErr(errOut)
 	root.PersistentFlags().StringVar(&c.rootDir, "root", "", "Stemma project directory (discovered from the current directory)")
 	root.PersistentFlags().StringVar(&c.configPath, "config", "", "Path to stemma.yaml")
-	root.PersistentFlags().StringVar(&c.cacheDir, "cache-dir", os.Getenv("STEMMA_CACHE_DIR"), "Disposable content cache directory")
+	root.PersistentFlags().StringVar(&c.cacheDir, "cache-dir", settings.Dir, "Disposable content cache directory")
+	root.PersistentFlags().StringVar(&c.cacheSize, "cache-max-size", settings.MaxSize, "Soft retained-cache budget; 0 disables automatic content eviction")
 	root.AddCommand(c.versionCommand(), c.schemaCommand(), c.validateCommand(), c.mcpCommand())
 	for _, method := range []string{"update", "prepare", "signature", "icon", "plan", "apply"} {
 		root.AddCommand(c.runCommand(method))
 	}
 	root.AddCommand(c.artifactCommand(), c.reconcileCommand(), c.inspectCommand(), packageCommand(c.out), c.cacheCommand(), c.pluginsCommand())
+	c.maintainCommands(root)
 	return root, display.finish
 }
 
@@ -175,9 +188,7 @@ func (c *cli) mcpCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		// Standard output carries the protocol, so diagnostics go to stderr.
-		logger := slog.New(slog.NewTextHandler(c.errOut, &slog.HandlerOptions{Level: slog.LevelWarn}))
-		return mcpserver.Run(plugin.WithLogger(cmd.Context(), logger), mcpserver.Options{ConfigPath: path, CacheDir: c.cacheDir, Version: version})
+		return mcpserver.Run(cmd.Context(), mcpserver.Options{ConfigPath: path, CacheDir: c.cacheDir, CachePolicy: c.cachePolicy, Version: version})
 	}}
 }
 
@@ -231,14 +242,14 @@ func (c *cli) runCommand(method string) *cobra.Command {
 }
 
 func (c *cli) artifactCommand() *cobra.Command {
-	var output string
+	var output, outputFile string
 	var offline, noInputLock bool
 	cmd := &cobra.Command{Use: "artifact Kind/name", Short: "Prepare one resource from the lockfile and print the path of its artifact", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		path, err := c.project()
 		if err != nil {
 			return err
 		}
-		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: "artifact", Resources: args, Output: output, ResourceDone: func(resource engine.ResourceReport) error {
+		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: "artifact", Resources: args, Output: output, OutputFile: outputFile, ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone("artifact", resource)
 		}, Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
 		if err != nil {
@@ -248,6 +259,7 @@ func (c *cli) artifactCommand() *cobra.Command {
 		return err
 	}}
 	cmd.Flags().StringVar(&output, "output", "installer", "Resource output to materialize")
+	cmd.Flags().StringVar(&outputFile, "output-file", "", "Export to a new file or directory outside the disposable cache")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
 	cmd.Flags().BoolVar(&noInputLock, "no-input-lock", false, "Resolve inputs from their sources now instead of their lock entries; plugins stay locked")
 	cmd.MarkFlagsMutuallyExclusive("offline", "no-input-lock")
@@ -301,28 +313,6 @@ func (c *cli) inspectCommand() *cobra.Command {
 		_, err = io.WriteString(c.out, renderInspection(c.display.outStyle, inspection))
 		return err
 	}
-	return cmd
-}
-
-func (c *cli) cacheCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "cache", Short: "Manage disposable cached content"}
-	cmd.AddCommand(&cobra.Command{Use: "path", Short: "Print the cache location", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {
-		store, err := cas.Open(c.cacheDir)
-		if err != nil {
-			return err
-		}
-		_, err = fmt.Fprintln(c.out, store.Dir)
-		return err
-	}})
-	cmd.AddCommand(&cobra.Command{Use: "prune", Short: "Remove cached objects after active runs finish", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) (runErr error) {
-		done := plugin.Stage(cmd.Context(), "Pruning cache")
-		defer func() { done(runErr) }()
-		store, err := cas.Open(c.cacheDir)
-		if err != nil {
-			return err
-		}
-		return store.Prune(cmd.Context())
-	}})
 	return cmd
 }
 

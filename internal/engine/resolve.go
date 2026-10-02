@@ -75,7 +75,7 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 	if err != nil {
 		return candidate, err
 	}
-	defer s.close()
+	defer s.close(ctx)
 	e := &execution{opts: opts, session: s}
 	if err := e.begin(ctx); err != nil {
 		return candidate, err

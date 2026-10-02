@@ -260,7 +260,7 @@ metadata edits do not invalidate source acquisition or rebuild unchanged content
 ## Cache and offline runs
 
 ```sh
-stemma cache path
+stemma cache info
 stemma prepare --offline
 ```
 
@@ -277,10 +277,36 @@ Set `STEMMA_CACHE_DIR` or `--cache-dir` when a runner needs another location, su
 as a mounted cache volume. A repository-local cache is optional; ignore its path
 in Git if you choose one.
 
-`stemma cache prune` clears cached content after active runs finish. Locked remote
-inputs can be fetched again if the publisher still serves the recorded bytes.
-Prepared outputs depend only on input content, configuration and the stemma or
-plugin build, so a new or recreated lock reuses them.
+Cache-using commands maintain the cache at startup and completion. Automatic
+maintenance skips collection while another run holds a cache lease. A complete
+`reconcile` invocation shares one lifecycle across all its phases; MCP tools
+maintain the cache per call. An idle machine does no maintenance.
+
+`--cache-max-size` / `STEMMA_CACHE_MAX_SIZE` sets the retained-cache budget,
+defaulting to `32GiB`; `0` disables automatic content eviction. The budget includes
+downloads, prepared objects, plugin bundles, materialized copies and disposable
+metadata. Under size pressure, least recently used entries are removed first.
+Successful reuse refreshes recency; inspection does not. Entries used within the
+last 24 hours are protected. This is a soft target: recent content and temporary
+work can exceed it. Abandoned work and partial writes are recovered only when no
+run holds a lease, independently of size pressure.
+
+`stemma cache info` shows the effective policy and a logical file-size breakdown.
+`stemma cache prune` applies the policy, waiting for active runs to finish;
+`--dry-run` previews the removals. `stemma cache prune --all` deliberately removes
+all disposable content, including recent entries. Prune reports reclaimed bytes
+and retained usage; both commands accept `--json`. Automatic maintenance reports
+reclaimed space, failures and an unmet size target on stderr, without changing
+the command's outcome.
+
+Explicitly offline commands skip automatic content eviction, but still clean up
+temporary work. This cannot restore content an earlier online run evicted.
+Locked remote inputs can be fetched again only if the publisher still serves the
+recorded bytes; acquisition verifies those bytes without resolving a newer
+version or rewriting the lock. Prepared outputs depend only on input content,
+configuration and the stemma or plugin build, so a new or recreated lock reuses
+them. The cache is not an artifact archive. Use `artifact --output-file PATH` for
+a durable export outside it.
 
 Destinations keep no local state either: each one identifies its publications
 itself. See [publication identity and retention](publishing.md#identity-and-retention).

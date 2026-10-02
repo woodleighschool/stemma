@@ -97,8 +97,11 @@ their input. See [macOS](mac-software.md#signature),
 `installer` output, or of the output `--output` names. `--no-input-lock` instead
 resolves the inputs of the resource and the builds it consumes from their sources
 as they are now, to show what an update would prepare. No destination receives
-the artifact. The path is a copy in the cache that each
-run replaces and `stemma cache prune` removes. Progress and errors stay on
+the artifact. By default the path is a disposable copy in the cache; normal
+maintenance protects it for 24 hours after use. `cache prune --all` removes it
+immediately after active runs finish. Use `--output-file PATH` to export to a new
+file or directory outside the cache. Its parent directory must exist; an existing
+output is never overwritten. Exports belong to the caller and are never pruned. Progress and errors stay on
 stderr, and the live tree needs only stderr to be a terminal, so the command
 composes with other tools:
 
@@ -106,6 +109,7 @@ composes with other tools:
 stemma inspect "$(stemma artifact MacSoftware/foo)"
 stemma inspect "$(stemma artifact MacSoftware/foo --no-input-lock)"
 pkgutil --check-signature "$(stemma artifact MacSoftware/foo)"
+stemma artifact MacSoftware/foo --output-file ./foo.pkg
 ```
 
 `--offline` requires cached network inputs and plugin bundles; destination calls
@@ -165,7 +169,10 @@ stemma plugins list
 stemma plugins update [NAME...]
 stemma plugins publish IMAGE --goreleaser dist
 stemma cache path
+stemma cache info
+stemma cache prune --dry-run
 stemma cache prune
+stemma cache prune --all
 ```
 
 `plugins list` loads each plugin from its lock entry and describes what it runs
@@ -181,7 +188,13 @@ The disposable cache defaults to the system's user cache directory under `stemma
 `--cache-dir` / `STEMMA_CACHE_DIR` overrides it; `cache path` prints its location.
 `reconcile --state-dir` / `STEMMA_STATE_DIR` relocates the applied marker from
 `.stemma/state` under the project root. See [reconciliation state](reconcile.md#cache-and-state).
-`cache prune` does not remove published packages.
+`--cache-max-size` / `STEMMA_CACHE_MAX_SIZE` sets the soft retained-cache budget
+(default `32GiB`, `0` disables automatic content eviction). Normal pruning
+protects content used in the last 24 hours; `--all` overrides that protection.
+`cache info` and `cache prune` accept `--json`. Pruning reports reclaimed bytes
+and never removes published packages, reconciliation state or user exports.
+See [cache and offline runs](sources.md#cache-and-offline-runs) for lifecycle and
+accounting details.
 
 ## Reports and diagnostics
 

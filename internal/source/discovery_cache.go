@@ -62,7 +62,7 @@ func (transport metadataTransport) RoundTrip(req *http.Request) (*http.Response,
 			return saved, nil
 		}
 		var previous metadataResponse
-		known := m.Store.RecallSource(key, &previous)
+		known := m.Store.RecallSource(req.Context(), key, &previous)
 		request := req.Clone(req.Context())
 		if known {
 			if etag := previous.Header.Get("ETag"); etag != "" {
@@ -107,7 +107,7 @@ func (transport metadataTransport) RoundTrip(req *http.Request) (*http.Response,
 		if current.Status != http.StatusOK {
 			return current, nil
 		}
-		if err := m.Store.RememberSource(key, current); err != nil {
+		if err := m.Store.RememberSource(req.Context(), key, current); err != nil {
 			return nil, err
 		}
 		cache.mu.Lock()

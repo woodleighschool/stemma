@@ -63,7 +63,7 @@ func (o *commandOutput) start(cmd *cobra.Command) error {
 	}
 	// Report blocks print above the live tree, so both streams must share the
 	// terminal; a path alone is written after the tree is gone.
-	o.interactive = (o.pathOnly || terminalOutput(o.out)) && terminalOutput(o.errOut) && os.Getenv("CI") == ""
+	o.interactive = cmd.Name() != "mcp" && (o.pathOnly || terminalOutput(o.out)) && terminalOutput(o.errOut) && os.Getenv("CI") == ""
 	cmd.SetContext(plugin.WithLogger(cmd.Context(), slog.New(&activityHandler{output: o})))
 	return nil
 }
@@ -192,6 +192,17 @@ func (h *activityHandler) Handle(_ context.Context, record slog.Record) error {
 	o := h.output
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	var maintenance bool
+	record.Attrs(func(attr slog.Attr) bool {
+		if attr.Key == "cache_maintenance" {
+			maintenance = attr.Value.Bool()
+		}
+		return true
+	})
+	if maintenance {
+		o.notice(record.Message + "\n")
+		return nil
+	}
 	if record.Level >= slog.LevelWarn && !a.status {
 		note := a.label
 		if a.scope != "" {

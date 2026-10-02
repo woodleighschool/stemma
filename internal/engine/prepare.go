@@ -5,12 +5,16 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
+	"github.com/woodleighschool/stemma/internal/fileio"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -55,12 +59,15 @@ func materialize(ctx context.Context, store *cas.Store, p Prepared, work string)
 }
 
 // expose replaces the operator's writable copy from the verified cache object.
-func expose(ctx context.Context, store *cas.Store, p Prepared, work string) (path string, err error) {
+func expose(ctx context.Context, store *cas.Store, p Prepared, work, outputFile string) (path string, err error) {
 	done := plugin.Stage(ctx, "Materializing artifact", plugin.Detail(p.Filename))
 	defer func() { done(err) }()
 	p, err = materialize(ctx, store, p, work)
 	if err != nil {
 		return "", err
+	}
+	if outputFile != "" {
+		return export(ctx, store, p, work, outputFile)
 	}
 	dir := filepath.Join(store.Dir, "materialized", p.Payload.SHA256)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -74,6 +81,55 @@ func expose(ctx context.Context, store *cas.Store, p Prepared, work string) (pat
 		return "", err
 	}
 	return path, nil
+}
+
+func export(ctx context.Context, store *cas.Store, p Prepared, work, target string) (string, error) {
+	target, err := filepath.Abs(target)
+	if err != nil {
+		return "", err
+	}
+	// Resolve the parent so an alias of the cache cannot make an export disposable.
+	parent, err := filepath.EvalSymlinks(filepath.Dir(target))
+	if err != nil {
+		return "", err
+	}
+	resolved := filepath.Join(parent, filepath.Base(target))
+	cache, err := filepath.EvalSymlinks(store.Dir)
+	if err != nil {
+		return "", err
+	}
+	if rel, err := filepath.Rel(cache, resolved); err == nil && filepath.IsLocal(rel) {
+		return "", errors.New("output-file must be outside the disposable cache")
+	}
+	if p.Tree {
+		if _, statErr := os.Lstat(target); !errors.Is(statErr, os.ErrNotExist) {
+			return "", fmt.Errorf("output-file already exists or is inaccessible: %s", target)
+		}
+		if err := archive.Extract(ctx, filepath.Join(work, "payload.tar"), target); err != nil {
+			return "", err
+		}
+	} else {
+		var in, out *os.File
+		in, err = os.Open(p.Path)
+		if err != nil {
+			return "", err
+		}
+		defer func() { _ = in.Close() }()
+		out, err = os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return "", err
+		}
+		_, err = io.Copy(out, fileio.Reader{Context: ctx, Reader: in})
+		err = errors.Join(err, out.Close())
+	}
+	if err == nil {
+		err = os.Chmod(target, os.FileMode(p.Mode))
+	}
+	if err != nil {
+		_ = os.RemoveAll(target)
+		return "", fmt.Errorf("export artifact: %w", err)
+	}
+	return target, nil
 }
 
 // Inspection describes a local file or directory by its own metadata.

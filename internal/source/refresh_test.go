@@ -99,12 +99,15 @@ func TestRefreshAsksHTTPConditionallyWhateverTheLock(t *testing.T) {
 			if err := os.Remove(object); err != nil {
 				t.Fatal(err)
 			}
-			// The server still confirms the URL, but the bytes are gone.
-			if same, cached, err := m.Refresh(t.Context(), input, previous); err != nil || cached || !same.Equal(updated) || server.bodies.Load() != 2 {
-				t.Fatalf("absent content was reported cached: %v cached=%v", err, cached)
+			// A dangling source entry is a miss; refresh reacquires the current URL.
+			if same, cached, err := m.Refresh(t.Context(), input, previous); err != nil || cached || !same.Equal(updated) || server.bodies.Load() != 3 {
+				t.Fatalf("dangling source did not reacquire: %v cached=%v bodies=%d", err, cached, server.bodies.Load())
+			}
+			if err := os.Remove(object); err != nil {
+				t.Fatal(err)
 			}
 			conditionals := server.conditionals.Load()
-			if hit, err := m.FetchLocked(t.Context(), input, updated); err != nil || hit || server.conditionals.Load() != conditionals || server.bodies.Load() != 3 {
+			if hit, err := m.FetchLocked(t.Context(), input, updated); err != nil || hit || server.conditionals.Load() != conditionals || server.bodies.Load() != 4 {
 				t.Fatalf("locked fetch was conditional: hit=%v err=%v", hit, err)
 			}
 		})
@@ -245,7 +248,7 @@ func TestFetchLockedRemembersWhatAMovedSourceServes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Store.Prune(t.Context()); err != nil {
+	if _, err := m.Store.Prune(t.Context(), cas.Policy{}, cas.PruneOptions{All: true}); err != nil {
 		t.Fatal(err)
 	}
 	server.payload.Store("installer v2")

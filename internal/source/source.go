@@ -175,7 +175,7 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 		if err := entry.Validate(); err != nil {
 			return Entry{}, false, err
 		}
-		return entry, m.Store.HasDigest(entry.Content.SHA256), nil
+		return entry, m.Store.Reuse(ctx, entry.Content.SHA256), nil
 	}
 	if resolver.Local {
 		current, _, err := m.acquire(ctx, resolver, input, entry, nil)
@@ -193,20 +193,20 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 		return Entry{}, false, err
 	}
 	var known record
-	recalled := m.Store.RecallSource(key, &known) && known.Content.valid()
+	recalled := m.Store.RecallSource(ctx, key, &known) && known.Content.valid()
 	switch {
 	case found.Immutable && recalled:
 		entry.Content = known.Content
 		if found.Evidence == nil {
 			entry.Evidence = known.Evidence
 		}
-		return entry, m.Store.HasDigest(entry.Content.SHA256), entry.Validate()
+		return entry, m.Store.Reuse(ctx, entry.Content.SHA256), entry.Validate()
 	case found.Immutable && locked.Validate() == nil && locked.Resolver == entry.Resolver && locked.ResolverVersion == version && locked.Declaration == declaration && sameJSON(locked.Observation, entry.Observation):
 		entry.Content = locked.Content
 		if found.Evidence == nil {
 			entry.Evidence = locked.Evidence
 		}
-		return entry, m.Store.HasDigest(locked.Content.SHA256), entry.Validate()
+		return entry, m.Store.Reuse(ctx, locked.Content.SHA256), entry.Validate()
 	}
 	var previous *record
 	if recalled {
@@ -216,14 +216,14 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 	if err != nil {
 		return Entry{}, false, err
 	}
-	if err := m.Store.RememberSource(key, current); err != nil {
+	if err := m.Store.RememberSource(ctx, key, current, current.Content.SHA256); err != nil {
 		return Entry{}, false, err
 	}
 	entry.Content = current.Content
 	if found.Evidence == nil {
 		entry.Evidence = current.Evidence
 	}
-	return entry, reused && m.Store.HasDigest(entry.Content.SHA256), entry.Validate()
+	return entry, reused && m.Store.Reuse(ctx, entry.Content.SHA256), entry.Validate()
 }
 
 // FetchLocked uses verified cached content or fetches the locked observation
@@ -270,7 +270,7 @@ func (m *Manager) FetchLocked(ctx context.Context, input plugin.Input, entry Ent
 	if err != nil {
 		return false, err
 	}
-	if err := m.Store.RememberSource(key, current); err != nil {
+	if err := m.Store.RememberSource(ctx, key, current, current.Content.SHA256); err != nil {
 		return false, err
 	}
 	if current.Content.SHA256 != entry.Content.SHA256 || current.Content.Tree != entry.Content.Tree {

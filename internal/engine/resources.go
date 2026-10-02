@@ -472,7 +472,11 @@ func rememberOutputs(ctx context.Context, store *cas.Store, key string, outputs 
 	if err != nil {
 		return err
 	}
-	return store.Remember(key, descriptor)
+	dependencies := make([]cas.Ref, 0, len(outputs))
+	for _, output := range outputs {
+		dependencies = append(dependencies, output.Payload)
+	}
+	return store.Remember(ctx, key, descriptor, dependencies...)
 }
 
 func recallOutputs(ctx context.Context, store *cas.Store, key string) (map[string]Prepared, bool, error) {

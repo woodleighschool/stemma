@@ -135,10 +135,10 @@ func projectOperations(ctx context.Context, p config.Project, opts Options) (*op
 	}
 	work, err := os.MkdirTemp(filepath.Join(store.Dir, "work"), "operations-*")
 	if err != nil {
-		_ = release()
+		cleanupError(ctx, release())
 		return nil, nil, err
 	}
-	cleanup := func() { _ = os.RemoveAll(work); _ = release() }
+	cleanup := func() { cleanupError(ctx, errors.Join(os.RemoveAll(work), release())) }
 	root, err := filepath.Abs(filepath.Dir(opts.ConfigPath))
 	if err != nil {
 		cleanup()

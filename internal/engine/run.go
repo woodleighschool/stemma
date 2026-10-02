@@ -31,8 +31,10 @@ type Options struct {
 	Icons        IconOptions
 	// Output names the resource output the artifact method materializes;
 	// empty selects installer.
-	Output   string
-	Handlers map[string]reconcileHandler
+	Output string
+	// OutputFile exports the selected artifact outside the disposable cache.
+	OutputFile string
+	Handlers   map[string]reconcileHandler
 	// ResourceDone receives each final resource result, including failures.
 	ResourceDone func(ResourceReport) error
 }
@@ -72,7 +74,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	if err != nil {
 		return report, err
 	}
-	defer s.close()
+	defer s.close(ctx)
 	e := &execution{
 		opts: opts, session: s, report: &report,
 		prepared: map[string]preparedResource{}, pending: map[string]int{},
@@ -327,7 +329,7 @@ func (e *execution) materialize(ctx context.Context) error {
 	artifact, ok := prepared.outputs[output]
 	var err error
 	if ok {
-		e.report.Artifact, err = expose(resourceContext(ctx, e.plans[key].Resource), e.session.store, artifact, filepath.Join(prepared.work, "materialized"))
+		e.report.Artifact, err = expose(resourceContext(ctx, e.plans[key].Resource), e.session.store, artifact, filepath.Join(prepared.work, "materialized"), e.opts.OutputFile)
 	} else {
 		err = fmt.Errorf("no %s output; the resource prepares %s", output, strings.Join(sortedKeys(prepared.outputs), ", "))
 	}
@@ -478,6 +480,7 @@ func (e *execution) removeWorkspaces(ctx context.Context) {
 		err = errors.Join(err, os.RemoveAll(work))
 	}
 	done(err)
+	cleanupError(ctx, err)
 }
 
 // resourceContext scopes logs and terminal progress to one resource tree.

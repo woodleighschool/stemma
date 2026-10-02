@@ -50,7 +50,7 @@ func TestDeclaredHTTPDigestPreservesSelectedFilename(t *testing.T) {
 			if err != nil || entry.Content.Filename != test.want || requests != wantRequests {
 				t.Fatalf("resolve: %+v requests=%d: %v", entry, requests, err)
 			}
-			if err := m.Store.Prune(t.Context()); err != nil {
+			if _, err := m.Store.Prune(t.Context(), cas.Policy{}, cas.PruneOptions{All: true}); err != nil {
 				t.Fatal(err)
 			}
 			m = New(m.Store, m.Root, false)
@@ -146,7 +146,7 @@ func TestDeclaredHTTPURLStaysOutOfTheLock(t *testing.T) {
 	if string(entry.Observation) != "{}" || strings.Contains(string(locked), token) {
 		t.Fatalf("lock entry records the declared URL:\n%s", locked)
 	}
-	if err := m.Store.Prune(t.Context()); err != nil {
+	if _, err := m.Store.Prune(t.Context(), cas.Policy{}, cas.PruneOptions{All: true}); err != nil {
 		t.Fatal(err)
 	}
 	if cached, err := m.FetchLocked(t.Context(), input, entry); err != nil || cached || downloads.Load() != 2 {
@@ -172,7 +172,7 @@ func TestMatchedHTTPLockRequiresItsDiscoveredURL(t *testing.T) {
 	if err != nil || observation(t, entry).URL != server.URL+"/downloads/app-1.0.pkg" {
 		t.Fatalf("discovery: observation=%s error=%v", entry.Observation, err)
 	}
-	if err := m.Store.Prune(t.Context()); err != nil {
+	if _, err := m.Store.Prune(t.Context(), cas.Policy{}, cas.PruneOptions{All: true}); err != nil {
 		t.Fatal(err)
 	}
 	entry.Observation = json.RawMessage(`{}`)

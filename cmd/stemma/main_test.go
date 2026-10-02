@@ -151,7 +151,7 @@ spec:
 	write(manifest)
 	invoke := func(success bool, args ...string) []byte {
 		t.Helper()
-		arguments := append([]string{"--root", project, "--cache-dir", cache}, args...)
+		arguments := append([]string{"--root", project, "--cache-dir", cache, "--cache-max-size", "1B"}, args...)
 		cmd := exec.CommandContext(t.Context(), binary, arguments...)
 		cmd.Env = append(os.Environ(), "CI=true")
 		var stderr strings.Builder
@@ -324,7 +324,21 @@ spec:
 		t.Fatalf("artifact --no-input-lock changed the lockfile: %v", err)
 	}
 	invoke(false, "artifact", "--offline", "--no-input-lock", "MacSoftware/fixture")
-	invoke(true, "cache", "prune")
+	exported := filepath.Join(t.TempDir(), "export.pkg")
+	if got := strings.TrimSpace(string(invoke(true, "artifact", "--offline", "--output-file", exported, "MacSoftware/fixture"))); got != exported {
+		t.Fatalf("export path=%s", got)
+	}
+	beforeExport, err := os.ReadFile(exported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invoke(true, "cache", "prune", "--all")
+	if data, err := os.ReadFile(exported); err != nil || !bytes.Equal(data, beforeExport) {
+		t.Fatalf("prune changed export: %v", err)
+	}
+	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
+		t.Fatalf("prune changed lock: %v", err)
+	}
 	if _, err := os.Stat(materialized); !os.IsNotExist(err) {
 		t.Fatalf("cache prune kept %s: %v", materialized, err)
 	}

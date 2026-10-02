@@ -280,7 +280,7 @@ func TestStableQueryRetainsOriginalURLAcrossRedirects(t *testing.T) {
 	if string(entry.Observation) != "{}" {
 		t.Fatalf("lock recorded a URL: %s", entry.Observation)
 	}
-	if err := store.Prune(t.Context()); err != nil {
+	if _, err := store.Prune(t.Context(), cas.Policy{}, cas.PruneOptions{All: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := m.FetchLocked(t.Context(), s, entry); err != nil || links.Load() != 2 {

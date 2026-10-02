@@ -37,7 +37,7 @@ func open(ctx context.Context, opts Options, resolvePlugins bool) (_ *session, e
 	s := &session{project: p}
 	defer func() {
 		if err != nil {
-			s.close()
+			s.close(ctx)
 		}
 	}()
 	s.root, err = filepath.Abs(filepath.Dir(opts.ConfigPath))
@@ -78,9 +78,9 @@ func open(ctx context.Context, opts Options, resolvePlugins bool) (_ *session, e
 }
 
 // close releases the lease and project lock after operation workspaces are gone.
-func (s *session) close() {
+func (s *session) close(ctx context.Context) {
 	for _, closer := range slices.Backward(s.closers) {
-		_ = closer()
+		cleanupError(ctx, closer())
 	}
 }
 
@@ -108,4 +108,11 @@ func suspended(resources map[string]config.Resource) []string {
 		}
 	}
 	return keys
+}
+
+// Cleanup failure is diagnostic: it cannot change a completed publication's outcome.
+func cleanupError(ctx context.Context, err error) {
+	if err != nil {
+		plugin.Logger(ctx).WarnContext(ctx, "Run cleanup incomplete", "error", err)
+	}
 }

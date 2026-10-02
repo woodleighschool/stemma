@@ -208,7 +208,7 @@ func TestExposeReplacesCopiesFromTheVerifiedObject(t *testing.T) {
 		t.Run(prepared.Filename, func(t *testing.T) {
 			var path string
 			for range 2 {
-				path, err = expose(t.Context(), store, prepared, t.TempDir())
+				path, err = expose(t.Context(), store, prepared, t.TempDir(), "")
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -238,7 +238,7 @@ func TestExposeReplacesCopiesFromTheVerifiedObject(t *testing.T) {
 	if err := os.WriteFile(object, []byte("corrupt!!"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := expose(t.Context(), store, Prepared{Payload: file, Filename: "setup.exe", Mode: 0o755}, t.TempDir()); err == nil || !strings.Contains(err.Error(), "integrity") {
+	if _, err := expose(t.Context(), store, Prepared{Payload: file, Filename: "setup.exe", Mode: 0o755}, t.TempDir(), ""); err == nil || !strings.Contains(err.Error(), "integrity") {
 		t.Fatalf("a corrupt object was materialized: %v", err)
 	}
 }

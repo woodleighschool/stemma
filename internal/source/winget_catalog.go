@@ -148,7 +148,7 @@ func (s *wingetSource) wingetMetadata(ctx context.Context, relative, digest stri
 		return len(data) <= metadataLimit && hex.EncodeToString(sum[:]) == digest
 	}
 	var data []byte
-	if s.manager.Store.RecallSource(key, &data) && matches(data) {
+	if s.manager.Store.RecallSource(ctx, key, &data) && matches(data) {
 		return data, nil
 	}
 	data, err = s.manager.metadataBytes(ctx, (&url.URL{Scheme: "https", Host: "cdn.winget.microsoft.com", Path: "/cache/" + relative}).String())
@@ -158,7 +158,7 @@ func (s *wingetSource) wingetMetadata(ctx context.Context, relative, digest stri
 	if !matches(data) {
 		return nil, errors.New("winget metadata SHA256 mismatch")
 	}
-	if err := s.manager.Store.RememberSource(key, data); err != nil {
+	if err := s.manager.Store.RememberSource(ctx, key, data); err != nil {
 		return nil, err
 	}
 	return data, nil

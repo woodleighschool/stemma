@@ -488,7 +488,7 @@ func TestWingetRechecksCachedMetadataDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Store.RememberSource(key, []byte("corrupted cache")); err != nil {
+	if err := m.Store.RememberSource(t.Context(), key, []byte("corrupted cache")); err != nil {
 		t.Fatal(err)
 	}
 	requests := 0
