@@ -134,7 +134,7 @@ func TestGitHubLookupReportsHTTPStatus(t *testing.T) {
 func TestGitHubDiscoveryKeepsTokenAtAPIOrigin(t *testing.T) {
 	for _, target := range []string{"https://elsewhere.example/release", "http://api.github.com/release", "https://api.github.com/repositories/1/releases/latest"} {
 		t.Run(target, func(t *testing.T) {
-			m := New(nil, t.TempDir(), false)
+			m := manager(t)
 			requests := 0
 			m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				requests++

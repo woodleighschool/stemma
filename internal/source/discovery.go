@@ -30,7 +30,7 @@ func (m *Manager) discoverLink(ctx context.Context, s nativeConfig) (link string
 	if err != nil {
 		return "", err
 	}
-	res, err := m.Client.Do(req)
+	res, err := m.metadataClient().Do(req)
 	if err != nil {
 		return "", transportError("download page", err)
 	}

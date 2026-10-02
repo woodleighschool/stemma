@@ -181,6 +181,7 @@ func TestRefreshRediscoversMatchedURLBeforeAskingTheServer(t *testing.T) {
 		t.Fatalf("same link was downloaded again: %v cached=%v", err, cached)
 	}
 	current.Store("/downloads/app-2.0.pkg")
+	m = New(m.Store, m.Root, false)
 	updated, _, err := m.Refresh(t.Context(), input, previous)
 	if err != nil || updated.Content.SHA256 == previous.Content.SHA256 || bodies.Load() != 2 || conditionals.Load() != 1 {
 		t.Fatalf("new link was asked conditionally with the old validator: %v", err)
@@ -211,7 +212,7 @@ func TestRefreshReusesGitHubAssetsByIdentity(t *testing.T) {
 	if err != nil || previous.Content.Filename != "App.pkg" {
 		t.Fatalf("resolve: %v %+v", err, previous.Content)
 	}
-	if same, cached, err := m.Refresh(t.Context(), input, Entry{}); err != nil || !cached || !same.Equal(previous) || lookups.Load() != 2 || downloads.Load() != 1 {
+	if same, cached, err := m.Refresh(t.Context(), input, Entry{}); err != nil || !cached || !same.Equal(previous) || lookups.Load() != 1 || downloads.Load() != 1 {
 		t.Fatalf("the cache did not reuse a fetched asset without a lock: %v cached=%v downloads=%d", err, cached, downloads.Load())
 	}
 	// The lock names the asset without the bytes, so nothing counts as cached.
@@ -221,12 +222,16 @@ func TestRefreshReusesGitHubAssetsByIdentity(t *testing.T) {
 		t.Fatalf("the lock did not answer for its own asset: %v cached=%v downloads=%d", err, cached, downloads.Load())
 	}
 	assetID.Store(35)
+	m = New(m.Store, m.Root, false)
+	m.Client.Transport = transport
 	replaced, _, err := m.Refresh(t.Context(), input, previous)
 	if err != nil || downloads.Load() != 2 || observation(t, replaced).AssetID != 35 {
 		t.Fatalf("replaced asset: %v %+v", err, observation(t, replaced))
 	}
 	// Back on a lock that records the new asset, the cache still knows the old one.
 	assetID.Store(34)
+	m = New(m.Store, m.Root, false)
+	m.Client.Transport = transport
 	if back, _, err := m.Refresh(t.Context(), input, replaced); err != nil || !back.Equal(previous) || downloads.Load() != 2 {
 		t.Fatalf("cache reuse followed the lock rather than the asset: %v downloads=%d", err, downloads.Load())
 	}

@@ -17,7 +17,7 @@ import (
 func (m *Manager) github(ctx context.Context, s nativeConfig, observed *nativeObservation) (err error) {
 	done := plugin.Stage(ctx, "Discovering GitHub release", plugin.Detail(s.Repository))
 	defer func() { done(err, plugin.Detail(observed.Release)) }()
-	options := []github.ClientOptionsFunc{github.WithHTTPClient(m.Client), github.WithUserAgent(userAgent)}
+	options := []github.ClientOptionsFunc{github.WithHTTPClient(m.metadataClient()), github.WithUserAgent(userAgent)}
 	if s.Token != "" {
 		options = append(options, github.WithAuthToken(s.Token))
 	}
