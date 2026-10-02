@@ -16,11 +16,11 @@ import (
 )
 
 // Version changes when the layout or package derivation changes.
-const Version = "stemma.macpkg/7"
+const Version = "stemma.macpkg/8"
 
 type Spec struct {
 	Inputs     map[string]plugin.Input      `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema_description:"Named source artifacts leased into the build. Refer to them with $input in payload and scripts."`
-	Payload    map[string]Entry             `json:"payload,omitempty" yaml:"payload,omitempty" jsonschema_description:"Installed absolute paths mapped to files, trees, literal text or directory declarations."`
+	Payload    map[string]Entry             `json:"payload,omitempty" yaml:"payload,omitempty" jsonschema_description:"Installed absolute paths mapped to files, trees, literal text, relative symlinks or directory declarations."`
 	Package    Package                      `json:"package" yaml:"package" jsonschema_description:"Component package identity and version recorded in macOS receipts, with the published filename and payload compression."`
 	Scripts    map[string]Script            `json:"scripts,omitempty" yaml:"scripts,omitempty" jsonschema_description:"Literal script text or input selections in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma."`
 	Signatures []signature.InputExpectation `json:"signatures,omitempty" yaml:"signatures,omitempty" jsonschema:"minItems=1" jsonschema_description:"Signing expectations for every physical signing subject consumed by the resolved payload and scripts layout. Unused siblings are excluded. The built package itself is unsigned."`
@@ -48,6 +48,7 @@ type Entry struct {
 	Input   string  `json:"$input,omitempty" yaml:"$input,omitempty" jsonschema_description:"Name of a declared input supplying this file or tree."`
 	Path    string  `json:"path,omitempty" yaml:"path,omitempty" jsonschema_description:"Exact relative path in a tree, ZIP, TAR or DMG. A dot selects the contents root. Omit to retain the original input; PKGs remain opaque files."`
 	Content *string `json:"content,omitempty" yaml:"content,omitempty" jsonschema_description:"Literal UTF-8 file contents. Mutually exclusive with $input; omit both to create a directory."`
+	Symlink string  `json:"symlink,omitempty" yaml:"symlink,omitempty" jsonschema_description:"Relative link target in the installed filesystem, confined to the package root. Mutually exclusive with $input and content."`
 	Mode    string  `json:"mode,omitempty" yaml:"mode,omitempty" jsonschema:"pattern=^0?[0-7]{3}$" jsonschema_description:"Octal permissions for the mapped root, for example 0644 for a file or 0755 for a directory."`
 	UID     uint32  `json:"uid,omitempty" yaml:"uid,omitempty" jsonschema:"maximum=262143" jsonschema_description:"Numeric owner applied to the mapped subtree. Defaults to root (0)."`
 	GID     uint32  `json:"gid,omitempty" yaml:"gid,omitempty" jsonschema:"maximum=262143" jsonschema_description:"Numeric group applied to the mapped subtree. Defaults to wheel (0)."`
@@ -86,6 +87,9 @@ func (s Spec) Validate() error {
 			return fmt.Errorf("payload %q duplicates another normalized destination", endpoint)
 		}
 		seen[name] = true
+		if entry.Symlink != "" && !validSymlink(name, entry.Symlink) {
+			return fmt.Errorf("payload %q: symlink must be relative and confined to the package root", endpoint)
+		}
 		if err := entry.validate(); err != nil {
 			return fmt.Errorf("payload %q: %w", endpoint, err)
 		}
@@ -133,8 +137,18 @@ func (s Spec) validateRef(input, name string) error {
 }
 
 func (e Entry) validate() error {
-	if e.Input != "" && e.Content != nil {
-		return errors.New("use either $input or content")
+	choices := 0
+	if e.Input != "" {
+		choices++
+	}
+	if e.Content != nil {
+		choices++
+	}
+	if e.Symlink != "" {
+		choices++
+	}
+	if choices > 1 {
+		return errors.New("use only one of $input, content or symlink")
 	}
 	if e.Input == "" && e.Path != "" {
 		return errors.New("path requires $input")

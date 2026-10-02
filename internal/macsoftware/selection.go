@@ -21,7 +21,7 @@ func choose(spec Spec, traversable bool, inventory plugin.Facts) (string, *plugi
 				return ".", nil, nil
 			}
 		}
-		return "", nil, errors.New("macOS software requires an application, PKG or DMG installer")
+		return "", nil, errors.New("MacSoftware requires an application or installer; use BuildMacPkg to declare a command or file layout")
 	}
 	var apps, packages []plugin.Subject
 	for _, subject := range inventory.Subjects {
@@ -55,6 +55,9 @@ func choose(spec Spec, traversable bool, inventory plugin.Facts) (string, *plugi
 		return "", nil, fmt.Errorf("application selector matched %d applications; require exactly one%s", len(matches), candidates(apps))
 	}
 	found := slices.Concat(apps, packages)
+	if len(found) == 0 {
+		return "", nil, errors.New("source contains no application or installer; use BuildMacPkg to declare a command or file layout")
+	}
 	if len(found) != 1 {
 		return "", nil, fmt.Errorf("found %d applications and packages; select application.path, application.bundle_id or package_path%s", len(found), candidates(found))
 	}

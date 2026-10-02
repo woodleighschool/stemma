@@ -163,27 +163,11 @@ func (stage *layout) copyNode(ctx context.Context, node contents.Node, destinati
 		if path.IsAbs(link) || strings.ContainsAny(link, "\\\x00") || !validPath(path.Join(path.Dir(node.Path), link)) || !validPath(path.Join(path.Dir(destination), link)) {
 			return errors.New("escaping content symlink")
 		}
-		if stage.claimed[destination] {
-			return fmt.Errorf("overlapping destination %q", destination)
-		}
-		if _, exists := stage.metadata[destination]; exists {
-			return fmt.Errorf("symlink %q overlaps a directory", destination)
-		}
-		if err := stage.parents(path.Dir(destination)); err != nil {
-			return err
-		}
-		if len(stage.metadata) >= pkgbuild.MaxEntries {
-			return errors.New("package exceeds entry limit")
-		}
-		if err := os.Symlink(filepath.FromSlash(link), filepath.Join(stage.root, filepath.FromSlash(destination))); err != nil {
-			return err
-		}
 		if attrs.Mode == nil {
 			mode := uint32(info.Mode().Perm())
 			attrs.Mode = &mode
 		}
-		stage.metadata[destination], stage.claimed[destination] = attrs, true
-		return nil
+		return stage.symlink(destination, link, attrs)
 	}
 	if !info.IsDir() && !info.Mode().IsRegular() {
 		return errors.New("input contains an unsupported file type")
@@ -225,5 +209,36 @@ func (stage *layout) copyNode(ctx context.Context, node contents.Node, destinati
 			return err
 		}
 	}
+	return nil
+}
+
+func validSymlink(name, target string) bool {
+	return !path.IsAbs(target) && len(target) <= 4096 && !strings.ContainsAny(target, "\\\x00\r\n\t") && validPath(path.Join(path.Dir(name), target))
+}
+
+func (stage *layout) symlink(name, target string, attrs pkgbuild.EntryMetadata) error {
+	if !validSymlink(name, target) {
+		return errors.New("symlink must be relative and confined to the package root")
+	}
+	if stage.claimed[name] {
+		return fmt.Errorf("overlapping payload destination %q", name)
+	}
+	if _, exists := stage.metadata[name]; exists {
+		return fmt.Errorf("symlink %q overlaps a directory", name)
+	}
+	if err := stage.parents(path.Dir(name)); err != nil {
+		return err
+	}
+	if len(stage.metadata) >= pkgbuild.MaxEntries {
+		return errors.New("package exceeds entry limit")
+	}
+	if err := os.Symlink(filepath.FromSlash(target), filepath.Join(stage.root, filepath.FromSlash(name))); err != nil {
+		return err
+	}
+	if attrs.Mode == nil {
+		mode := uint32(0o777)
+		attrs.Mode = &mode
+	}
+	stage.metadata[name], stage.claimed[name] = attrs, true
 	return nil
 }

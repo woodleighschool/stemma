@@ -107,6 +107,9 @@ func (stage *layout) entry(ctx context.Context, name string, entry Entry, source
 	if entry.Content != nil {
 		return stage.content(ctx, name, strings.NewReader(*entry.Content), int64(len(*entry.Content)), attrs, 0o644)
 	}
+	if entry.Symlink != "" {
+		return stage.symlink(name, entry.Symlink, attrs)
+	}
 	if entry.Input == "" {
 		return stage.directory(name, attrs)
 	}

@@ -271,3 +271,30 @@ func TestBuildRefusesSignaturesInAttributes(t *testing.T) {
 		})
 	}
 }
+
+func TestDeclaredLinksExposePrivatePayload(t *testing.T) {
+	script := "#!/bin/sh\nexit 93\n"
+	spec := Spec{Package: Package{Identifier: "org.example.tool", Version: "1"}, Payload: map[string]Entry{
+		"/usr/local/libexec/tool/run": {Content: &script, Mode: "0755"},
+		"/usr/local/bin/tool":         {Symlink: "../libexec/tool/run"},
+		"/usr/local/bin/alias":        {Symlink: "tool"},
+	}}
+	result, err := buildPackage(t.Context(), spec, nil, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, modes := packageArchive(t, result.Path, "Payload")
+	if files["usr/local/bin/tool"] != "../libexec/tool/run" || files["usr/local/bin/alias"] != "tool" || files["usr/local/libexec/tool/run"] != script || modes["usr/local/bin/tool"] != cpio.ModeSymlink|0o777 {
+		t.Fatalf("wrong links: %v %v", files, modes)
+	}
+	for _, link := range []string{"../../../../escape", "/outside", "tool"} {
+		spec.Payload["/usr/local/bin/tool"] = Entry{Symlink: link}
+		if _, err := buildPackage(t.Context(), spec, nil, t.TempDir()); err == nil {
+			t.Fatalf("invalid link %q accepted", link)
+		}
+	}
+	spec.Payload["/usr/local/bin/tool"] = Entry{Symlink: "../libexec/tool/run", Content: &script}
+	if err := spec.Validate(); err == nil {
+		t.Fatal("link and content accepted")
+	}
+}

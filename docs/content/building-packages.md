@@ -55,7 +55,7 @@ Building does not require a destination.
 
 Payload keys are installation paths relative to the package's `/` installation
 root. Each entry can select an input file or tree, select a path within an input,
-contain literal text, or create a directory:
+contain literal text, declare a relative symlink, or create a directory:
 
 ```yaml
 payload:
@@ -78,8 +78,11 @@ named inputs can come from repository assets or network downloads.
 Ownership defaults to root:wheel; numeric `uid` and `gid` apply to the mapped
 subtree without changing ownership on the runner. Quote octal modes in YAML.
 
-An entry with neither `$input` nor `content` creates a directory. Confined relative
-symlinks are supported. Extended attributes, ACLs and resource forks are not
+Use `symlink: ../libexec/example/run` at `/usr/local/bin/example` to expose a
+command from a private payload directory. Links stay relative and confined to the
+package root; loops and symlink destination parents are rejected. `$input`,
+`content` and `symlink` are mutually exclusive. An entry with none creates a
+directory. Existing confined relative symlinks in selected inputs are preserved. Extended attributes, ACLs and resource forks are not
 carried into new payload trees. Vendor installers retain their original bytes.
 
 ## Select contents from an input

@@ -190,6 +190,18 @@
                                 ],
                                 "description": "Exact relative path in a tree, ZIP, TAR or DMG. A dot selects the contents root. Omit to retain the original input; PKGs remain opaque files."
                               },
+                              "symlink": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Relative link target in the installed filesystem, confined to the package root. Mutually exclusive with $input and content."
+                              },
                               "uid": {
                                 "anyOf": [
                                   {
@@ -229,7 +241,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Installed absolute paths mapped to files, trees, literal text or directory declarations."
+                  "description": "Installed absolute paths mapped to files, trees, literal text, relative symlinks or directory declarations."
                 },
                 "scripts": {
                   "anyOf": [
@@ -634,6 +646,18 @@
                                     ],
                                     "description": "Exact relative path in a tree, ZIP, TAR or DMG. A dot selects the contents root. Omit to retain the original input; PKGs remain opaque files."
                                   },
+                                  "symlink": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Relative link target in the installed filesystem, confined to the package root. Mutually exclusive with $input and content."
+                                  },
                                   "uid": {
                                     "anyOf": [
                                       {
@@ -673,7 +697,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Installed absolute paths mapped to files, trees, literal text or directory declarations."
+                      "description": "Installed absolute paths mapped to files, trees, literal text, relative symlinks or directory declarations."
                     },
                     "scripts": {
                       "anyOf": [

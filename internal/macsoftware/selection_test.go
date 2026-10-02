@@ -1,6 +1,7 @@
 package macsoftware
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/plugin"
@@ -17,6 +18,15 @@ func TestApplicationOptionsRequireAnApplication(t *testing.T) {
 	for _, options := range []*Application{{VersionKey: "CFBundleVersion"}, {InstalledPath: "/Applications/Example.app"}} {
 		if _, err := selectApp(facts, options); err == nil {
 			t.Fatalf("ignored application options without an application: %+v", options)
+		}
+	}
+}
+
+func TestCommandPayloadRequiresAnExplicitPackageLayout(t *testing.T) {
+	facts := plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: ".", Kind: "file", Path: "."}}}
+	for _, traversable := range []bool{false, true} {
+		if _, _, err := choose(Spec{}, traversable, facts); err == nil || !strings.Contains(err.Error(), "BuildMacPkg") {
+			t.Fatalf("command payload accepted or not explained: %v", err)
 		}
 	}
 }

@@ -142,9 +142,9 @@ type homebrewEvidence struct {
 	MacOS        string                       `json:"macos"`
 	Language     string                       `json:"language,omitempty"`
 	Artifacts    []map[string]json.RawMessage `json:"artifacts,omitempty"`
-	Revision     int                          `json:"revision,omitempty"`
+	Revision     *int                         `json:"revision,omitempty"`
 	BottleTag    string                       `json:"bottle_tag,omitempty"`
-	Rebuild      int                          `json:"rebuild,omitempty"`
+	Rebuild      *int                         `json:"rebuild,omitempty"`
 	Cellar       string                       `json:"cellar,omitempty"`
 	PayloadRoot  string                       `json:"payload_root,omitempty"`
 }
@@ -274,7 +274,7 @@ func (m *Manager) discoverHomebrew(ctx context.Context, input plugin.Input) (Dis
 		if strings.TrimPrefix(bottle.Cellar, ":") != "any_skip_relocation" {
 			return Discovery{}, fmt.Errorf("formula %s bottle requires Homebrew relocation or Cellar %q", name, bottle.Cellar)
 		}
-		evidence.Version, evidence.Revision, evidence.Rebuild = doc.Versions.Stable, doc.Revision, doc.Bottle.Stable.Rebuild
+		evidence.Version, evidence.Revision, evidence.Rebuild = doc.Versions.Stable, &doc.Revision, &doc.Bottle.Stable.Rebuild
 		evidence.Cellar = "any_skip_relocation"
 		evidence.PayloadRoot = name + "/" + evidence.Version
 		if doc.Revision > 0 {
