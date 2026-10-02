@@ -83,7 +83,11 @@ repeat discovery or reapply the pattern. Credentials remain confined to the
 configured source origin. Discovery belongs to the resolver; the software kind still receives
 one file. External plugins can supply other [resolvers](writing-plugins.md#resolvers).
 
-## Homebrew metadata
+## Follow Homebrew releases
+
+Homebrew casks and bottles provide download hashes, so `stemma update` checks for
+new releases without downloading installers, even with an empty cache. `prepare`
+downloads the selected file when needed and verifies its hash.
 
 ```yaml
 source:
@@ -102,16 +106,39 @@ sources require `any_skip_relocation`, no runtime formula dependencies and no
 post-install actions. An older bottle of the same architecture can satisfy a
 newer target. There is no source-build fallback or Homebrew prefix emulation.
 
-The lock records the selected target, variant, digest and replay URL. Evidence
-under `homebrew.cask` or `homebrew.formula` carries the version and payload hints;
-formula evidence also supplies `payload_root`, revision and bottle rebuild.
-Cask lifecycle actions are never executed. Hashless and `no_check` casks still
-check their vendor bytes during update, even when the cask metadata is unchanged.
+A cask may supply a universal or Intel artifact for an Apple silicon target.
+Hashless and `no_check` casks still check their vendor bytes during update.
 
 A bottle remains a source archive. Use `BuildMacPkg` to declare the installed
 layout, including support files and command links, then publish that package
 with `MacSoftware`. `MacSoftware` requires an application or installer; it does
 not choose an installation location for a command-line tool.
+
+## Follow WinGet releases
+
+WinGet also supplies installer hashes: checking for updates does not require
+downloading the installer.
+
+```yaml
+source:
+  resolver: winget
+  package: Google.Chrome
+  architecture: x64
+  scope: machine
+  installer_type: wix
+```
+
+The community source supplies the latest version by default. `version` can select
+an exact published version. Version selection happens before installer filtering;
+a missing match never falls back to an older release. Architecture defaults to
+`x64` independently of the runner. `scope`, `installer_type` and `locale` filter
+explicit manifest claims. Exactly one installer must match. An absent installer
+locale remains absent; the package description's locale does not fill it.
+
+The lock retains the selected installer and its declared settings under
+`winget.installer` evidence. Stemma does not run the WinGet client or install its
+dependencies. Store-only, authenticated and download-prohibited installers are
+unsupported.
 
 ## Use local files
 
@@ -183,11 +210,10 @@ concrete selection without evaluating the asset glob or looking up the latest
 release again. Changing the pattern or release selector makes the declaration
 stale and requires a lock update, even with cached bytes.
 
-`update` records required bytes, not successful preparation. When a source supplies
-an expected SHA-256 and a replayable selection, it needs no installer request,
-even with an empty cache. A source lock has no measured size; acquired cache
-objects record their actual byte length. Registry evidence can change while the
-content digest stays the same.
+Homebrew, WinGet and GitHub assets with published hashes can update the lock
+without downloading the file. The hash pins the required bytes; preparation
+verifies them before use. A changed version or installer setting can therefore
+appear in review even when the file itself is unchanged.
 
 `update` also avoids downloads the cache or the lock can answer. A GitHub asset never
 changes, so an asset the cache fetched before, or the one the lock records, is
@@ -228,10 +254,8 @@ stemma prepare --offline
 It controls source and plugin acquisition; **it does not disable destination
 network access for `plan` or `apply`**.
 
-Discovery responses are shared within a run and revalidated with HTTP validators
-on later runs. Authentication and request headers partition the response cache.
-A failed refresh never falls back to stale metadata. These responses are separate
-from reviewed lock evidence and verified artifact bytes.
+Repeated source lookups share cached responses and check with the publisher for
+changes on later runs. A failed lookup remains a failure, even with cached data.
 
 The disposable cache lives under `stemma` in the system's user cache directory
 by default, outside the catalog. `stemma cache path` prints the effective location.

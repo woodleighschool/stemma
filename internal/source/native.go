@@ -59,11 +59,15 @@ type nativeObservation struct {
 // NativeResolver reports whether the name is reserved for a built-in source.
 func NativeResolver(name string) bool {
 	_, ok := nativeFields[name]
-	return ok || name == "homebrew"
+	return ok || name == "homebrew" || name == "winget"
 }
 
 // ValidateInput checks a native declaration without acquiring its content.
 func ValidateInput(input plugin.Input) error {
+	if input.Resolver == "winget" {
+		_, err := wingetInput(input)
+		return err
+	}
 	if input.Resolver == "homebrew" {
 		_, err := homebrewInput(input)
 		return err

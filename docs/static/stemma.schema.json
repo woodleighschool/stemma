@@ -1635,6 +1635,109 @@
             "resolver"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "architecture": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "x64",
+                    "x86",
+                    "arm64",
+                    "arm",
+                    "neutral"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Exact target architecture. Defaults to x64 independently of the runner."
+            },
+            "installer_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional declared installer type filter, such as msi, wix, inno or zip."
+            },
+            "locale": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional exact installer locale filter, such as en-US. Package description locale is not an installer locale."
+            },
+            "package": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Exact WinGet community package identifier."
+            },
+            "resolver": {
+              "const": "winget",
+              "description": "Built-in resolver selecting this input."
+            },
+            "scope": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "user",
+                    "machine"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional declared installer scope filter. Omit only when selection is unambiguous."
+            },
+            "version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Exact published version or latest (the default). Selects the release before filtering installers."
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "\\{\\{"
+            }
+          },
+          "required": [
+            "package",
+            "resolver"
+          ],
+          "type": "object"
         }
       ],
       "type": "object"
@@ -8440,6 +8543,105 @@
             "resolver": {
               "const": "homebrew",
               "description": "Built-in resolver selecting this input."
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "\\{\\{"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "architecture": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "x64",
+                    "x86",
+                    "arm64",
+                    "arm",
+                    "neutral"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Exact target architecture. Defaults to x64 independently of the runner."
+            },
+            "installer_type": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional declared installer type filter, such as msi, wix, inno or zip."
+            },
+            "locale": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional exact installer locale filter, such as en-US. Package description locale is not an installer locale."
+            },
+            "package": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Exact WinGet community package identifier."
+            },
+            "resolver": {
+              "const": "winget",
+              "description": "Built-in resolver selecting this input."
+            },
+            "scope": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "user",
+                    "machine"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional declared installer scope filter. Omit only when selection is unambiguous."
+            },
+            "version": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Exact published version or latest (the default). Selects the release before filtering installers."
             }
           },
           "propertyNames": {

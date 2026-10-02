@@ -41,6 +41,7 @@ require (
 	github.com/microsoftgraph/msgraph-sdk-go-core v1.4.1
 	github.com/mikelolasagasti/xz v1.0.1
 	github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261001080146-53effc04ea25
+	github.com/ncruces/go-sqlite3 v0.35.6
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/oras-project/oras-go/v3 v3.0.0-rc.1.0.20260925203640-cb6d6dc79f83
@@ -55,6 +56,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
 	golang.org/x/net v0.59.0
 	golang.org/x/oauth2 v0.37.0
+	golang.org/x/sync v0.23.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/term v0.46.0
 	golang.org/x/text v0.42.0
@@ -114,6 +116,8 @@ require (
 	github.com/microsoft/kiota-authentication-azure-go v1.3.1 // indirect
 	github.com/minio/minlz v1.2.0 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
+	github.com/ncruces/go-sqlite3-wasm/v6 v6.3.35304 // indirect
+	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/nwaples/rardecode/v2 v2.4.1 // indirect
 	github.com/pb33f/go-yaml v0.1.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.30 // indirect
@@ -140,7 +144,6 @@ require (
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260813180055-c1d0aacb2297 // indirect
-	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20251202230838-ff82c1b0f217 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect

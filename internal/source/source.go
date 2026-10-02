@@ -55,6 +55,7 @@ type record struct {
 // Manager owns acquisition and cached content, independently of resource kinds.
 type Manager struct {
 	metadata  *metadataCache
+	winget    *wingetCatalog
 	Store     *cas.Store
 	Root      string
 	Client    *http.Client
@@ -64,7 +65,7 @@ type Manager struct {
 
 // New creates a manager with bounded HTTP lifetimes and credential-safe redirects.
 func New(store *cas.Store, root string, offline bool) *Manager {
-	return &Manager{metadata: &metadataCache{}, Store: store, Root: root, Offline: offline, Resolvers: map[string]Resolver{}, Client: &http.Client{Timeout: 15 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	return &Manager{metadata: &metadataCache{}, winget: &wingetCatalog{}, Store: store, Root: root, Offline: offline, Resolvers: map[string]Resolver{}, Client: &http.Client{Timeout: 15 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("too many redirects")
 		}
@@ -98,6 +99,8 @@ func (m *Manager) resolver(name string) (Resolver, error) {
 		return resolver, nil
 	}
 	switch name {
+	case "winget":
+		return m.wingetResolver(), nil
 	case "homebrew":
 		return m.homebrewResolver(), nil
 	case "http", "github":

@@ -11,11 +11,18 @@ import (
 
 // Resolvers names the built-in resolvers. A url alone selects http and a path
 // alone selects file.
-func Resolvers() []string { return []string{"http", "github", "file", "local", "homebrew"} }
+func Resolvers() []string { return []string{"http", "github", "file", "local", "homebrew", "winget"} }
 
 // ResolverSchema describes a built-in resolver's settings beside the resolver
 // field, or returns nil for a name that is not built in.
 func ResolverSchema(resolver string) *jsonschema.Schema {
+	if resolver == "winget" {
+		config := (&jsonschema.Reflector{DoNotReference: true}).Reflect(wingetConfig{})
+		config.Version, config.ID = "", ""
+		property, _ := config.Properties.Get("package")
+		property.MinLength = new(uint64(1))
+		return config
+	}
 	if resolver == "homebrew" {
 		config := (&jsonschema.Reflector{DoNotReference: true}).Reflect(homebrewConfig{})
 		config.Version, config.ID = "", ""
