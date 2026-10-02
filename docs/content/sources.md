@@ -153,7 +153,13 @@ concrete selection without evaluating the asset glob or looking up the latest
 release again. Changing the pattern or release selector makes the declaration
 stale and requires a lock update, even with cached bytes.
 
-`update` avoids downloads the cache or the lock can answer. A GitHub asset never
+`update` records required bytes, not successful preparation. When a source supplies
+an expected SHA-256 and a replayable selection, it needs no installer request,
+even with an empty cache. A source lock has no measured size; acquired cache
+objects record their actual byte length. Registry evidence can change while the
+content digest stays the same.
+
+`update` also avoids downloads the cache or the lock can answer. A GitHub asset never
 changes, so an asset the cache fetched before, or the one the lock records, is
 not downloaded again. An HTTP URL can serve new bytes at any time: after
 rediscovering a `match` link, `update` asks the server with the `ETag` and
@@ -169,6 +175,10 @@ are reported as blocked, with the resources that blocked them. Successful
 resources can still update their entries. `update` can therefore write the
 lockfile and exit nonzero after reporting every resource. A failed refresh stays
 a failure even when the previous locked bytes remain cached.
+
+A registry hash can be stale: resolution may succeed and preparation then fail.
+Every consuming path verifies the required digest before using content. Offline
+preparation requires cached bytes, not merely a resolved lock.
 
 If a vendor replaces bytes at a stable URL, a cold locked run fails the content
 check. It does not silently accept today's download. Run `update` and review the

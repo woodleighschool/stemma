@@ -255,11 +255,19 @@ what the lock records for it, instead of calling `run`. Reuse from the cache is
 per plugin build; the lock's answer holds across builds. Change the version
 when an observation's meaning changes.
 
-Return consumer metadata in namespaced `artifact.evidence`, for example
+When discovery identifies the bytes, return `content` with `sha256`, `filename`,
+`mode` and optional `tree`. No size is required: these are expected bytes, not a
+verified artifact. To delegate ordinary HTTP acquisition, also return `download`
+with a stable `url` and optional nonsecret `headers`. The host locks these
+instructions, acquires conditionally when content is mutable, and verifies all
+consumed content. Custom acquisition still uses `run` and its leased workspace.
+
+Return registry metadata in namespaced discovery `evidence`, for example
 `{"vendor.release":{"version":"1.2"}}`. Evidence is reviewed in the source lock
 and passed to resource inputs; destination metadata can reference it with
 `{{ evidence['vendor.release'].version }}`. A builder reads the same evidence
-through `inputs.<name>.evidence`. Changing evidence invalidates preparation even
+through `inputs.<name>.evidence`. Fresh discovery evidence replaces the prior evidence independently of cached bytes.
+Changing evidence invalidates preparation even
 when the bytes are unchanged.
 
 Observation remains private to the resolver. A locked fetch verifies bytes and

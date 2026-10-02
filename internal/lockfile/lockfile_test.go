@@ -106,7 +106,7 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 	if err != nil || refreshed.Changed || !entry(refreshed).Equal(original) {
 		t.Fatalf("same bytes changed the reviewed entry: %v", err)
 	}
-	object, err := m.Store.Path(original.Content.Artifact)
+	object, err := m.Store.Path(cas.Ref{SHA256: original.Content.SHA256})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,7 +265,7 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if second.File.Inputs[resource]["script"].Content.Artifact != script.Content.Artifact || second.File.Inputs[resource]["script"].Content.Mode != uint32(info.Mode().Perm()) {
+	if second.File.Inputs[resource]["script"].Content.SHA256 != script.Content.SHA256 || second.File.Inputs[resource]["script"].Content.Mode != uint32(info.Mode().Perm()) {
 		t.Fatal("mode-only change did not preserve byte identity")
 	}
 	if err := os.Remove(link); err != nil {
@@ -281,7 +281,7 @@ func TestNamedLocalInputsCommitModesAndSymlinkTargets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if third.File.Inputs[resource]["payload"].Content.Artifact == second.File.Inputs[resource]["payload"].Content.Artifact {
+	if third.File.Inputs[resource]["payload"].Content.SHA256 == second.File.Inputs[resource]["payload"].Content.SHA256 {
 		t.Fatal("tree digest omitted symlink identity")
 	}
 	if err := os.Chmod(filepath.Join(tree, "one"), 0o444); err != nil {
@@ -338,7 +338,7 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 	if discoveries != 1 || fetches != 1 {
 		t.Fatal("identical named inputs repeated acquisition")
 	}
-	if entry(first).Content.Artifact.SHA256 != hex.EncodeToString(digest[:]) || entry(first).Content.Artifact.Size != int64(len(data)) {
+	if entry(first).Content.SHA256 != hex.EncodeToString(digest[:]) {
 		t.Fatal("manager did not establish the resolver output's content identity")
 	}
 	before := lockedBytes(t, m)
@@ -353,7 +353,7 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 		t.Fatalf("warm offline resolver evidence changed: %v", err)
 	}
 	artifact.Evidence = map[string]json.RawMessage{"vendor.release": json.RawMessage(`{"version":"2.0"}`)}
-	object, _ := m.Store.Path(entry(first).Content.Artifact)
+	object, _ := m.Store.Path(cas.Ref{SHA256: entry(first).Content.SHA256})
 	if err := os.Remove(object); err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +586,7 @@ func TestPreparationFetchesContentTheSourceIndexNamed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	object, err := m.Store.Path(entry(first).Content.Artifact)
+	object, err := m.Store.Path(cas.Ref{SHA256: entry(first).Content.SHA256})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -597,7 +597,7 @@ func TestPreparationFetchesContentTheSourceIndexNamed(t *testing.T) {
 	if updated, err := prepare(t, m, inputs, Options{Refresh: true}); err != nil || updated.Changed || fetches.Load() != 1 {
 		t.Fatalf("update fetched bytes it does not read: %v fetches=%d", err, fetches.Load())
 	}
-	if _, err := prepare(t, m, inputs, Options{IgnoreInputs: true}); err != nil || fetches.Load() != 2 || m.Store.Verify(t.Context(), entry(first).Content.Artifact) != nil {
+	if _, err := prepare(t, m, inputs, Options{IgnoreInputs: true}); err != nil || fetches.Load() != 2 || m.Store.VerifyDigest(t.Context(), entry(first).Content.SHA256) != nil {
 		t.Fatalf("preparation was left without the bytes the index named: %v fetches=%d", err, fetches.Load())
 	}
 }
@@ -741,9 +741,7 @@ inputs:
       resolver_version: "1"
       declaration: ` + strings.Repeat("a", 64) + `
       content:
-        artifact:
-          sha256: ` + strings.Repeat("b", 64) + `
-          size: 1
+        sha256: ` + strings.Repeat("b", 64) + `
         filename: input.pkg
         mode: 420
 `)

@@ -58,7 +58,7 @@ func TestHTTPFilenameAndLockedRecovery(t *testing.T) {
 			if err != nil || entry.Content.Filename != tc.want || requests.Load() != 1 {
 				t.Fatalf("resolve: name=%q requests=%d error=%v", entry.Content.Filename, requests.Load(), err)
 			}
-			cached, err := store.Path(entry.Content.Artifact)
+			cached, err := store.Path(cas.Ref{SHA256: entry.Content.SHA256})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -295,7 +295,7 @@ func TestHTTPDiscoveryResolvesURLReferences(t *testing.T) {
 			if observation(t, entry).URL != test.want || entry.Content.Filename != "App.pkg" {
 				t.Fatalf("unexpected resolved input: %+v", entry)
 			}
-			cached, err := store.Path(entry.Content.Artifact)
+			cached, err := store.Path(cas.Ref{SHA256: entry.Content.SHA256})
 			if err != nil {
 				t.Fatal(err)
 			}

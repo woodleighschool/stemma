@@ -36,7 +36,7 @@ func TestLocalIncludesSnapshotOnlyMatchedInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	filename, err := store.Path(first.Content.Artifact)
+	filename, err := store.Path(cas.Ref{SHA256: first.Content.SHA256})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestLocalIncludesSnapshotOnlyMatchedInputs(t *testing.T) {
 	writeInput(t, filepath.Join(base, "adjacent.txt"), "new unrelated content", 0o600)
 	writeInput(t, filepath.Join(base, "stemma.yaml"), "new configuration", 0o600)
 	second, err := m.Resolve(t.Context(), s)
-	if err != nil || second.Content.Artifact != first.Content.Artifact {
+	if err != nil || second.Content.SHA256 != first.Content.SHA256 {
 		t.Fatalf("adjacent inputs affected identity: %#v %v", second, err)
 	}
 	writeInput(t, filepath.Join(base, "Scripts", "postinstall"), "#!/bin/sh\necho changed\n", 0o755)
@@ -71,7 +71,7 @@ func TestLocalIncludesSnapshotOnlyMatchedInputs(t *testing.T) {
 		t.Fatal("warm CAS hid a local script change")
 	}
 	third, err := m.Resolve(t.Context(), s)
-	if err != nil || third.Content.Artifact == first.Content.Artifact {
+	if err != nil || third.Content.SHA256 == first.Content.SHA256 {
 		t.Fatalf("matched script did not affect identity: %#v %v", third, err)
 	}
 }
@@ -173,7 +173,7 @@ func TestFileInputsUseFilesystemPathSemantics(t *testing.T) {
 	}
 
 	escaping, err := m.Resolve(t.Context(), plugin.Input{Resolver: "file", Base: "software/Vendor", Config: map[string]any{"path": "../../../Applications/Vendor.pkg"}})
-	if err != nil || escaping.Content.Artifact != absolute.Content.Artifact {
+	if err != nil || escaping.Content.SHA256 != absolute.Content.SHA256 {
 		t.Fatalf("relative input above the project: %#v %v", escaping.Content, err)
 	}
 	if escaping.Declaration == absolute.Declaration {
@@ -181,7 +181,7 @@ func TestFileInputsUseFilesystemPathSemantics(t *testing.T) {
 	}
 
 	link, err := m.Resolve(t.Context(), plugin.Input{Resolver: "file", Config: map[string]any{"path": "Vendor.link"}})
-	if err != nil || link.Content.Artifact != absolute.Content.Artifact {
+	if err != nil || link.Content.SHA256 != absolute.Content.SHA256 {
 		t.Fatalf("symlinked input: %#v %v", link.Content, err)
 	}
 }

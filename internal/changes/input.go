@@ -1,6 +1,7 @@
 package changes
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -54,9 +55,8 @@ func inputValue(entry *source.Entry, comparing bool) map[string]any {
 		return map[string]any{}
 	}
 	fields := map[string]any{
-		"filename":   entry.Content.Filename,
-		"sha256":     entry.Content.Artifact.SHA256,
-		"size_bytes": entry.Content.Artifact.Size,
+		"filename": entry.Content.Filename,
+		"sha256":   entry.Content.SHA256,
 	}
 	if entry.Content.Mode != 0 && entry.Content.Mode != 0o644 || comparing {
 		fields["mode"] = fmt.Sprintf("%04o", entry.Content.Mode)
@@ -67,6 +67,10 @@ func inputValue(entry *source.Entry, comparing bool) map[string]any {
 	if comparing {
 		fields["resolver"] = entry.Resolver
 		fields["resolver_version"] = entry.ResolverVersion
+	}
+	if entry.Download != nil {
+		data, _ := json.Marshal(entry.Download)
+		fields["download"] = decode(data)
 	}
 	if len(entry.Observation) > 0 {
 		if observation := decode(entry.Observation); observation != nil {

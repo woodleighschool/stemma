@@ -4,16 +4,15 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/source"
 )
 
 func TestDiffInputsIncludesRemovedAndMetadataOnlyEntries(t *testing.T) {
-	old := source.Entry{Version: 1, Content: source.Content{Filename: "one.pkg", Artifact: cas.Ref{SHA256: "old", Size: 1}}, Observation: json.RawMessage(`{"version":"1"}`)}
+	old := source.Entry{Version: 1, Content: source.Content{Filename: "one.pkg", SHA256: "old"}, Observation: json.RawMessage(`{"version":"1"}`)}
 	metadata := old
 	metadata.Observation = json.RawMessage(`{"version":"1","etag":"new"}`)
 	content := old
-	content.Content.Artifact.SHA256 = "new"
+	content.Content.SHA256 = "new"
 	changes := DiffInputs(map[string]map[string]source.Entry{"app": {"source": old, "icon": old}, "removed": {"source": old}}, map[string]map[string]source.Entry{"app": {"source": metadata, "icon": content}, "new": {"source": content}})
 	if len(changes) != 4 {
 		t.Fatalf("changes=%+v", changes)

@@ -8,7 +8,6 @@ import (
 	"io"
 	"maps"
 
-	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
 	"go.yaml.in/yaml/v4"
 )
@@ -16,10 +15,10 @@ import (
 // Content identifies bytes and their filesystem representation. Tree bytes are a
 // canonical TAR retaining file and directory modes and confined symlink targets.
 type Content struct {
-	Artifact cas.Ref `json:"artifact" yaml:"artifact"`
-	Filename string  `json:"filename" yaml:"filename"`
-	Tree     bool    `json:"tree,omitempty" yaml:"tree,omitempty"`
-	Mode     uint32  `json:"mode" yaml:"mode"`
+	SHA256   string `json:"sha256" yaml:"sha256"`
+	Filename string `json:"filename" yaml:"filename"`
+	Tree     bool   `json:"tree,omitempty" yaml:"tree,omitempty"`
+	Mode     uint32 `json:"mode" yaml:"mode"`
 }
 
 // Entry is the common lock envelope. Observation belongs to the named resolver;
@@ -30,6 +29,7 @@ type Entry struct {
 	ResolverVersion string                     `json:"resolver_version" yaml:"resolver_version"`
 	Declaration     string                     `json:"declaration" yaml:"declaration"`
 	Observation     json.RawMessage            `json:"observation" yaml:"observation"`
+	Download        *plugin.Download           `json:"download,omitempty" yaml:"download,omitempty"`
 	Content         Content                    `json:"content" yaml:"content"`
 	Evidence        map[string]json.RawMessage `json:"evidence,omitempty" yaml:"evidence,omitempty"`
 }
@@ -39,6 +39,12 @@ type Entry struct {
 func (entry Entry) Validate() error {
 	if entry.Version != 1 || !plugin.ValidOperationName(entry.Resolver) || entry.ResolverVersion == "" || !validDigest(entry.Declaration) {
 		return errors.New("unsupported or incomplete input lock envelope")
+	}
+	if err := validateDownload(entry.Download); err != nil {
+		return err
+	}
+	if entry.Download != nil && entry.Content.Tree {
+		return errors.New("HTTP downloads must identify file content")
 	}
 	if !entry.Content.valid() {
 		return errors.New("invalid locked input content")
@@ -58,12 +64,12 @@ func (entry Entry) Validate() error {
 }
 
 func (content Content) valid() bool {
-	return validFilename(content.Filename) && validDigest(content.Artifact.SHA256) && content.Artifact.Size >= 0 && content.Artifact.Size <= cas.MaxObjectSize && content.Mode <= 0o777
+	return validFilename(content.Filename) && validDigest(content.SHA256) && content.Mode <= 0o777
 }
 
 // Equal compares semantic lock state, including JSON observations and evidence.
 func (entry Entry) Equal(other Entry) bool {
-	if entry.Version != other.Version || entry.Resolver != other.Resolver || entry.ResolverVersion != other.ResolverVersion || entry.Declaration != other.Declaration || entry.Content != other.Content || !sameJSON(entry.Observation, other.Observation) {
+	if entry.Version != other.Version || entry.Resolver != other.Resolver || entry.ResolverVersion != other.ResolverVersion || entry.Declaration != other.Declaration || entry.Content != other.Content || !equalDownload(entry.Download, other.Download) || !sameJSON(entry.Observation, other.Observation) {
 		return false
 	}
 	leftEvidence, err := canonicalEvidence(entry.Evidence)
@@ -188,4 +194,10 @@ func canonicalJSON(data json.RawMessage) (json.RawMessage, error) {
 		return nil, errors.New("expected one JSON value")
 	}
 	return json.Marshal(value)
+}
+
+func equalDownload(a, b *plugin.Download) bool {
+	left, _ := json.Marshal(a)
+	right, _ := json.Marshal(b)
+	return bytes.Equal(left, right)
 }

@@ -51,6 +51,12 @@ func (m *Manager) github(ctx context.Context, s nativeConfig, observed *nativeOb
 	}
 	asset := matches[0]
 	*observed = nativeObservation{URL: asset.GetBrowserDownloadURL(), Release: release.TagName, ReleaseID: release.ID, AssetID: asset.GetID()}
+	if digest, ok := strings.CutPrefix(asset.GetDigest(), "sha256:"); ok {
+		if !validDigest(digest) {
+			return errors.New("GitHub asset returned an invalid sha256 digest")
+		}
+		observed.SHA256, observed.Filename = digest, asset.GetName()
+	}
 	return nil
 }
 

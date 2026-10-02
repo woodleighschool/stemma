@@ -88,6 +88,40 @@ func (s *Store) Path(ref Ref) (string, error) {
 	return filepath.Join(s.Dir, "objects", ref.SHA256), nil
 }
 
+// Lookup describes a stored object without certifying its bytes. Verify must
+// succeed before a consumer uses the returned reference.
+func (s *Store) Lookup(digest string) (Ref, error) {
+	ref := Ref{SHA256: digest}
+	path, err := s.Path(ref)
+	if err != nil {
+		return Ref{}, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return Ref{}, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > MaxObjectSize {
+		return Ref{}, errors.New("invalid cached object")
+	}
+	ref.Size = info.Size()
+	return ref, nil
+}
+
+// VerifyDigest verifies content whose size has not been measured by this run.
+func (s *Store) VerifyDigest(ctx context.Context, digest string) error {
+	ref, err := s.Lookup(digest)
+	if err != nil {
+		return err
+	}
+	return s.Verify(ctx, ref)
+}
+
+// HasDigest reports availability, not integrity. Consumers must verify bytes.
+func (s *Store) HasDigest(digest string) bool {
+	_, err := s.Lookup(digest)
+	return err == nil
+}
+
 // Verify hashes actual stored bytes instead of trusting file existence or size.
 func (s *Store) Verify(ctx context.Context, ref Ref) error {
 	path, err := s.Path(ref)

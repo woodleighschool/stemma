@@ -80,7 +80,9 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, address string, 
 		return record{}, false, errors.New("input has no safe filename; set filename explicitly")
 	}
 	plugin.Logger(ctx).DebugContext(ctx, "Download response", "bytes", res.ContentLength)
-	result.Content.Artifact, err = m.Store.Import(ctx, plugin.ProgressReader(ctx, res.Body, res.ContentLength), s.SHA256)
+	var object cas.Ref
+	object, err = m.Store.Import(ctx, plugin.ProgressReader(ctx, res.Body, res.ContentLength), s.SHA256)
+	result.Content.SHA256 = object.SHA256
 	return result, false, err
 }
 

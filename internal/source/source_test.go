@@ -101,7 +101,7 @@ func TestDownloadPagePinsUniqueURLAndColdRecovery(t *testing.T) {
 	if observation(t, entry).URL != "https://cdn.example/App.pkg?version=1&arch=arm64" || entry.Content.Filename != "App.pkg" {
 		t.Fatalf("unexpected discovery: %+v", entry)
 	}
-	filename, err := store.Path(entry.Content.Artifact)
+	filename, err := store.Path(cas.Ref{SHA256: entry.Content.SHA256})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,8 +317,9 @@ func TestDownloadReportsActualBytes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if entry.Content.Artifact.Size != int64(len(payload)) {
-				t.Fatalf("artifact size %d", entry.Content.Artifact.Size)
+			ref, err := store.Lookup(entry.Content.SHA256)
+			if err != nil || ref.Size != int64(len(payload)) {
+				t.Fatalf("artifact size %d: %v", ref.Size, err)
 			}
 			decoder := json.NewDecoder(&logs)
 			found := false

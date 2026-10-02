@@ -49,14 +49,14 @@ type prepared struct {
 // the content that fetched. Change compares it with the lockfile: added,
 // removed, content changed or metadata refreshed.
 type input struct {
-	Name        string         `json:"name"`
-	Change      string         `json:"change"`
-	Resolver    string         `json:"resolver"`
-	Observation any            `json:"observation,omitempty"`
-	Filename    string         `json:"filename"`
-	SHA256      string         `json:"sha256"`
-	Size        int64          `json:"size"`
-	Evidence    map[string]any `json:"evidence,omitempty"`
+	Download    *plugin.Download `json:"download,omitempty"`
+	Name        string           `json:"name"`
+	Change      string           `json:"change"`
+	Resolver    string           `json:"resolver"`
+	Observation any              `json:"observation,omitempty"`
+	Filename    string           `json:"filename"`
+	SHA256      string           `json:"sha256"`
+	Evidence    map[string]any   `json:"evidence,omitempty"`
 }
 
 // artifact is a prepared output with its inspected subjects. Signatures is the
@@ -245,7 +245,7 @@ func inputs(changes []lockfile.InputChange) []input {
 }
 
 func lockedInput(name, change string, entry source.Entry) input {
-	result := input{Name: name, Change: change, Resolver: entry.Resolver, Filename: entry.Content.Filename, SHA256: entry.Content.Artifact.SHA256, Size: entry.Content.Artifact.Size, Evidence: decode(entry.Evidence)}
+	result := input{Name: name, Change: change, Resolver: entry.Resolver, Filename: entry.Content.Filename, SHA256: entry.Content.SHA256, Evidence: decode(entry.Evidence), Download: entry.Download}
 	var observation any
 	if json.Unmarshal(entry.Observation, &observation) == nil {
 		if object, ok := observation.(map[string]any); !ok || len(object) > 0 {

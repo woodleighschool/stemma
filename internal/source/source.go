@@ -22,6 +22,9 @@ import (
 // Discovery is a resolver's current observation. Immutable promises that the
 // observation always fetches the same bytes.
 type Discovery struct {
+	Content     *Content
+	Download    *plugin.Download
+	Evidence    map[string]json.RawMessage
 	Observation json.RawMessage
 	Immutable   bool
 }
@@ -73,7 +76,7 @@ func New(store *cas.Store, root string, offline bool) *Manager {
 
 // Register adds a resolver without shadowing native or previously registered inputs.
 func (m *Manager) Register(name string, resolver Resolver) error {
-	if !plugin.ValidOperationName(name) || resolver.Version == "" || resolver.Discover == nil || resolver.Fetch == nil {
+	if !plugin.ValidOperationName(name) || resolver.Version == "" || resolver.Discover == nil {
 		return errors.New("resolver registration requires a name, version and acquisition callbacks")
 	}
 	if _, err := m.resolver(name); err == nil {
@@ -88,7 +91,7 @@ func (m *Manager) Register(name string, resolver Resolver) error {
 
 func (m *Manager) resolver(name string) (Resolver, error) {
 	if resolver, ok := m.Resolvers[name]; ok {
-		if resolver.Version == "" || resolver.Discover == nil || resolver.Fetch == nil {
+		if resolver.Version == "" || resolver.Discover == nil {
 			return Resolver{}, fmt.Errorf("resolver %s has an incomplete contract", name)
 		}
 		return resolver, nil
@@ -179,20 +182,37 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 	if err != nil {
 		return Entry{}, false, err
 	}
-	entry := Entry{Version: 1, Resolver: input.Resolver, ResolverVersion: version, Declaration: declaration}
+	entry := Entry{Version: 1, Resolver: input.Resolver, ResolverVersion: version, Declaration: declaration, Download: found.Download}
+	entry.Evidence, err = canonicalEvidence(found.Evidence)
+	if err != nil {
+		return Entry{}, false, err
+	}
+	if err := validateDownload(entry.Download); err != nil {
+		return Entry{}, false, err
+	}
 	entry.Observation, err = canonicalJSON(found.Observation)
 	if err != nil {
 		return Entry{}, false, fmt.Errorf("resolver observation: %w", err)
 	}
+	if found.Content != nil && !resolver.Local {
+		entry.Content = *found.Content
+		if err := entry.Validate(); err != nil {
+			return Entry{}, false, err
+		}
+		return entry, m.Store.HasDigest(entry.Content.SHA256), nil
+	}
 	if resolver.Local {
-		current, _, err := m.fetch(ctx, resolver, input, entry.Observation, nil)
+		current, _, err := m.acquire(ctx, resolver, input, entry, nil)
 		if err != nil {
 			return Entry{}, false, err
 		}
-		entry.Content, entry.Evidence = current.Content, current.Evidence
+		entry.Content = current.Content
+		if found.Evidence == nil {
+			entry.Evidence = current.Evidence
+		}
 		return entry, false, entry.Validate()
 	}
-	key, err := sourceKey(input.Resolver, resolver, declaration, entry.Observation)
+	key, err := entrySourceKey(input.Resolver, resolver, declaration, entry)
 	if err != nil {
 		return Entry{}, false, err
 	}
@@ -200,24 +220,34 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 	recalled := m.Store.RecallSource(key, &known) && known.Content.valid()
 	switch {
 	case found.Immutable && recalled:
-		entry.Content, entry.Evidence = known.Content, known.Evidence
-		return entry, m.Store.Has(entry.Content.Artifact), entry.Validate()
-	case found.Immutable && locked.Validate() == nil && locked.Resolver == entry.Resolver && locked.ResolverVersion == version && locked.Declaration == declaration && sameJSON(locked.Observation, entry.Observation):
-		return locked, m.Store.Has(locked.Content.Artifact), nil
+		entry.Content = known.Content
+		if found.Evidence == nil {
+			entry.Evidence = known.Evidence
+		}
+		return entry, m.Store.HasDigest(entry.Content.SHA256), entry.Validate()
+	case found.Immutable && locked.Validate() == nil && locked.Resolver == entry.Resolver && locked.ResolverVersion == version && locked.Declaration == declaration && sameJSON(locked.Observation, entry.Observation) && equalDownload(locked.Download, entry.Download):
+		entry.Content = locked.Content
+		if found.Evidence == nil {
+			entry.Evidence = locked.Evidence
+		}
+		return entry, m.Store.HasDigest(locked.Content.SHA256), nil
 	}
 	var previous *record
 	if recalled {
 		previous = &known
 	}
-	current, reused, err := m.fetch(ctx, resolver, input, entry.Observation, previous)
+	current, reused, err := m.acquire(ctx, resolver, input, entry, previous)
 	if err != nil {
 		return Entry{}, false, err
 	}
 	if err := m.Store.RememberSource(key, current); err != nil {
 		return Entry{}, false, err
 	}
-	entry.Content, entry.Evidence = current.Content, current.Evidence
-	return entry, reused && m.Store.Has(entry.Content.Artifact), entry.Validate()
+	entry.Content = current.Content
+	if found.Evidence == nil {
+		entry.Evidence = current.Evidence
+	}
+	return entry, reused && m.Store.HasDigest(entry.Content.SHA256), entry.Validate()
 }
 
 // FetchLocked uses verified cached content or fetches the locked observation
@@ -235,7 +265,7 @@ func (m *Manager) FetchLocked(ctx context.Context, input plugin.Input, entry Ent
 	if entry.Resolver != input.Resolver || entry.ResolverVersion != version || entry.Declaration != declaration {
 		return false, errors.New("invalid or stale input lock")
 	}
-	cached := m.Store.Verify(ctx, entry.Content.Artifact)
+	cached := m.Store.VerifyDigest(ctx, entry.Content.SHA256)
 	resolver, _ := m.resolver(input.Resolver)
 	if resolver.Local {
 		current, err := m.Resolve(ctx, input)
@@ -256,18 +286,18 @@ func (m *Manager) FetchLocked(ctx context.Context, input plugin.Input, entry Ent
 	if m.Offline {
 		return false, fmt.Errorf("offline cache miss for %s", entry.Content.Filename)
 	}
-	current, _, err := m.fetch(ctx, resolver, input, entry.Observation, nil)
+	current, _, err := m.acquire(ctx, resolver, input, entry, nil)
 	if err != nil {
 		return false, err
 	}
-	key, err := sourceKey(input.Resolver, resolver, declaration, entry.Observation)
+	key, err := entrySourceKey(input.Resolver, resolver, declaration, entry)
 	if err != nil {
 		return false, err
 	}
 	if err := m.Store.RememberSource(key, current); err != nil {
 		return false, err
 	}
-	if current.Content.Artifact != entry.Content.Artifact || current.Content.Tree != entry.Content.Tree {
+	if current.Content.SHA256 != entry.Content.SHA256 || current.Content.Tree != entry.Content.Tree {
 		return false, errors.New("fetched content differs from the input lock")
 	}
 	return false, nil
@@ -280,11 +310,41 @@ func (m *Manager) discover(ctx context.Context, resolver Resolver, input plugin.
 	return resolver.Discover(ctx, input)
 }
 
+func validateDownload(download *plugin.Download) error {
+	if download == nil {
+		return nil
+	}
+	if err := validateHTTPURL(download.URL); err != nil {
+		return err
+	}
+	for name := range download.Headers {
+		switch http.CanonicalHeaderKey(name) {
+		case "Authorization", "Proxy-Authorization":
+			return errors.New("download credentials must remain in resolver configuration")
+		}
+	}
+	return (nativeConfig{Type: "http", URL: download.URL, Headers: download.Headers}).Validate()
+}
+
+func (m *Manager) acquire(ctx context.Context, resolver Resolver, input plugin.Input, entry Entry, previous *record) (record, bool, error) {
+	if err := validateDownload(entry.Download); err != nil {
+		return record{}, false, err
+	}
+	if entry.Download != nil {
+		s := nativeConfig{Type: "http", URL: entry.Download.URL, Headers: entry.Download.Headers, Filename: entry.Content.Filename, SHA256: entry.Content.SHA256}
+		return m.download(ctx, s, s.URL, previous)
+	}
+	return m.fetch(ctx, resolver, input, entry.Observation, previous)
+}
+
 // fetch acquires the content an observation names. Only native HTTP uses the
 // previous record, reusing it when the server confirms it still stands.
 func (m *Manager) fetch(ctx context.Context, resolver Resolver, input plugin.Input, observation json.RawMessage, previous *record) (record, bool, error) {
-	if resolver.Fetch == nil {
+	if resolver.Discover == nil {
 		return m.fetchNative(ctx, input, observation, previous)
+	}
+	if resolver.Fetch == nil {
+		return record{}, false, errors.New("resolver must supply download instructions or implement acquisition")
 	}
 	artifact, err := resolver.Fetch(ctx, input, observation)
 	if err != nil {
@@ -296,6 +356,21 @@ func (m *Manager) fetch(ctx context.Context, resolver Resolver, input plugin.Inp
 	}
 	evidence, err := canonicalEvidence(artifact.Evidence)
 	return record{Content: content, Evidence: evidence}, false, err
+}
+
+func entrySourceKey(name string, resolver Resolver, declaration string, entry Entry) (string, error) {
+	observation := entry.Observation
+	if entry.Download != nil {
+		var err error
+		observation, err = json.Marshal(struct {
+			Observation json.RawMessage  `json:"observation"`
+			Download    *plugin.Download `json:"download"`
+		}{observation, entry.Download})
+		if err != nil {
+			return "", err
+		}
+	}
+	return sourceKey(name, resolver, declaration, observation)
 }
 
 // sourceKey identifies an observation in the source index. The resolver
@@ -355,7 +430,9 @@ func (m *Manager) importArtifact(ctx context.Context, artifact plugin.Artifact) 
 			return Content{}, err
 		}
 		defer func() { _ = root.Close() }()
-		content.Artifact, err = m.importTree(ctx, root, nil, artifact.SHA256)
+		var object cas.Ref
+		object, err = m.importTree(ctx, root, nil, artifact.SHA256)
+		content.SHA256 = object.SHA256
 		if err != nil {
 			return Content{}, err
 		}
@@ -363,12 +440,18 @@ func (m *Manager) importArtifact(ctx context.Context, artifact plugin.Artifact) 
 		if (artifact.SHA256 != "" || artifact.Size != 0) && info.Size() != artifact.Size {
 			return Content{}, errors.New("resolver artifact size differs from its descriptor")
 		}
-		content.Artifact, err = m.Store.Import(ctx, file, artifact.SHA256)
+		var object cas.Ref
+		object, err = m.Store.Import(ctx, file, artifact.SHA256)
+		content.SHA256 = object.SHA256
 		if err != nil {
 			return Content{}, err
 		}
 	}
-	if artifact.Size != 0 && artifact.Size != content.Artifact.Size {
+	measured, err := m.Store.Lookup(content.SHA256)
+	if err != nil {
+		return Content{}, err
+	}
+	if artifact.Size != 0 && artifact.Size != measured.Size {
 		return Content{}, errors.New("resolver artifact size differs from imported content")
 	}
 	return content, nil

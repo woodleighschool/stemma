@@ -425,7 +425,11 @@ func (e *execution) inputs(plan resourcePlan, entries map[string]source.Entry) (
 		ref := plan.Inputs[name].Resource
 		if ref == nil {
 			entry := entries[name]
-			inputs[name] = Prepared{Payload: entry.Content.Artifact, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, InputsHash: entry.Content.Artifact.SHA256, Evidence: entry.Evidence}
+			ref, err := e.session.store.Lookup(entry.Content.SHA256)
+			if err != nil {
+				return nil, err
+			}
+			inputs[name] = Prepared{Payload: ref, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, InputsHash: entry.Content.SHA256, Evidence: entry.Evidence}
 			continue
 		}
 		producer := e.prepared[ref.Key()]

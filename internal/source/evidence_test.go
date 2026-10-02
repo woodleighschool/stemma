@@ -17,7 +17,7 @@ func TestEntryEvidenceRoundTripAndEquality(t *testing.T) {
 	entry := Entry{
 		Version: 1, Resolver: "vendor.release", ResolverVersion: "1", Declaration: strings.Repeat("a", 64),
 		Observation: json.RawMessage(`{}`),
-		Content:     Content{Artifact: cas.Ref{SHA256: strings.Repeat("b", 64), Size: 1}, Filename: "input.pkg", Mode: 0o644},
+		Content:     Content{SHA256: strings.Repeat("b", 64), Filename: "input.pkg", Mode: 0o644},
 		Evidence:    map[string]json.RawMessage{"vendor.release": json.RawMessage(`{ "version": "1.2", "id": 9007199254740993, "enabled": false }`)},
 	}
 	data, err := yaml.Marshal(entry)

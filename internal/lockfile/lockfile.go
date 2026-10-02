@@ -205,7 +205,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		// Inputs sharing a declaration share one observation.
 		key := input.Resolver + "\x00" + version + "\x00" + declaration
 		if current, ok := resolved[key]; ok {
-			return current, m.Store.Has(current.Content.Artifact), nil
+			return current, m.Store.HasDigest(current.Content.SHA256), nil
 		}
 		current, cached, err := m.Refresh(ctx, input, previous)
 		if err == nil {
@@ -223,7 +223,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 			if !matches && frozen {
 				return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
 			}
-			cached := matches && m.Store.Verify(ctx, entry.Content.Artifact) == nil
+			cached := matches && m.Store.VerifyDigest(ctx, entry.Content.SHA256) == nil
 			current, _, err := resolve(ctx, input, entry)
 			if err != nil {
 				return current, false, err

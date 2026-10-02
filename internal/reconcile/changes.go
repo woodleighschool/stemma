@@ -48,7 +48,7 @@ func sameArtifacts(before, after map[string]source.Entry) bool {
 	}
 	for name, entry := range after {
 		previous, ok := before[name]
-		if !ok || previous.Content.Artifact != entry.Content.Artifact {
+		if !ok || previous.Content.SHA256 != entry.Content.SHA256 {
 			return false
 		}
 	}

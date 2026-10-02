@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -51,6 +52,8 @@ type nativeObservation struct {
 	Release   string `json:"release,omitempty"`
 	ReleaseID int64  `json:"release_id,omitempty"`
 	AssetID   int64  `json:"asset_id,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	Filename  string `json:"filename,omitempty"`
 }
 
 // NativeResolver reports whether the name is reserved for a built-in source.
@@ -121,7 +124,30 @@ func (m *Manager) discoverNative(ctx context.Context, input plugin.Input) (Disco
 		return Discovery{}, err
 	}
 	data, err := json.Marshal(observed)
-	return Discovery{Observation: data, Immutable: s.Type == "github"}, err
+	found := Discovery{Observation: data, Immutable: s.Type == "github"}
+	digest := s.SHA256
+	if observed.SHA256 != "" {
+		if digest != "" && digest != observed.SHA256 {
+			return Discovery{}, errors.New("declared sha256 disagrees with registry digest")
+		}
+		digest = observed.SHA256
+	}
+	filename := s.Filename
+	if filename == "" {
+		filename = observed.Filename
+	}
+	if filename == "" && s.Type == "http" {
+		address := s.URL
+		if observed.URL != "" {
+			address = observed.URL
+		}
+		u, _ := url.Parse(address)
+		filename = path.Base(u.Path)
+	}
+	if digest != "" && validFilename(filename) && (s.Type == "http" || s.Type == "github") {
+		found.Content = &Content{SHA256: digest, Filename: filename, Mode: 0o644}
+	}
+	return found, err
 }
 
 // fetchNative reads a local input or downloads its URL. A declared HTTP URL is
@@ -138,6 +164,9 @@ func (m *Manager) fetchNative(ctx context.Context, input plugin.Input, observati
 	var observed nativeObservation
 	if err := decode(observation, &observed); err != nil {
 		return record{}, false, fmt.Errorf("observation: %w", err)
+	}
+	if observed.SHA256 != "" {
+		s.SHA256 = observed.SHA256
 	}
 	address := observed.URL
 	if s.Type == "http" && s.Match == "" {

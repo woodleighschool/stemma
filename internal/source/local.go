@@ -164,7 +164,9 @@ func (m *Manager) readLocal(ctx context.Context, s nativeConfig) (content Conten
 				return content, fmt.Errorf("local include %q matched no files", pattern)
 			}
 		}
-		content.Artifact, err = m.importTree(ctx, root, names, s.SHA256)
+		var object cas.Ref
+		object, err = m.importTree(ctx, root, names, s.SHA256)
+		content.SHA256 = object.SHA256
 		return content, err
 	}
 	done := plugin.Stage(ctx, "Reading local input", plugin.Detail(filepath.Base(s.Path)))
@@ -193,13 +195,17 @@ func (m *Manager) readLocal(ctx context.Context, s nativeConfig) (content Conten
 			return content, err
 		}
 		defer func() { _ = tree.Close() }()
-		content.Artifact, err = m.importTree(ctx, tree, nil, s.SHA256)
+		var object cas.Ref
+		object, err = m.importTree(ctx, tree, nil, s.SHA256)
+		content.SHA256 = object.SHA256
 		return content, err
 	case info.Mode().IsRegular():
 		if err := archive.CheckXattrs(ctx, f); err != nil {
 			return content, err
 		}
-		content.Artifact, err = m.Store.Import(ctx, f, s.SHA256)
+		var object cas.Ref
+		object, err = m.Store.Import(ctx, f, s.SHA256)
+		content.SHA256 = object.SHA256
 		return content, err
 	}
 	return content, errors.New("file source is not a regular file or directory")

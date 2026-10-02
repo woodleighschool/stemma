@@ -227,13 +227,32 @@ type ResolveRequest[C any] struct {
 	Observation json.RawMessage `json:"observation,omitempty"`
 }
 
+// SourceContent identifies expected input bytes and their representation, without
+// claiming they have been acquired or verified.
+type SourceContent struct {
+	SHA256   string `json:"sha256"`
+	Filename string `json:"filename"`
+	Tree     bool   `json:"tree,omitempty"`
+	Mode     uint32 `json:"mode"`
+}
+
+// Download delegates HTTP acquisition to the host. Headers must be nonsecret;
+// credentials stay in resolver configuration. The host never executes content.
+type Download struct {
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
 // ResolveResponse answers discover with Observation and run with Artifact.
 // Immutable promises that the observation always fetches the same bytes, so
 // the host reuses content it fetched for it before instead of calling run.
 type ResolveResponse struct {
-	Observation json.RawMessage `json:"observation,omitempty"`
-	Immutable   bool            `json:"immutable,omitempty"`
-	Artifact    Artifact        `json:"artifact,omitzero"`
+	Content     *SourceContent             `json:"content,omitempty"`
+	Download    *Download                  `json:"download,omitempty"`
+	Evidence    map[string]json.RawMessage `json:"evidence"`
+	Observation json.RawMessage            `json:"observation,omitempty"`
+	Immutable   bool                       `json:"immutable,omitempty"`
+	Artifact    Artifact                   `json:"artifact,omitzero"`
 }
 
 func (request *ResolveRequest[C]) setMethod(method string) { request.Method = method }

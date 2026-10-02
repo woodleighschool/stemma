@@ -37,7 +37,7 @@ func DiffInputs(before, after map[string]map[string]source.Entry) []InputChange 
 			if aok && bok && a.Equal(b) {
 				continue
 			}
-			change := InputChange{Resource: resource, Input: name, ContentChanged: !aok || !bok || a.Content.Artifact != b.Content.Artifact}
+			change := InputChange{Resource: resource, Input: name, ContentChanged: !aok || !bok || a.Content.SHA256 != b.Content.SHA256}
 			if aok {
 				change.Before = &a
 			}

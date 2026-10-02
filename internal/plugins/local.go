@@ -80,7 +80,7 @@ func (s *Store) Load(ctx context.Context, root string, declaration config.Plugin
 	if !current.Content.Tree && declaration.Entrypoint != "" {
 		return Bundle{}, Entry{}, errors.New("entrypoint requires a directory; path already selects an executable")
 	}
-	entry := Entry{Declaration: fingerprint, Digest: "sha256:" + current.Content.Artifact.SHA256}
+	entry := Entry{Declaration: fingerprint, Digest: "sha256:" + current.Content.SHA256}
 	switch {
 	case resolve || entry == previous:
 	case previous.Digest == "":
@@ -99,6 +99,10 @@ func (s *Store) Load(ctx context.Context, root string, declaration config.Plugin
 		Content    source.Content
 		Entrypoint string
 	}{current.Content, name})
-	bundle := Bundle{Manifest: identity, Artifact: current.Content.Artifact, Local: &current.Content, Entrypoint: name}
+	artifact, err := s.cache.Lookup(current.Content.SHA256)
+	if err != nil {
+		return Bundle{}, Entry{}, err
+	}
+	bundle := Bundle{Manifest: identity, Artifact: artifact, Local: &current.Content, Entrypoint: name}
 	return bundle, entry, nil
 }

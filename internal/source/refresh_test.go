@@ -85,14 +85,14 @@ func TestRefreshAsksHTTPConditionallyWhateverTheLock(t *testing.T) {
 			server.etag.Store(strings.Replace(test.etag, "v1", "v2", 1))
 			server.modified.Store(strings.Replace(test.modified, "2015", "2016", 1))
 			updated, cached, err := m.Refresh(t.Context(), input, previous)
-			if err != nil || cached || updated.Content.Artifact == previous.Content.Artifact || server.bodies.Load() != 2 {
+			if err != nil || cached || updated.Content.SHA256 == previous.Content.SHA256 || server.bodies.Load() != 2 {
 				t.Fatalf("changed content was not downloaded: %v cached=%v", err, cached)
 			}
 			if same, cached, err := m.Refresh(t.Context(), input, previous); err != nil || !cached || !same.Equal(updated) || server.bodies.Load() != 2 {
 				t.Fatalf("new validators were not kept: %v cached=%v bodies=%d", err, cached, server.bodies.Load())
 			}
 			// Locked recovery must fetch the bytes, never ask whether they changed.
-			object, err := m.Store.Path(updated.Content.Artifact)
+			object, err := m.Store.Path(cas.Ref{SHA256: updated.Content.SHA256})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -182,7 +182,7 @@ func TestRefreshRediscoversMatchedURLBeforeAskingTheServer(t *testing.T) {
 	}
 	current.Store("/downloads/app-2.0.pkg")
 	updated, _, err := m.Refresh(t.Context(), input, previous)
-	if err != nil || updated.Content.Artifact == previous.Content.Artifact || bodies.Load() != 2 || conditionals.Load() != 1 {
+	if err != nil || updated.Content.SHA256 == previous.Content.SHA256 || bodies.Load() != 2 || conditionals.Load() != 1 {
 		t.Fatalf("new link was asked conditionally with the old validator: %v", err)
 	}
 	if observation(t, updated).URL != server.URL+"/downloads/app-2.0.pkg" {
@@ -249,7 +249,7 @@ func TestFetchLockedRemembersWhatAMovedSourceServes(t *testing.T) {
 		t.Fatalf("moved source was accepted for the lock: %v", err)
 	}
 	updated, cached, err := m.Refresh(t.Context(), input, locked)
-	if err != nil || !cached || updated.Content.Artifact == locked.Content.Artifact || server.bodies.Load() != 2 {
+	if err != nil || !cached || updated.Content.SHA256 == locked.Content.SHA256 || server.bodies.Load() != 2 {
 		t.Fatalf("refresh downloaded what the locked fetch already had: %v cached=%v bodies=%d", err, cached, server.bodies.Load())
 	}
 }

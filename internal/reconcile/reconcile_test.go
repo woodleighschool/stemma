@@ -775,8 +775,8 @@ func TestRunReadsSourceControlSettingsWhenConnecting(t *testing.T) {
 // a refresh is only called one when merging changes no destination.
 func TestProposalTitlesDescribeMerging(t *testing.T) {
 	artifact := cas.Ref{SHA256: "8ccdfd126c8e80411108c8ec45cbc610779a08c54285d02d48681e8d8afed529", Size: 3}
-	before := map[string]source.Entry{"source": {Version: 1, Observation: []byte(`{"url":"https://example.test/app.pkg"}`), Content: source.Content{Artifact: artifact, Filename: "app.pkg"}}}
-	after := map[string]source.Entry{"source": {Version: 1, Observation: []byte(`{"url":"https://example.test/app.pkg","etag":"\"x\""}`), Content: source.Content{Artifact: artifact, Filename: "app-2.pkg"}}}
+	before := map[string]source.Entry{"source": {Version: 1, Observation: []byte(`{"url":"https://example.test/app.pkg"}`), Content: source.Content{SHA256: artifact.SHA256, Filename: "app.pkg"}}}
+	after := map[string]source.Entry{"source": {Version: 1, Observation: []byte(`{"url":"https://example.test/app.pkg","etag":"\"x\""}`), Content: source.Content{SHA256: artifact.SHA256, Filename: "app-2.pkg"}}}
 	if !sameArtifacts(before, after) || sameArtifacts(before, nil) || sameArtifacts(before, map[string]source.Entry{"source": {Version: 1}}) {
 		t.Fatal("artifact comparison")
 	}
@@ -810,8 +810,8 @@ func TestProposalTitlesDescribeMerging(t *testing.T) {
 // destination effects by field name, and failures without their error text.
 func TestProposalBodySummarisesWithoutValues(t *testing.T) {
 	secret := `"#!/bin/sh\ncurl -H 'Authorization: s3cr3t' https://example.test\n"`
-	before := map[string]source.Entry{"source": {Version: 1, Content: source.Content{Artifact: cas.Ref{SHA256: strings.Repeat("a", 64), Size: 1}, Filename: "App 1.pkg"}}}
-	after := map[string]source.Entry{"source": {Version: 1, Content: source.Content{Artifact: cas.Ref{SHA256: strings.Repeat("b", 64), Size: 1}, Filename: "App 2.pkg"}}}
+	before := map[string]source.Entry{"source": {Version: 1, Content: source.Content{SHA256: strings.Repeat("a", 64), Filename: "App 1.pkg"}}}
+	after := map[string]source.Entry{"source": {Version: 1, Content: source.Content{SHA256: strings.Repeat("b", 64), Filename: "App 2.pkg"}}}
 	update := change{kind: "MacSoftware", name: "app", entries: after}
 	planned := engine.Report{Resources: []engine.ResourceReport{
 		{Kind: "MacSoftware", Name: "consumer", Destinations: []engine.DestinationReport{{Name: "woodstar"}}},

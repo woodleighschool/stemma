@@ -85,7 +85,7 @@ func TestGitHubAssetSelection(t *testing.T) {
 			if entry.Content.Filename != test.want || observed.Release != "3.7.1" || observed.ReleaseID != 12 || observed.AssetID != wantID {
 				t.Fatalf("lost selected identity: %+v %+v", entry.Content, observed)
 			}
-			cachedPath, err := store.Path(entry.Content.Artifact)
+			cachedPath, err := store.Path(cas.Ref{SHA256: entry.Content.SHA256})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -185,7 +185,7 @@ func TestGitHubLockedFetchVerification(t *testing.T) {
 			if entry.Content.Filename != "renamed.pkg" {
 				t.Fatal("lost filename override")
 			}
-			cachedPath, err := store.Path(entry.Content.Artifact)
+			cachedPath, err := store.Path(cas.Ref{SHA256: entry.Content.SHA256})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -292,7 +292,7 @@ func TestGitHubReleaseDiscovery(t *testing.T) {
 			if observed.Release != test.tag || observed.ReleaseID != wantRelease || observed.AssetID != wantAsset {
 				t.Fatalf("lost release identity: %+v", observed)
 			}
-			cached, err := store.Path(entry.Content.Artifact)
+			cached, err := store.Path(cas.Ref{SHA256: entry.Content.SHA256})
 			if err != nil {
 				t.Fatal(err)
 			}
