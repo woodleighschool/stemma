@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
@@ -269,5 +270,51 @@ func writeApplication(ctx context.Context, app, output string, compression Compr
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	return WriteApplication(ctx, root.FS().(fs.ReadLinkFS), filepath.Base(app), output, compression, timestamp)
+	return WriteApplication(ctx, bundleFS{root.FS().(fs.ReadLinkFS)}, filepath.Base(app), output, compression, timestamp)
+}
+
+// Match archive.Tree's host-to-POSIX boundary for local bundle fixtures.
+type bundleFS struct{ fs.ReadLinkFS }
+
+func (b bundleFS) ReadLink(name string) (string, error) {
+	target, err := b.ReadLinkFS.ReadLink(name)
+	return filepath.ToSlash(target), err
+}
+
+func TestWriteApplicationLogicalSymlinks(t *testing.T) {
+	for _, test := range []struct {
+		name, target string
+		reject       bool
+	}{
+		{"nested", "nested/file", false},
+		{"parent inside bundle", "../Resources/nested/file", false},
+		{"literal backslash", `nested\file`, false},
+		{"escaping", "../../../outside", true},
+		{"absolute", "/outside", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := fstest.MapFS{
+				"Example.app/Contents/Resources/link": {Mode: fs.ModeSymlink | 0o755, Data: []byte(test.target)},
+			}
+			output := filepath.Join(t.TempDir(), "Example.dmg")
+			err := WriteApplication(t.Context(), source, "Example.app", output, Zlib, imageTime)
+			if test.reject {
+				if err == nil || errors.Is(err, fs.ErrNotExist) {
+					t.Fatalf("escaping symlink accepted: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			image, err := Open(t.Context(), output)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = image.Close() }()
+			if target, err := image.ReadLink("Example.app/Contents/Resources/link"); err != nil || target != test.target {
+				t.Fatalf("symlink target = %q, want %q: %v", target, test.target, err)
+			}
+		})
+	}
 }

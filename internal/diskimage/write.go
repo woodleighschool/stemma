@@ -51,6 +51,7 @@ func (c Compression) codec() (disk.Compression, error) {
 // relative symlinks, owned by root, with every date set to timestamp, so the same bundle,
 // compression and timestamp produce the same bytes on every host. The bundle is
 // never mounted or executed.
+// Source names and symlink targets use POSIX paths, independent of the host.
 func WriteApplication(ctx context.Context, source fs.ReadLinkFS, app, output string, compression Compression, timestamp time.Time) (err error) {
 	done := plugin.Stage(ctx, "Building disk image", plugin.Detail(filepath.Base(output)))
 	defer func() { done(err) }()
