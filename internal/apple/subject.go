@@ -17,7 +17,7 @@ func VerifySubject(ctx context.Context, source *contents.Source, subject plugin.
 	if subject.Kind != "app" && subject.Kind != "container" {
 		return signature.Result{}, fmt.Errorf("%q is not an application or package signing subject", subject.Path)
 	}
-	if subject.Path == "." {
+	if subject.Path == "." && source.Artifact().ContentRoot == "" {
 		if subject.Kind == "app" {
 			return VerifyApp(ctx, source.Artifact().Path, signature.Signer{})
 		}

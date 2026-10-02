@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -132,7 +131,7 @@ func (m *Manager) discoverNative(ctx context.Context, input plugin.Input) (Disco
 		return Discovery{}, err
 	}
 	data, err := json.Marshal(observed)
-	found := Discovery{Observation: data, Immutable: s.Type == "github", Version: observed.Release}
+	found := Discovery{Observation: data, Immutable: s.Type == "github" || s.SHA256 != "", Version: observed.Release}
 	digest := s.SHA256
 	if observed.SHA256 != "" {
 		if digest != "" && digest != observed.SHA256 {
@@ -144,14 +143,8 @@ func (m *Manager) discoverNative(ctx context.Context, input plugin.Input) (Disco
 	if filename == "" {
 		filename = observed.Filename
 	}
-	if filename == "" && s.Type == "http" {
-		address := s.URL
-		if observed.URL != "" {
-			address = observed.URL
-		}
-		u, _ := url.Parse(address)
-		filename = path.Base(u.Path)
-	}
+	// HTTP response names need an initial fetch unless the declaration supplies
+	// one. A declared digest then lets later updates reuse that selected name.
 	if digest != "" && validFilename(filename) && (s.Type == "http" || s.Type == "github") {
 		found.Content = &Content{SHA256: digest, Filename: filename, Mode: 0o644}
 	}

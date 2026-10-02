@@ -317,20 +317,26 @@ func TestPrepareVerifiesTheWrappedInputBeforeBuilding(t *testing.T) {
 		}
 	}
 	for name, input := range map[string]plugin.Artifact{
-		"dmg": {Path: image, Filename: "vendor.dmg", Format: "dmg"},
-		"zip": {Path: archive, Filename: "vendor.zip", Format: "zip"},
+		"dmg":      {Path: image, Filename: "vendor.dmg", Format: "dmg"},
+		"zip":      {Path: archive, Filename: "vendor.zip", Format: "zip"},
+		"dmg root": {Path: image, Filename: "vendor.dmg", Format: "dmg", ContentRoot: "Vendor Installer.app"},
+		"zip root": {Path: archive, Filename: "vendor.zip", Format: "zip", ContentRoot: "Vendor Installer.app"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			inputs := map[string]plugin.Artifact{"vendor": input}
-			artifact, err := Prepare(t.Context(), prepareRequest(t, config(map[string]any{"input": "vendor", "subject": map[string]any{"path": "Vendor Installer.app"}, "signer": signer}), inputs))
+			subjectPath := "Vendor Installer.app"
+			if input.ContentRoot != "" {
+				subjectPath = "."
+			}
+			artifact, err := Prepare(t.Context(), prepareRequest(t, config(map[string]any{"input": "vendor", "subject": map[string]any{"path": subjectPath}, "signer": signer}), inputs))
 			if err != nil {
 				t.Fatal(err)
 			}
 			var verified []signature.Observation
-			if err := json.Unmarshal(artifact.Evidence["signatures"], &verified); err != nil || len(verified) != 1 || verified[0].Input != "vendor" || verified[0].Signer != signer || verified[0].Target != "Vendor Installer.app" {
+			if err := json.Unmarshal(artifact.Evidence["signatures"], &verified); err != nil || len(verified) != 1 || verified[0].Input != "vendor" || verified[0].Signer != signer || verified[0].Target != "Vendor Installer.app" || verified[0].Subject.Path != subjectPath {
 				t.Fatalf("input evidence: %+v, %v", verified, err)
 			}
-			rejected := prepareRequest(t, config(map[string]any{"input": "vendor", "subject": map[string]any{"path": "Vendor Installer.app"}, "signer": "apple:developer-id:AAAAAAAAAA"}), inputs)
+			rejected := prepareRequest(t, config(map[string]any{"input": "vendor", "subject": map[string]any{"path": subjectPath}, "signer": "apple:developer-id:AAAAAAAAAA"}), inputs)
 			if _, err := Prepare(t.Context(), rejected); !errors.Is(err, signature.ErrMismatch) {
 				t.Fatalf("unexpected signer accepted: %v", err)
 			}

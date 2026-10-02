@@ -47,6 +47,44 @@ func applicationFixture(t *testing.T) string {
 	return root
 }
 
+func TestResolvedApplicationRootPublishesOnlyItsApplication(t *testing.T) {
+	root := t.TempDir()
+	if err := os.CopyFS(filepath.Join(root, "Example.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "outside.txt"), []byte("not selected"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, format := range []string{"zip", "dmg"} {
+		t.Run(format, func(t *testing.T) {
+			filename := filepath.Join(t.TempDir(), "vendor."+format)
+			if format == "zip" {
+				testarchive.Zip(t, filename, root)
+			} else {
+				testdiskimage.Write(t, filename, root)
+			}
+			input := plugin.Artifact{Path: filename, Filename: filepath.Base(filename), Format: format, ContentRoot: "Example.app"}
+			spec := Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: "Example.app"}, Signer: "apple:developer-id:SMLKBTR495"}}}
+			outputs, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			installer := outputs["installer"]
+			if len(installer.Facts.Subjects) != 2 || installer.Facts.Subjects[1].Path != "Example.app" {
+				t.Fatalf("facts do not describe published image: %+v", installer.Facts)
+			}
+			image, err := diskimage.Open(t.Context(), installer.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = image.Close() }()
+			if _, err := fs.Stat(image, "outside.txt"); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("published sibling outside content root: %v", err)
+			}
+		})
+	}
+}
+
 func TestZIPApplicationIsPublishedInADiskImage(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "Example.zip")
 	testarchive.Zip(t, filename, applicationFixture(t))

@@ -64,7 +64,7 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	if err != nil {
 		return nil, err
 	}
-	if spec.DiskImage != nil && (app == nil || source.IsImage()) {
+	if spec.DiskImage != nil && (app == nil || source.IsImage() && input.ContentRoot == "") {
 		return nil, errors.New("disk_image requires an application from an archive or tree")
 	}
 	var installer plugin.Artifact
@@ -101,6 +101,7 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 // archive or tree application alone in a new one.
 func publishApplication(ctx context.Context, spec Spec, request Request, source *contents.Source, inventory plugin.Facts, app plugin.Subject) (plugin.Artifact, *plugin.Subject, []signature.Observation, error) {
 	input := request.Input
+	retainImage := source.IsImage() && input.ContentRoot == ""
 	selection := app.Path
 	if app.ID == "." {
 		selection = ""
@@ -120,7 +121,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 	if len(spec.Signatures) > 0 || request.DeriveSignature {
 		var err error
 		targets := []plugin.Subject{app}
-		if source.IsImage() {
+		if retainImage {
 			targets = topLevel(inventory)
 		} else {
 			// The selected archive app is published alone at the image root.
@@ -129,7 +130,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 		verified, err = signature.Verify(ctx, spec.Signatures, targets, request.DeriveSignature, func(subject plugin.Subject) (signature.Result, error) {
 			var result signature.Result
 			var err error
-			if source.IsImage() {
+			if retainImage {
 				result, err = apple.VerifySubject(ctx, source, subject, request.Workspace)
 			} else {
 				result, err = apple.VerifyAppFS(ctx, node.FS, node.Path, signature.Signer{})
@@ -141,7 +142,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 		}
 	}
 	var installer plugin.Artifact
-	if source.IsImage() {
+	if retainImage {
 		if installer, err = retain(ctx, input.Path, input.Filename, request.Workspace); err != nil {
 			return plugin.Artifact{}, nil, nil, err
 		}

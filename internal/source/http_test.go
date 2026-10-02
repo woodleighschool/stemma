@@ -1,7 +1,9 @@
 package source
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"html"
 	"io"
 	"net/http"
@@ -16,6 +18,52 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 	"go.yaml.in/yaml/v4"
 )
+
+func TestDeclaredHTTPDigestPreservesSelectedFilename(t *testing.T) {
+	for _, test := range []struct{ name, disposition, declared, want string }{
+		{"disposition", `attachment; filename="Vendor.zip"`, "", "Vendor.zip"},
+		{"redirect", "", "", "redirected.zip"},
+		{"explicit", `attachment; filename="Vendor.zip"`, "Pinned.zip", "Pinned.zip"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			payload := "archive bytes"
+			digest := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/download" {
+					http.Redirect(w, r, "/redirected.zip", http.StatusFound)
+					return
+				}
+				requests++
+				w.Header().Set("Content-Disposition", test.disposition)
+				_, _ = io.WriteString(w, payload)
+			}))
+			defer server.Close()
+			m := manager(t)
+			input := plugin.Input{Resolver: "http", Config: map[string]any{"url": server.URL + "/download", "sha256": digest}}
+			wantRequests := 1
+			if test.declared != "" {
+				input.Config["filename"] = test.declared
+				wantRequests = 0
+			}
+			entry, err := m.Resolve(t.Context(), input)
+			if err != nil || entry.Content.Filename != test.want || requests != wantRequests {
+				t.Fatalf("resolve: %+v requests=%d: %v", entry, requests, err)
+			}
+			if err := m.Store.Prune(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			m = New(m.Store, m.Root, false)
+			current, _, err := m.Refresh(t.Context(), input, entry)
+			if err != nil || !current.Equal(entry) || requests != wantRequests {
+				t.Fatalf("cold update forgot reviewed filename: %+v requests=%d: %v", current, requests, err)
+			}
+			if _, err := m.FetchLocked(t.Context(), input, entry); err != nil || requests != wantRequests+1 {
+				t.Fatalf("locked replay: requests=%d: %v", requests, err)
+			}
+		})
+	}
+}
 
 func TestHTTPFilenameAndLockedRecovery(t *testing.T) {
 	for _, tc := range []struct{ name, disposition, target, override, want string }{

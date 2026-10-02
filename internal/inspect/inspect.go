@@ -281,7 +281,7 @@ func Selection(ctx context.Context, source *contents.Source, selection string) (
 		}
 		root := plugin.Subject{ID: ".", Path: ".", Kind: "file"}
 		switch {
-		case info.IsDir() && strings.EqualFold(path.Ext(selection), ".app"):
+		case info.IsDir() && strings.EqualFold(path.Ext(node.Path), ".app"):
 			var app apple.AppFacts
 			app, err = apple.InspectAppFS(ctx, node.FS, node.Path)
 			root.Kind, root.App = "app", appFacts(app)

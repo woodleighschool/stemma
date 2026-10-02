@@ -27,6 +27,8 @@ source:
 `token` supplies a bearer token. It cannot be combined with an `Authorization`
 header. Credentials and custom headers stay confined to the source origin across
 redirects. An optional `sha256` asserts a known digest in the declaration.
+Pair it with `filename` to resolve without downloading. Otherwise the first
+fetch discovers the filename, which later updates can reuse with that digest.
 
 The lock keeps only a digest of this declaration, so a URL that works as a
 credential can come from `{{ env.NAME }}`. Set `filename` with it; the default

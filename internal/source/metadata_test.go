@@ -60,7 +60,7 @@ func TestMetadataResolutionAndLockedAcquisition(t *testing.T) {
 	if err != nil || ref.Size != int64(len(payload)) {
 		t.Fatalf("measured cache object: %+v %v", ref, err)
 	}
-	third, err := m.Resolve(t.Context(), plugin.Input{Resolver: "http", Config: map[string]any{"url": server.URL + "/other.exe", "sha256": digest}})
+	third, err := m.Resolve(t.Context(), plugin.Input{Resolver: "http", Config: map[string]any{"url": server.URL + "/other.exe", "filename": "other.exe", "sha256": digest}})
 	if err != nil || third.Content.Filename != "other.exe" || requests != 1 {
 		t.Fatalf("same bytes borrowed representation: %+v %v", third, err)
 	}
@@ -85,7 +85,7 @@ func TestResolvedLockDoesNotCertifyAvailabilityOrContent(t *testing.T) {
 			defer server.Close()
 			m := manager(t)
 			sum := sha256.Sum256([]byte("expected"))
-			input := plugin.Input{Resolver: "http", Config: map[string]any{"url": server.URL + "/app.pkg", "sha256": hex.EncodeToString(sum[:])}}
+			input := plugin.Input{Resolver: "http", Config: map[string]any{"url": server.URL + "/app.pkg", "filename": "app.pkg", "sha256": hex.EncodeToString(sum[:])}}
 			entry, err := m.Resolve(t.Context(), input)
 			if err != nil || requests != 0 {
 				t.Fatalf("resolution: %v requests=%d", err, requests)
