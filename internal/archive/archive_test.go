@@ -129,3 +129,18 @@ func TestExtractRefusesSignaturesItWouldDiscard(t *testing.T) {
 		})
 	}
 }
+
+func TestArchiveNameHintRequiresArchiveSuffix(t *testing.T) {
+	for _, name := range []string{"setup.zip.exe", "setup.tar.exe", "download"} {
+		t.Run(name, func(t *testing.T) {
+			filename := filepath.Join(t.TempDir(), name)
+			if err := os.WriteFile(filename, []byte("scalar installer"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			archived, err := IsArchive(t.Context(), filename)
+			if err != nil || archived {
+				t.Fatalf("scalar recognized as archive: %v %v", archived, err)
+			}
+		})
+	}
+}

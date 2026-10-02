@@ -56,7 +56,10 @@ func identify(ctx context.Context, name string, f *os.File) (archives.Format, io
 	}
 	if errors.Is(err, archives.NoMatch) {
 		// Empty TAR archives have no member header to identify by content.
-		format, _, err = archives.Identify(ctx, name, nil)
+		switch strings.ToLower(filepath.Ext(name)) {
+		case ".zip", ".tar", ".gz", ".tgz":
+			format, _, err = archives.Identify(ctx, name, nil)
+		}
 	}
 	return format, f, err
 }
