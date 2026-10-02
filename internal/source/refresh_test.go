@@ -199,7 +199,7 @@ func TestRefreshReusesGitHubAssetsByIdentity(t *testing.T) {
 		body := "installer " + r.URL.Path
 		if r.URL.Host == "api.github.com" {
 			lookups.Add(1)
-			body = fmt.Sprintf(`{"id":12,"tag_name":"v1","assets":[{"id":%d,"name":"App.pkg","browser_download_url":"https://github.com/example/app/releases/download/v%[1]d/App.pkg"}]}`, assetID.Load())
+			body = fmt.Sprintf(`{"id":12,"tag_name":"v%[1]d","assets":[{"id":%[1]d,"name":"App.pkg","browser_download_url":"https://github.com/example/app/releases/download/v%[1]d/App.pkg"}]}`, assetID.Load())
 		} else {
 			downloads.Add(1)
 		}
@@ -267,14 +267,15 @@ func TestRefreshTrustsTheSourceIndexOfOneResolverBuild(t *testing.T) {
 	var fetches atomic.Int32
 	m := manager(t)
 	register := func(identity string) {
-		m.Resolvers["vendor.release"] = Resolver{
-			Version: "1", Identity: identity,
+		m.resolvers["vendor.release"] = Resolver{
+			Fingerprint: func(input plugin.Input) (string, error) { return fingerprint(input.Config) },
+			Version:     "1", Identity: identity,
 			Discover: func(context.Context, plugin.Input) (Discovery, error) {
 				return Discovery{Observation: json.RawMessage(`{"release":"1.0"}`), Immutable: true}, nil
 			},
-			Fetch: func(context.Context, plugin.Input, json.RawMessage) (plugin.Artifact, error) {
+			Acquire: func(context.Context, plugin.Input, json.RawMessage) (Acquisition, error) {
 				fetches.Add(1)
-				return plugin.Artifact{Path: filename, Filename: "input.pkg"}, nil
+				return Acquisition{Artifact: &plugin.Artifact{Path: filename, Filename: "input.pkg"}}, nil
 			},
 		}
 	}

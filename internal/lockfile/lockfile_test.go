@@ -319,7 +319,7 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 		}
 		discoveries++
 		return source.Discovery{Observation: observation}, nil
-	}, Fetch: func(_ context.Context, input plugin.Input, observed json.RawMessage) (plugin.Artifact, error) {
+	}, Acquire: func(_ context.Context, input plugin.Input, observed json.RawMessage) (source.Acquisition, error) {
 		if input.Base != "software/App" {
 			t.Fatal("external fetch lost its resource-relative context")
 		}
@@ -327,9 +327,11 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 		if !bytes.Contains(observed, []byte("9007199254740993")) {
 			t.Fatal("opaque observation lost integer precision")
 		}
-		return artifact, nil
+		return source.Acquisition{Artifact: &artifact}, nil
 	}}
-	m.Resolvers["example.release"] = resolver
+	if err := m.Register("example.release", resolver); err != nil {
+		t.Fatal(err)
+	}
 	inputs := inputset("example.release", map[string]any{"track": "stable", "credential": "private"})
 	input := inputs[resource]["source"]
 	input.Base = "software/App"
@@ -371,7 +373,10 @@ func TestResolverOwnedObservationAndSharedResolution(t *testing.T) {
 	}
 	before = lockedBytes(t, m)
 	resolver.Version = "resolver-2"
-	m.Resolvers["example.release"] = resolver
+	m = source.New(m.Store, m.Root, false)
+	if err := m.Register("example.release", resolver); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := prepare(t, m, inputs, Options{}); err == nil {
 		t.Fatal("frozen lock accepted a different resolver version")
 	}
@@ -575,15 +580,23 @@ func TestPreparationFetchesContentTheSourceIndexNamed(t *testing.T) {
 	}
 	var fetches atomic.Int32
 	m := manager(t)
-	m.Resolvers["example.release"] = source.Resolver{
+	resolver := source.Resolver{
+		Fingerprint: func(input plugin.Input) (string, error) {
+			data, err := json.Marshal(input.Config)
+			digest := sha256.Sum256(data)
+			return hex.EncodeToString(digest[:]), err
+		},
 		Version: "1",
 		Discover: func(context.Context, plugin.Input) (source.Discovery, error) {
 			return source.Discovery{Observation: json.RawMessage(`{"release":"1.0"}`), Immutable: true}, nil
 		},
-		Fetch: func(context.Context, plugin.Input, json.RawMessage) (plugin.Artifact, error) {
+		Acquire: func(context.Context, plugin.Input, json.RawMessage) (source.Acquisition, error) {
 			fetches.Add(1)
-			return plugin.Artifact{Path: file, Filename: "input.pkg"}, nil
+			return source.Acquisition{Artifact: &plugin.Artifact{Path: file, Filename: "input.pkg"}}, nil
 		},
+	}
+	if err := m.Register("example.release", resolver); err != nil {
+		t.Fatal(err)
 	}
 	inputs := inputset("example.release", nil)
 	first, err := prepare(t, m, inputs, Options{Refresh: true})
@@ -710,19 +723,19 @@ func TestCommitRetainsRejectedResourcesWithoutPartialInputs(t *testing.T) {
 }
 
 func TestParseChecksTheVersionBeforeAnyEntry(t *testing.T) {
-	// Version 2 entries carried resolved_at, which version 3 entries reject.
+	// Reject unsupported envelope versions before decoding their entries.
 	older := "version: 2\ninputs:\n  app:\n    source:\n      version: 1\n      resolved_at: \"2026-09-23T03:32:34Z\"\n"
 	const unsupported = "lockfile: version 2 is not supported; delete it and run stemma update"
 	for data, want := range map[string]string{
 		older:                      unsupported,
-		"version: 4\ninputs: {}\n": "lockfile: version 4 needs a newer stemma",
-		"version: 3\n":             "lockfile: incomplete; run stemma update",
+		"version: 5\ninputs: {}\n": "lockfile: version 5 needs a newer stemma",
+		"version: 4\n":             "lockfile: incomplete; run stemma update",
 	} {
 		if _, err := Parse([]byte(data)); err == nil || err.Error() != want {
 			t.Errorf("Parse(%q) = %v, want %q", data, err, want)
 		}
 	}
-	if _, err := Parse([]byte("version: 3\ninputs: {}\n")); err != nil {
+	if _, err := Parse([]byte("version: 4\ninputs: {}\n")); err != nil {
 		t.Fatal(err)
 	}
 	// A run names the lockfile once too.
@@ -736,7 +749,7 @@ func TestParseChecksTheVersionBeforeAnyEntry(t *testing.T) {
 }
 
 func TestParseReportsMissingObservation(t *testing.T) {
-	data := []byte(`version: 3
+	data := []byte(`version: 4
 inputs:
   fixture:
     source:

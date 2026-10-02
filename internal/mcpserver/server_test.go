@@ -65,7 +65,8 @@ func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 	if len(overview.Destinations) != 1 || overview.Destinations[0].Name != "repo" || overview.Destinations[0].Operation != "munki" {
 		t.Fatalf("destinations = %+v", overview.Destinations)
 	}
-	if overview.Resolvers[0].Name != "http" || !slices.Contains(overview.Resolvers[0].Fields, "url*") {
+	index := slices.IndexFunc(overview.Resolvers, func(r resolverSummary) bool { return r.Name == "http" })
+	if index < 0 || !slices.Contains(overview.Resolvers[index].Fields, "url*") {
 		t.Fatalf("resolvers = %+v", overview.Resolvers)
 	}
 	var detail description

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -243,7 +244,11 @@ func TestExecutableProtocol(t *testing.T) {
 			t.Fatalf("legacy operations = %+v", description)
 		}
 		for _, operation := range description.Unavailable {
-			if !strings.Contains(operation.Reason, "interface 1; this Stemma uses 2") {
+			version := plugin.ResourceInterface
+			if operation.Kind == "resolve" {
+				version = plugin.ResolveInterface
+			}
+			if !strings.Contains(operation.Reason, fmt.Sprintf("interface 1; this Stemma uses %d", version)) {
 				t.Fatalf("unclear incompatibility: %s", operation.Reason)
 			}
 		}

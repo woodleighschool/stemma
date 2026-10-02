@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 
 	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/internal/expression"
 	"github.com/woodleighschool/stemma/internal/git"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/source"
@@ -153,19 +152,9 @@ func changedSince(ctx context.Context, s *session, rev string) (roots []string, 
 			if input.Resource != nil {
 				continue
 			}
-			// A path supplied by the environment can name a private input absent
-			// from this checkout. Only its declaration or reviewed lock selects it.
-			if source.NativeResolver(input.Resolver) && (expression.Has(input.Config["path"]) || expression.Has(input.Config["base"])) {
-				continue
-			}
-			changed, err := source.LocalInputChanged(input, s.base.changed)
+			changed, err := s.manager.InputChanged(input, s.base.changed)
 			if err != nil {
 				return nil, fmt.Errorf("resource %s: %w", key, err)
-			}
-			if !source.NativeResolver(input.Resolver) {
-				// Plugin-local resolvers expose no file dependency list.
-				op, err := s.ops.operation(input.Resolver)
-				changed = err == nil && op.Resolver != nil && op.Resolver.Local && len(s.base.changed) > 0
 			}
 			if changed {
 				affected[key] = true

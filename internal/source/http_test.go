@@ -186,14 +186,14 @@ func TestHTTPHeadersStayWithinTheirOrigin(t *testing.T) {
 	for _, discovery := range []bool{false, true} {
 		t.Run(map[bool]string{false: "redirect", true: "page match"}[discovery], func(t *testing.T) {
 			var cdnReads atomic.Int64
-			cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			cdn := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				cdnReads.Add(1)
 				for _, name := range []string{"Authorization", "X-Vendor-Key", "Cookie"} {
 					if r.Header.Get(name) != "" {
 						t.Errorf("%s escaped its source origin", name)
 					}
 				}
-				if referer := r.Header.Get("Referer"); referer != "" && !strings.HasPrefix(referer, "http://"+r.Host+"/") {
+				if referer := r.Header.Get("Referer"); referer != "" && !strings.HasPrefix(referer, "https://"+r.Host+"/") {
 					t.Error("source Referer escaped its origin")
 				}
 				if r.Header.Get("User-Agent") != "FixtureDownloader" || r.Header.Get("Accept") != "application/octet-stream" {
@@ -229,7 +229,7 @@ func TestHTTPHeadersStayWithinTheirOrigin(t *testing.T) {
 				"User-Agent": "FixtureDownloader", "Accept": "application/octet-stream", "Referer": source.URL,
 			}}}
 			if discovery {
-				input.Config["match"] = `http://127\.0\.0\.1:\d+/redirect`
+				input.Config["match"] = `https://127\.0\.0\.1:\d+/redirect`
 			}
 			manager := New(store, t.TempDir(), false)
 			manager.Client.Transport = source.Client().Transport
@@ -257,13 +257,14 @@ func TestHTTPHeaderValidationAndDeclaration(t *testing.T) {
 			t.Fatalf("accepted invalid headers: %T", headers)
 		}
 	}
-	headers := map[string]string{"Accept": "application/octet-stream", "Authorization": "Bearer first"}
+	headers := map[string]string{"Accept": "application/octet-stream", "Authorization": "Bearer first", "X-Vendor-Key": "first"}
 	input := plugin.Input{Resolver: "http", Config: map[string]any{"url": "https://example.test/download", "headers": headers}}
 	_, first, err := manager.Declaration(input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	headers["Authorization"] = "Bearer rotated"
+	headers["X-Vendor-Key"] = "rotated"
 	if _, rotated, err := manager.Declaration(input); err != nil || rotated != first {
 		t.Fatalf("credential rotation changed declaration: %v", err)
 	}

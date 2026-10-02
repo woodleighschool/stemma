@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/invopop/jsonschema"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -25,7 +26,6 @@ type Discovery struct {
 	Content     *Content
 	Version     string
 	ContentRoot string
-	Download    *plugin.Download
 	Evidence    map[string]json.RawMessage
 	Observation json.RawMessage
 	Immutable   bool
@@ -34,7 +34,7 @@ type Discovery struct {
 // Resolver owns its declaration and stable observation. Local resolvers are
 // reobserved even with a warm cache. Fingerprint must exclude credentials.
 // Identity names the implementation in the source index and defaults to
-// Version. Fetch keeps returned artifact paths available until the manager
+// Version. Acquire keeps returned artifact paths available until the manager
 // returns.
 type Resolver struct {
 	Version     string
@@ -42,7 +42,9 @@ type Resolver struct {
 	Local       bool
 	Fingerprint func(plugin.Input) (string, error)
 	Discover    func(context.Context, plugin.Input) (Discovery, error)
-	Fetch       func(context.Context, plugin.Input, json.RawMessage) (plugin.Artifact, error)
+	Schema      *jsonschema.Schema
+	Acquire     func(context.Context, plugin.Input, json.RawMessage) (Acquisition, error)
+	Changed     func(plugin.Input, []string) (bool, error)
 }
 
 // record is what the source index keeps for one observation: the content a
@@ -57,61 +59,54 @@ type record struct {
 // Manager owns acquisition and cached content, independently of resource kinds.
 type Manager struct {
 	metadata  *metadataCache
-	winget    *wingetCatalog
 	Store     *cas.Store
 	Root      string
 	Client    *http.Client
 	Offline   bool
-	Resolvers map[string]Resolver
+	resolvers map[string]Resolver
 }
 
 // New creates a manager with bounded HTTP lifetimes and credential-safe redirects.
 func New(store *cas.Store, root string, offline bool) *Manager {
-	return &Manager{metadata: &metadataCache{}, winget: &wingetCatalog{}, Store: store, Root: root, Offline: offline, Resolvers: map[string]Resolver{}, Client: &http.Client{Timeout: 15 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	manager := &Manager{metadata: &metadataCache{}, Store: store, Root: root, Offline: offline, Client: &http.Client{Timeout: 15 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("too many redirects")
+		}
+		if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+			return errors.New("HTTPS download must not downgrade to HTTP")
 		}
 		if !sameOrigin(req.URL, via[0].URL) || !sameOrigin(req.URL, via[len(via)-1].URL) {
 			stripPrivateHeaders(req.Header)
 		}
 		return nil
 	}}}
+	manager.resolvers = builtins(manager)
+	return manager
 }
 
 // Register adds a resolver without shadowing native or previously registered inputs.
 func (m *Manager) Register(name string, resolver Resolver) error {
-	if !plugin.ValidOperationName(name) || resolver.Version == "" || resolver.Discover == nil {
+	if !plugin.ValidOperationName(name) || resolver.Version == "" || resolver.Fingerprint == nil || resolver.Discover == nil || resolver.Acquire == nil {
 		return errors.New("resolver registration requires a name, version and acquisition callbacks")
 	}
 	if _, err := m.resolver(name); err == nil {
 		return fmt.Errorf("resolver %s is already registered", name)
 	}
-	if m.Resolvers == nil {
-		m.Resolvers = map[string]Resolver{}
+	if m.resolvers == nil {
+		m.resolvers = map[string]Resolver{}
 	}
-	m.Resolvers[name] = resolver
+	m.resolvers[name] = resolver
 	return nil
 }
 
 func (m *Manager) resolver(name string) (Resolver, error) {
-	if resolver, ok := m.Resolvers[name]; ok {
-		if resolver.Version == "" || resolver.Discover == nil {
+	if resolver, ok := m.resolvers[name]; ok {
+		if resolver.Version == "" || resolver.Fingerprint == nil || resolver.Discover == nil || resolver.Acquire == nil {
 			return Resolver{}, fmt.Errorf("resolver %s has an incomplete contract", name)
 		}
 		return resolver, nil
 	}
-	switch name {
-	case "winget":
-		return m.wingetResolver(), nil
-	case "homebrew":
-		return m.homebrewResolver(), nil
-	case "http", "github":
-		return Resolver{Version: "1"}, nil
-	case "file", "local":
-		return Resolver{Version: "1", Local: true}, nil
-	default:
-		return Resolver{}, fmt.Errorf("unsupported input resolver %q", name)
-	}
+	return Resolver{}, fmt.Errorf("unsupported input resolver %q", name)
 }
 
 // Declaration validates the declaration and returns its resolver version and
@@ -124,31 +119,7 @@ func (m *Manager) Declaration(input plugin.Input) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	var digest string
-	switch {
-	case resolver.Discover == nil:
-		s, err := native(input)
-		if err != nil {
-			return "", "", err
-		}
-		s.Token = ""
-		for _, name := range []string{"Authorization", "Proxy-Authorization", "Cookie"} {
-			delete(s.Headers, name)
-		}
-		digest, err = fingerprint(s)
-		if err != nil {
-			return "", "", err
-		}
-	case resolver.Fingerprint != nil:
-		digest, err = resolver.Fingerprint(input)
-	case resolver.Local:
-		digest, err = fingerprint(struct {
-			Config map[string]any
-			Base   string
-		}{input.Config, input.Base})
-	default:
-		digest, err = fingerprint(input.Config)
-	}
+	digest, err := resolver.Fingerprint(input)
 	if err != nil {
 		return "", "", err
 	}
@@ -186,16 +157,13 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 	if m.Offline && !resolver.Local {
 		return Entry{}, false, errors.New("offline mode cannot resolve inputs")
 	}
-	found, err := m.discover(ctx, resolver, input)
+	found, err := resolver.Discover(ctx, input)
 	if err != nil {
 		return Entry{}, false, err
 	}
-	entry := Entry{Version: 1, Resolver: input.Resolver, ResolverVersion: version, Declaration: declaration, Download: found.Download, InputVersion: found.Version, ContentRoot: found.ContentRoot}
+	entry := Entry{Version: 1, Resolver: input.Resolver, ResolverVersion: version, Declaration: declaration, InputVersion: found.Version, ContentRoot: found.ContentRoot}
 	entry.Evidence, err = canonicalEvidence(found.Evidence)
 	if err != nil {
-		return Entry{}, false, err
-	}
-	if err := validateDownload(entry.Download); err != nil {
 		return Entry{}, false, err
 	}
 	entry.Observation, err = canonicalJSON(found.Observation)
@@ -233,7 +201,7 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 			entry.Evidence = known.Evidence
 		}
 		return entry, m.Store.HasDigest(entry.Content.SHA256), entry.Validate()
-	case found.Immutable && locked.Validate() == nil && locked.Resolver == entry.Resolver && locked.ResolverVersion == version && locked.Declaration == declaration && sameJSON(locked.Observation, entry.Observation) && equalDownload(locked.Download, entry.Download):
+	case found.Immutable && locked.Validate() == nil && locked.Resolver == entry.Resolver && locked.ResolverVersion == version && locked.Declaration == declaration && sameJSON(locked.Observation, entry.Observation):
 		entry.Content = locked.Content
 		if found.Evidence == nil {
 			entry.Evidence = locked.Evidence
@@ -311,77 +279,8 @@ func (m *Manager) FetchLocked(ctx context.Context, input plugin.Input, entry Ent
 	return false, nil
 }
 
-func (m *Manager) discover(ctx context.Context, resolver Resolver, input plugin.Input) (Discovery, error) {
-	if resolver.Discover == nil {
-		return m.discoverNative(ctx, input)
-	}
-	return resolver.Discover(ctx, input)
-}
-
-func validateDownload(download *plugin.Download) error {
-	if download == nil {
-		return nil
-	}
-	if err := validateHTTPURL(download.URL); err != nil {
-		return err
-	}
-	for name := range download.Headers {
-		switch http.CanonicalHeaderKey(name) {
-		case "Authorization", "Proxy-Authorization":
-			return errors.New("download credentials must remain in resolver configuration")
-		}
-	}
-	return (nativeConfig{Type: "http", URL: download.URL, Headers: download.Headers}).Validate()
-}
-
-func (m *Manager) acquire(ctx context.Context, resolver Resolver, input plugin.Input, entry Entry, previous *record) (record, bool, error) {
-	if err := validateDownload(entry.Download); err != nil {
-		return record{}, false, err
-	}
-	if entry.Download != nil {
-		s := nativeConfig{Type: "http", URL: entry.Download.URL, Headers: entry.Download.Headers, Filename: entry.Content.Filename, SHA256: entry.Content.SHA256}
-		return m.download(ctx, s, s.URL, previous)
-	}
-	return m.fetch(ctx, resolver, input, entry.Observation, previous)
-}
-
-// fetch acquires the content an observation names. Only native HTTP uses the
-// previous record, reusing it when the server confirms it still stands.
-func (m *Manager) fetch(ctx context.Context, resolver Resolver, input plugin.Input, observation json.RawMessage, previous *record) (record, bool, error) {
-	if input.Resolver == "homebrew" {
-		return m.fetchHomebrew(ctx, observation, previous)
-	}
-	if resolver.Discover == nil {
-		return m.fetchNative(ctx, input, observation, previous)
-	}
-	if resolver.Fetch == nil {
-		return record{}, false, errors.New("resolver must supply download instructions or implement acquisition")
-	}
-	artifact, err := resolver.Fetch(ctx, input, observation)
-	if err != nil {
-		return record{}, false, err
-	}
-	content, err := m.importArtifact(ctx, artifact)
-	if err != nil {
-		return record{}, false, err
-	}
-	evidence, err := canonicalEvidence(artifact.Evidence)
-	return record{Content: content, Evidence: evidence}, false, err
-}
-
 func entrySourceKey(name string, resolver Resolver, declaration string, entry Entry) (string, error) {
-	observation := entry.Observation
-	if entry.Download != nil {
-		var err error
-		observation, err = json.Marshal(struct {
-			Observation json.RawMessage  `json:"observation"`
-			Download    *plugin.Download `json:"download"`
-		}{observation, entry.Download})
-		if err != nil {
-			return "", err
-		}
-	}
-	return sourceKey(name, resolver, declaration, observation)
+	return sourceKey(name, resolver, declaration, entry.Observation)
 }
 
 // sourceKey identifies an observation in the source index. The resolver

@@ -27,8 +27,11 @@ func TestMetadataResolutionAndLockedAcquisition(t *testing.T) {
 	evidence := json.RawMessage(`{"silent":"/S"}`)
 	filename := "first.exe"
 	version, root := "1", "release/1"
-	m.Resolvers["registry"] = Resolver{Version: "1", Discover: func(context.Context, plugin.Input) (Discovery, error) {
-		return Discovery{Version: version, ContentRoot: root, Observation: json.RawMessage(`{"version":"1"}`), Content: &Content{SHA256: digest, Filename: filename, Mode: 0o644}, Download: &plugin.Download{URL: server.URL + "/installer"}, Evidence: map[string]json.RawMessage{"registry.installer": evidence}}, nil
+	acquire := func(context.Context, plugin.Input, json.RawMessage) (Acquisition, error) {
+		return Acquisition{Download: &Download{URL: server.URL + "/installer", Filename: filename, SHA256: digest}}, nil
+	}
+	m.resolvers["registry"] = Resolver{Fingerprint: func(input plugin.Input) (string, error) { return fingerprint(input.Config) }, Version: "1", Acquire: acquire, Discover: func(context.Context, plugin.Input) (Discovery, error) {
+		return Discovery{Version: version, ContentRoot: root, Observation: json.RawMessage(`{"version":"1"}`), Content: &Content{SHA256: digest, Filename: filename, Mode: 0o644}, Evidence: map[string]json.RawMessage{"registry.installer": evidence}}, nil
 	}}
 	input := plugin.Input{Resolver: "registry"}
 	first, err := m.Resolve(t.Context(), input)
@@ -49,7 +52,7 @@ func TestMetadataResolutionAndLockedAcquisition(t *testing.T) {
 	if strings.Contains(string(encoded), `"size"`) {
 		t.Fatalf("lock contains measured size: %s", encoded)
 	}
-	m.Resolvers["registry"] = Resolver{Version: "1", Discover: func(context.Context, plugin.Input) (Discovery, error) {
+	m.resolvers["registry"] = Resolver{Fingerprint: func(input plugin.Input) (string, error) { return fingerprint(input.Config) }, Version: "1", Acquire: acquire, Discover: func(context.Context, plugin.Input) (Discovery, error) {
 		t.Fatal("locked acquisition rediscovered")
 		return Discovery{}, nil
 	}}

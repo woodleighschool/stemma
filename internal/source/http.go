@@ -10,21 +10,18 @@ import (
 	"path"
 	"strings"
 
-	"github.com/oras-project/oras-go/v3/registry/remote/auth"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
 // download fetches a URL into the cache. With a previous record it asks
 // conditionally and reuses that record when the server confirms it.
-func (m *Manager) download(ctx context.Context, s nativeConfig, address string, previous *record) (result record, reused bool, err error) {
-	if err := validateHTTPURL(address); err != nil {
+func (m *Manager) download(ctx context.Context, s Download, previous *record) (result record, reused bool, err error) {
+	address := s.URL
+	if err := validateDownload(s.Download); err != nil {
 		return record{}, false, fmt.Errorf("observation URL: %w", err)
 	}
 	u, _ := url.Parse(address)
-	if s.Type == "github" && (u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/")) {
-		return record{}, false, errors.New("observed asset does not belong to the configured GitHub repository")
-	}
 	name := s.Filename
 	if name == "" {
 		name = urlName(u)
@@ -37,7 +34,7 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, address string, 
 		}
 		done(err, plugin.Detail(result.Content.Filename))
 	}()
-	req, err := m.request(ctx, address, s)
+	req, err := m.request(ctx, address, s.Headers)
 	if err != nil {
 		return record{}, false, err
 	}
@@ -50,10 +47,9 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, address string, 
 			req.Header.Set("If-Modified-Since", previous.LastModified)
 		}
 	}
-	do := m.Client.Do
-	if s.Type == "homebrew" {
-		client := &auth.Client{Client: m.Client, Cache: auth.NewCache()}
-		do = client.Do
+	do := s.Do
+	if do == nil {
+		do = m.Client.Do
 	}
 	res, err := do(req)
 	if err != nil {
@@ -76,9 +72,6 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, address string, 
 	}
 	result.ETag, result.LastModified = res.Header.Get("ETag"), res.Header.Get("Last-Modified")
 	result.Content = Content{Filename: s.Filename, Mode: 0o644}
-	if result.Content.Filename == "" && s.Type == "github" {
-		result.Content.Filename = path.Base(u.Path)
-	}
 	if result.Content.Filename == "" {
 		result.Content.Filename = responseFilename(res, address)
 	}
@@ -94,23 +87,14 @@ func (m *Manager) download(ctx context.Context, s nativeConfig, address string, 
 
 const userAgent = "stemma/0.1"
 
-func (m *Manager) request(ctx context.Context, address string, s nativeConfig) (*http.Request, error) {
+func (m *Manager) request(ctx context.Context, address string, headers map[string]string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, address, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("User-Agent", userAgent)
-	for name, value := range s.Headers {
+	for name, value := range headers {
 		req.Header.Set(name, value)
-	}
-	if s.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+s.Token)
-	}
-	if s.Type == "http" {
-		origin, _ := url.Parse(s.URL)
-		if !sameOrigin(origin, req.URL) {
-			stripPrivateHeaders(req.Header)
-		}
 	}
 	return req, nil
 }

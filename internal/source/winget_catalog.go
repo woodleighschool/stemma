@@ -32,30 +32,30 @@ type wingetPackage struct {
 	SHA256 string
 }
 
-// A manager uses one source snapshot so multiple inputs cannot observe different releases mid-run.
+// A resolver uses one source snapshot so inputs cannot observe different releases mid-run.
 type wingetCatalog struct {
 	mu       sync.Mutex
 	packages map[string]wingetPackage
 }
 
-func (m *Manager) wingetPackage(ctx context.Context, id string) (wingetPackage, error) {
-	m.winget.mu.Lock()
-	loaded := m.winget.packages != nil
-	m.winget.mu.Unlock()
+func (s *wingetSource) wingetPackage(ctx context.Context, id string) (wingetPackage, error) {
+	s.catalog.mu.Lock()
+	loaded := s.catalog.packages != nil
+	s.catalog.mu.Unlock()
 	if !loaded {
-		data, err := m.metadataBytes(ctx, wingetURL+"source2.msix")
+		data, err := s.manager.metadataBytes(ctx, wingetURL+"source2.msix")
 		if err != nil {
 			return wingetPackage{}, fmt.Errorf("winget source: %w", err)
 		}
-		m.winget.mu.Lock()
-		if m.winget.packages == nil {
+		s.catalog.mu.Lock()
+		if s.catalog.packages == nil {
 			var packages map[string]wingetPackage
 			packages, err = readWingetCatalog(ctx, data)
 			if err == nil {
-				m.winget.packages = packages
+				s.catalog.packages = packages
 			}
 		}
-		m.winget.mu.Unlock()
+		s.catalog.mu.Unlock()
 		if err != nil {
 			return wingetPackage{}, fmt.Errorf("winget index: %w", err)
 		}
@@ -63,9 +63,9 @@ func (m *Manager) wingetPackage(ctx context.Context, id string) (wingetPackage, 
 	if err := ctx.Err(); err != nil {
 		return wingetPackage{}, err
 	}
-	m.winget.mu.Lock()
-	p, ok := m.winget.packages[strings.ToLower(id)]
-	m.winget.mu.Unlock()
+	s.catalog.mu.Lock()
+	p, ok := s.catalog.packages[strings.ToLower(id)]
+	s.catalog.mu.Unlock()
 	if !ok {
 		return p, fmt.Errorf("winget package %q is not in the source", id)
 	}
@@ -132,7 +132,7 @@ func readWingetCatalog(ctx context.Context, data []byte) (map[string]wingetPacka
 	return packages, rows.Err()
 }
 
-func (m *Manager) wingetMetadata(ctx context.Context, relative, digest string) ([]byte, error) {
+func (s *wingetSource) wingetMetadata(ctx context.Context, relative, digest string) ([]byte, error) {
 	if !validDigest(digest) || !safeRelative(relative) || path.Clean(relative) != relative {
 		return nil, errors.New("winget metadata has an invalid path or digest")
 	}
@@ -148,17 +148,17 @@ func (m *Manager) wingetMetadata(ctx context.Context, relative, digest string) (
 		return len(data) <= metadataLimit && hex.EncodeToString(sum[:]) == digest
 	}
 	var data []byte
-	if m.Store.RecallSource(key, &data) && matches(data) {
+	if s.manager.Store.RecallSource(key, &data) && matches(data) {
 		return data, nil
 	}
-	data, err = m.metadataBytes(ctx, (&url.URL{Scheme: "https", Host: "cdn.winget.microsoft.com", Path: "/cache/" + relative}).String())
+	data, err = s.manager.metadataBytes(ctx, (&url.URL{Scheme: "https", Host: "cdn.winget.microsoft.com", Path: "/cache/" + relative}).String())
 	if err != nil {
 		return nil, err
 	}
 	if !matches(data) {
 		return nil, errors.New("winget metadata SHA256 mismatch")
 	}
-	if err := m.Store.RememberSource(key, data); err != nil {
+	if err := s.manager.Store.RememberSource(key, data); err != nil {
 		return nil, err
 	}
 	return data, nil

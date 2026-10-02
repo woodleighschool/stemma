@@ -243,7 +243,7 @@ Register an operation with `kind: resolve`, methods `validate`, `discover` and
 `ResolveRequest[Config]` supplies declaration `config`, resource-relative `base`
 and project `root`. `discover` returns the current `observation` without
 downloading anything. `run` receives an `observation` and a workspace and
-returns the `artifact` it names, reproducing that observation instead of asking
+returns a transient `download` request or the `artifact` it names, reproducing that observation instead of asking
 for the latest release. Stemma owns the surrounding versioned lock, declaration
 fingerprint and content verification; your resolver owns the observation body.
 Keep credentials out of observations and identify credential configuration
@@ -257,10 +257,17 @@ when an observation's meaning changes.
 
 When discovery identifies the bytes, return `content` with `sha256`, `filename`,
 `mode` and optional `tree`. No size is required: these are expected bytes, not a
-verified artifact. To delegate ordinary HTTP acquisition, also return `download`
-with a stable `url` and optional nonsecret `headers`. The host locks these
-instructions, acquires conditionally when content is mutable, and verifies all
-consumed content. Custom acquisition still uses `run` and its leased workspace.
+verified artifact. To delegate HTTP acquisition, return `download` from `run`
+with `url`, optional `headers`, `filename` and an optional expected `sha256`.
+These requests may contain current credentials or signed URLs; they are never
+written to locks. Reconstruct and validate the request from the saved observation
+and current configuration on every `run`. Return exactly one download request or
+an artifact inside the leased workspace. Discovery must not return either.
+
+The host confines credentials and custom headers to the request origin, rejects HTTPS downgrades,
+acquires mutable content conditionally, and verifies consumed content against
+the lock. The resolver owns observation validation, filename selection, and
+provider authentication. All downloads use the same transfer and cache lifecycle.
 
 Return registry metadata in namespaced discovery `evidence`, for example
 `{"vendor.release":{"version":"1.2"}}`. Evidence is reviewed in the source lock

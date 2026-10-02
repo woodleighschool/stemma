@@ -1039,39 +1039,12 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
+              "description": "Optional input basename override. Defaults to the selected path's basename. Independent of publication naming."
             },
-            "headers": {
+            "path": {
               "anyOf": [
                 {
-                  "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                        "type": "string"
-                      }
-                    ]
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin."
-            },
-            "match": {
-              "anyOf": [
-                {
+                  "minLength": 1,
                   "type": "string"
                 },
                 {
@@ -1079,7 +1052,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
             },
             "sha256": {
               "anyOf": [
@@ -1092,32 +1065,6 @@
                 }
               ],
               "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
-            },
-            "token": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
-              "writeOnly": true
-            },
-            "url": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
             }
           },
           "propertyNames": {
@@ -1126,7 +1073,7 @@
             }
           },
           "required": [
-            "url"
+            "path"
           ],
           "type": "object"
         },
@@ -1143,39 +1090,12 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
+              "description": "Optional input basename override. Defaults to the selected path's basename. Independent of publication naming."
             },
-            "headers": {
+            "path": {
               "anyOf": [
                 {
-                  "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                        "type": "string"
-                      }
-                    ]
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin."
-            },
-            "match": {
-              "anyOf": [
-                {
+                  "minLength": 1,
                   "type": "string"
                 },
                 {
@@ -1183,10 +1103,10 @@
                   "type": "string"
                 }
               ],
-              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
             },
             "resolver": {
-              "const": "http",
+              "const": "file",
               "description": "Built-in resolver selecting this input."
             },
             "sha256": {
@@ -1200,32 +1120,6 @@
                 }
               ],
               "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
-            },
-            "token": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
-              "writeOnly": true
-            },
-            "url": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
             }
           },
           "propertyNames": {
@@ -1234,7 +1128,7 @@
             }
           },
           "required": [
-            "url",
+            "path",
             "resolver"
           ],
           "type": "object"
@@ -1265,7 +1159,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
+              "description": "Optional input basename override. Defaults to the selected asset name. Independent of publication naming."
             },
             "include_prereleases": {
               "anyOf": [
@@ -1330,7 +1224,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+              "description": "Optional bearer token for release discovery and acquisition.",
               "writeOnly": true
             }
           },
@@ -1342,192 +1236,6 @@
           "required": [
             "repository",
             "asset",
-            "resolver"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "filename": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
-            },
-            "path": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
-            },
-            "sha256": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
-            }
-          },
-          "propertyNames": {
-            "not": {
-              "pattern": "\\{\\{"
-            }
-          },
-          "required": [
-            "path"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "filename": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
-            },
-            "path": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
-            },
-            "resolver": {
-              "const": "file",
-              "description": "Built-in resolver selecting this input."
-            },
-            "sha256": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
-            }
-          },
-          "propertyNames": {
-            "not": {
-              "pattern": "\\{\\{"
-            }
-          },
-          "required": [
-            "path",
-            "resolver"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "base": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Local tree root, relative to the resource file. Defaults to its directory."
-            },
-            "filename": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
-            },
-            "include": {
-              "anyOf": [
-                {
-                  "items": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                        "type": "string"
-                      }
-                    ]
-                  },
-                  "minItems": 1,
-                  "type": "array"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "Local tree globs using doublestar semantics. Each pattern must match at least one entry."
-            },
-            "resolver": {
-              "const": "local",
-              "description": "Built-in resolver selecting this input."
-            },
-            "sha256": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
-            }
-          },
-          "propertyNames": {
-            "not": {
-              "pattern": "\\{\\{"
-            }
-          },
-          "required": [
-            "include",
             "resolver"
           ],
           "type": "object"
@@ -1632,6 +1340,298 @@
             }
           },
           "required": [
+            "resolver"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "filename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional input basename override. Defaults to Content-Disposition, then final and original URL basenames. Independent of publication naming."
+            },
+            "headers": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "propertyNames": {
+                    "not": {
+                      "pattern": "\\{\\{"
+                    }
+                  },
+                  "type": "object"
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin. Only Accept, Accept-Encoding, Accept-Language and User-Agent participate in source identity; other headers are treated as credentials."
+            },
+            "match": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+            },
+            "sha256": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
+            },
+            "token": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+              "writeOnly": true
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "\\{\\{"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "filename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional input basename override. Defaults to Content-Disposition, then final and original URL basenames. Independent of publication naming."
+            },
+            "headers": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "propertyNames": {
+                    "not": {
+                      "pattern": "\\{\\{"
+                    }
+                  },
+                  "type": "object"
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin. Only Accept, Accept-Encoding, Accept-Language and User-Agent participate in source identity; other headers are treated as credentials."
+            },
+            "match": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+            },
+            "resolver": {
+              "const": "http",
+              "description": "Built-in resolver selecting this input."
+            },
+            "sha256": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
+            },
+            "token": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+              "writeOnly": true
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "\\{\\{"
+            }
+          },
+          "required": [
+            "url",
+            "resolver"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "base": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Local tree root, relative to the resource file. Defaults to its directory."
+            },
+            "filename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional input basename override. Defaults to the selected base's basename. Independent of publication naming."
+            },
+            "include": {
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Local tree globs using doublestar semantics. Each pattern must match at least one entry."
+            },
+            "resolver": {
+              "const": "local",
+              "description": "Built-in resolver selecting this input."
+            },
+            "sha256": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "\\{\\{"
+            }
+          },
+          "required": [
+            "include",
             "resolver"
           ],
           "type": "object"
@@ -7987,39 +7987,12 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
+              "description": "Optional input basename override. Defaults to the selected path's basename. Independent of publication naming."
             },
-            "headers": {
+            "path": {
               "anyOf": [
                 {
-                  "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                        "type": "string"
-                      }
-                    ]
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin."
-            },
-            "match": {
-              "anyOf": [
-                {
+                  "minLength": 1,
                   "type": "string"
                 },
                 {
@@ -8027,7 +8000,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
             },
             "sha256": {
               "anyOf": [
@@ -8040,32 +8013,6 @@
                 }
               ],
               "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
-            },
-            "token": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
-              "writeOnly": true
-            },
-            "url": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
             }
           },
           "propertyNames": {
@@ -8088,39 +8035,12 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
+              "description": "Optional input basename override. Defaults to the selected path's basename. Independent of publication naming."
             },
-            "headers": {
+            "path": {
               "anyOf": [
                 {
-                  "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                        "type": "string"
-                      }
-                    ]
-                  },
-                  "propertyNames": {
-                    "not": {
-                      "pattern": "\\{\\{"
-                    }
-                  },
-                  "type": "object"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin."
-            },
-            "match": {
-              "anyOf": [
-                {
+                  "minLength": 1,
                   "type": "string"
                 },
                 {
@@ -8128,10 +8048,10 @@
                   "type": "string"
                 }
               ],
-              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
             },
             "resolver": {
-              "const": "http",
+              "const": "file",
               "description": "Built-in resolver selecting this input."
             },
             "sha256": {
@@ -8145,32 +8065,6 @@
                 }
               ],
               "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
-            },
-            "token": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
-              "writeOnly": true
-            },
-            "url": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
             }
           },
           "propertyNames": {
@@ -8206,7 +8100,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
+              "description": "Optional input basename override. Defaults to the selected asset name. Independent of publication naming."
             },
             "include_prereleases": {
               "anyOf": [
@@ -8271,183 +8165,8 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+              "description": "Optional bearer token for release discovery and acquisition.",
               "writeOnly": true
-            }
-          },
-          "propertyNames": {
-            "not": {
-              "pattern": "\\{\\{"
-            }
-          },
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "filename": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
-            },
-            "path": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
-            },
-            "sha256": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
-            }
-          },
-          "propertyNames": {
-            "not": {
-              "pattern": "\\{\\{"
-            }
-          },
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "filename": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
-            },
-            "path": {
-              "anyOf": [
-                {
-                  "minLength": 1,
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Exact file or directory path. Relative paths resolve from the resource file; absolute paths select a host location."
-            },
-            "resolver": {
-              "const": "file",
-              "description": "Built-in resolver selecting this input."
-            },
-            "sha256": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
-            }
-          },
-          "propertyNames": {
-            "not": {
-              "pattern": "\\{\\{"
-            }
-          },
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
-            "base": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Local tree root, relative to the resource file. Defaults to its directory."
-            },
-            "filename": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional input basename override. HTTP defaults to Content-Disposition, then final and original URL basenames; GitHub uses the selected asset name; file and local use the selected path or base. Independent of publication naming."
-            },
-            "include": {
-              "anyOf": [
-                {
-                  "items": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                        "type": "string"
-                      }
-                    ]
-                  },
-                  "minItems": 1,
-                  "type": "array"
-                },
-                {
-                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
-                  "type": "string"
-                }
-              ],
-              "description": "Local tree globs using doublestar semantics. Each pattern must match at least one entry."
-            },
-            "resolver": {
-              "const": "local",
-              "description": "Built-in resolver selecting this input."
-            },
-            "sha256": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                  "type": "string"
-                }
-              ],
-              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
             }
           },
           "propertyNames": {
@@ -8543,6 +8262,287 @@
             "resolver": {
               "const": "homebrew",
               "description": "Built-in resolver selecting this input."
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "\\{\\{"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "filename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional input basename override. Defaults to Content-Disposition, then final and original URL basenames. Independent of publication naming."
+            },
+            "headers": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "propertyNames": {
+                    "not": {
+                      "pattern": "\\{\\{"
+                    }
+                  },
+                  "type": "object"
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin. Only Accept, Accept-Encoding, Accept-Language and User-Agent participate in source identity; other headers are treated as credentials."
+            },
+            "match": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+            },
+            "sha256": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
+            },
+            "token": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+              "writeOnly": true
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "\\{\\{"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "filename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional input basename override. Defaults to Content-Disposition, then final and original URL basenames. Independent of publication naming."
+            },
+            "headers": {
+              "anyOf": [
+                {
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "propertyNames": {
+                    "not": {
+                      "pattern": "\\{\\{"
+                    }
+                  },
+                  "type": "object"
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "HTTP request headers, including optional User-Agent and Referer overrides. Credentials and custom headers are confined to the source origin. Only Accept, Accept-Encoding, Accept-Language and User-Agent participate in source identity; other headers are treated as credentials."
+            },
+            "match": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+            },
+            "resolver": {
+              "const": "http",
+              "description": "Built-in resolver selecting this input."
+            },
+            "sha256": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
+            },
+            "token": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional bearer token. Mutually exclusive with an Authorization header.",
+              "writeOnly": true
+            },
+            "url": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
+            }
+          },
+          "propertyNames": {
+            "not": {
+              "pattern": "\\{\\{"
+            }
+          },
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "base": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Local tree root, relative to the resource file. Defaults to its directory."
+            },
+            "filename": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional input basename override. Defaults to the selected base's basename. Independent of publication naming."
+            },
+            "include": {
+              "anyOf": [
+                {
+                  "items": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Local tree globs using doublestar semantics. Each pattern must match at least one entry."
+            },
+            "resolver": {
+              "const": "local",
+              "description": "Built-in resolver selecting this input."
+            },
+            "sha256": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."
             }
           },
           "propertyNames": {

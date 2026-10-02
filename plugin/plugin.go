@@ -16,7 +16,7 @@ import (
 // misreads. Stemma uses a plugin's operations of a kind only while the plugin
 // implements that kind at the host's version.
 const (
-	ResolveInterface   = 2
+	ResolveInterface   = 3
 	ResourceInterface  = 2
 	ReconcileInterface = 1
 )

@@ -16,33 +16,6 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// LocalInputChanged reports whether a changed project path can belong to a
-// native file or tree input. Tree includes are deliberately conservative: a
-// directory edit selects the input even if a glob later excludes the file.
-func LocalInputChanged(input plugin.Input, changed []string) (bool, error) {
-	var base string
-	var err error
-	switch input.Resolver {
-	case "file":
-		name, _ := input.Config["path"].(string)
-		base, err = resolvePath(input.Base, name)
-	case "local":
-		name, _ := input.Config["base"].(string)
-		base, err = projectPath(input.Base, name)
-	default:
-		return false, nil
-	}
-	if err != nil || absolutePath(base) {
-		return false, err
-	}
-	for _, name := range changed {
-		if base == "." && filepath.IsLocal(filepath.FromSlash(name)) || name == base || strings.HasPrefix(name, base+"/") || strings.HasPrefix(base, name+"/") {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 // absolutePath reports whether a declared path names a host location instead of
 // one resolved from the project. A slash-rooted path counts on every platform so
 // that a catalog reads the same way everywhere.
@@ -85,14 +58,6 @@ func projectPath(base, name string) (string, error) {
 	return resolved, nil
 }
 
-// hostPath locates a file input on the filesystem.
-func (s nativeConfig) hostPath(root string) string {
-	if absolutePath(s.Path) {
-		return filepath.FromSlash(s.Path)
-	}
-	return filepath.Join(root, filepath.FromSlash(s.Path))
-}
-
 func safeRelative(name string) bool {
 	if name == "" || strings.ContainsAny(name, "\\:\x00\r\n") || !filepath.IsLocal(filepath.FromSlash(name)) {
 		return false
@@ -106,17 +71,17 @@ func safeRelative(name string) bool {
 }
 
 // readLocal hashes a file or local tree as it is now.
-func (m *Manager) readLocal(ctx context.Context, s nativeConfig) (content Content, err error) {
+func (m *Manager) readLocal(ctx context.Context, s fileRequest) (content Content, err error) {
 	content.Filename = s.Filename
-	if s.Type == "local" {
-		done := plugin.Stage(ctx, "Reading local inputs", plugin.Detail(s.Base))
+	if s.Include != nil {
+		done := plugin.Stage(ctx, "Reading local inputs", plugin.Detail(s.Path))
 		defer func() { done(err) }()
 		project, err := os.OpenRoot(m.Root)
 		if err != nil {
 			return content, err
 		}
 		defer func() { _ = project.Close() }()
-		base := s.Base
+		base := s.Path
 		if base == "" {
 			base = "."
 		}
@@ -129,7 +94,7 @@ func (m *Manager) readLocal(ctx context.Context, s nativeConfig) (content Conten
 		}
 		content.Tree, content.Mode = info.IsDir(), uint32(info.Mode().Perm())
 		if content.Filename == "" {
-			content.Filename = path.Base(s.Base)
+			content.Filename = path.Base(s.Path)
 			if content.Filename == "." || content.Filename == "" {
 				content.Filename = "local"
 			}
@@ -171,7 +136,7 @@ func (m *Manager) readLocal(ctx context.Context, s nativeConfig) (content Conten
 	}
 	done := plugin.Stage(ctx, "Reading local input", plugin.Detail(filepath.Base(s.Path)))
 	defer func() { done(err) }()
-	name := s.hostPath(m.Root)
+	name := s.Path
 	f, err := os.Open(name)
 	if err != nil {
 		return content, err

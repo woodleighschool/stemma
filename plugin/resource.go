@@ -236,14 +236,19 @@ type SourceContent struct {
 	Mode     uint32 `json:"mode"`
 }
 
-// Download delegates HTTP acquisition to the host. Headers must be nonsecret;
-// credentials stay in resolver configuration. The host never executes content.
+// Download is a transient HTTP acquisition request returned by run. It may
+// contain credentials or expiring URLs; the host never persists it in a lock.
+// Credentials and custom headers are confined to the request origin. The host
+// never executes content.
 type Download struct {
-	URL     string            `json:"url"`
-	Headers map[string]string `json:"headers,omitempty"`
+	URL      string            `json:"url"`
+	Headers  map[string]string `json:"headers,omitempty"`
+	Filename string            `json:"filename,omitempty"`
+	SHA256   string            `json:"sha256,omitempty"`
 }
 
-// ResolveResponse answers discover with Observation and run with Artifact.
+// ResolveResponse answers discover with Observation and optional expected Content.
+// Run returns exactly one Download or Artifact for that observation.
 // Immutable promises that the observation always fetches the same bytes, so
 // the host reuses content it fetched for it before instead of calling run.
 type ResolveResponse struct {

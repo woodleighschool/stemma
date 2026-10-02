@@ -139,6 +139,7 @@ Installers:
 		t.Run(test.name, func(t *testing.T) {
 			config := test.config
 			config.Package = "Example.Tool"
+			config.Version = "latest"
 			if config.Architecture == "" {
 				config.Architecture = "x64"
 			}
@@ -407,7 +408,8 @@ func TestWingetVersionSelectedBeforeInstaller(t *testing.T) {
 	for _, version := range []string{"latest", "1.0"} {
 		t.Run(version, func(t *testing.T) {
 			m := manager(t)
-			m.winget.packages = map[string]wingetPackage{"example.tool": {ID: "Example.Tool", Latest: "2.0", SHA256: versionHash}}
+			source := &wingetSource{manager: m, catalog: wingetCatalog{packages: map[string]wingetPackage{"example.tool": {ID: "Example.Tool", Latest: "2.0", SHA256: versionHash}}}}
+			m.resolvers["winget"] = resolverFor(wingetInput, source.discoverWinget, acquireWinget)
 			m.Client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				if strings.HasSuffix(req.URL.Path, ".mszyml") {
 					return wingetTestResponse(versions), nil
@@ -434,7 +436,7 @@ func TestWingetVersionSelectedBeforeInstaller(t *testing.T) {
 
 func TestWingetRejectsSignedInstallerURL(t *testing.T) {
 	manifest := wingetTestManifest("InstallerType: msi\nInstallers:\n- Architecture: x64\n  InstallerUrl: https://vendor.test/tool.msi?token=secret\n  InstallerSha256: " + strings.Repeat("a", 64) + "\n")
-	_, err := selectWinget(manifest, wingetConfig{Package: "Example.Tool", Architecture: "x64"}, "2.0")
+	_, err := selectWinget(manifest, wingetConfig{Package: "Example.Tool", Version: "latest", Architecture: "x64"}, "2.0")
 	if err == nil || !strings.Contains(err.Error(), "credentials or expiration") {
 		t.Fatalf("signed URL: %v", err)
 	}
@@ -494,7 +496,8 @@ func TestWingetRechecksCachedMetadataDigest(t *testing.T) {
 		requests++
 		return wingetTestResponse([]byte("incorrect server response")), nil
 	})
-	if _, err := m.wingetMetadata(t.Context(), "manifests/example", digest); err == nil || !strings.Contains(err.Error(), "SHA256 mismatch") {
+	source := &wingetSource{manager: m}
+	if _, err := source.wingetMetadata(t.Context(), "manifests/example", digest); err == nil || !strings.Contains(err.Error(), "SHA256 mismatch") {
 		t.Fatalf("corrupt cache or response accepted: %v", err)
 	}
 	if requests != 1 {
@@ -517,7 +520,7 @@ Installers:
   InstallerLocale: en-GB
   InstallerUrl: https://vendor.test/download-user
   InstallerSha256: ` + strings.Repeat("b", 64) + "\n"
-			_, err := selectWinget(wingetTestManifest(body), wingetConfig{Package: "Example.Tool", Architecture: architecture}, "2.0")
+			_, err := selectWinget(wingetTestManifest(body), wingetConfig{Package: "Example.Tool", Version: "latest", Architecture: architecture}, "2.0")
 			if err == nil {
 				t.Fatal("accepted nonunique selection")
 			}
@@ -535,11 +538,11 @@ func TestWingetOpaqueURLUsesInstallerTypeForFilename(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			address := "https://vendor.test/download?id=2.0"
 			body := "InstallerType: " + kind + "\nInstallers:\n- Architecture: x64\n  InstallerUrl: " + address + "\n  InstallerSha256: " + strings.Repeat("a", 64) + "\n"
-			found, err := selectWinget(wingetTestManifest(body), wingetConfig{Package: "Example.Tool", Architecture: "x64"}, "2.0")
+			found, err := selectWinget(wingetTestManifest(body), wingetConfig{Package: "Example.Tool", Version: "latest", Architecture: "x64"}, "2.0")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if found.Content.Filename != "Example.Tool-2.0."+extension || found.Download.URL != address {
+			if found.Content.Filename != "Example.Tool-2.0."+extension || !strings.Contains(string(found.Observation), address) {
 				t.Fatalf("discovery = %+v", found)
 			}
 		})

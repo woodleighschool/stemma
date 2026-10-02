@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -14,15 +13,9 @@ import (
 )
 
 func registerResolvers(manager *source.Manager, ops *operations, work string) error {
-	if manager.Resolvers == nil {
-		manager.Resolvers = map[string]source.Resolver{}
-	}
 	for _, operation := range ops.registry.Descriptor().Operations {
 		if operation.Resolver == nil {
 			continue
-		}
-		if _, exists := manager.Resolvers[operation.Name]; exists {
-			return fmt.Errorf("resolver %s is already registered", operation.Name)
 		}
 		call := func(ctx context.Context, method string, input plugin.Input, observation json.RawMessage, workspace string) (plugin.ResolveResponse, error) {
 			settings, err := json.Marshal(input.Config)
@@ -58,35 +51,47 @@ func registerResolvers(manager *source.Manager, ops *operations, work string) er
 			},
 			Discover: func(ctx context.Context, input plugin.Input) (source.Discovery, error) {
 				response, err := call(ctx, "discover", input, nil, "")
-				result := source.Discovery{Observation: response.Observation, Immutable: response.Immutable, Download: response.Download, Evidence: response.Evidence, Version: response.Version, ContentRoot: response.ContentRoot}
+				if err == nil && (response.Download != nil || response.Artifact.Path != "") {
+					return source.Discovery{}, errors.New("resolver discovery must not return acquisition instructions")
+				}
+				result := source.Discovery{Observation: response.Observation, Immutable: response.Immutable, Evidence: response.Evidence, Version: response.Version, ContentRoot: response.ContentRoot}
 				if response.Content != nil {
 					result.Content = &source.Content{SHA256: response.Content.SHA256, Filename: response.Content.Filename, Mode: response.Content.Mode, Tree: response.Content.Tree}
 				}
 				return result, err
 			},
-			Fetch: func(ctx context.Context, input plugin.Input, observation json.RawMessage) (plugin.Artifact, error) {
+			Acquire: func(ctx context.Context, input plugin.Input, observation json.RawMessage) (source.Acquisition, error) {
 				workspace, err := os.MkdirTemp(work, "resolver-*")
 				if err != nil {
-					return plugin.Artifact{}, err
+					return source.Acquisition{}, err
 				}
 				// Manager imports these bytes before the enclosing operation lease ends.
 				response, err := call(ctx, "run", input, observation, workspace)
 				if err != nil {
-					return plugin.Artifact{}, err
+					return source.Acquisition{}, err
+				}
+				if response.Download != nil {
+					if response.Artifact.Path != "" {
+						return source.Acquisition{}, errors.New("resolver run must return exactly one download or artifact")
+					}
+					return source.Acquisition{Download: &source.Download{Download: *response.Download}, Evidence: response.Evidence}, nil
+				}
+				if response.Artifact.Path == "" {
+					return source.Acquisition{}, errors.New("resolver run must return exactly one download or artifact")
 				}
 				resolved, err := filepath.EvalSymlinks(response.Artifact.Path)
 				if err != nil {
-					return plugin.Artifact{}, err
+					return source.Acquisition{}, err
 				}
 				allowed, err := filepath.EvalSymlinks(workspace)
 				if err != nil {
-					return plugin.Artifact{}, err
+					return source.Acquisition{}, err
 				}
 				if !within(allowed, resolved) {
-					return plugin.Artifact{}, errors.New("resolver output must be inside its leased workspace")
+					return source.Acquisition{}, errors.New("resolver output must be inside its leased workspace")
 				}
 				response.Artifact.Path = resolved
-				return response.Artifact, nil
+				return source.Acquisition{Artifact: &response.Artifact, Evidence: response.Evidence}, nil
 			},
 		}
 		if err := manager.Register(operation.Name, resolver); err != nil {

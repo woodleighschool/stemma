@@ -26,7 +26,7 @@ import (
 
 // Version is the lockfile format. It changes whenever older entries no longer
 // read the same, so a mismatch fails before any entry is used.
-const Version = 3
+const Version = 4
 
 // File pins resource inputs and executable plugin content.
 type File struct {

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"net/http"
 	"net/url"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/invopop/jsonschema"
+	"github.com/oras-project/oras-go/v3/registry/remote/auth"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -59,7 +60,10 @@ func homebrewInput(input plugin.Input) (homebrewConfig, error) {
 	if s.Architecture != "arm64" && s.Architecture != "x86_64" {
 		return s, errors.New("homebrew architecture must be arm64 or x86_64")
 	}
-	if s.MacOS != "" && !slices.ContainsFunc(brewReleases, func(r struct{ version, name string }) bool { return r.version == s.MacOS }) {
+	if s.MacOS == "" {
+		s.MacOS = brewReleases[0].version
+	}
+	if !slices.ContainsFunc(brewReleases, func(r struct{ version, name string }) bool { return r.version == s.MacOS }) {
 		return s, fmt.Errorf("unsupported macOS target %q", s.MacOS)
 	}
 	if s.Formula != "" && s.Language != "" {
@@ -68,22 +72,21 @@ func homebrewInput(input plugin.Input) (homebrewConfig, error) {
 	return s, nil
 }
 
+func (homebrewConfig) JSONSchemaExtend(schema *jsonschema.Schema) {
+	schema.OneOf = []*jsonschema.Schema{{Required: []string{"cask"}, Not: &jsonschema.Schema{Required: []string{"formula"}}}, {Required: []string{"formula"}, Not: &jsonschema.Schema{Required: []string{"cask"}}}}
+}
+
 func (m *Manager) homebrewResolver() Resolver {
-	return Resolver{Version: "1", Discover: m.discoverHomebrew, Fingerprint: func(input plugin.Input) (string, error) {
-		s, err := homebrewInput(input)
-		if err != nil {
-			return "", err
-		}
-		return fingerprint(s)
-	}}
+	return resolverFor(homebrewInput, m.discoverHomebrew, m.acquireHomebrew)
 }
 
 // homebrewObservation is sufficient for cold replay, including hashless casks.
 type homebrewObservation struct {
-	URL      string `json:"url"`
-	Filename string `json:"filename"`
-	SHA256   string `json:"sha256,omitempty"`
-	Bottle   bool   `json:"bottle,omitempty"`
+	URL      string            `json:"url"`
+	Filename string            `json:"filename"`
+	SHA256   string            `json:"sha256,omitempty"`
+	Bottle   bool              `json:"bottle,omitempty"`
+	Headers  map[string]string `json:"headers,omitempty"`
 }
 
 type brewDocument struct {
@@ -151,14 +154,7 @@ type homebrewEvidence struct {
 	PayloadRoot        string                       `json:"payload_root,omitempty"`
 }
 
-func (m *Manager) discoverHomebrew(ctx context.Context, input plugin.Input) (Discovery, error) {
-	s, err := homebrewInput(input)
-	if err != nil {
-		return Discovery{}, err
-	}
-	if s.MacOS == "" {
-		s.MacOS = brewReleases[0].version
-	}
+func (m *Manager) discoverHomebrew(ctx context.Context, s homebrewConfig) (Discovery, error) {
 	kind, name := "cask", s.Cask
 	if s.Formula != "" {
 		kind, name = "formula", s.Formula
@@ -307,10 +303,6 @@ func (m *Manager) discoverHomebrew(ctx context.Context, input plugin.Input) (Dis
 			evidence.PayloadRoot += "_" + strconv.Itoa(doc.Revision)
 		}
 		observed = homebrewObservation{URL: bottle.URL, SHA256: bottle.SHA256, Bottle: true, Filename: name + "-" + path.Base(evidence.PayloadRoot) + "." + evidence.BottleTag + ".bottle.tar.gz"}
-		u, err := url.Parse(observed.URL)
-		if err != nil || u.Scheme != "https" || u.Host != "ghcr.io" || u.Path != "/v2/homebrew/core/"+strings.ReplaceAll(name, "@", "/")+"/blobs/sha256:"+observed.SHA256 || u.RawQuery != "" {
-			return Discovery{}, errors.New("unsupported Homebrew bottle registry URL")
-		}
 	}
 	if evidence.Version == "" {
 		return Discovery{}, errors.New("homebrew metadata has no version")
@@ -331,6 +323,10 @@ func (m *Manager) discoverHomebrew(ctx context.Context, input plugin.Input) (Dis
 	if observed.Bottle && observed.SHA256 == "" {
 		return Discovery{}, errors.New("homebrew bottle has no sha256")
 	}
+	observed.Headers = headers
+	if err := observed.validate(s); err != nil {
+		return Discovery{}, err
+	}
 	observation, _ := json.Marshal(observed)
 	claims, _ := json.Marshal(evidence)
 	found := Discovery{Observation: observation, Evidence: map[string]json.RawMessage{"homebrew." + kind: claims}}
@@ -341,9 +337,6 @@ func (m *Manager) discoverHomebrew(ctx context.Context, input plugin.Input) (Dis
 	}
 	if observed.SHA256 != "" {
 		found.Content = &Content{SHA256: observed.SHA256, Filename: observed.Filename, Mode: 0o644}
-	}
-	if !observed.Bottle {
-		found.Download = &plugin.Download{URL: observed.URL, Headers: headers}
 	}
 	return found, nil
 }
@@ -429,29 +422,43 @@ func standaloneBottle(doc brewDocument, s homebrewConfig) error {
 	return nil
 }
 
-func (m *Manager) fetchHomebrew(ctx context.Context, observed json.RawMessage, previous *record) (record, bool, error) {
-	var selected homebrewObservation
-	if err := decode(observed, &selected); err != nil {
-		return record{}, false, err
+func (observed homebrewObservation) validate(config homebrewConfig) error {
+	if observed.Bottle != (config.Formula != "") {
+		return errors.New("homebrew observation differs from the configured source")
 	}
-	if !selected.Bottle {
-		return record{}, false, errors.New("cask lock is missing download instructions")
+	if err := validateHTTPURL(observed.URL); err != nil {
+		return err
 	}
-	return m.download(ctx, nativeConfig{Type: "homebrew", URL: selected.URL, Filename: selected.Filename, SHA256: selected.SHA256}, selected.URL, previous)
+	if !validFilename(observed.Filename) {
+		return errors.New("homebrew download has no safe filename")
+	}
+	if observed.SHA256 != "" && !validDigest(observed.SHA256) {
+		return errors.New("homebrew returned an invalid sha256")
+	}
+	if err := validateHeaders(observed.Headers); err != nil {
+		return err
+	}
+	if observed.Bottle {
+		u, _ := url.Parse(observed.URL)
+		if !validDigest(observed.SHA256) || u.Scheme != "https" || u.Host != "ghcr.io" || u.Path != "/v2/homebrew/core/"+strings.ReplaceAll(config.Formula, "@", "/")+"/blobs/sha256:"+observed.SHA256 || u.RawQuery != "" || len(observed.Headers) != 0 {
+			return errors.New("unsupported Homebrew bottle registry URL")
+		}
+	}
+	return nil
 }
 
-func (m *Manager) metadataBytes(ctx context.Context, address string) ([]byte, error) {
-	req, err := m.request(ctx, address, nativeConfig{})
-	if err != nil {
-		return nil, err
+func (m *Manager) acquireHomebrew(_ context.Context, config homebrewConfig, observation json.RawMessage) (Acquisition, error) {
+	var observed homebrewObservation
+	if err := decode(observation, &observed); err != nil {
+		return Acquisition{}, err
 	}
-	response, err := m.metadataClient().Do(req)
-	if err != nil {
-		return nil, err
+	if err := observed.validate(config); err != nil {
+		return Acquisition{}, err
 	}
-	defer func() { _ = response.Body.Close() }()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("metadata returned HTTP %d", response.StatusCode)
+	request := &Download{URL: observed.URL, Headers: observed.Headers, Filename: observed.Filename, SHA256: observed.SHA256}
+	if observed.Bottle {
+		client := &auth.Client{Client: m.Client, Cache: auth.NewCache()}
+		request.Do = client.Do
 	}
-	return io.ReadAll(response.Body)
+	return Acquisition{Download: request}, nil
 }

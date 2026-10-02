@@ -1,7 +1,6 @@
 package changes
 
 import (
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -73,10 +72,6 @@ func inputValue(entry *source.Entry, comparing bool) map[string]any {
 	if comparing {
 		fields["resolver"] = entry.Resolver
 		fields["resolver_version"] = entry.ResolverVersion
-	}
-	if entry.Download != nil {
-		data, _ := json.Marshal(entry.Download)
-		fields["download"] = decode(data)
 	}
 	if len(entry.Observation) > 0 {
 		if observation := decode(entry.Observation); observation != nil {

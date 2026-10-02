@@ -86,7 +86,9 @@ URL. References resolve against the page's base URL: the final URL after
 redirects, or the `base` element when the page declares one. Equivalent references count as one URL. All matches must resolve to one distinct
 stable HTTP(S) URL. The lock stores that absolute URL, so locked fetches do not
 repeat discovery or reapply the pattern. Credentials remain confined to the
-configured source origin. Discovery belongs to the resolver; the software kind still receives
+configured source origin. `Accept`, `Accept-Encoding`, `Accept-Language` and
+`User-Agent` affect source identity. Other headers are treated as credentials,
+so rotating them does not stale the lock. Discovery belongs to the resolver; the software kind still receives
 one file. External plugins can supply other [resolvers](writing-plugins.md#resolvers).
 
 ## Follow Homebrew releases

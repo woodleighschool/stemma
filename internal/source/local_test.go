@@ -76,6 +76,20 @@ func TestLocalIncludesSnapshotOnlyMatchedInputs(t *testing.T) {
 	}
 }
 
+func TestLocalDependencySelectionLeavesUnrelatedExpressionsUnresolved(t *testing.T) {
+	for _, input := range []plugin.Input{
+		{Resolver: "file", Base: "software", Config: map[string]any{"path": "App.pkg", "sha256": "{{ env.DIGEST }}"}},
+		{Resolver: "local", Base: "software", Config: map[string]any{"include": "{{ env.PATTERNS }}", "sha256": "{{ env.DIGEST }}"}},
+	} {
+		t.Run(input.Resolver, func(t *testing.T) {
+			changed, err := New(nil, t.TempDir(), true).InputChanged(input, []string{"software/App.pkg"})
+			if err != nil || !changed {
+				t.Fatalf("local dependency: changed=%v, err=%v", changed, err)
+			}
+		})
+	}
+}
+
 func TestFamilyRelativeInputDeclarations(t *testing.T) {
 	root := t.TempDir()
 	writeInput(t, filepath.Join(root, "software", "Shared", "script"), "shared script", 0o755)

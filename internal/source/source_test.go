@@ -37,7 +37,10 @@ func TestLocalInputChangesRespectResourcePaths(t *testing.T) {
 				field = "base"
 			}
 			input := plugin.Input{Resolver: test.resolver, Base: test.base, Config: map[string]any{field: test.input}}
-			if got, err := LocalInputChanged(input, []string{test.changed}); err != nil || got != test.want {
+			if test.resolver == "local" {
+				input.Config["include"] = []string{"**"}
+			}
+			if got, err := New(nil, t.TempDir(), true).InputChanged(input, []string{test.changed}); err != nil || got != test.want {
 				t.Fatalf("changed = %v, want %v: %v", got, test.want, err)
 			}
 		})
@@ -285,9 +288,18 @@ func TestStableQueryRetainsOriginalURLAcrossRedirects(t *testing.T) {
 	}
 }
 
-func observation(t *testing.T, entry Entry) nativeObservation {
+type observedSource struct {
+	URL       string `json:"url,omitempty"`
+	Release   string `json:"release,omitempty"`
+	ReleaseID int64  `json:"release_id,omitempty"`
+	AssetID   int64  `json:"asset_id,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
+	Filename  string `json:"filename,omitempty"`
+}
+
+func observation(t *testing.T, entry Entry) observedSource {
 	t.Helper()
-	var value nativeObservation
+	var value observedSource
 	if err := json.Unmarshal(entry.Observation, &value); err != nil {
 		t.Fatal(err)
 	}

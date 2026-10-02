@@ -70,13 +70,45 @@ func wingetInput(input plugin.Input) (wingetConfig, error) {
 }
 
 func (m *Manager) wingetResolver() Resolver {
-	return Resolver{Version: "1", Discover: m.discoverWinget, Fingerprint: func(input plugin.Input) (string, error) {
-		config, err := wingetInput(input)
-		if err != nil {
-			return "", err
-		}
-		return fingerprint(config)
-	}}
+	source := &wingetSource{manager: m}
+	return resolverFor(wingetInput, source.discoverWinget, acquireWinget)
+}
+
+type wingetSource struct {
+	manager *Manager
+	catalog wingetCatalog
+}
+
+type wingetObservation struct {
+	Package  string `json:"package"`
+	Version  string `json:"version"`
+	URL      string `json:"url"`
+	Filename string `json:"filename"`
+	SHA256   string `json:"sha256"`
+}
+
+func (observed wingetObservation) validate(config wingetConfig) error {
+	if !strings.EqualFold(observed.Package, config.Package) || observed.Version == "" || config.Version != "latest" && observed.Version != config.Version {
+		return errors.New("winget observation differs from the configured package")
+	}
+	if err := validateHTTPURL(observed.URL); err != nil {
+		return err
+	}
+	if !validDigest(observed.SHA256) || !validFilename(observed.Filename) {
+		return errors.New("winget observation requires a digest and safe filename")
+	}
+	return nil
+}
+
+func acquireWinget(_ context.Context, config wingetConfig, observation json.RawMessage) (Acquisition, error) {
+	var observed wingetObservation
+	if err := decode(observation, &observed); err != nil {
+		return Acquisition{}, err
+	}
+	if err := observed.validate(config); err != nil {
+		return Acquisition{}, err
+	}
+	return Acquisition{Download: &Download{URL: observed.URL, Filename: observed.Filename, SHA256: observed.SHA256}}, nil
 }
 
 type wingetVersions struct {
@@ -99,17 +131,13 @@ type wingetManifest struct {
 	Fields     wingetFields   `yaml:",inline"`
 }
 
-func (m *Manager) discoverWinget(ctx context.Context, input plugin.Input) (Discovery, error) {
-	config, err := wingetInput(input)
-	if err != nil {
-		return Discovery{}, err
-	}
-	p, err := m.wingetPackage(ctx, config.Package)
+func (s *wingetSource) discoverWinget(ctx context.Context, config wingetConfig) (Discovery, error) {
+	p, err := s.wingetPackage(ctx, config.Package)
 	if err != nil {
 		return Discovery{}, err
 	}
 	config.Package = p.ID
-	data, err := m.wingetMetadata(ctx, "packages/"+p.ID+"/"+p.SHA256[:8]+"/versionData.mszyml", p.SHA256)
+	data, err := s.wingetMetadata(ctx, "packages/"+p.ID+"/"+p.SHA256[:8]+"/versionData.mszyml", p.SHA256)
 	if err != nil {
 		return Discovery{}, fmt.Errorf("winget versions: %w", err)
 	}
@@ -143,7 +171,7 @@ func (m *Manager) discoverWinget(ctx context.Context, input plugin.Input) (Disco
 	if !strings.HasPrefix(relative, "manifests/") {
 		return Discovery{}, errors.New("winget version has an invalid manifest path")
 	}
-	data, err = m.wingetMetadata(ctx, relative, digest)
+	data, err = s.wingetMetadata(ctx, relative, digest)
 	if err != nil {
 		return Discovery{}, fmt.Errorf("winget manifest: %w", err)
 	}
@@ -246,14 +274,15 @@ func selectWinget(data []byte, config wingetConfig, version string) (Discovery, 
 	if err != nil {
 		return Discovery{}, err
 	}
-	observation, err := json.Marshal(struct {
-		Package string `json:"package"`
-		Version string `json:"version"`
-	}{config.Package, version})
+	observed := wingetObservation{Package: config.Package, Version: version, URL: address, Filename: filename, SHA256: digest}
+	if err := observed.validate(config); err != nil {
+		return Discovery{}, err
+	}
+	observation, err := json.Marshal(observed)
 	if err != nil {
 		return Discovery{}, err
 	}
-	return Discovery{Version: version, Content: &Content{SHA256: digest, Filename: filename, Mode: 0o644}, Download: &plugin.Download{URL: address}, Observation: observation, Immutable: true, Evidence: map[string]json.RawMessage{"winget.installer": encoded}}, nil
+	return Discovery{Version: version, Content: &Content{SHA256: digest, Filename: filename, Mode: 0o644}, Observation: observation, Immutable: true, Evidence: map[string]json.RawMessage{"winget.installer": encoded}}, nil
 }
 
 var wingetInheritedFields = strings.Fields(`InstallerType PackageFamilyName ProductCode InstallerLocale Platform MinimumOSVersion Scope InstallModes InstallerSwitches InstallerSuccessCodes UpgradeBehavior Commands Protocols FileExtensions Dependencies Capabilities RestrictedCapabilities InstallerAbortsTerminal InstallLocationRequired RequireExplicitUpgrade ReleaseDate UnsupportedOSArchitectures ElevationRequirement Markets AppsAndFeaturesEntries ExpectedReturnCodes UnsupportedArguments DisplayInstallWarnings NestedInstallerType NestedInstallerFiles InstallationMetadata DownloadCommandProhibited RepairBehavior ArchiveBinariesDependOnPath Authentication DesiredStateConfiguration`)

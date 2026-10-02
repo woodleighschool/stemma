@@ -149,6 +149,9 @@ func (e *execution) begin(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	if err := registerResolvers(s.manager, s.ops, s.work); err != nil {
+		return err
+	}
 	if e.opts.ChangedSince != "" {
 		if e.roots, err = changedSince(ctx, s, e.opts.ChangedSince); err != nil {
 			return err
@@ -170,9 +173,6 @@ func (e *execution) begin(ctx context.Context) (err error) {
 		if err := verifyIcons(s.root, e.plans, e.selected); err != nil {
 			return err
 		}
-	}
-	if err := registerResolvers(s.manager, s.ops, s.work); err != nil {
-		return err
 	}
 	e.destinations = map[destinationRef]destinationPlan{}
 	if usesDestinations {

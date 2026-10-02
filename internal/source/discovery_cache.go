@@ -2,6 +2,7 @@ package source
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -136,4 +137,20 @@ func (transport metadataTransport) RoundTrip(req *http.Request) (*http.Response,
 	header := stored.Header.Clone()
 	header.Set("Content-Length", strconv.Itoa(len(stored.Body)))
 	return &http.Response{StatusCode: stored.Status, Status: fmt.Sprintf("%d %s", stored.Status, http.StatusText(stored.Status)), Header: header, Body: io.NopCloser(bytes.NewReader(stored.Body)), ContentLength: int64(len(stored.Body)), Request: request}, nil
+}
+
+func (m *Manager) metadataBytes(ctx context.Context, address string) ([]byte, error) {
+	req, err := m.request(ctx, address, nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := m.metadataClient().Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("metadata returned HTTP %d", response.StatusCode)
+	}
+	return io.ReadAll(response.Body)
 }

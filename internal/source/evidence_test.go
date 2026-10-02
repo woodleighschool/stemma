@@ -79,13 +79,14 @@ func TestResolveRejectsInvalidEvidence(t *testing.T) {
 	for _, test := range []struct{ name, value string }{{"empty", ""}, {"malformed", "{"}, {"trailing", "{} {}"}} {
 		t.Run(test.name, func(t *testing.T) {
 			evidence := map[string]json.RawMessage{"vendor.release": json.RawMessage(test.value)}
-			m.Resolvers["vendor.release"] = Resolver{
-				Version: "1",
+			m.resolvers["vendor.release"] = Resolver{
+				Fingerprint: func(input plugin.Input) (string, error) { return fingerprint(input.Config) },
+				Version:     "1",
 				Discover: func(context.Context, plugin.Input) (Discovery, error) {
 					return Discovery{Observation: json.RawMessage(`{}`)}, nil
 				},
-				Fetch: func(context.Context, plugin.Input, json.RawMessage) (plugin.Artifact, error) {
-					return plugin.Artifact{Path: filename, Filename: "input.pkg", Evidence: evidence}, nil
+				Acquire: func(context.Context, plugin.Input, json.RawMessage) (Acquisition, error) {
+					return Acquisition{Artifact: &plugin.Artifact{Path: filename, Filename: "input.pkg", Evidence: evidence}}, nil
 				},
 			}
 			if _, err := m.Resolve(t.Context(), plugin.Input{Resolver: "vendor.release"}); err == nil || !strings.Contains(err.Error(), `resolver evidence "vendor.release"`) {

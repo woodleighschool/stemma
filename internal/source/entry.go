@@ -31,7 +31,6 @@ type Entry struct {
 	ResolverVersion string                     `json:"resolver_version" yaml:"resolver_version"`
 	Declaration     string                     `json:"declaration" yaml:"declaration"`
 	Observation     json.RawMessage            `json:"observation" yaml:"observation"`
-	Download        *plugin.Download           `json:"download,omitempty" yaml:"download,omitempty"`
 	Content         Content                    `json:"content" yaml:"content"`
 	InputVersion    string                     `json:"input_version,omitempty" yaml:"input_version,omitempty"`
 	ContentRoot     string                     `json:"content_root,omitempty" yaml:"content_root,omitempty"`
@@ -43,12 +42,6 @@ type Entry struct {
 func (entry Entry) Validate() error {
 	if entry.Version != 1 || !plugin.ValidOperationName(entry.Resolver) || entry.ResolverVersion == "" || !validDigest(entry.Declaration) {
 		return errors.New("unsupported or incomplete input lock envelope")
-	}
-	if err := validateDownload(entry.Download); err != nil {
-		return err
-	}
-	if entry.Download != nil && entry.Content.Tree {
-		return errors.New("HTTP downloads must identify file content")
 	}
 	if !entry.Content.valid() {
 		return errors.New("invalid locked input content")
@@ -79,7 +72,7 @@ func (entry Entry) Equal(other Entry) bool {
 	if entry.InputVersion != other.InputVersion || entry.ContentRoot != other.ContentRoot {
 		return false
 	}
-	if entry.Version != other.Version || entry.Resolver != other.Resolver || entry.ResolverVersion != other.ResolverVersion || entry.Declaration != other.Declaration || entry.Content != other.Content || !equalDownload(entry.Download, other.Download) || !sameJSON(entry.Observation, other.Observation) {
+	if entry.Version != other.Version || entry.Resolver != other.Resolver || entry.ResolverVersion != other.ResolverVersion || entry.Declaration != other.Declaration || entry.Content != other.Content || !sameJSON(entry.Observation, other.Observation) {
 		return false
 	}
 	leftEvidence, err := canonicalEvidence(entry.Evidence)
@@ -204,10 +197,4 @@ func canonicalJSON(data json.RawMessage) (json.RawMessage, error) {
 		return nil, errors.New("expected one JSON value")
 	}
 	return json.Marshal(value)
-}
-
-func equalDownload(a, b *plugin.Download) bool {
-	left, _ := json.Marshal(a)
-	right, _ := json.Marshal(b)
-	return bytes.Equal(left, right)
 }

@@ -163,8 +163,12 @@ func TestHomebrewDownloadRequirements(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !strings.HasPrefix(entry.Download.Headers["User-Agent"], "Mozilla/") {
-				t.Fatalf("browser request requirement lost: %+v", entry.Download)
+			if !strings.HasPrefix(func() string {
+				var o homebrewObservation
+				_ = json.Unmarshal(entry.Observation, &o)
+				return o.Headers["User-Agent"]
+			}(), "Mozilla/") {
+				t.Fatalf("browser request requirement lost: %+v", entry.Observation)
 			}
 		})
 	}

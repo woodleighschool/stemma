@@ -16,7 +16,7 @@ import (
 )
 
 // discoverLink finds the one download URL a page's match selects.
-func (m *Manager) discoverLink(ctx context.Context, s nativeConfig) (link string, err error) {
+func (m *Manager) discoverLink(ctx context.Context, s httpConfig) (link string, err error) {
 	var host string
 	if page, err := url.Parse(s.URL); err == nil {
 		host = page.Hostname()
@@ -26,7 +26,7 @@ func (m *Manager) discoverLink(ctx context.Context, s nativeConfig) (link string
 		found, _ := url.Parse(link)
 		done(err, plugin.Detail(urlName(found)))
 	}()
-	req, err := m.request(ctx, s.URL, s)
+	req, err := m.request(ctx, s.URL, s.headers(s.URL))
 	if err != nil {
 		return "", err
 	}

@@ -2,6 +2,7 @@ package source
 
 import (
 	"cmp"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,82 @@ import (
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
 )
+
+func TestGitHubObservationValidationOnDiscoveryAndReplay(t *testing.T) {
+	const body = "installer"
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(body)))
+	valid := githubObservation{URL: "https://github.com/example/app/releases/download/v1/App.pkg", Release: "v1", ReleaseID: 12, AssetID: 34, Filename: "App.pkg", SHA256: digest}
+	for _, test := range []struct {
+		name, failure string
+		change        func(*githubObservation)
+	}{
+		{"repository", "configured GitHub repository", func(o *githubObservation) { o.URL = "https://github.com/other/app/releases/download/v1/App.pkg" }},
+		{"insecure origin", "configured GitHub repository", func(o *githubObservation) { o.URL = "http://github.com/example/app/releases/download/v1/App.pkg" }},
+		{"release selection", "configured GitHub release", func(o *githubObservation) { o.Release = "v2" }},
+		{"URL selection", "selected release asset", func(o *githubObservation) { o.URL = "https://github.com/example/app/releases/download/v2/App.pkg" }},
+		{"release identity", "release and asset IDs", func(o *githubObservation) { o.ReleaseID = 0 }},
+		{"asset identity", "release and asset IDs", func(o *githubObservation) { o.AssetID = 0 }},
+		{"digest conflict", "declared sha256 disagrees", func(o *githubObservation) { o.SHA256 = strings.Repeat("0", 64) }},
+		{"invalid digest", "invalid sha256", func(o *githubObservation) { o.SHA256 = "invalid" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := manager(t)
+			selected := valid
+			test.change(&selected)
+			transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Host != "api.github.com" {
+					t.Fatal("invalid observation reached artifact transfer")
+				}
+				asset := map[string]any{"id": selected.AssetID, "name": selected.Filename, "browser_download_url": selected.URL, "digest": "sha256:" + selected.SHA256}
+				data, err := json.Marshal(map[string]any{"id": selected.ReleaseID, "tag_name": selected.Release, "assets": []any{asset}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(data)))}, nil
+			})
+			m.Client.Transport = transport
+			input := plugin.Input{Resolver: "github", Config: map[string]any{"repository": "example/app", "release": "v1", "asset": "App.pkg", "sha256": digest, "token": "synthetic-token"}}
+			_, err := m.Resolve(t.Context(), input)
+			if err == nil || !strings.Contains(err.Error(), test.failure) {
+				t.Fatalf("discovery: %v, want %q", err, test.failure)
+			}
+			selected = valid
+			m = New(m.Store, m.Root, false)
+			m.Client.Transport = transport
+			entry, err := m.Resolve(t.Context(), input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.change(&selected)
+			entry.Observation, err = json.Marshal(selected)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.FetchLocked(t.Context(), input, entry); err == nil || !strings.Contains(err.Error(), test.failure) {
+				t.Fatalf("cold replay: %v, want %q", err, test.failure)
+			}
+		})
+	}
+}
+
+func TestGitHubReplayRejectsReleasePathTraversal(t *testing.T) {
+	m := manager(t)
+	input := plugin.Input{Resolver: "github", Config: map[string]any{"repository": "example/app", "asset": "App.pkg", "token": "synthetic-token"}}
+	observed := githubObservation{
+		URL:       "https://github.com/example/app/releases/download/../../../../other/app/releases/download/v1/App.pkg",
+		Release:   "../../../../other/app/releases/download/v1",
+		ReleaseID: 12,
+		AssetID:   34,
+		Filename:  "App.pkg",
+	}
+	data, err := json.Marshal(observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.githubResolver().Acquire(t.Context(), input, data); err == nil || !strings.Contains(err.Error(), "selected release asset") {
+		t.Fatalf("accepted a release path outside the configured repository: %v", err)
+	}
+}
 
 func TestGitHubAssetSelection(t *testing.T) {
 	for _, test := range []struct{ name, pattern, release, want, failure string }{
@@ -150,9 +227,13 @@ func TestGitHubDiscoveryKeepsTokenAtAPIOrigin(t *testing.T) {
 				}
 				return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"message":"Not Found"}`)), Request: r}, nil
 			})
-			var observed nativeObservation
-			err := m.github(t.Context(), nativeConfig{Repository: "example/app", Asset: "App.pkg", Token: "synthetic-token"}, &observed)
-			if requests != 2 || err == nil || !strings.Contains(err.Error(), "HTTP 404") {
+			var observed githubObservation
+			err := m.github(t.Context(), githubConfig{Repository: "example/app", Asset: "App.pkg", Token: "synthetic-token"}, &observed)
+			wantRequests, failure := 2, "HTTP 404"
+			if strings.HasPrefix(target, "http:") {
+				wantRequests, failure = 1, "must not downgrade"
+			}
+			if requests != wantRequests || err == nil || !strings.Contains(err.Error(), failure) {
 				t.Fatalf("redirect: requests=%d, err=%v", requests, err)
 			}
 		})
