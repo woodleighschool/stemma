@@ -91,6 +91,7 @@ type Summary struct {
 	Blocked      int `json:"blocked"`
 	Destinations int `json:"destinations"`
 	Applied      int `json:"applied"`
+	Resolved     int `json:"resolved"`
 	Prepared     int `json:"prepared"`
 	Cached       int `json:"cached"`
 }
@@ -105,6 +106,8 @@ func (r *Report) Summarize(method string) {
 			s.Blocked++
 		case resource.Error != "":
 			s.Failed++
+		case method == "update":
+			s.Resolved++
 		case resource.Cached:
 			s.Cached++
 		default:
