@@ -21,7 +21,7 @@ require (
 	github.com/dustin/go-humanize v1.1.0
 	github.com/ebitengine/purego v0.11.1
 	github.com/fatih/color v1.19.0
-	github.com/go-git/go-billy/v6 v6.0.0-alpha.2
+	github.com/go-git/go-billy/v6 v6.0.0-beta.1
 	github.com/go-git/go-git/v6 v6.0.0-alpha.5
 	github.com/gofrs/flock v0.13.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
