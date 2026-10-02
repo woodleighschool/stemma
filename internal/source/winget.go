@@ -11,9 +11,11 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/woodleighschool/stemma/internal/artifactname"
 	"github.com/woodleighschool/stemma/plugin"
 	"go.yaml.in/yaml/v4"
 )
@@ -161,12 +163,15 @@ func selectWinget(data []byte, config wingetConfig, version string) (Discovery, 
 		return Discovery{}, errors.New("unsupported winget manifest schema or type")
 	}
 	var selected wingetFields
+	var candidates, matching []string
 	matches := 0
-	for _, installer := range manifest.Installers {
+	for i, installer := range manifest.Installers {
 		claims, err := effectiveWingetInstaller(manifest.Fields, installer)
 		if err != nil {
 			return Discovery{}, err
 		}
+		candidate := fmt.Sprintf("#%d architecture=%q scope=%q installer_type=%q locale=%q", i+1, wingetString(claims, "Architecture"), wingetString(claims, "Scope"), wingetString(claims, "InstallerType"), wingetString(claims, "InstallerLocale"))
+		candidates = append(candidates, candidate)
 		if wingetString(claims, "Architecture") != config.Architecture ||
 			config.Scope != "" && wingetString(claims, "Scope") != config.Scope ||
 			config.InstallerType != "" && wingetString(claims, "InstallerType") != config.InstallerType ||
@@ -174,9 +179,17 @@ func selectWinget(data []byte, config wingetConfig, version string) (Discovery, 
 			continue
 		}
 		selected, matches = claims, matches+1
+		matching = append(matching, candidate)
 	}
 	if matches != 1 {
-		return Discovery{}, fmt.Errorf("winget %s %s: %d installers match; select architecture, scope, installer_type and locale to identify exactly one", config.Package, version, matches)
+		if matches > 0 {
+			candidates = matching
+		}
+		listed := strings.Join(candidates[:min(len(candidates), 10)], "; ")
+		if len(candidates) > 10 {
+			listed += fmt.Sprintf("; and %d more", len(candidates)-10)
+		}
+		return Discovery{}, fmt.Errorf("winget %s %s: %d installers match; select architecture, scope, installer_type and locale to identify exactly one; candidates: %s", config.Package, version, matches, listed)
 	}
 	installerType := wingetString(selected, "InstallerType")
 	if !slices.Contains(wingetTypes, installerType) || installerType == "msstore" || installerType == "pwa" {
@@ -204,6 +217,18 @@ func selectWinget(data []byte, config wingetConfig, version string) (Discovery, 
 	}
 	u, _ := url.Parse(address)
 	filename := path.Base(u.Path)
+	var extension string
+	switch installerType {
+	case "msi", "wix":
+		extension = "msi"
+	case "exe", "inno", "nullsoft", "burn":
+		extension = "exe"
+	case "zip":
+		extension = "zip"
+	}
+	if extension != "" && !strings.EqualFold(path.Ext(filename), "."+extension) {
+		filename = artifactname.Filename(config.Package, version, digest, extension)
+	}
 	if !validFilename(filename) {
 		return Discovery{}, errors.New("winget installer URL has no valid filename")
 	}

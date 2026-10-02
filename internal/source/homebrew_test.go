@@ -1,9 +1,12 @@
 package source
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -164,5 +167,36 @@ func TestHomebrewDownloadRequirements(t *testing.T) {
 				t.Fatalf("browser request requirement lost: %+v", entry.Download)
 			}
 		})
+	}
+}
+
+func TestHomebrewWarnsForDeprecatedCask(t *testing.T) {
+	m := manager(t)
+	requests := 0
+	m.Client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		requests++
+		if req.URL.Host != "formulae.brew.sh" {
+			t.Fatal("downloaded deprecated cask during discovery")
+		}
+		body := `{"token":"example","version":"2.0","url":"https://vendor.test/download","sha256":"` + strings.Repeat("a", 64) + `","supported_platforms":["arm64_golden_gate"],"deprecated":true,"deprecation_reason":"discontinued"}`
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	var logs bytes.Buffer
+	ctx := plugin.WithLogger(t.Context(), slog.New(slog.NewJSONHandler(&logs, nil)))
+	entry, err := m.Resolve(ctx, plugin.Input{Resolver: "homebrew", Config: map[string]any{"cask": "example"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var warning struct {
+		Level  string `json:"level"`
+		Name   string `json:"name"`
+		Kind   string `json:"kind"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(logs.Bytes(), &warning); err != nil {
+		t.Fatal(err)
+	}
+	if warning.Level != "WARN" || warning.Name != "example" || warning.Kind != "cask" || warning.Reason != "discontinued" || entry.Content.SHA256 != strings.Repeat("a", 64) || requests != 1 {
+		t.Fatalf("warning=%+v entry=%+v requests=%d", warning, entry, requests)
 	}
 }

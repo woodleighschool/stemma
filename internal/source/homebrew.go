@@ -93,6 +93,8 @@ type brewDocument struct {
 	URL                string          `json:"url"`
 	SHA256             string          `json:"sha256"`
 	Disabled           bool            `json:"disabled"`
+	Deprecated         bool            `json:"deprecated"`
+	DeprecationReason  string          `json:"deprecation_reason"`
 	SupportedPlatforms []string        `json:"supported_platforms"`
 	URLSpecs           struct {
 		UserAgent string            `json:"user_agent"`
@@ -185,6 +187,9 @@ func (m *Manager) discoverHomebrew(ctx context.Context, input plugin.Input) (Dis
 	}
 	if doc.Disabled {
 		return Discovery{}, errors.New("homebrew entry is disabled")
+	}
+	if doc.Deprecated {
+		plugin.Logger(ctx).WarnContext(ctx, "Homebrew entry is deprecated", "kind", kind, "name", name, "reason", doc.DeprecationReason)
 	}
 	evidence := homebrewEvidence{Name: name, TargetArchitecture: s.Architecture, MacOS: s.MacOS}
 	observed := homebrewObservation{}

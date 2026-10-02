@@ -501,3 +501,47 @@ func TestWingetRechecksCachedMetadataDigest(t *testing.T) {
 		t.Fatalf("cache was not rechecked: requests=%d", requests)
 	}
 }
+
+func TestWingetSelectionListsEffectiveCandidates(t *testing.T) {
+	for _, architecture := range []string{"x64", "neutral"} {
+		t.Run(architecture, func(t *testing.T) {
+			body := `InstallerType: msi
+Scope: machine
+InstallerLocale: en-US
+Installers:
+- Architecture: neutral
+  InstallerUrl: https://vendor.test/download
+  InstallerSha256: ` + strings.Repeat("a", 64) + `
+- Architecture: neutral
+  Scope: user
+  InstallerLocale: en-GB
+  InstallerUrl: https://vendor.test/download-user
+  InstallerSha256: ` + strings.Repeat("b", 64) + "\n"
+			_, err := selectWinget(wingetTestManifest(body), wingetConfig{Package: "Example.Tool", Architecture: architecture}, "2.0")
+			if err == nil {
+				t.Fatal("accepted nonunique selection")
+			}
+			for _, want := range []string{`#1 architecture="neutral" scope="machine" installer_type="msi" locale="en-US"`, `#2 architecture="neutral" scope="user" installer_type="msi" locale="en-GB"`} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("missing candidate %s: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+func TestWingetOpaqueURLUsesInstallerTypeForFilename(t *testing.T) {
+	for kind, extension := range map[string]string{"msi": "msi", "wix": "msi", "exe": "exe", "inno": "exe", "nullsoft": "exe", "burn": "exe", "zip": "zip"} {
+		t.Run(kind, func(t *testing.T) {
+			address := "https://vendor.test/download?id=2.0"
+			body := "InstallerType: " + kind + "\nInstallers:\n- Architecture: x64\n  InstallerUrl: " + address + "\n  InstallerSha256: " + strings.Repeat("a", 64) + "\n"
+			found, err := selectWinget(wingetTestManifest(body), wingetConfig{Package: "Example.Tool", Architecture: "x64"}, "2.0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if found.Content.Filename != "Example.Tool-2.0."+extension || found.Download.URL != address {
+				t.Fatalf("discovery = %+v", found)
+			}
+		})
+	}
+}
