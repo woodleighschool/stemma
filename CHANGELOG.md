@@ -1,5 +1,92 @@
 # Changelog
 
+## [0.9.0](https://github.com/woodleighschool/stemma/compare/v0.8.2...v0.9.0) (2026-10-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* unify source resolver contracts
+
+### Features
+
+* **cache:** maintain retained content automatically ([272921a](https://github.com/woodleighschool/stemma/commit/272921a39739fcbea83b714f7faacc4b7d295cc8))
+* **go:** update module github.com/caarlos0/env/v11 (v11.3.1 → v11.4.1) ([#96](https://github.com/woodleighschool/stemma/issues/96)) ([80d4f20](https://github.com/woodleighschool/stemma/commit/80d4f2010a7336f055eb5d78361bb32ea2cc8ced))
+* **go:** update module github.com/deploymenttheory/go-apfs-v2 (v0.13.0 → v0.15.1) ([#85](https://github.com/woodleighschool/stemma/issues/85)) ([f4ffcba](https://github.com/woodleighschool/stemma/commit/f4ffcbad1caaedfb98b923e45b1a8bc2929bd98b))
+* **go:** update module github.com/deploymenttheory/go-apfs-v2 (v0.15.1 → v0.17.0) ([#97](https://github.com/woodleighschool/stemma/issues/97)) ([85ce03b](https://github.com/woodleighschool/stemma/commit/85ce03b037d7842f19757d60bf60c1581dd19cd0))
+* **macpkg:** declare command links in package layouts ([a0b6ee5](https://github.com/woodleighschool/stemma/commit/a0b6ee5cda98bfbe569c39b6000eb072a1994e65))
+* **npm:** update dependency oxlint (1.85.0 → 1.86.0) ([#74](https://github.com/woodleighschool/stemma/issues/74)) ([915c2d0](https://github.com/woodleighschool/stemma/commit/915c2d08349bf85a44f47991cd9921c68c9c27df))
+* preserve archive metadata in application disk images ([2a47d06](https://github.com/woodleighschool/stemma/commit/2a47d06615714e51befffafbdac854d0d0c42647))
+* **source:** expose resolved input versions and content roots ([cbfb60f](https://github.com/woodleighschool/stemma/commit/cbfb60f3d1c5448655318becd40bae171dc89f41))
+* **source:** resolve Homebrew casks and standalone bottles ([ae7bc86](https://github.com/woodleighschool/stemma/commit/ae7bc8651c95c6f6cdcad2eb600521bc265c7005))
+* **source:** resolve reviewed content from metadata ([862828c](https://github.com/woodleighschool/stemma/commit/862828c29067396e04ce9ad997197b99d854eb06))
+* **source:** resolve WinGet installers from the community catalog ([1710154](https://github.com/woodleighschool/stemma/commit/1710154680b47223aa86204b72fd0e5dd9e3cec2))
+
+
+### Bug Fixes
+
+* **archive:** require archive suffixes for filename hints ([b01f21a](https://github.com/woodleighschool/stemma/commit/b01f21a9b3f9177e4984468f1b839f6f7e8a04a9))
+* **build:** exclude MIT-0 sqlite module from license export ([7690f36](https://github.com/woodleighschool/stemma/commit/7690f36459d48ac8bc87c2eb0e39decf5c72b0c2))
+* **contents:** recognize containers behind opaque download URLs ([129e15d](https://github.com/woodleighschool/stemma/commit/129e15d79c7a20f23102422473eee7ac9ee31185))
+* **go:** update module github.com/azure/azure-sdk-for-go/sdk/storage/azblob (v1.8.1 → v1.8.2) ([#90](https://github.com/woodleighschool/stemma/issues/90)) ([cb1db6a](https://github.com/woodleighschool/stemma/commit/cb1db6a29bb0c5fb14aa16f8708c1e7d9c502c1e))
+* **go:** update module github.com/go-git/go-billy/v6 (v6.0.0-alpha.2 → v6.0.0-beta.1) ([#101](https://github.com/woodleighschool/stemma/issues/101)) ([7f44466](https://github.com/woodleighschool/stemma/commit/7f4446658f6e23cae96988e9dd80b73bf663cbf5))
+* **go:** update module github.com/google/go-github/v92 (48d0a66 → e741894) ([#89](https://github.com/woodleighschool/stemma/issues/89)) ([fc9e5a8](https://github.com/woodleighschool/stemma/commit/fc9e5a8c979fe8d887ee0654382d49f99c5dd985))
+* **go:** update module github.com/google/go-github/v92 (93344bc → 9a9d77c) ([#95](https://github.com/woodleighschool/stemma/issues/95)) ([881042f](https://github.com/woodleighschool/stemma/commit/881042f252895059bf740a26adf211ff973366a6))
+* **go:** update module github.com/google/go-github/v92 (9a9d77c → a3ddb8e) ([#102](https://github.com/woodleighschool/stemma/issues/102)) ([6799d55](https://github.com/woodleighschool/stemma/commit/6799d558bf23fd77abd64c9ee08899dc3a13d9c1))
+* **go:** update module github.com/google/go-github/v92 (a3ddb8e → 4a73e54) ([#103](https://github.com/woodleighschool/stemma/issues/103)) ([f7948de](https://github.com/woodleighschool/stemma/commit/f7948deaec4fccbc780af0226404e7002d3a9c91))
+* **go:** update module github.com/google/go-github/v92 (c674c93 → 93344bc) ([#92](https://github.com/woodleighschool/stemma/issues/92)) ([434d53a](https://github.com/woodleighschool/stemma/commit/434d53a55b1fff3c79a8ab639fce70a7913d73f4))
+* **go:** update module github.com/google/go-github/v92 (e741894 → c674c93) ([#91](https://github.com/woodleighschool/stemma/issues/91)) ([0553446](https://github.com/woodleighschool/stemma/commit/0553446b10e467f58f58fe04c1e6e7a114ce71ea))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (1bfbc5c → 9ceba26) ([#80](https://github.com/woodleighschool/stemma/issues/80)) ([55fb900](https://github.com/woodleighschool/stemma/commit/55fb900c05e52b677c8b4884d04d2c016359413f))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (28ff432 → d04a013) ([#73](https://github.com/woodleighschool/stemma/issues/73)) ([52f8848](https://github.com/woodleighschool/stemma/commit/52f8848d196b962b55ccfdd9c5fc3cb6fd33c588))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (463c760 → 591c5fd) ([#70](https://github.com/woodleighschool/stemma/issues/70)) ([4811bd3](https://github.com/woodleighschool/stemma/commit/4811bd3ec5eb306dac09c074622cf9118cb67178))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (53effc0 → 25a53e3) ([#99](https://github.com/woodleighschool/stemma/issues/99)) ([c0075de](https://github.com/woodleighschool/stemma/commit/c0075de81f380f17609e638265135fa03223d24f))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (591c5fd → 28ff432) ([#72](https://github.com/woodleighschool/stemma/issues/72)) ([36f7c2f](https://github.com/woodleighschool/stemma/commit/36f7c2f5895c610daf1f77475931854314dc655f))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (9ceba26 → f4850f5) ([#86](https://github.com/woodleighschool/stemma/issues/86)) ([99d5873](https://github.com/woodleighschool/stemma/commit/99d5873efc9348171f1a6918dd8afc1ca4c836b8))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (bab4bf1 → e2ad683) ([#78](https://github.com/woodleighschool/stemma/issues/78)) ([c6c4da0](https://github.com/woodleighschool/stemma/commit/c6c4da0900b705f9f16e8b613c628701d601fab3))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (d04a013 → bab4bf1) ([#75](https://github.com/woodleighschool/stemma/issues/75)) ([7bfc6e6](https://github.com/woodleighschool/stemma/commit/7bfc6e669702c89ae1c7f4941f24377cb4717624))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (e2ad683 → 1bfbc5c) ([#79](https://github.com/woodleighschool/stemma/issues/79)) ([26c77f3](https://github.com/woodleighschool/stemma/commit/26c77f331b3d2e809187acd0f3b87a2f45a53fce))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (f4850f5 → 53effc0) ([#87](https://github.com/woodleighschool/stemma/issues/87)) ([df156db](https://github.com/woodleighschool/stemma/commit/df156dbb72047e2c661afbdfaf1283afb698a329))
+* honor resolved filenames and application roots ([0bc3619](https://github.com/woodleighschool/stemma/commit/0bc36190cae6e99ee4138b171b7e5400adbcdcf9))
+* **plugin:** version resolved content contracts ([c5f8f5d](https://github.com/woodleighschool/stemma/commit/c5f8f5d32a01009057420f539aea6e955d3f3720))
+* **report:** distinguish resolved inputs from prepared resources ([cf2db42](https://github.com/woodleighschool/stemma/commit/cf2db42635cdf07452a58a4bfaad5cc8d2e0d57a))
+* **source:** clarify registry selections and installer names ([90f3c37](https://github.com/woodleighschool/stemma/commit/90f3c370f70921031e5f5280a0ad5b1a898bf225))
+* **source:** preserve discovery response semantics ([76c47ff](https://github.com/woodleighschool/stemma/commit/76c47ffddb5c2b6299c6b1a62ddbc25dbbdeed7d))
+
+
+### Performance Improvements
+
+* **source:** share and revalidate discovery responses ([5b8556e](https://github.com/woodleighschool/stemma/commit/5b8556e5afe2e150e4e6080c88d71ef65b28f9c2))
+
+
+### Code Refactoring
+
+* unify source resolver contracts ([4a9ac8b](https://github.com/woodleighschool/stemma/commit/4a9ac8bcf0924665296b49209177d9e83f1b0807))
+
+
+### Tests
+
+* **diskimage:** adapt native symlink targets at fixture boundary ([e526343](https://github.com/woodleighschool/stemma/commit/e526343e3f81e96fd4715508d10fac2af302f83c))
+* establish runner-owned HTTPS trust ([74f01f0](https://github.com/woodleighschool/stemma/commit/74f01f02c6766e3e8ab94314d21210b47fe44f21))
+* **source:** open WinGet fixtures with native SQLite paths ([c5a1747](https://github.com/woodleighschool/stemma/commit/c5a1747b744329e2e42cf8db85447558c9933392))
+
+
+### Continuous Integration
+
+* run Linux tests on Ubuntu 26.04 ([cbd5a1d](https://github.com/woodleighschool/stemma/commit/cbd5a1d6c211f590e6be69fa285d0303f2c49d11))
+* start renovate and release please runs in .github ([43627b7](https://github.com/woodleighschool/stemma/commit/43627b7c613bcc1ac7385416dfed1ca36eab52d1))
+
+
+### Miscellaneous Chores
+
+* **mise:** lock file maintenance tool (mise) ([#81](https://github.com/woodleighschool/stemma/issues/81)) ([59ba316](https://github.com/woodleighschool/stemma/commit/59ba316f6629a85da8bc92a58c11981d1e707fcb))
+* **mise:** lock file maintenance tool (mise) ([#83](https://github.com/woodleighschool/stemma/issues/83)) ([0a98918](https://github.com/woodleighschool/stemma/commit/0a98918caeb4e37bc75071d465b5e3d0b6cdd7c5))
+* **mise:** update tool lefthook (2.1.14 → 2.1.15) ([#100](https://github.com/woodleighschool/stemma/issues/100)) ([21f4249](https://github.com/woodleighschool/stemma/commit/21f4249d597945584550196955cfd3e6cb7573a4))
+* **mise:** update tool oxfmt (0.70.0 → 0.71.0) ([#88](https://github.com/woodleighschool/stemma/issues/88)) ([4309001](https://github.com/woodleighschool/stemma/commit/4309001903735e6422f9e3a9c3044d6dfc8898e5))
+* **npm:** lock file maintenance dependency (npm) ([#82](https://github.com/woodleighschool/stemma/issues/82)) ([5171eb5](https://github.com/woodleighschool/stemma/commit/5171eb55782dc37b0737c5b89181f0ab92d2e7d3))
+* **npm:** lock file maintenance dependency (npm) ([#84](https://github.com/woodleighschool/stemma/issues/84)) ([12cf5f6](https://github.com/woodleighschool/stemma/commit/12cf5f6e4bac3bbeb0c83b37529d9925efa864f4))
+* **npm:** lock file maintenance dependency (npm) ([#98](https://github.com/woodleighschool/stemma/issues/98)) ([2885fd7](https://github.com/woodleighschool/stemma/commit/2885fd7b1f66d1e55c436f537bde48953d013bfd))
+* **npm:** update dependency pnpm (12.6.0 → 12.8.0) ([#76](https://github.com/woodleighschool/stemma/issues/76)) ([80e1fb9](https://github.com/woodleighschool/stemma/commit/80e1fb9e1186757c9636d14281a0689ba6006570))
+* **npm:** update dependency pnpm (12.8.0 → 12.8.1) ([#77](https://github.com/woodleighschool/stemma/issues/77)) ([ea0ac25](https://github.com/woodleighschool/stemma/commit/ea0ac2523cc1445280f1386835e470e90e50bc39))
+
 ## [0.8.2](https://github.com/woodleighschool/stemma/compare/v0.8.1...v0.8.2) (2026-09-29)
 
 
