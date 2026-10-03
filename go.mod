@@ -14,7 +14,7 @@ require (
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/bmatcuk/doublestar/v4 v4.10.2
 	github.com/caarlos0/env/v11 v11.4.1
-	github.com/deploymenttheory/go-apfs-v2 v0.15.1
+	github.com/deploymenttheory/go-apfs-v2 v0.17.0
 	github.com/deploymenttheory/go-bindings-macosplatform v0.20.1
 	github.com/deploymenttheory/go-macos-pkg v0.7.2
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
