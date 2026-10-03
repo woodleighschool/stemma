@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +10,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
+	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 )
 
@@ -77,10 +80,39 @@ spec:
 		})
 	}
 	opts.Input.Path = "Missing.app"
-	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "available subject IDs: ., Example.app, Installers/Example.pkg") {
+	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), `available subject IDs: ["." "Example.app" "Installers/Example.pkg"]`) {
 		t.Fatalf("missing subject: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "stemma.lock.yaml")); !os.IsNotExist(err) {
 		t.Fatalf("inspection wrote lock: %v", err)
+	}
+}
+
+func TestLocalInspectionRetainsContainerDigest(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "notice.txt"), []byte("synthetic content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, format := range []string{"zip", "dmg"} {
+		t.Run(format, func(t *testing.T) {
+			filename := filepath.Join(t.TempDir(), "vendor."+format)
+			if format == "zip" {
+				testarchive.Zip(t, filename, source)
+			} else {
+				testdiskimage.Write(t, filename, source)
+			}
+			data, err := os.ReadFile(filename)
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256(data)
+			result, err := Inspect(t.Context(), filename, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := result.Facts.Subjects[0].SHA256; got != hex.EncodeToString(digest[:]) {
+				t.Fatalf("container digest = %q", got)
+			}
+		})
 	}
 }

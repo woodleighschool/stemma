@@ -115,8 +115,7 @@ type updated struct {
 	Inputs   []input `json:"inputs,omitempty"`
 }
 
-// icons answers icon with each resource's outcome: created and the
-// presentation, unchanged, no icon declared or no artwork.
+// icons reports each resource's extraction outcome.
 type icons struct {
 	Resources []iconOutcome `json:"resources"`
 	Error     string        `json:"error,omitempty"`

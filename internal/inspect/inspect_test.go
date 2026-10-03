@@ -258,3 +258,17 @@ func writeFixture(t *testing.T, name string, data []byte) {
 		t.Fatal(err)
 	}
 }
+
+func TestSubjectDiagnosticsStayBounded(t *testing.T) {
+	ids := make([]string, 1000)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("%d-%s.app", i, strings.Repeat("界", 2000))
+	}
+	got := FormatSubjectIDs(ids)
+	if len(got) > 5000 || !strings.Contains(got, "992 more") || strings.Contains(got, ids[0]) {
+		t.Fatalf("unbounded diagnostic: %d bytes", len(got))
+	}
+	if got := FormatSubjectIDs([]string{".", "line\nbreak.app"}); got != `["." "line\nbreak.app"]` {
+		t.Fatalf("unsafe diagnostic: %q", got)
+	}
+}

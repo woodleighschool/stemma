@@ -85,6 +85,9 @@ func largest(candidates []candidate) ([]byte, error) {
 			continue
 		}
 		pixels := img.Bounds().Dx() * img.Bounds().Dy()
+		if pixels <= validArea {
+			continue
+		}
 		frame := candidate.data
 		bounds := img.Bounds()
 		if Validate(frame) != nil && bounds.Dx() == bounds.Dy() &&

@@ -322,7 +322,7 @@ func (e *execution) icons(ctx context.Context) error {
 		}
 		item := &e.report.Resources[prepared.report]
 		var err error
-		item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], prepared.outputs["installer"], "", prepared.work)
+		item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], prepared.outputs["installer"], InputSelection{}, prepared.work)
 		if err != nil {
 			item.Error = err.Error()
 			e.fail(ctx, ResourceError{Resource: key, Err: err})

@@ -70,7 +70,7 @@ func inspectInput(ctx context.Context, input plugin.Artifact, selection, work st
 			}
 		}
 		if len(selected) == 0 {
-			return Inspection{}, fmt.Errorf("no facts at %q; available subject IDs: %s", selection, strings.Join(available, ", "))
+			return Inspection{}, fmt.Errorf("no facts at %q; available subject IDs: %s", selection, inspect.FormatSubjectIDs(available))
 		}
 		facts.Subjects = selected
 		name = filepath.Base(selection)

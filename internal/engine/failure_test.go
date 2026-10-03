@@ -211,3 +211,45 @@ func TestRunAbortsOnCancellationOrReportFailure(t *testing.T) {
 		})
 	}
 }
+
+func TestInputReadsReportBlockedConsumers(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: failures}
+spec:
+  imports: ['*.software.yaml']
+  destinations:
+    repo: {operation: munki, config: {path: repo}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: producer}
+spec:
+  source: {path: missing.pkg}
+  destinations:
+    repo: {pkginfo: {catalogs: [testing]}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: consumer}
+spec:
+  icon: example
+  source: {resource: {kind: MacSoftware, name: producer}}
+  destinations:
+    repo: {pkginfo: {catalogs: [testing]}}
+`)
+	for _, method := range []string{"icon", "inspect"} {
+		t.Run(method, func(t *testing.T) {
+			report, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: method, Resources: []string{"MacSoftware/consumer"}, Input: InputSelection{Name: "source"}, Icons: IconOptions{Presentation: icon.Raw}, Lock: lockfile.Options{IgnoreInputs: true}})
+			if err == nil || len(report.Resources) != 2 {
+				t.Fatalf("report=%+v error=%v", report, err)
+			}
+			producer, consumer := report.Resources[0], report.Resources[1]
+			if !slices.Equal(consumer.BlockedBy, []string{producer.Key}) || !strings.Contains(consumer.Error, "blocked by") || strings.Contains(err.Error(), consumer.Key) {
+				t.Fatalf("consumer counted as another failure: %+v; %v", report, err)
+			}
+		})
+	}
+}

@@ -64,7 +64,7 @@ func Prepare(ctx context.Context, request plugin.ResourceRequest[json.RawMessage
 			for _, name := range slices.Sorted(maps.Keys(inputs)) {
 				fields := inputs[name].(map[string]any)
 				if facts, ok := fields["facts"].(map[string]plugin.Subject); ok {
-					err = fmt.Errorf("%w; input %q available subject IDs: %q", err, name, slices.Sorted(maps.Keys(facts)))
+					err = fmt.Errorf("%w; input %q available subject IDs: %s", err, name, inspect.FormatSubjectIDs(slices.Sorted(maps.Keys(facts))))
 				}
 			}
 		}

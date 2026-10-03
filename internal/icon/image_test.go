@@ -77,3 +77,12 @@ func TestICNSPreservesUsableFrameBeforeResizing(t *testing.T) {
 		t.Fatalf("usable frame changed: %v", err)
 	}
 }
+
+func TestIconSelectionUsesDecodedDimensions(t *testing.T) {
+	small, large := testPNG(t, 128, 1), testPNG(t, 512, 2)
+	// Directory dimensions can differ from the pixels actually stored.
+	data, err := FromICNS(testICNS(map[string][]byte{"ic10": small, "ic07": large}))
+	if err != nil || !bytes.Equal(data, large) {
+		t.Fatalf("selected by nominal frame size: %v", err)
+	}
+}

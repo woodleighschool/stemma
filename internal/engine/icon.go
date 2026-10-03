@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/icon"
@@ -85,7 +84,7 @@ func iconOutcome(options IconOptions, root string, plan resourcePlan) string {
 // createIcon writes the declared asset for one prepared resource and reports
 // the outcome in the words the CLI prints: the presentation created, or why
 // nothing could be.
-func createIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, installer Prepared, selection, work string) (string, error) {
+func createIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, installer Prepared, selection InputSelection, work string) (string, error) {
 	name := plan.Icon
 	if installer.Path == "" {
 		return "no installer output", nil
@@ -94,8 +93,8 @@ func createIcon(ctx context.Context, options IconOptions, root string, plan reso
 	done := plugin.Stage(ctx, "Extracting artwork", plugin.Detail(installer.Filename))
 	var subject icon.Subject
 	var err error
-	if selection != "" {
-		subject, err = inputIconSubject(ctx, installer.artifact(), selection, workspace, options.Presentation)
+	if selection.Name != "" {
+		subject, err = inputIconSubject(ctx, installer.artifact(), selection.Path, workspace, options.Presentation)
 	} else {
 		subject, err = iconSubject(ctx, plan.Resource.Kind, installer.artifact(), workspace, options.Presentation)
 	}
@@ -124,7 +123,12 @@ func createIcon(ctx context.Context, options IconOptions, root string, plan reso
 	return "created " + string(presentation), nil
 }
 
-func inputIconSubject(ctx context.Context, input plugin.Artifact, selection, workspace string, presentation icon.Presentation) (icon.Subject, error) {
+func inputIconSubject(ctx context.Context, input plugin.Artifact, selection, workspace string, presentation icon.Presentation) (result icon.Subject, err error) {
+	defer func() {
+		if err != nil && selection != "" {
+			err = fmt.Errorf("icon path %q: %w", selection, err)
+		}
+	}()
 	contentWork := filepath.Join(workspace, "source")
 	if err := os.MkdirAll(contentWork, 0o700); err != nil {
 		return icon.Subject{}, err
@@ -164,7 +168,7 @@ func inputIconSubject(ctx context.Context, input plugin.Artifact, selection, wor
 		}
 	}
 	if len(apps) > 1 {
-		return icon.Subject{}, fmt.Errorf("multiple applications; select an icon path: %s", strings.Join(names, ", "))
+		return icon.Subject{}, fmt.Errorf("multiple applications; select an icon path: %s", inspect.FormatSubjectIDs(names))
 	}
 	if len(apps) == 1 {
 		return macsoftware.IconFromSource(ctx, source, apps[0], workspace, presentation)
@@ -185,10 +189,10 @@ func inputIconSubject(ctx context.Context, input plugin.Artifact, selection, wor
 		return icon.Subject{}, err
 	}
 	input.Path, input.Tree = local, false
-	for _, subject := range facts.Subjects {
-		if subject.MSI != nil {
-			return windowssoftware.Icon(ctx, input)
-		}
+	if root := facts.Subjects[0]; root.MSI != nil {
+		return windowssoftware.Icon(ctx, input)
+	} else if root.Kind == "container" {
+		return icon.Subject{}, macsoftware.ErrNoApplication
 	}
 	artwork, err := icon.FromFile(ctx, local)
 	return icon.Subject{Artwork: artwork}, err
@@ -203,12 +207,8 @@ func (e *execution) inputIcon(ctx context.Context) error {
 		return e.complete(ctx, &e.report.Resources[len(e.report.Resources)-1])
 	}
 	return e.withInput(ctx, func(ctx context.Context, input Prepared, work string, item *ResourceReport) error {
-		selection := e.opts.Input.Path
-		if selection == "" {
-			selection = "."
-		}
 		var err error
-		item.Icon, err = createIcon(ctx, e.opts.Icons, e.session.root, plan, input, selection, work)
+		item.Icon, err = createIcon(ctx, e.opts.Icons, e.session.root, plan, input, e.opts.Input, work)
 		return err
 	})
 }

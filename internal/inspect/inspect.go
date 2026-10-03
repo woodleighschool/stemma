@@ -104,18 +104,10 @@ func Read(ctx context.Context, name string) (plugin.Facts, error) {
 			return plugin.Facts{}, fmt.Errorf("inspect dmg: %w", err)
 		}
 	}
-	if _, err := f.Seek(0, io.SeekStart); err != nil {
-		return plugin.Facts{}, fmt.Errorf("inspect digest: %w", err)
-	}
-	digest := sha256.New()
-	written, err := io.Copy(digest, fileio.Reader{Context: ctx, Reader: io.LimitReader(f, info.Size()+1)})
+	root.SHA256, err = fileDigest(ctx, f, info.Size())
 	if err != nil {
-		return plugin.Facts{}, fmt.Errorf("inspect digest: %w", err)
+		return plugin.Facts{}, err
 	}
-	if written != info.Size() {
-		return plugin.Facts{}, fmt.Errorf("inspect: artifact changed size")
-	}
-	root.SHA256 = hex.EncodeToString(digest.Sum(nil))
 	facts.Subjects = append([]plugin.Subject{root}, facts.Subjects...)
 	return facts, ctx.Err()
 }
@@ -155,6 +147,21 @@ func Source(ctx context.Context, source *contents.Source) (plugin.Facts, error) 
 	subjects, err := Contents(ctx, node.FS)
 	if err != nil {
 		return plugin.Facts{}, err
+	}
+	if input.SHA256 == "" {
+		file, err := os.Open(input.Path)
+		if err != nil {
+			return plugin.Facts{}, err
+		}
+		defer func() { _ = file.Close() }()
+		info, err := file.Stat()
+		if err != nil {
+			return plugin.Facts{}, err
+		}
+		input.SHA256, err = fileDigest(ctx, file, info.Size())
+		if err != nil {
+			return plugin.Facts{}, err
+		}
 	}
 	root := plugin.Subject{ID: ".", Path: ".", Kind: "container", SHA256: input.SHA256}
 	return plugin.Facts{Version: plugin.FactsVersion, Subjects: append([]plugin.Subject{root}, subjects...)}, nil
@@ -304,4 +311,22 @@ func Selection(ctx context.Context, source *contents.Source, selection string) (
 	}
 	facts.Version = plugin.FactsVersion
 	return facts, nil
+}
+
+func fileDigest(ctx context.Context, file *os.File, size int64) (string, error) {
+	if size > maxInspectedBytes {
+		return "", errors.New("inspect digest: artifact exceeds size limit")
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("inspect digest: %w", err)
+	}
+	digest := sha256.New()
+	written, err := io.Copy(digest, fileio.Reader{Context: ctx, Reader: io.LimitReader(file, size+1)})
+	if err != nil {
+		return "", fmt.Errorf("inspect digest: %w", err)
+	}
+	if written != size {
+		return "", errors.New("inspect: artifact changed size")
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }

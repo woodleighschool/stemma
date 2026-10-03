@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/icon"
+	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
@@ -318,6 +319,10 @@ spec:
 		t.Fatalf("icon changed source lock: %v", err)
 	}
 	opts.Icons.Force = true
+	opts.Input.Path = "Missing.app"
+	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), `icon path "Missing.app"`) {
+		t.Fatalf("missing icon path: %v", err)
+	}
 	opts.Input.Path = "../outside"
 	if _, err := Run(t.Context(), opts); err == nil {
 		t.Fatal("escaping selection accepted")
@@ -359,5 +364,51 @@ func TestIconArchiveRequiresAnArtworkSelection(t *testing.T) {
 	_, err := inputIconSubject(t.Context(), plugin.Artifact{Path: archive, Filename: "vendor.zip"}, "", t.TempDir(), icon.Raw)
 	if err == nil || !strings.Contains(err.Error(), "--path") {
 		t.Fatalf("archive selection: %v", err)
+	}
+}
+
+func TestIconInputPackageWithoutApplication(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "script.pkg")
+	scripts := t.TempDir()
+	if err := os.Mkdir(filepath.Join(scripts, "Scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scripts, "Scripts", "postinstall"), []byte("#!/bin/sh\nexit 97\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := pkgbuild.Build(t.Context(), scripts, filename, pkgbuild.Options{Identifier: "org.example.script", Version: "1", Scripts: "Scripts"}); err != nil {
+		t.Fatal(err)
+	}
+	testproject.Write(t, filepath.Join(root, "stemma.yaml"), `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: icons}
+spec:
+  imports: ['*.software.yaml']
+  destinations:
+    repo: {operation: munki, config: {path: repo}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: script}
+spec:
+  icon: script
+  source: {path: script.pkg}
+  destinations:
+    repo: {pkginfo: {catalogs: [testing]}}
+`)
+	opts := Options{ConfigPath: filepath.Join(root, "stemma.yaml"), CacheDir: t.TempDir(), Method: "update", Resources: []string{"MacSoftware/script"}, Icons: IconOptions{Presentation: icon.Raw}}
+	if _, err := Run(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	opts.Method = "icon"
+	direct, err := Run(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.Input = InputSelection{Name: "source"}
+	selected, err := Run(t.Context(), opts)
+	if err != nil || selected.Resources[0].Icon != direct.Resources[0].Icon || !strings.HasPrefix(direct.Resources[0].Icon, "no application selected") {
+		t.Fatalf("default=%+v input=%+v error=%v", direct, selected, err)
 	}
 }

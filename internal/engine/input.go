@@ -58,6 +58,10 @@ func (e *execution) withInput(ctx context.Context, consume func(context.Context,
 			if err := e.prepare(ctx, ref.Key()); err != nil {
 				return err
 			}
+			if !e.prepared[ref.Key()].ready {
+				item.BlockedBy = []string{ref.Key()}
+				return fmt.Errorf("blocked by %s", ref.Key())
+			}
 		}
 		var entry source.Entry
 		if declaration.Resource == nil {
@@ -84,7 +88,9 @@ func (e *execution) withInput(ctx context.Context, consume func(context.Context,
 	}()
 	if err != nil {
 		item.Error = err.Error()
-		e.fail(ctx, ResourceError{Resource: key, Err: err})
+		if len(item.BlockedBy) == 0 {
+			e.fail(ctx, ResourceError{Resource: key, Err: err})
+		}
 	}
 	e.report.Resources = append(e.report.Resources, item)
 	return e.complete(ctx, &e.report.Resources[len(e.report.Resources)-1])
