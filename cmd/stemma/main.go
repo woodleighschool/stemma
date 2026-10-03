@@ -234,6 +234,8 @@ func (c *cli) runCommand(method string) *cobra.Command {
 		cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the whole lockfile, then prepare only resources whose preparation changed since the Git revision `REV`")
 	}
 	if method == "icon" {
+		cmd.Flags().StringVar(&icons.Input, "input", "", "Extract from one resource's locked input without building its output")
+		cmd.Flags().StringVar(&icons.Path, "path", "", "Application or artwork path within the selected input")
 		cmd.Flags().BoolVar(&icons.Force, "force", false, "Replace icon assets that already exist")
 		cmd.Flags().StringVar(&presentation, "presentation", string(icon.Auto), "Icon presentation: auto (glassy on macOS, raw elsewhere), raw or glassy")
 		cmd.Flags().IntVar(&icons.Size, "size", icon.Size, "Glassy icon width and height in pixels")

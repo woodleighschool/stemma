@@ -80,6 +80,16 @@ locked software. `--presentation raw` extracts the original artwork;
 `--presentation glassy` uses the macOS renderer at `--size` pixels (512 by default).
 The default, `auto`, chooses glassy on macOS and raw elsewhere.
 
+Use `--input NAME` to read one resource's locked input directly, with `--path` to
+select an application, installer or artwork file inside it. This uses `spec.icon`
+as the asset name, or the resource name when no icon is declared:
+
+```sh
+stemma icon BuildMacPkg/example --input vendor --path Installer.app
+```
+
+This mode acquires inputs without building the selected resource's output.
+
 Existing icons stay unchanged unless `--force` is set. Only resources needing an
 icon are prepared. The command leaves the lockfile unchanged and does not contact
 destinations. Commit the icons so publication sends the same bytes on every host.

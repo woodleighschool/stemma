@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/icon"
+	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -197,10 +198,9 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 	}
 
 	// A new declaration is locked and extracts before its asset exists; the raw
-	// presentation writes Mac and Windows artwork alike, and a bundle without
-	// a PNG-backed icon file has nothing portable to write.
+	// presentation writes Mac and Windows artwork alike.
 	statuses("update")
-	want := map[string]string{"example": "created raw", "setup": "created raw", "fixture": "no artwork", "branding": "no artwork", "plain": "no icon declared"}
+	want := map[string]string{"example": "created raw", "setup": "created raw", "fixture": "no artwork", "branding": "no installer output", "plain": "no icon declared"}
 	if got := statuses("icon"); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("first run: %v", got)
 	}
@@ -252,5 +252,87 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 	}
 	if artifact, declared := published["plain"]; !declared || artifact.Path != "" {
 		t.Fatalf("undeclared icon reached the destination: %+v", artifact)
+	}
+}
+
+func TestIconInputUsesLockedArtworkWithoutBuilding(t *testing.T) {
+	root := t.TempDir()
+	fixture := t.TempDir()
+	want, _ := iconFixtures(t, fixture)
+	testarchive.Zip(t, filepath.Join(root, "vendor.zip"), fixture)
+	project := `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: icons}
+spec:
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata: {name: wrapper}
+spec:
+  inputs:
+    vendor: {path: vendor.zip}
+  package:
+    identifier: org.example.wrapper
+    version: "{{ inputs.vendor.facts['missing.app'].app.version }}"
+  scripts:
+    postinstall: '#!/bin/sh'
+`
+	path := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, path, project)
+	opts := Options{ConfigPath: path, CacheDir: t.TempDir(), Method: "update", Resources: []string{"BuildMacPkg/wrapper"}}
+	if _, err := Run(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := os.ReadFile(filepath.Join(root, "stemma.lock.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.Method = "icon"
+	opts.Icons = IconOptions{Input: "vendor", Path: "Example.app", Presentation: icon.Raw}
+	report, err := Run(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Resources) != 1 || report.Resources[0].Icon != "created raw" || len(report.Resources[0].Artifacts) != 0 {
+		t.Fatalf("icon run: %+v", report.Resources)
+	}
+	got, err := icon.Read(root, "wrapper")
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("input artwork differs: %v", err)
+	}
+	after, err := os.ReadFile(filepath.Join(root, "stemma.lock.yaml"))
+	if err != nil || !bytes.Equal(lock, after) {
+		t.Fatalf("icon changed source lock: %v", err)
+	}
+	opts.Icons.Force = true
+	opts.Icons.Path = "../outside"
+	if _, err := Run(t.Context(), opts); err == nil {
+		t.Fatal("escaping selection accepted")
+	}
+	opts.Icons.Path = "icon.msi"
+	report, err = Run(t.Context(), opts)
+	if err != nil || report.Resources[0].Icon != "created raw" {
+		t.Fatalf("MSI input icon: %+v, %v", report.Resources, err)
+	}
+	opts.Icons.Input = "unknown"
+	if _, err := Run(t.Context(), opts); err == nil {
+		t.Fatal("unknown input accepted")
+	}
+}
+
+func TestIconInputRequiresUnambiguousArtwork(t *testing.T) {
+	root := t.TempDir()
+	iconFixtures(t, root)
+	if err := os.CopyFS(filepath.Join(root, "Other.app"), os.DirFS(filepath.Join(root, "Example.app"))); err != nil {
+		t.Fatal(err)
+	}
+	input := plugin.Artifact{Path: root, Filename: "vendor", Tree: true}
+	if _, err := inputIconSubject(t.Context(), input, "", t.TempDir(), icon.Raw); err == nil || !strings.Contains(err.Error(), "multiple applications") {
+		t.Fatalf("ambiguous artwork: %v", err)
+	}
+	subject, err := inputIconSubject(t.Context(), input, "Example.app/Contents/Resources/AppIcon.icns", t.TempDir(), icon.Raw)
+	if err != nil || icon.Validate(subject.Artwork) != nil {
+		t.Fatalf("explicit native artwork: %v", err)
 	}
 }

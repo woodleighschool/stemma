@@ -67,7 +67,7 @@ func newServer(opts Options) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "icon",
 		Description: "Create each resource's declared icon, icons/<name>.png, from the artwork its locked software carries. " +
-			"An existing icon stays unless force is set. macOS renders the glassy icon; other hosts keep the raw artwork.",
+			"Set input and path to extract from a builder's vendor input. An existing icon stays unless force is set. macOS renders the glassy icon; other hosts normalize the raw artwork.",
 		Annotations: &mcp.ToolAnnotations{OpenWorldHint: &openWorld},
 	}, tools.icon)
 	mcp.AddTool(server, &mcp.Tool{

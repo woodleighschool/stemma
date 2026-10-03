@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
@@ -132,6 +133,7 @@ type execution struct {
 
 type preparedResource struct {
 	work    string
+	inputs  map[string]Prepared
 	outputs map[string]Prepared
 	report  int
 	ready   bool
@@ -168,6 +170,24 @@ func (e *execution) begin(ctx context.Context) (err error) {
 	}
 	if err := preflight(e.plans, e.selected, s.project, s.ops, usesDestinations); err != nil {
 		return err
+	}
+	if e.opts.Method == "icon" {
+		options := e.opts.Icons
+		if options.Path != "" && options.Input == "" {
+			return errors.New("icon path requires an input")
+		}
+		if options.Input != "" {
+			if len(e.roots) != 1 {
+				return errors.New("icon input requires one resource selector")
+			}
+			plan := e.plans[e.roots[0]]
+			if _, ok := plan.Inputs[options.Input]; !ok {
+				return fmt.Errorf("resource has no input %q", options.Input)
+			}
+			if !icon.ValidName(iconName(options, plan)) {
+				return errors.New("resource name must be a valid icon asset name")
+			}
+		}
 	}
 	if e.publishing() {
 		// Locking and icon creation come first for a new declaration, so only
@@ -259,6 +279,9 @@ func (e *execution) commit(ctx context.Context) error {
 // missing or forced asset costs a preparation, so a run across the catalog is
 // cheap; creating the icon completes the resource in place of publication.
 func (e *execution) icons(ctx context.Context) error {
+	if e.opts.Icons.Input != "" {
+		return e.inputIcon(ctx)
+	}
 	outcomes, building := map[string]string{}, map[string]bool{}
 	var builds func(string)
 	builds = func(key string) {
@@ -296,7 +319,7 @@ func (e *execution) icons(ctx context.Context) error {
 		}
 		item := &e.report.Resources[prepared.report]
 		var err error
-		item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], prepared.outputs, prepared.work)
+		item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], prepared.outputs["installer"], prepared.work)
 		if err != nil {
 			item.Error = err.Error()
 			e.fail(ctx, ResourceError{Resource: key, Err: err})
@@ -384,11 +407,14 @@ func (e *execution) prepare(ctx context.Context, key string) error {
 		result.work = work
 		var inputs map[string]Prepared
 		if inputs, failure = e.inputs(plan, entries); failure == nil {
+			result.inputs = inputs
 			derive := ""
 			if e.opts.Method == "signature" {
 				derive = "signature"
 			}
-			result.outputs, item.Cached, failure = prepareResource(ctx, e.session.store, e.session.ops, plan, inputs, work, derive)
+			if e.opts.Method != "icon" || e.opts.Icons.Input == "" || key != e.roots[0] {
+				result.outputs, item.Cached, failure = prepareResource(ctx, e.session.store, e.session.ops, plan, inputs, work, derive)
+			}
 		}
 	}
 	item.Artifacts = result.outputs

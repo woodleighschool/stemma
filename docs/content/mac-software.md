@@ -308,8 +308,11 @@ artwork reports a decoding error; an asset-catalog-only icon requires `glassy`.
 `--presentation` selects either presentation explicitly. A package's payload is
 still read through once to reach the selected files, which requires decompressing it.
 
-`icons/` holds plain PNG files. Software without an application, such as a
-script-only item or a driver package, uses artwork you commit yourself: any square
-PNG between 128 and 1024 pixels, up to 1 MiB. Resources share an asset by naming
+For a script-only wrapper, extract from the builder's vendor input with
+`stemma icon BuildMacPkg/example --input vendor --path Installer.app`, then declare
+`icon: example` on the software resource. An ambiguous input requires `--path`.
+
+`icons/` holds plain PNG files: square, between 128 and 1024 pixels, up to 1 MiB.
+You can also commit an asset directly. Resources share an asset by naming
 it, so a `WindowsSoftware` document can publish the icon created from its macOS
 counterpart, or create its own.

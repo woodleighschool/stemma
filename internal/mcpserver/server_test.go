@@ -15,6 +15,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/woodleighschool/stemma/internal/engine"
+	"github.com/woodleighschool/stemma/internal/icon"
 )
 
 const project = `apiVersion: stemma/v1alpha1
@@ -52,6 +53,40 @@ spec:
   extends: app
   source: {path: app.pkg}
 `
+
+func TestIconToolReadsBuilderInput(t *testing.T) {
+	root := committedProject(t)
+	data, err := os.ReadFile("../msi/testdata/icon.ico")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "software", "artwork.ico"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "software", "wrapper.yaml"), `apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata: {name: wrapper}
+spec:
+  inputs:
+    vendor: {path: artwork.ico}
+  package:
+    identifier: org.example.wrapper
+    version: "{{ inputs.vendor.facts['missing.app'].app.version }}"
+  scripts:
+    postinstall: '#!/bin/sh'
+`)
+	session := connect(t, root)
+	var updated lockUpdate
+	call(t, session, "update", map[string]any{"resources": []string{"BuildMacPkg/wrapper"}}, &updated)
+	var result icons
+	call(t, session, "icon", map[string]any{"resources": []string{"BuildMacPkg/wrapper"}, "input": "vendor", "path": "."}, &result)
+	if len(result.Resources) != 1 || !strings.HasPrefix(result.Resources[0].Icon, "created ") {
+		t.Fatalf("icon: %+v", result)
+	}
+	if _, err := icon.Read(root, "wrapper"); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 	root := committedProject(t)
