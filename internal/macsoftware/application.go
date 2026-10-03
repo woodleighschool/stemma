@@ -39,6 +39,9 @@ func Icon(ctx context.Context, installer plugin.Artifact, workspace string, pres
 	}
 	hasNamedIcon := presentation == icon.Glassy && app.App.IconName != ""
 	if resource == "" && !hasNamedIcon {
+		if app.App.IconName != "" {
+			return icon.Subject{}, fmt.Errorf("asset catalog icon requires the glassy presentation on macOS: %w", icon.ErrUnsupportedArtwork)
+		}
 		return icon.Subject{}, icon.ErrNoArtwork
 	}
 	var keep archive.Leaves
@@ -79,7 +82,7 @@ func Icon(ctx context.Context, installer plugin.Artifact, workspace string, pres
 		return icon.Subject{}, icon.ErrNoArtwork
 	}
 	if presentation == icon.Raw {
-		artwork, err := icon.FromICNS(data)
+		artwork, err := icon.FromImage(data)
 		return icon.Subject{Artwork: artwork}, err
 	}
 	executable, err := apple.ResolveExecutable(app.App.Executable, filepath.Base(bundle))

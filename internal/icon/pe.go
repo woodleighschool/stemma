@@ -80,7 +80,10 @@ func FromPE(r io.ReaderAt) ([]byte, error) {
 	if len(header) < 6+14*count {
 		return nil, errors.New("icon group exceeds its resource")
 	}
-	frames := make([][]byte, 0, count)
+	// PE groups store resource IDs where ICO directories store byte offsets.
+	// Reconstruct that directory so standalone and embedded icons share a decoder.
+	data = make([]byte, 6+16*count)
+	copy(data, header[:6])
 	for i := range count {
 		id := uint32(binary.LittleEndian.Uint16(header[6+14*i+12:]))
 		member, ok := members.subdirectory(id)
@@ -91,9 +94,16 @@ func FromPE(r io.ReaderAt) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		frames = append(frames, frame)
+		if len(frame) > maxResourceBytes || len(data) > maxResourceBytes-len(frame) {
+			return nil, errors.New("icon group exceeds size limit")
+		}
+		entry := data[6+16*i : 6+16*(i+1)]
+		copy(entry, header[6+14*i:6+14*i+12])
+		binary.LittleEndian.PutUint32(entry[8:], uint32(len(frame))) //nolint:gosec // Bounded by maxResourceBytes above.
+		binary.LittleEndian.PutUint32(entry[12:], uint32(len(data))) //nolint:gosec // Bounded by maxResourceBytes above.
+		data = append(data, frame...)                                //nolint:makezero // The ICO directory precedes its frame payloads.
 	}
-	return largest(framesPNG(frames))
+	return FromICO(data)
 }
 
 // resources walks the resource section: directories of entries whose high

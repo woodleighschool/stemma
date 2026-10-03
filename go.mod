@@ -28,6 +28,7 @@ require (
 	github.com/google/go-containerregistry v0.22.1
 	github.com/google/go-github/v92 v92.0.1-0.20261002192830-4a73e54dfc6f
 	github.com/invopop/jsonschema v0.14.0
+	github.com/jackmordaunt/icns/v4 v4.2.0
 	github.com/jferrl/go-githubauth v1.9.1
 	github.com/kaptinlin/jsonschema v0.9.10
 	github.com/klauspost/compress v1.20.1
@@ -42,6 +43,7 @@ require (
 	github.com/microsoftgraph/msgraph-sdk-go-core v1.4.1
 	github.com/mikelolasagasti/xz v1.0.1
 	github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261002152441-25a53e3f27df
+	github.com/mrjoshuak/go-jpeg2000 v1.5.12
 	github.com/ncruces/go-sqlite3 v0.35.6
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
@@ -55,6 +57,7 @@ require (
 	github.com/ulikunitz/xz v0.5.17
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
+	golang.org/x/image v0.46.0
 	golang.org/x/net v0.59.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.23.0

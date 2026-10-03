@@ -103,7 +103,8 @@ an MSI supplies the icon it registers for Programs and Features (`ARPPRODUCTICON
 and an EXE its first icon group, the icon Explorer shows. On a Mac the default
 `glassy` presentation draws that artwork with the same renderer as macOS
 applications, so both platforms' icons look alike; elsewhere `raw` writes the
-largest frame unchanged. An installer without a registered icon reports
+largest PNG or bitmap frame as a PNG asset, enlarging small icons to 128 pixels.
+Unreadable frames report a decoding error. An installer without a registered icon reports
 `no artwork`; commit a square PNG or share the macOS document's asset instead.
 
 ## Signature

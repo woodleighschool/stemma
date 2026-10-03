@@ -207,7 +207,11 @@ func TestIconWithOnlyAssetCatalog(t *testing.T) {
 			for _, presentation := range []icon.Presentation{icon.Raw, icon.Glassy} {
 				subject, err := Icon(t.Context(), outputs["installer"], t.TempDir(), presentation)
 				if !declared || presentation == icon.Raw {
-					if !errors.Is(err, icon.ErrNoArtwork) {
+					want := icon.ErrNoArtwork
+					if declared {
+						want = icon.ErrUnsupportedArtwork
+					}
+					if !errors.Is(err, want) {
 						t.Fatalf("declared=%v %s: %v", declared, presentation, err)
 					}
 					continue

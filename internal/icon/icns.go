@@ -4,43 +4,36 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"image/png"
+	"fmt"
+	"image"
+
+	"github.com/jackmordaunt/icns/v4"
 )
 
-// FromICNS returns the largest PNG-encoded entry of an ICNS file that fits the
-// asset bounds. Legacy run-length encodings and JPEG 2000 entries are not
-// artwork here, so a file holding only those reports ErrNoArtwork.
+// FromICNS decodes native icon elements and normalizes the largest artwork.
 func FromICNS(data []byte) ([]byte, error) {
-	if len(data) < 8 || string(data[:4]) != "icns" || int64(binary.BigEndian.Uint32(data[4:8])) != int64(len(data)) {
-		return nil, errors.New("not an ICNS file")
+	if len(data) < 8 || int64(binary.BigEndian.Uint32(data[4:8])) != int64(len(data)) {
+		return nil, errors.New("invalid ICNS length")
 	}
-	var entries [][]byte
-	for offset := 8; offset+8 <= len(data); {
-		length := int(binary.BigEndian.Uint32(data[offset+4 : offset+8]))
-		if length < 8 || length > len(data)-offset {
-			return nil, errors.New("ICNS entry exceeds the file")
-		}
-		entries = append(entries, data[offset+8:offset+length])
-		offset += length
+	decoder, err := icns.NewDecoder(bytes.NewReader(data))
+	if errors.Is(err, icns.ErrNoIcons) {
+		return nil, fmt.Errorf("ICNS: %w", ErrUnsupportedArtwork)
 	}
-	return largest(entries)
-}
-
-// largest picks the biggest candidate that is a valid asset on its own.
-func largest(candidates [][]byte) ([]byte, error) {
-	var best []byte
-	edge := 0
-	for _, candidate := range candidates {
-		if Validate(candidate) != nil {
-			continue
-		}
-		config, err := png.DecodeConfig(bytes.NewReader(candidate))
-		if err == nil && config.Width > edge {
-			best, edge = candidate, config.Width
-		}
+	if err != nil {
+		return nil, err
 	}
-	if best == nil {
-		return nil, ErrNoArtwork
+	var candidates []candidate
+	for _, entry := range decoder.Icons() {
+		candidates = append(candidates, candidate{data: entry.Payload(), decode: func() (image.Image, error) {
+			switch entry.ImageFormat {
+			case icns.ImageFormatRGB, icns.ImageFormatARGB, icns.ImageFormatBitmap, icns.ImageFormatIndexed:
+				return entry.Decode()
+			case icns.ImageFormatPNG, icns.ImageFormatJPEG2000:
+				return decodeRaster(entry.Payload())
+			default:
+				return nil, ErrUnsupportedArtwork
+			}
+		}})
 	}
-	return best, nil
+	return largest(candidates)
 }

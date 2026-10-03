@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"image"
+	"image/color"
+	"os"
 	"testing"
 )
 
@@ -13,8 +15,8 @@ func TestFromICNSPicksTheLargestEntryWithinBounds(t *testing.T) {
 	if err != nil || !bytes.Equal(data, large) {
 		t.Fatalf("picked %d bytes: %v", len(data), err)
 	}
-	if _, err := FromICNS(testICNS(map[string][]byte{"icp4": small, "it32": []byte("legacy")})); !errors.Is(err, ErrNoArtwork) {
-		t.Fatalf("legacy-only file: %v", err)
+	if data, err := FromICNS(testICNS(map[string][]byte{"icp4": small, "it32": []byte("broken")})); err != nil || Validate(data) != nil {
+		t.Fatalf("usable small frame: %v", err)
 	}
 	if _, err := FromICNS([]byte("icns\x00\x00\x00\x10junk")); err == nil || errors.Is(err, ErrNoArtwork) {
 		t.Fatalf("truncated file: %v", err)
@@ -44,11 +46,66 @@ func TestFromICOConvertsBitmapFramesAndKeepsPNGFrames(t *testing.T) {
 		}
 		assertImage(t, data, medium)
 	}
-	if _, err := FromICO(testICO(testDIB(testImage(64, 1), 32, true))); !errors.Is(err, ErrNoArtwork) {
-		t.Fatalf("frames below the minimum edge: %v", err)
+	if data, err := FromICO(testICO(testDIB(testImage(64, 1), 32, true))); err != nil || Validate(data) != nil {
+		t.Fatalf("small native icon: %v", err)
 	}
 	if _, err := FromICO([]byte("not an icon")); err == nil {
 		t.Fatal("accepted a file without an ICO directory")
+	}
+}
+
+func TestFromICNSReadsNativeEncodings(t *testing.T) {
+	// Uncompressed planar RGB with an independent alpha mask.
+	const pixels = 128 * 128
+	rgb := make([]byte, 4+3*pixels)
+	copy(rgb[4:], bytes.Repeat([]byte{200}, pixels))
+	copy(rgb[4+pixels:], bytes.Repeat([]byte{80}, pixels))
+	copy(rgb[4+2*pixels:], bytes.Repeat([]byte{30}, pixels))
+	mask := bytes.Repeat([]byte{128}, pixels)
+	data, err := FromICNS(testICNS(map[string][]byte{"it32": rgb, "t8mk": mask}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decodePNG(t, data).NRGBAAt(40, 40); got != (color.NRGBA{R: 200, G: 80, B: 30, A: 128}) {
+		t.Fatalf("planar colour and mask: %v", got)
+	}
+	// This JP2 was encoded by macOS ImageIO, independently of the decoder.
+	jp2, err := os.ReadFile("testdata/quadrants.jp2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = FromICNS(testICNS(map[string][]byte{"ic07": jp2}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := decodePNG(t, data)
+	for _, sample := range []struct {
+		x, y int
+		want color.NRGBA
+	}{
+		{32, 32, color.NRGBA{}},
+		{32, 96, color.NRGBA{R: 240, G: 32, B: 64, A: 255}},
+		{96, 96, color.NRGBA{R: 32, G: 224, B: 96, A: 255}},
+	} {
+		got, want := img.NRGBAAt(sample.x, sample.y), sample.want
+		near := func(a, b uint8) bool { return int(a)-int(b) <= 2 && int(b)-int(a) <= 2 }
+		if !near(got.R, want.R) || !near(got.G, want.G) || !near(got.B, want.B) || got.A != want.A {
+			t.Fatalf("JP2 pixel %d,%d: %v, want approximately %v", sample.x, sample.y, got, want)
+		}
+	}
+}
+
+func TestBrokenArtworkIsNotReportedAsAbsent(t *testing.T) {
+	for name, decode := range map[string]func() ([]byte, error){
+		"icns": func() ([]byte, error) { return FromICNS(testICNS(map[string][]byte{"ic09": []byte("broken")})) },
+		"ico":  func() ([]byte, error) { return FromICO(testICO([]byte("broken"))) },
+		"pe":   func() ([]byte, error) { return FromPE(bytes.NewReader(testPE(0, []byte("broken")))) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := decode(); err == nil || errors.Is(err, ErrNoArtwork) {
+				t.Fatalf("broken artwork: %v", err)
+			}
+		})
 	}
 }
 

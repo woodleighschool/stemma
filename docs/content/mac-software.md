@@ -300,8 +300,11 @@ missing-executable badges; vendor executables and their symlink targets are neve
 extracted or run. Applications with only a named asset icon do not require an ICNS
 fallback. Missing artwork reports `no artwork`.
 
-`raw`, the default elsewhere, extracts only the declared icon and writes its largest
-supported PNG entry unchanged. Legacy-only ICNS encodings report `no artwork`.
+`raw`, the default elsewhere, decodes the declared ICNS or raster icon and writes
+its largest artwork as PNG. ICNS supports PNG, JPEG 2000, planar colour and indexed
+elements. Small artwork is enlarged to 128 pixels; larger or rectangular artwork
+is fitted to the asset bounds. Valid PNG assets retain their bytes. Unreadable
+artwork reports a decoding error; an asset-catalog-only icon requires `glassy`.
 `--presentation` selects either presentation explicitly. A package's payload is
 still read through once to reach the selected files, which requires decompressing it.
 

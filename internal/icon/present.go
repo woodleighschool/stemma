@@ -20,7 +20,7 @@ type Presentation string
 const (
 	// Auto draws Glassy where the host can and Raw elsewhere.
 	Auto Presentation = "auto"
-	// Raw writes the extracted artwork unchanged on any host.
+	// Raw writes the normalized artwork on any host.
 	Raw Presentation = "raw"
 	// Glassy draws the subject with the macOS icon renderer.
 	Glassy Presentation = "glassy"
