@@ -300,6 +300,12 @@ missing-executable badges; vendor executables and their symlink targets are neve
 extracted or run. Applications with only a named asset icon do not require an ICNS
 fallback. Missing artwork reports `no artwork`.
 
+Output size can change the macOS presentation, not just its resolution. For some
+applications, 256 pixels produces the expected app icon while 512 pixels adds a
+grey frame around the artwork. If the result looks wrong, compare sizes with
+`stemma icon MacSoftware/<name> --force --size 256`. Review the generated image;
+a larger size does not necessarily produce a better match to Finder.
+
 `raw`, the default elsewhere, decodes the declared ICNS or raster icon and writes
 its largest artwork as PNG. ICNS supports PNG, JPEG 2000, planar colour and indexed
 elements. Small artwork is enlarged to 128 pixels; larger or rectangular artwork
