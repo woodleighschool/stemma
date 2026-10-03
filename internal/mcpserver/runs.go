@@ -21,6 +21,31 @@ type resourcesInput struct {
 	Resources []string `json:"resources" jsonschema:"Resources as Kind/name, such as MacSoftware/firefox."`
 }
 
+type inspectInput struct {
+	Resource string `json:"resource" jsonschema:"Resource as Kind/name."`
+	Input    string `json:"input" jsonschema:"Declared input name, such as vendor."`
+	Path     string `json:"path,omitempty" jsonschema:"Optional path within the input; omitted inventories the source."`
+}
+
+type inspection struct {
+	Resource string             `json:"resource"`
+	Input    string             `json:"input"`
+	Artifact *engine.Inspection `json:"artifact,omitempty"`
+	Error    string             `json:"error,omitempty"`
+}
+
+func (c catalog) inspect(ctx context.Context, _ *mcp.CallToolRequest, in inspectInput) (*mcp.CallToolResult, inspection, error) {
+	opts := c.options("inspect")
+	opts.Resources, opts.Input, opts.InputPath = []string{in.Resource}, in.Input, in.Path
+	opts.Lock.IgnoreInputs = true
+	report, err := engine.Run(ctx, opts)
+	result := inspection{Resource: in.Resource, Input: in.Input, Artifact: report.Inspection}
+	if err != nil {
+		result.Error = err.Error()
+	}
+	return outcome(err), result, nil
+}
+
 type iconInput struct {
 	Resources []string `json:"resources" jsonschema:"Resources as Kind/name, such as MacSoftware/firefox."`
 	Force     bool     `json:"force,omitempty" jsonschema:"Replace icons that already exist."`

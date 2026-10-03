@@ -30,6 +30,8 @@ type Options struct {
 	ChangedSince string
 	Lock         lockfile.Options
 	Icons        IconOptions
+	// Input and InputPath select the source inspected by the inspect method.
+	Input, InputPath string
 	// Output names the resource output the artifact method materializes;
 	// empty selects installer.
 	Output string
@@ -50,9 +52,9 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}()
 	switch opts.Method {
 	case "update", "prepare", "signature", "plan", "apply", "icon":
-	case "artifact":
+	case "artifact", "inspect":
 		if len(opts.Resources) != 1 {
-			return report, errors.New("artifact requires one resource selector")
+			return report, fmt.Errorf("%s requires one resource selector", opts.Method)
 		}
 	default:
 		return report, fmt.Errorf("unsupported run method %q", opts.Method)
@@ -95,6 +97,8 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	switch opts.Method {
 	case "icon":
 		err = e.icons(ctx)
+	case "inspect":
+		err = e.inspectInput(ctx)
 	case "artifact":
 		err = e.materialize(ctx)
 	default:
@@ -163,13 +167,18 @@ func (e *execution) begin(ctx context.Context) (err error) {
 	}
 	// Updates, artifacts and icons never reach a destination, so only the
 	// other runs check the destinations they publish to.
-	usesDestinations := e.opts.Method != "update" && e.opts.Method != "artifact" && e.opts.Method != "icon"
+	usesDestinations := e.opts.Method != "update" && e.opts.Method != "artifact" && e.opts.Method != "icon" && e.opts.Method != "inspect"
 	e.plans, e.selected, err = discoverClosure(ctx, s.project, s.ops, e.roots, true, usesDestinations)
 	if err != nil {
 		return err
 	}
 	if err := preflight(e.plans, e.selected, s.project, s.ops, usesDestinations); err != nil {
 		return err
+	}
+	if e.opts.Method == "inspect" {
+		if _, ok := e.plans[e.roots[0]].Inputs[e.opts.Input]; !ok {
+			return fmt.Errorf("resource has no input %q", e.opts.Input)
+		}
 	}
 	if e.opts.Method == "icon" {
 		options := e.opts.Icons
@@ -412,7 +421,7 @@ func (e *execution) prepare(ctx context.Context, key string) error {
 			if e.opts.Method == "signature" {
 				derive = "signature"
 			}
-			if e.opts.Method != "icon" || e.opts.Icons.Input == "" || key != e.roots[0] {
+			if !e.inputsOnly(key) {
 				result.outputs, item.Cached, failure = prepareResource(ctx, e.session.store, e.session.ops, plan, inputs, work, derive)
 			}
 		}
@@ -445,6 +454,10 @@ func (e *execution) prepare(ctx context.Context, key string) error {
 		return e.complete(ctx, &e.report.Resources[result.report])
 	}
 	return nil
+}
+
+func (e *execution) inputsOnly(key string) bool {
+	return key == e.roots[0] && (e.opts.Method == "inspect" || e.opts.Method == "icon" && e.opts.Icons.Input != "")
 }
 
 func (e *execution) inputs(plan resourcePlan, entries map[string]source.Entry) (map[string]Prepared, error) {

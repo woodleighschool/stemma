@@ -63,12 +63,16 @@ func TestIconToolReadsBuilderInput(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "software", "artwork.ico"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.CopyFS(filepath.Join(root, "software", "Installer.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
+		t.Fatal(err)
+	}
 	write(t, filepath.Join(root, "software", "wrapper.yaml"), `apiVersion: stemma/v1alpha1
 kind: BuildMacPkg
 metadata: {name: wrapper}
 spec:
   inputs:
     vendor: {path: artwork.ico}
+    installer: {path: Installer.app}
   package:
     identifier: org.example.wrapper
     version: "{{ inputs.vendor.facts['missing.app'].app.version }}"
@@ -76,6 +80,14 @@ spec:
     postinstall: '#!/bin/sh'
 `)
 	session := connect(t, root)
+	var inspected inspection
+	call(t, session, "inspect", map[string]any{"resource": "BuildMacPkg/wrapper", "input": "installer"}, &inspected)
+	if inspected.Artifact == nil || len(inspected.Artifact.Facts.Subjects) != 1 || inspected.Artifact.Facts.Subjects[0].App == nil {
+		t.Fatalf("input inspection: %+v", inspected)
+	}
+	if _, err := os.Stat(filepath.Join(root, "stemma.lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("inspection wrote an input lock: %v", err)
+	}
 	var updated lockUpdate
 	call(t, session, "update", map[string]any{"resources": []string{"BuildMacPkg/wrapper"}}, &updated)
 	var result icons

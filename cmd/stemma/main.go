@@ -289,9 +289,34 @@ func (c *cli) reconcileCommand() *cobra.Command {
 }
 
 func (c *cli) inspectCommand() *cobra.Command {
-	cmd := &cobra.Command{Use: "inspect PATH", Short: "Describe a local file or directory without executing it", Args: cobra.ExactArgs(1)}
+	var input, selection string
+	var offline, noInputLock bool
+	cmd := &cobra.Command{Use: "inspect PATH | Kind/name --input NAME", Short: "Describe a local artifact or resource input without executing it", Args: cobra.ExactArgs(1)}
+	cmd.Flags().StringVar(&input, "input", "", "Inspect this resource input without building the resource")
+	cmd.Flags().StringVar(&selection, "path", "", "Path within the resource input")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
+	cmd.Flags().BoolVar(&noInputLock, "no-input-lock", false, "Resolve current inputs without changing their lock entries")
+	cmd.MarkFlagsMutuallyExclusive("offline", "no-input-lock")
 	asJSON := jsonFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if input != "" {
+			path, err := c.project()
+			if err != nil {
+				return err
+			}
+			report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: "inspect", Resources: args, Input: input, InputPath: selection, Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
+			if err != nil {
+				return err
+			}
+			if *asJSON {
+				return writeJSON(c.out, report.Inspection)
+			}
+			_, err = io.WriteString(c.out, renderInspection(c.display.outStyle, *report.Inspection))
+			return err
+		}
+		if selection != "" || offline || noInputLock {
+			return errors.New("input options require --input NAME")
+		}
 		if strings.EqualFold(filepath.Ext(args[0]), ".intunewin") {
 			done := plugin.Stage(cmd.Context(), "Inspecting artifact", plugin.Detail(filepath.Base(args[0])))
 			envelope, err := intunewin.Inspect(cmd.Context(), args[0])

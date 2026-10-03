@@ -22,6 +22,8 @@ type Report struct {
 	Resources []ResourceReport        `json:"resources"`
 	// Artifact is where the artifact method materialized the selected output.
 	Artifact string `json:"artifact,omitempty"`
+	// Inspection is the static evidence of the selected resource input.
+	Inspection *Inspection `json:"inspection,omitempty"`
 }
 
 // ResourceReport separates immutable outputs from destination reconciliation.

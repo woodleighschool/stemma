@@ -19,7 +19,7 @@ type Options struct {
 	Version string
 }
 
-const instructions = `Stemma prepares the software a catalog declares from its vendors' sources and publishes it to destinations. These tools work on the catalog's files as they are now. describe answers what a document can declare; prepare tries documents against their current sources without the lockfile; update records sources in the lockfile; icon creates declared icons; check runs the checks a pull request runs. None of them publish.`
+const instructions = `Stemma prepares the software a catalog declares from its vendors' sources and publishes it to destinations. These tools work on the catalog's files as they are now. describe answers what a document can declare; inspect reads a resource input's static facts; prepare tries documents against their current sources without the lockfile; update records sources in the lockfile; icon creates declared icons; check runs the checks a pull request runs. None of them publish.`
 
 // Run serves the project's tools on standard input and output until the
 // client disconnects or ctx ends.
@@ -52,6 +52,11 @@ func newServer(opts Options) *mcp.Server {
 			"A source names its resolver with resolver:, except that a url alone uses http and a path alone uses file.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
 	}, tools.describe)
+	mcp.AddTool(server, &mcp.Tool{
+		Name:        "inspect",
+		Description: "Inspect a resource input from its current source without building that resource or changing the lockfile. Returns static subjects and their exact paths, app versions and builds, identifiers, and installer facts. Use these facts to write build expressions.",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld},
+	}, tools.inspect)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "prepare",
 		Description: "Prepare resources from their sources as they are now, ignoring the lockfile. " +

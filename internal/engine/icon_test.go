@@ -288,6 +288,21 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
+	opts.Method, opts.Input, opts.InputPath = "inspect", "vendor", "Example.app"
+	inspected, err := Run(t.Context(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspected.Inspection == nil || len(inspected.Inspection.Facts.Subjects) != 1 {
+		t.Fatalf("input inspection: %+v", inspected)
+	}
+	app := inspected.Inspection.Facts.Subjects[0]
+	if app.Path != "Example.app" || app.App == nil || app.App.Build != "123" || app.App.Version != "1.2" {
+		t.Fatalf("input facts: %+v", app)
+	}
+	if len(inspected.Resources[0].Artifacts) != 0 {
+		t.Fatal("inspection built the wrapper")
+	}
 	opts.Method = "icon"
 	opts.Icons = IconOptions{Input: "vendor", Path: "Example.app", Presentation: icon.Raw}
 	report, err := Run(t.Context(), opts)

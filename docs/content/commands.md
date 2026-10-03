@@ -145,7 +145,8 @@ stemma mcp
 
 `mcp` serves the catalog's tools to an agent over the Model Context Protocol on
 standard input and output. `describe` answers what documents can declare, from
-the built-in operations and the catalog's plugins; `prepare` tries documents
+the built-in operations and the catalog's plugins; `inspect` reads a named input's
+static facts before a build; `prepare` tries documents
 against their current sources without the lockfile and reports the inspected
 artifact and its signer; `update`, `icon` and `check` match the commands. No
 tool contacts a destination.
@@ -167,6 +168,18 @@ same registry and schema composition as project generation.
 `inspect` describes a local file or directory from its own metadata, without
 executing it or loading a project; `--json` prints its complete facts. Pass it
 the path `artifact` prints to inspect what Stemma prepares for a resource.
+
+To inspect a named input before its build expressions can resolve, use:
+
+```sh
+stemma inspect BuildMacPkg/example --input vendor --path Installer.app --json
+```
+
+This reads the locked input without building the selected resource. Omit `--path`
+to inventory the source; add `--no-input-lock` to inspect current sources without
+writing the lockfile. MCP `inspect` takes `resource`, `input` and an optional `path`
+and uses current sources. Both return the paths and static facts used by
+`inputs.<name>.facts` expressions.
 `validate` needs no credentials. `validate --resolved` also evaluates every
 environment value, as runs do, and prints the merged configuration with connection
 settings resolved. It needs every referenced variable and may expose secrets: do
