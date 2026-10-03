@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.9.1](https://github.com/woodleighschool/stemma/compare/v0.9.0...v0.9.1) (2026-10-03)
+
+
+### Features
+
+* extract icons from resource inputs ([bcb0939](https://github.com/woodleighschool/stemma/commit/bcb0939ce56095428c8fa82bb3c771ad3cfe7550))
+* inspect resource inputs before building ([b36e7bd](https://github.com/woodleighschool/stemma/commit/b36e7bd4bac334b7401c2b092b08d70e921ca3c3))
+
+
+### Bug Fixes
+
+* decode native icon artwork across platforms ([1dd25fe](https://github.com/woodleighschool/stemma/commit/1dd25fec025a87547685984d897664464f6002c4))
+* preserve artwork and report observed input changes ([a2bc1a5](https://github.com/woodleighschool/stemma/commit/a2bc1a5ac7e8009d77941c306cfda67b9abbe6a7))
+* preserve inspection identity and icon outcomes ([ffacdc6](https://github.com/woodleighschool/stemma/commit/ffacdc60a6a3377006e94a1613f22795e5c6f6ed))
+* read artwork through declared resource inputs ([0ba75d8](https://github.com/woodleighschool/stemma/commit/0ba75d821a8e5a09c34b0c1873df9bad677ed27f))
+
 ## [0.9.0](https://github.com/woodleighschool/stemma/compare/v0.8.2...v0.9.0) (2026-10-03)
 
 
