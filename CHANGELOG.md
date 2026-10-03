@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.9.1](https://github.com/woodleighschool/stemma/compare/v0.9.0...v0.9.1) (2026-10-03)
+
+
+### Miscellaneous Chores
+
+* **docs:** upgrade to TypeScript 7 ([9632afa](https://github.com/woodleighschool/stemma/commit/9632afa142b9aaac48e9ae6e630898dc2b73081b))
+* **github-action:** update action jdx/mise-action (v4.3.0 → v5.0.0) ([#93](https://github.com/woodleighschool/stemma/issues/93)) ([eb57dc2](https://github.com/woodleighschool/stemma/commit/eb57dc2a052d2c5c1d2a9ece7934c3fa40d83ab3))
+
 ## [0.9.0](https://github.com/woodleighschool/stemma/compare/v0.8.2...v0.9.0) (2026-10-03)
 
 
