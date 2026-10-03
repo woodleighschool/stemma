@@ -351,3 +351,16 @@ func TestIconInputRequiresUnambiguousArtwork(t *testing.T) {
 		t.Fatalf("explicit native artwork: %v", err)
 	}
 }
+
+func TestIconArchiveRequiresAnArtworkSelection(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "artwork.png"), iconPNG(t, 128, 42), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(t.TempDir(), "vendor.zip")
+	testarchive.Zip(t, archive, root)
+	_, err := inputIconSubject(t.Context(), plugin.Artifact{Path: archive, Filename: "vendor.zip"}, "", t.TempDir(), icon.Raw)
+	if err == nil || !strings.Contains(err.Error(), "--path") {
+		t.Fatalf("archive selection: %v", err)
+	}
+}

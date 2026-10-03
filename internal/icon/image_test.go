@@ -60,3 +60,20 @@ func TestArtworkRejectsOversizedAndUnknownImages(t *testing.T) {
 		t.Fatalf("unknown artwork: %v", err)
 	}
 }
+
+func TestICNSPreservesUsableFrameBeforeResizing(t *testing.T) {
+	oversized := image.NewNRGBA(image.Rect(0, 0, 1024, 1024))
+	random := rand.NewChaCha8([32]byte{1})
+	if _, err := random.Read(oversized.Pix); err != nil {
+		t.Fatal(err)
+	}
+	large := encodePNG(t, oversized)
+	if Validate(large) == nil {
+		t.Fatal("fixture must exceed publication bounds")
+	}
+	usable := testPNG(t, 512, 42)
+	got, err := FromICNS(testICNS(map[string][]byte{"ic10": large, "ic09": usable}))
+	if err != nil || !bytes.Equal(got, usable) {
+		t.Fatalf("usable frame changed: %v", err)
+	}
+}

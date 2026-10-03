@@ -476,6 +476,9 @@ func TestIncrementalAcquisitionCommitsOnlyCompleteUncancelledUpdates(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	if changes := update.Changes("b"); len(changes) != 0 {
+		t.Fatalf("unacquired input reported as changed: %+v", changes)
+	}
 	if _, _, err := update.Acquire(t.Context(), "a"); err != nil {
 		t.Fatal(err)
 	}

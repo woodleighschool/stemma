@@ -68,9 +68,9 @@ func checkDimensions(width, height int) error {
 // decoding failures when none can. Asset bounds apply after normalization.
 func largest(candidates []candidate) ([]byte, error) {
 	var best image.Image
-	var original []byte
+	var valid []byte
 	var failures []error
-	area := 0
+	area, validArea := 0, 0
 	for _, candidate := range candidates {
 		img, err := candidate.decode()
 		if err == nil {
@@ -81,8 +81,11 @@ func largest(candidates []candidate) ([]byte, error) {
 			continue
 		}
 		pixels := img.Bounds().Dx() * img.Bounds().Dy()
+		if pixels > validArea && Validate(candidate.data) == nil {
+			valid, validArea = candidate.data, pixels
+		}
 		if pixels > area {
-			best, original, area = img, candidate.data, pixels
+			best, area = img, pixels
 		}
 	}
 	if best == nil {
@@ -91,8 +94,8 @@ func largest(candidates []candidate) ([]byte, error) {
 		}
 		return nil, ErrNoArtwork
 	}
-	if Validate(original) == nil {
-		return original, nil
+	if valid != nil {
+		return valid, nil
 	}
 	bounds := best.Bounds()
 	longest := max(bounds.Dx(), bounds.Dy())

@@ -563,3 +563,29 @@ spec:
 		})
 	}
 }
+
+func TestInspectInputFailureIsPrinted(t *testing.T) {
+	root := t.TempDir()
+	testproject.Write(t, filepath.Join(root, "stemma.yaml"), `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: inspection}
+spec: {imports: ['*.software.yaml']}
+---
+apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata: {name: example}
+spec:
+  inputs:
+    vendor: {path: missing.zip}
+  package: {identifier: org.example.wrapper, version: '1'}
+  scripts: {postinstall: '#!/bin/sh'}
+`)
+	var out, logs bytes.Buffer
+	cmd, finish := command(&out, &logs)
+	cmd.SetArgs([]string{"inspect", "BuildMacPkg/example", "--input", "vendor", "--path", "Missing.app", "--no-input-lock", "--root", root, "--cache-dir", t.TempDir()})
+	err := cmd.ExecuteContext(t.Context())
+	finish(err)
+	if err == nil || out.Len() != 0 || !strings.Contains(logs.String(), "Error: BuildMacPkg/example:") || !strings.Contains(logs.String(), "missing.zip") {
+		t.Fatalf("error=%v stdout=%q stderr=%q", err, out.String(), logs.String())
+	}
+}

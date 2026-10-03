@@ -313,8 +313,8 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	if entries, ok := u.result.File.Inputs[resource]; ok {
-		return entries, u.result.CacheHits[resource], nil
+	if hits, ok := u.result.CacheHits[resource]; ok {
+		return u.result.File.Inputs[resource], hits, nil
 	}
 	inputs, ok := u.inputs[resource]
 	if !ok || resource == "" {
@@ -347,8 +347,8 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 	}
 	if len(entries) > 0 {
 		u.result.File.Inputs[resource] = entries
-		u.result.CacheHits[resource] = hits
 	}
+	u.result.CacheHits[resource] = hits
 	return entries, hits, nil
 }
 
@@ -356,7 +356,7 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 // as Commit records them unless the resource is rejected. A run that ignores
 // input locks records nothing and reports what an update would record.
 func (u *Update) Changes(resource string) []InputChange {
-	if u.opts.PluginsOnly {
+	if _, acquired := u.result.CacheHits[resource]; u.opts.PluginsOnly || !acquired {
 		return nil
 	}
 	return DiffInputs(map[string]map[string]source.Entry{resource: u.reviewed[resource]}, map[string]map[string]source.Entry{resource: u.result.File.Inputs[resource]})

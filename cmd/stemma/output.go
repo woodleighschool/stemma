@@ -29,8 +29,8 @@ type commandOutput struct {
 	progress           *terminalProgress
 	asJSON, all        bool
 	reconciling        bool
-	// pathOnly commands print one path on stdout and report nothing else.
-	pathOnly bool
+	// resultOnly commands print their result without a resource report.
+	resultOnly bool
 	// JSON reports carry the warnings raised while they ran.
 	warnings []string
 }
@@ -58,12 +58,12 @@ func (o *commandOutput) start(cmd *cobra.Command) error {
 		o.asJSON, _ = cmd.Flags().GetBool("resolved")
 	case "reconcile":
 		o.reconciling = true
-	case "artifact":
-		o.pathOnly = true
+	case "artifact", "inspect":
+		o.resultOnly = true
 	}
 	// Report blocks print above the live tree, so both streams must share the
 	// terminal; a path alone is written after the tree is gone.
-	o.interactive = cmd.Name() != "mcp" && (o.pathOnly || terminalOutput(o.out)) && terminalOutput(o.errOut) && os.Getenv("CI") == ""
+	o.interactive = cmd.Name() != "mcp" && (o.resultOnly || terminalOutput(o.out)) && terminalOutput(o.errOut) && os.Getenv("CI") == ""
 	cmd.SetContext(plugin.WithLogger(cmd.Context(), slog.New(&activityHandler{output: o})))
 	return nil
 }
@@ -113,7 +113,7 @@ func (o *commandOutput) finish(err error) {
 		_, _ = fmt.Fprintln(o.errOut, o.errStyle.paint("Interrupted.", color.FgHiYellow))
 	default:
 		text := commandError(err)
-		if o.pathOnly {
+		if o.resultOnly {
 			// No report shows a failed resource, so the error must.
 			text = failureText(err)
 		}
@@ -242,7 +242,7 @@ func (o *commandOutput) resourceDone(method string, resource engine.ResourceRepo
 		o.progress.complete(resourceName(resource))
 	}
 	switch {
-	case o.asJSON || o.pathOnly:
+	case o.asJSON || o.resultOnly:
 		return nil
 	case o.reconciling && method != "apply":
 		// Proposals report what the lookup found and what their checks showed;

@@ -189,7 +189,7 @@ func inputIconSubject(ctx context.Context, input plugin.Artifact, selection, wor
 	if err != nil {
 		return icon.Subject{}, err
 	}
-	if !info.Mode().IsRegular() {
+	if !info.Mode().IsRegular() || source.Traversable() {
 		return icon.Subject{}, errors.New("select an application, installer or artwork file with --path")
 	}
 	local, err := node.Materialize(ctx, filepath.Join(workspace, "selected"))

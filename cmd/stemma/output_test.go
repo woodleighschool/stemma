@@ -280,7 +280,7 @@ func TestFinalErrorShowsOnlyWhatNoReportShowed(t *testing.T) {
 	// A command that prints only a path shows no report of its resource.
 	var logs bytes.Buffer
 	o := newCommandOutput(io.Discard, &logs)
-	o.pathOnly = true
+	o.resultOnly = true
 	o.finish(errors.Join(engine.ResourceError{Resource: "stemma/v1alpha1/MacSoftware/example", Err: errors.New("upload failed")}))
 	if want := "Error: MacSoftware/example: upload failed\n"; logs.String() != want {
 		t.Fatalf("path-only failure printed %q, want %q", logs.String(), want)
