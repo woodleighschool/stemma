@@ -4,6 +4,14 @@
 `inputs`. Both use the same resolvers and lockfile. Windows accompanying files use
 these resolvers too.
 
+GitHub, Homebrew, WinGet and direct HTTP can identify the same software. Choose the
+source that preserves the intended release stream and deployment artifact. Official
+GitHub Releases already provide structured upstream metadata; routing them through
+Homebrew is not inherently better. Homebrew and WinGet are especially useful when
+registry metadata turns mutable or awkward vendor discovery into a concrete version,
+installer and digest. Do not change channel, architecture, edition or artifact type
+merely to use a registry. A stable vendor URL remains a good source.
+
 ## Download a file
 
 ```yaml
@@ -102,6 +110,9 @@ source:
   resolver: homebrew
   cask: vlc
 ```
+
+Stemma reads cask and formula metadata to acquire artifacts. It does not execute
+Homebrew install, uninstall or postflight actions.
 
 A cask selects the vendor download. `architecture` defaults to `arm64` and
 `macos` to the current supported release, macOS 27. Both describe the target;

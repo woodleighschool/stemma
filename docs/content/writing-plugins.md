@@ -236,6 +236,10 @@ when no input is supplied.
 
 ## Resolvers
 
+Resolver plugins should model discovery or acquisition semantics that built-in
+sources cannot express cleanly. When a built-in gains equivalent behaviour,
+catalogs can remove the plugin instead of preserving a compatibility layer.
+
 Register an operation with `kind: resolve`, methods `validate`, `discover` and
 `run`, and a `ResolverKind` containing the observation contract's version. Set
 `local: true` when consuming a lock must also check current local files.
