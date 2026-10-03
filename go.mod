@@ -16,7 +16,7 @@ require (
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/deploymenttheory/go-apfs-v2 v0.17.0
 	github.com/deploymenttheory/go-bindings-macosplatform v0.20.1
-	github.com/deploymenttheory/go-macos-pkg v0.7.2
+	github.com/deploymenttheory/go-macos-pkg v0.7.3
 	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
 	github.com/dustin/go-humanize v1.1.0
 	github.com/ebitengine/purego v0.11.1
@@ -97,7 +97,7 @@ require (
 	github.com/dsnet/compress v0.0.2-0.20230904184137-39efe44ab707 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/go-compressions/lzfse v0.3.0 // indirect
+	github.com/go-compressions/lzfse v0.4.1 // indirect
 	github.com/go-git/gcfg/v2 v2.0.2 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -124,7 +124,7 @@ require (
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/nwaples/rardecode/v2 v2.4.1 // indirect
 	github.com/pb33f/go-yaml v0.1.0 // indirect
-	github.com/pierrec/lz4/v4 v4.1.30 // indirect
+	github.com/pierrec/lz4/v4 v4.1.31 // indirect
 	github.com/pjbgf/sha1cd v0.6.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
