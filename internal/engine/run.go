@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
@@ -30,8 +29,8 @@ type Options struct {
 	ChangedSince string
 	Lock         lockfile.Options
 	Icons        IconOptions
-	// Input and InputPath select the source inspected by the inspect method.
-	Input, InputPath string
+	// Input selects artwork or facts without building the selected resource.
+	Input InputSelection
 	// Output names the resource output the artifact method materializes;
 	// empty selects installer.
 	Output string
@@ -124,6 +123,7 @@ type execution struct {
 	destinations map[destinationRef]destinationPlan
 	connections  map[string]json.RawMessage
 	locked       *lockfile.Update
+	inputOwner   string
 
 	prepared map[string]preparedResource
 	// pending counts each resource's destinations still to reconcile; the
@@ -137,7 +137,6 @@ type execution struct {
 
 type preparedResource struct {
 	work    string
-	inputs  map[string]Prepared
 	outputs map[string]Prepared
 	report  int
 	ready   bool
@@ -175,27 +174,22 @@ func (e *execution) begin(ctx context.Context) (err error) {
 	if err := preflight(e.plans, e.selected, s.project, s.ops, usesDestinations); err != nil {
 		return err
 	}
-	if e.opts.Method == "inspect" {
-		if _, ok := e.plans[e.roots[0]].Inputs[e.opts.Input]; !ok {
-			return fmt.Errorf("resource has no input %q", e.opts.Input)
-		}
+	if e.opts.Method == "inspect" && e.opts.Input.Name == "" {
+		return errors.New("inspect requires an input name")
 	}
-	if e.opts.Method == "icon" {
-		options := e.opts.Icons
-		if options.Path != "" && options.Input == "" {
-			return errors.New("icon path requires an input")
+	if e.opts.Input.Path != "" && e.opts.Input.Name == "" {
+		return errors.New("path requires an input")
+	}
+	if e.opts.Input.Name != "" {
+		if len(e.roots) != 1 {
+			return errors.New("input requires one resource selector")
 		}
-		if options.Input != "" {
-			if len(e.roots) != 1 {
-				return errors.New("icon input requires one resource selector")
-			}
-			plan := e.plans[e.roots[0]]
-			if _, ok := plan.Inputs[options.Input]; !ok {
-				return fmt.Errorf("resource has no input %q", options.Input)
-			}
-			if !icon.ValidName(iconName(options, plan)) {
-				return errors.New("resource name must be a valid icon asset name")
-			}
+		if e.opts.Method == "icon" && e.plans[e.roots[0]].Icon == "" {
+			return errors.New("selected resource must declare an icon")
+		}
+		e.inputOwner, err = inputOwner(e.plans, e.roots[0], e.opts.Input.Name)
+		if err != nil {
+			return err
 		}
 	}
 	if e.publishing() {
@@ -288,7 +282,7 @@ func (e *execution) commit(ctx context.Context) error {
 // missing or forced asset costs a preparation, so a run across the catalog is
 // cheap; creating the icon completes the resource in place of publication.
 func (e *execution) icons(ctx context.Context) error {
-	if e.opts.Icons.Input != "" {
+	if e.opts.Input.Name != "" {
 		return e.inputIcon(ctx)
 	}
 	outcomes, building := map[string]string{}, map[string]bool{}
@@ -328,7 +322,7 @@ func (e *execution) icons(ctx context.Context) error {
 		}
 		item := &e.report.Resources[prepared.report]
 		var err error
-		item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], prepared.outputs["installer"], prepared.work)
+		item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], prepared.outputs["installer"], "", prepared.work)
 		if err != nil {
 			item.Error = err.Error()
 			e.fail(ctx, ResourceError{Resource: key, Err: err})
@@ -416,14 +410,11 @@ func (e *execution) prepare(ctx context.Context, key string) error {
 		result.work = work
 		var inputs map[string]Prepared
 		if inputs, failure = e.inputs(plan, entries); failure == nil {
-			result.inputs = inputs
 			derive := ""
 			if e.opts.Method == "signature" {
 				derive = "signature"
 			}
-			if !e.inputsOnly(key) {
-				result.outputs, item.Cached, failure = prepareResource(ctx, e.session.store, e.session.ops, plan, inputs, work, derive)
-			}
+			result.outputs, item.Cached, failure = prepareResource(ctx, e.session.store, e.session.ops, plan, inputs, work, derive)
 		}
 	}
 	item.Artifacts = result.outputs
@@ -456,32 +447,34 @@ func (e *execution) prepare(ctx context.Context, key string) error {
 	return nil
 }
 
-func (e *execution) inputsOnly(key string) bool {
-	return key == e.roots[0] && (e.opts.Method == "inspect" || e.opts.Method == "icon" && e.opts.Icons.Input != "")
-}
-
 func (e *execution) inputs(plan resourcePlan, entries map[string]source.Entry) (map[string]Prepared, error) {
 	inputs := map[string]Prepared{}
 	for _, name := range sortedKeys(plan.Inputs) {
-		ref := plan.Inputs[name].Resource
-		if ref == nil {
-			entry := entries[name]
-			ref, err := e.session.store.Lookup(entry.Content.SHA256)
-			if err != nil {
-				return nil, err
-			}
-			inputs[name] = Prepared{Payload: ref, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, Version: entry.InputVersion, ContentRoot: entry.ContentRoot, InputsHash: entry.Content.SHA256, Evidence: entry.Evidence}
-			continue
+		input, err := e.input(plan.Inputs[name], entries[name])
+		if err != nil {
+			return nil, fmt.Errorf("input %s: %w", name, err)
 		}
-		producer := e.prepared[ref.Key()]
-		output := cmp.Or(ref.Output, "installer")
-		artifact, ok := producer.outputs[output]
-		if !producer.ready || !ok {
-			return nil, fmt.Errorf("input %s requires successful %s output %s", name, ref.Key(), output)
-		}
-		inputs[name] = artifact
+		inputs[name] = input
 	}
 	return inputs, nil
+}
+
+func (e *execution) input(input plugin.Input, entry source.Entry) (Prepared, error) {
+	if input.Resource == nil {
+		ref, err := e.session.store.Lookup(entry.Content.SHA256)
+		if err != nil {
+			return Prepared{}, err
+		}
+		return Prepared{Payload: ref, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, Version: entry.InputVersion, ContentRoot: entry.ContentRoot, InputsHash: entry.Content.SHA256, Evidence: entry.Evidence}, nil
+	}
+	ref := input.Resource
+	producer := e.prepared[ref.Key()]
+	output := cmp.Or(ref.Output, "installer")
+	artifact, ok := producer.outputs[output]
+	if !producer.ready || !ok {
+		return Prepared{}, fmt.Errorf("requires successful %s output %s", ref.Key(), output)
+	}
+	return artifact, nil
 }
 
 // complete reports a finished resource. A rejected resource keeps its

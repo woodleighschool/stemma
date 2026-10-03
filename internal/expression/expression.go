@@ -21,6 +21,9 @@ import (
 	"cel.dev/cel-go/ext"
 )
 
+// ErrMissingReference identifies an absent expression key or attribute.
+var ErrMissingReference = errors.New("required reference is missing")
+
 const (
 	maxExpression = 64 << 10
 	maxBytes      = 16 << 20
@@ -312,20 +315,20 @@ func (s segment) eval(contexts map[string]any) (any, error) {
 	if err != nil {
 		// Evaluation errors can include context values, such as a failed numeric
 		// conversion or a dynamically selected map key. Report only their location.
-		reason := "evaluation failed"
+		reason := errors.New("evaluation failed")
 		switch {
 		case strings.HasPrefix(err.Error(), "no such key:"), strings.HasPrefix(err.Error(), "no such attribute:"):
-			reason = "required reference is missing"
+			reason = ErrMissingReference
 		case strings.Contains(err.Error(), "no such overload"):
-			reason = "incompatible value types"
+			reason = errors.New("incompatible value types")
 		case strings.Contains(err.Error(), "cost limit"):
-			reason = "evaluation cost limit exceeded"
+			reason = errors.New("evaluation cost limit exceeded")
 		}
 		if evaluationError, ok := errors.AsType[*types.Err](err); ok {
 			location := s.tree.NativeRep().SourceInfo().GetStartLocation(evaluationError.NodeID())
-			return nil, fmt.Errorf("expression at character %d, line %d, column %d: %s", s.offset+1, location.Line(), location.Column()+1, reason)
+			return nil, fmt.Errorf("expression at character %d, line %d, column %d: %w", s.offset+1, location.Line(), location.Column()+1, reason)
 		}
-		return nil, fmt.Errorf("expression at character %d: %s", s.offset+1, reason)
+		return nil, fmt.Errorf("expression at character %d: %w", s.offset+1, reason)
 	}
 	budget := limits{}
 	return native(result, &budget, 0)

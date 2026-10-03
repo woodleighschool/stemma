@@ -1,12 +1,16 @@
 package apple
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
+
+	"github.com/woodleighschool/stemma/internal/fileio"
 )
 
 const maxIconFile = 32 << 20
@@ -43,4 +47,24 @@ func AppIconFile(appPath, name string) ([]byte, error) {
 		return nil, nil
 	}
 	return data, err
+}
+
+// StageIconFiles copies bounded regular bundle resources for icon rendering.
+func StageIconFiles(ctx context.Context, fsys fs.ReadLinkFS, bundle, destination string, files []string) error {
+	for _, name := range files {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		data, err := readRegular(fsys, path.Join(bundle, name), maxIconFile)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := fileio.Write(filepath.Join(destination, filepath.FromSlash(name)), data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }

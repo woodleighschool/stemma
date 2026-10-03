@@ -265,6 +265,8 @@ kind: Project
 metadata: {name: icons}
 spec:
   imports: ['*.software.yaml']
+  destinations:
+    repository: {operation: munki, config: {path: repository}}
 ---
 apiVersion: stemma/v1alpha1
 kind: BuildMacPkg
@@ -277,10 +279,19 @@ spec:
     version: "{{ inputs.vendor.facts['missing.app'].app.version }}"
   scripts:
     postinstall: '#!/bin/sh'
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: product}
+spec:
+  icon: branding
+  source: {resource: {kind: BuildMacPkg, name: wrapper}}
+  destinations:
+    repository: {pkginfo: {catalogs: [testing]}}
 `
 	path := filepath.Join(root, "stemma.yaml")
 	testproject.Write(t, path, project)
-	opts := Options{ConfigPath: path, CacheDir: t.TempDir(), Method: "update", Resources: []string{"BuildMacPkg/wrapper"}}
+	opts := Options{ConfigPath: path, CacheDir: t.TempDir(), Method: "update", Resources: []string{"MacSoftware/product"}}
 	if _, err := Run(t.Context(), opts); err != nil {
 		t.Fatal(err)
 	}
@@ -288,23 +299,9 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	opts.Method, opts.Input, opts.InputPath = "inspect", "vendor", "Example.app"
-	inspected, err := Run(t.Context(), opts)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if inspected.Inspection == nil || len(inspected.Inspection.Facts.Subjects) != 1 {
-		t.Fatalf("input inspection: %+v", inspected)
-	}
-	app := inspected.Inspection.Facts.Subjects[0]
-	if app.Path != "Example.app" || app.App == nil || app.App.Build != "123" || app.App.Version != "1.2" {
-		t.Fatalf("input facts: %+v", app)
-	}
-	if len(inspected.Resources[0].Artifacts) != 0 {
-		t.Fatal("inspection built the wrapper")
-	}
 	opts.Method = "icon"
-	opts.Icons = IconOptions{Input: "vendor", Path: "Example.app", Presentation: icon.Raw}
+	opts.Input = InputSelection{Name: "vendor", Path: "Example.app"}
+	opts.Icons = IconOptions{Presentation: icon.Raw}
 	report, err := Run(t.Context(), opts)
 	if err != nil {
 		t.Fatal(err)
@@ -312,7 +309,7 @@ spec:
 	if len(report.Resources) != 1 || report.Resources[0].Icon != "created raw" || len(report.Resources[0].Artifacts) != 0 {
 		t.Fatalf("icon run: %+v", report.Resources)
 	}
-	got, err := icon.Read(root, "wrapper")
+	got, err := icon.Read(root, "branding")
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("input artwork differs: %v", err)
 	}
@@ -321,16 +318,16 @@ spec:
 		t.Fatalf("icon changed source lock: %v", err)
 	}
 	opts.Icons.Force = true
-	opts.Icons.Path = "../outside"
+	opts.Input.Path = "../outside"
 	if _, err := Run(t.Context(), opts); err == nil {
 		t.Fatal("escaping selection accepted")
 	}
-	opts.Icons.Path = "icon.msi"
+	opts.Input.Path = "icon.msi"
 	report, err = Run(t.Context(), opts)
 	if err != nil || report.Resources[0].Icon != "created raw" {
 		t.Fatalf("MSI input icon: %+v, %v", report.Resources, err)
 	}
-	opts.Icons.Input = "unknown"
+	opts.Input.Name = "unknown"
 	if _, err := Run(t.Context(), opts); err == nil {
 		t.Fatal("unknown input accepted")
 	}

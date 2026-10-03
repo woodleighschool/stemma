@@ -3,6 +3,7 @@ package macpkg
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"path"
@@ -59,6 +60,14 @@ func Prepare(ctx context.Context, request plugin.ResourceRequest[json.RawMessage
 	}
 	resolved, err := expression.Eval(raw, contexts)
 	if err != nil {
+		if errors.Is(err, expression.ErrMissingReference) {
+			for _, name := range slices.Sorted(maps.Keys(inputs)) {
+				fields := inputs[name].(map[string]any)
+				if facts, ok := fields["facts"].(map[string]plugin.Subject); ok {
+					err = fmt.Errorf("%w; input %q available subject IDs: %q", err, name, slices.Sorted(maps.Keys(facts)))
+				}
+			}
+		}
 		return plugin.Artifact{}, err
 	}
 	object := resolved.(map[string]any)

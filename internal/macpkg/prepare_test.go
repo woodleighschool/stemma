@@ -438,3 +438,15 @@ func TestBuilderSignatureScopeFollowsConsumedSelections(t *testing.T) {
 		t.Fatalf("opaque DMG omitted companion: %v", err)
 	}
 }
+
+func TestMissingInputFactListsAvailableSubjects(t *testing.T) {
+	root, _ := prepareApplication(t, "Example.app")
+	request := prepareRequest(t, map[string]any{
+		"package": map[string]any{"identifier": "org.example.fixture", "version": "{{ inputs.vendor.facts['Missing.app'].app.version }}"},
+		"scripts": map[string]any{"postinstall": "#!/bin/sh"},
+	}, map[string]plugin.Artifact{"vendor": {Path: root, Filename: "vendor", Tree: true}})
+	_, err := Prepare(t.Context(), request)
+	if err == nil || !strings.Contains(err.Error(), "required reference is missing") || !strings.Contains(err.Error(), `input "vendor" available subject IDs: ["." "Example.app"]`) {
+		t.Fatalf("missing fact: %v", err)
+	}
+}

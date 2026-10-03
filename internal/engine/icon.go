@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -28,17 +27,6 @@ type IconOptions struct {
 	Size int
 	// Presentation styles the artwork; icon.Auto follows the host.
 	Presentation icon.Presentation
-	// Input selects a locked input instead of the prepared installer.
-	Input string
-	// Path selects a file or application within Input.
-	Path string
-}
-
-func iconName(options IconOptions, plan resourcePlan) string {
-	if plan.Icon == "" && options.Input != "" {
-		return plan.Resource.Metadata.Name
-	}
-	return plan.Icon
 }
 
 // verifyIcons rejects declared assets that are missing or invalid before any
@@ -84,7 +72,7 @@ func iconInput(root, name, dir string) (plugin.Artifact, error) {
 // icon created, or "" when it does. Existing files stay unless forced, so
 // committed artwork survives a catalog-wide run.
 func iconOutcome(options IconOptions, root string, plan resourcePlan) string {
-	name := iconName(options, plan)
+	name := plan.Icon
 	if name == "" {
 		return "no icon declared"
 	}
@@ -97,8 +85,8 @@ func iconOutcome(options IconOptions, root string, plan resourcePlan) string {
 // createIcon writes the declared asset for one prepared resource and reports
 // the outcome in the words the CLI prints: the presentation created, or why
 // nothing could be.
-func createIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, installer Prepared, work string) (string, error) {
-	name := iconName(options, plan)
+func createIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, installer Prepared, selection, work string) (string, error) {
+	name := plan.Icon
 	if installer.Path == "" {
 		return "no installer output", nil
 	}
@@ -106,8 +94,8 @@ func createIcon(ctx context.Context, options IconOptions, root string, plan reso
 	done := plugin.Stage(ctx, "Extracting artwork", plugin.Detail(installer.Filename))
 	var subject icon.Subject
 	var err error
-	if options.Input != "" {
-		subject, err = inputIconSubject(ctx, installer.artifact(), options.Path, workspace, options.Presentation)
+	if selection != "" {
+		subject, err = inputIconSubject(ctx, installer.artifact(), selection, workspace, options.Presentation)
 	} else {
 		subject, err = iconSubject(ctx, plan.Resource.Kind, installer.artifact(), workspace, options.Presentation)
 	}
@@ -197,30 +185,12 @@ func inputIconSubject(ctx context.Context, input plugin.Artifact, selection, wor
 		return icon.Subject{}, err
 	}
 	input.Path, input.Tree = local, false
-	file, err := os.Open(local)
-	if err != nil {
-		return icon.Subject{}, err
+	for _, subject := range facts.Subjects {
+		if subject.MSI != nil {
+			return windowssoftware.Icon(ctx, input)
+		}
 	}
-	var header [8]byte
-	n, readErr := file.Read(header[:])
-	closeErr := file.Close()
-	if readErr != nil && n == 0 {
-		return icon.Subject{}, fmt.Errorf("read artwork: %w", readErr)
-	}
-	if closeErr != nil {
-		return icon.Subject{}, closeErr
-	}
-	if bytes.HasPrefix(header[:n], []byte("MZ")) || bytes.Equal(header[:n], []byte{0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1}) {
-		return windowssoftware.Icon(ctx, input)
-	}
-	if info.Size() > 32<<20 {
-		return icon.Subject{}, errors.New("artwork file exceeds 32 MiB")
-	}
-	data, err := os.ReadFile(local)
-	if err != nil {
-		return icon.Subject{}, err
-	}
-	artwork, err := icon.FromImage(data)
+	artwork, err := icon.FromFile(ctx, local)
 	return icon.Subject{Artwork: artwork}, err
 }
 
@@ -232,27 +202,15 @@ func (e *execution) inputIcon(ctx context.Context) error {
 		e.report.Resources = append(e.report.Resources, ResourceReport{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Key: key, Icon: outcome})
 		return e.complete(ctx, &e.report.Resources[len(e.report.Resources)-1])
 	}
-	e.pending[key] = 1
-	if err := e.prepare(ctx, key); err != nil {
+	return e.withInput(ctx, func(ctx context.Context, input Prepared, work string, item *ResourceReport) error {
+		selection := e.opts.Input.Path
+		if selection == "" {
+			selection = "."
+		}
+		var err error
+		item.Icon, err = createIcon(ctx, e.opts.Icons, e.session.root, plan, input, selection, work)
 		return err
-	}
-	prepared := e.prepared[key]
-	if !prepared.ready {
-		return nil
-	}
-	item := &e.report.Resources[prepared.report]
-	input, err := materialize(ctx, e.session.store, prepared.inputs[e.opts.Icons.Input], filepath.Join(prepared.work, "icon-input"))
-	if err == nil {
-		item.Icon, err = createIcon(resourceContext(ctx, plan.Resource), e.opts.Icons, e.session.root, plan, input, prepared.work)
-	}
-	if err != nil {
-		item.Error = err.Error()
-		e.fail(ctx, ResourceError{Resource: key, Err: err})
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return e.complete(ctx, item)
+	})
 }
 
 // iconSubject reads the installer artwork or bundle that presentation needs.

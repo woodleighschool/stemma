@@ -54,7 +54,7 @@ spec:
   source: {path: app.pkg}
 `
 
-func TestIconToolReadsBuilderInput(t *testing.T) {
+func TestIconToolReadsVendorInputIntoDeclaredAsset(t *testing.T) {
 	root := committedProject(t)
 	data, err := os.ReadFile("../msi/testdata/icon.ico")
 	if err != nil {
@@ -63,39 +63,35 @@ func TestIconToolReadsBuilderInput(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "software", "artwork.ico"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.CopyFS(filepath.Join(root, "software", "Installer.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
-		t.Fatal(err)
-	}
 	write(t, filepath.Join(root, "software", "wrapper.yaml"), `apiVersion: stemma/v1alpha1
 kind: BuildMacPkg
 metadata: {name: wrapper}
 spec:
   inputs:
     vendor: {path: artwork.ico}
-    installer: {path: Installer.app}
   package:
     identifier: org.example.wrapper
     version: "{{ inputs.vendor.facts['missing.app'].app.version }}"
   scripts:
     postinstall: '#!/bin/sh'
 `)
+	write(t, filepath.Join(root, "software", "product.yaml"), `apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: product}
+spec:
+  extends: app
+  icon: branding
+  source: {resource: {kind: BuildMacPkg, name: wrapper}}
+`)
 	session := connect(t, root)
-	var inspected inspection
-	call(t, session, "inspect", map[string]any{"resource": "BuildMacPkg/wrapper", "input": "installer"}, &inspected)
-	if inspected.Artifact == nil || len(inspected.Artifact.Facts.Subjects) != 1 || inspected.Artifact.Facts.Subjects[0].App == nil {
-		t.Fatalf("input inspection: %+v", inspected)
-	}
-	if _, err := os.Stat(filepath.Join(root, "stemma.lock.yaml")); !os.IsNotExist(err) {
-		t.Fatalf("inspection wrote an input lock: %v", err)
-	}
 	var updated lockUpdate
 	call(t, session, "update", map[string]any{"resources": []string{"BuildMacPkg/wrapper"}}, &updated)
 	var result icons
-	call(t, session, "icon", map[string]any{"resources": []string{"BuildMacPkg/wrapper"}, "input": "vendor", "path": "."}, &result)
+	call(t, session, "icon", map[string]any{"resources": []string{"MacSoftware/product"}, "input": "vendor", "path": "."}, &result)
 	if len(result.Resources) != 1 || !strings.HasPrefix(result.Resources[0].Icon, "created ") {
 		t.Fatalf("icon: %+v", result)
 	}
-	if _, err := icon.Read(root, "wrapper"); err != nil {
+	if _, err := icon.Read(root, "branding"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -331,5 +327,19 @@ func TestArtifactDescriptionKeepsUnsignedObservations(t *testing.T) {
 	observations, ok := artifact.Evidence["signatures"].([]any)
 	if !ok || len(observations) != 1 || observations[0].(map[string]any)["state"] != "unsigned" {
 		t.Fatalf("lost structured observations: %+v", artifact.Evidence)
+	}
+}
+
+func TestInspectToolReadsCurrentInputWithoutLocking(t *testing.T) {
+	root := committedProject(t)
+	write(t, filepath.Join(root, "software", "app.yaml"), draft)
+	session := connect(t, root)
+	var inspected inspection
+	call(t, session, "inspect", map[string]any{"resource": "MacSoftware/app", "input": "source"}, &inspected)
+	if inspected.Artifact == nil || len(inspected.Artifact.Facts.Subjects) < 2 {
+		t.Fatalf("input inspection: %+v", inspected)
+	}
+	if _, err := os.Stat(filepath.Join(root, "stemma.lock.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("inspection wrote an input lock: %v", err)
 	}
 }

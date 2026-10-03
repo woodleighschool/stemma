@@ -308,9 +308,10 @@ artwork reports a decoding error; an asset-catalog-only icon requires `glassy`.
 `--presentation` selects either presentation explicitly. A package's payload is
 still read through once to reach the selected files, which requires decompressing it.
 
-For a script-only wrapper, extract from the builder's vendor input with
-`stemma icon BuildMacPkg/example --input vendor --path Installer.app`, then declare
-`icon: example` on the software resource. An ambiguous input requires `--path`.
+For a script-only wrapper, declare `icon: example` on the software resource and run
+`stemma icon MacSoftware/example --input vendor --path Installer.app`. The command
+finds `vendor` through the build dependencies and writes `icons/example.png`.
+An input containing multiple applications requires `--path`.
 
 `icons/` holds plain PNG files: square, between 128 and 1024 pixels, up to 1 MiB.
 You can also commit an asset directly. Resources share an asset by naming

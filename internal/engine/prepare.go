@@ -15,7 +15,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/fileio"
-	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -138,17 +137,6 @@ type Inspection struct {
 	Format   string       `json:"format"`
 	Version  string       `json:"version,omitempty"`
 	Facts    plugin.Facts `json:"facts"`
-}
-
-// Inspect reads a local artifact's complete facts without executing it.
-func Inspect(ctx context.Context, path string) (result Inspection, err error) {
-	done := plugin.Stage(ctx, "Inspecting artifact", plugin.Detail(filepath.Base(path)))
-	defer func() { done(err) }()
-	facts, err := inspection.Read(ctx, path)
-	if err != nil {
-		return Inspection{}, err
-	}
-	return Inspection{Filename: filepath.Base(path), Format: artifactFormat(path, facts), Version: artifactVersion(facts), Facts: facts}, nil
 }
 
 // artifactFormat names what the facts show an artifact is, falling back to its

@@ -204,6 +204,7 @@ var runShort = map[string]string{
 func (c *cli) runCommand(method string) *cobra.Command {
 	var offline bool
 	var icons engine.IconOptions
+	var input engine.InputSelection
 	var presentation, changedSince string
 	cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: runShort[method]}
 	jsonFlag(cmd)
@@ -217,7 +218,7 @@ func (c *cli) runCommand(method string) *cobra.Command {
 				return err
 			}
 		}
-		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: method, Resources: args, ChangedSince: changedSince, Icons: icons, ResourceDone: func(resource engine.ResourceReport) error {
+		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: method, Resources: args, ChangedSince: changedSince, Icons: icons, Input: input, ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone(method, resource)
 		}, Lock: lockfile.Options{Offline: offline}})
 		if err := c.display.report(c.out, method, report, runErr); err != nil {
@@ -234,8 +235,8 @@ func (c *cli) runCommand(method string) *cobra.Command {
 		cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the whole lockfile, then prepare only resources whose preparation changed since the Git revision `REV`")
 	}
 	if method == "icon" {
-		cmd.Flags().StringVar(&icons.Input, "input", "", "Extract from one resource's locked input without building its output")
-		cmd.Flags().StringVar(&icons.Path, "path", "", "Application or artwork path within the selected input")
+		cmd.Flags().StringVar(&input.Name, "input", "", "Extract from one resource's locked input without building its output")
+		cmd.Flags().StringVar(&input.Path, "path", "", "Application or artwork path within the selected input")
 		cmd.Flags().BoolVar(&icons.Force, "force", false, "Replace icon assets that already exist")
 		cmd.Flags().StringVar(&presentation, "presentation", string(icon.Auto), "Icon presentation: auto (glassy on macOS, raw elsewhere), raw or glassy")
 		cmd.Flags().IntVar(&icons.Size, "size", icon.Size, "Glassy icon width and height in pixels")
@@ -293,7 +294,7 @@ func (c *cli) inspectCommand() *cobra.Command {
 	var offline, noInputLock bool
 	cmd := &cobra.Command{Use: "inspect PATH | Kind/name --input NAME", Short: "Describe a local artifact or resource input without executing it", Args: cobra.ExactArgs(1)}
 	cmd.Flags().StringVar(&input, "input", "", "Inspect this resource input without building the resource")
-	cmd.Flags().StringVar(&selection, "path", "", "Path within the resource input")
+	cmd.Flags().StringVar(&selection, "path", "", "Subject path within the artifact or resource input")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
 	cmd.Flags().BoolVar(&noInputLock, "no-input-lock", false, "Resolve current inputs without changing their lock entries")
 	cmd.MarkFlagsMutuallyExclusive("offline", "no-input-lock")
@@ -304,7 +305,7 @@ func (c *cli) inspectCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: "inspect", Resources: args, Input: input, InputPath: selection, Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
+			report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: "inspect", Resources: args, Input: engine.InputSelection{Name: input, Path: selection}, Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
 			if err != nil {
 				return err
 			}
@@ -314,10 +315,13 @@ func (c *cli) inspectCommand() *cobra.Command {
 			_, err = io.WriteString(c.out, renderInspection(c.display.outStyle, *report.Inspection))
 			return err
 		}
-		if selection != "" || offline || noInputLock {
+		if offline || noInputLock {
 			return errors.New("input options require --input NAME")
 		}
 		if strings.EqualFold(filepath.Ext(args[0]), ".intunewin") {
+			if selection != "" {
+				return errors.New("intunewin inspection does not accept --path")
+			}
 			done := plugin.Stage(cmd.Context(), "Inspecting artifact", plugin.Detail(filepath.Base(args[0])))
 			envelope, err := intunewin.Inspect(cmd.Context(), args[0])
 			done(err)
@@ -330,7 +334,7 @@ func (c *cli) inspectCommand() *cobra.Command {
 			_, err = io.WriteString(c.out, renderEnvelope(c.display.outStyle, filepath.Base(args[0]), envelope))
 			return err
 		}
-		inspection, err := engine.Inspect(cmd.Context(), args[0])
+		inspection, err := engine.Inspect(cmd.Context(), args[0], selection)
 		if err != nil {
 			return err
 		}

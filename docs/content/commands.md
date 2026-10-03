@@ -80,15 +80,16 @@ locked software. `--presentation raw` extracts the original artwork;
 `--presentation glassy` uses the macOS renderer at `--size` pixels (512 by default).
 The default, `auto`, chooses glassy on macOS and raw elsewhere.
 
-Use `--input NAME` to read one resource's locked input directly, with `--path` to
-select an application, installer or artwork file inside it. This uses `spec.icon`
-as the asset name, or the resource name when no icon is declared:
+Use `--input NAME` to read a locked input of the selected resource or its build
+dependencies, with `--path` to select an application, installer or artwork file.
+The selected resource must declare `spec.icon`, which names the asset:
 
 ```sh
-stemma icon BuildMacPkg/example --input vendor --path Installer.app
+stemma icon MacSoftware/example --input vendor --path Installer.app
 ```
 
-This mode acquires inputs without building the selected resource's output.
+Input names inherited from build dependencies must be unambiguous. Only an input
+that references a resource output requires preparation.
 
 Existing icons stay unchanged unless `--force` is set. Only resources needing an
 icon are prepared. The command leaves the lockfile unchanged and does not contact
@@ -165,8 +166,8 @@ stemma version
 `schema` requires an explicit output file and includes the locally loaded plugins.
 `--builtins` generates the default schema without loading a catalog; it uses the
 same registry and schema composition as project generation.
-`inspect` describes a local file or directory from its own metadata, without
-executing it or loading a project; `--json` prints its complete facts. Pass it
+`inspect` inventories a local file, directory or archive without executing it or
+loading a project. `--json` prints its facts; `--path` filters by subject path. Pass it
 the path `artifact` prints to inspect what Stemma prepares for a resource.
 
 To inspect a named input before its build expressions can resolve, use:
@@ -178,8 +179,9 @@ stemma inspect BuildMacPkg/example --input vendor --path Installer.app --json
 This reads the locked input without building the selected resource. Omit `--path`
 to inventory the source; add `--no-input-lock` to inspect current sources without
 writing the lockfile. MCP `inspect` takes `resource`, `input` and an optional `path`
-and uses current sources. Both return the paths and static facts used by
-`inputs.<name>.facts` expressions.
+and uses current sources. Both return the subject IDs and static facts used by
+`inputs.<name>.facts` expressions. Selecting a package inside an archive returns
+its inventory entry. Inspect the package itself to read its receipts and payload.
 `validate` needs no credentials. `validate --resolved` also evaluates every
 environment value, as runs do, and prints the merged configuration with connection
 settings resolved. It needs every referenced variable and may expose secrets: do

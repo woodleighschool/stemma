@@ -36,7 +36,8 @@ type inspection struct {
 
 func (c catalog) inspect(ctx context.Context, _ *mcp.CallToolRequest, in inspectInput) (*mcp.CallToolResult, inspection, error) {
 	opts := c.options("inspect")
-	opts.Resources, opts.Input, opts.InputPath = []string{in.Resource}, in.Input, in.Path
+	opts.Resources = []string{in.Resource}
+	opts.Input = engine.InputSelection{Name: in.Input, Path: in.Path}
 	opts.Lock.IgnoreInputs = true
 	report, err := engine.Run(ctx, opts)
 	result := inspection{Resource: in.Resource, Input: in.Input, Artifact: report.Inspection}
@@ -49,7 +50,7 @@ func (c catalog) inspect(ctx context.Context, _ *mcp.CallToolRequest, in inspect
 type iconInput struct {
 	Resources []string `json:"resources" jsonschema:"Resources as Kind/name, such as MacSoftware/firefox."`
 	Force     bool     `json:"force,omitempty" jsonschema:"Replace icons that already exist."`
-	Input     string   `json:"input,omitempty" jsonschema:"Read this locked input of one resource without building its output. The asset uses spec.icon or the resource name."`
+	Input     string   `json:"input,omitempty" jsonschema:"Read a locked input of this resource or its build dependencies. The asset uses the selected resource's spec.icon."`
 	Path      string   `json:"path,omitempty" jsonschema:"Application, installer or artwork path within the selected input."`
 }
 
@@ -189,7 +190,8 @@ func (c catalog) icon(ctx context.Context, _ *mcp.CallToolRequest, in iconInput)
 	}
 	opts := c.options("icon")
 	opts.Resources = in.Resources
-	opts.Icons = engine.IconOptions{Presentation: icon.Auto, Size: icon.Size, Force: in.Force, Input: in.Input, Path: in.Path}
+	opts.Input = engine.InputSelection{Name: in.Input, Path: in.Path}
+	opts.Icons = engine.IconOptions{Presentation: icon.Auto, Size: icon.Size, Force: in.Force}
 	report, err := engine.Run(ctx, opts)
 	result := icons{Resources: []iconOutcome{}, Error: unreported(err)}
 	for _, resource := range report.Resources {

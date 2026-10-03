@@ -332,16 +332,9 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 		if name == "" {
 			return nil, nil, errors.New("input lock has an empty input name")
 		}
-		ctx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("input", name))
-		done := plugin.Stage(ctx, "Acquiring input")
-		entry, hit, err := u.acquire(ctx, inputs[name], u.old.Inputs[resource][name])
-		detail := entry.Content.Filename
-		if hit {
-			detail = strings.TrimSpace(detail + " (cached)")
-		}
-		done(err, plugin.Detail(detail))
+		entry, hit, err := u.ReadInput(ctx, resource, name)
 		if err != nil {
-			return nil, nil, fmt.Errorf("%s input %s: %w", resource, name, err)
+			return nil, nil, err
 		}
 		entries[name], hits[name] = entry, hit
 	}
@@ -350,6 +343,35 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 	}
 	u.result.CacheHits[resource] = hits
 	return entries, hits, nil
+}
+
+// ReadInput leases one declared input without advancing the resource's lock update.
+func (u *Update) ReadInput(ctx context.Context, resource, name string) (source.Entry, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return source.Entry{}, false, err
+	}
+	input, ok := u.inputs[resource][name]
+	if !ok {
+		return source.Entry{}, false, fmt.Errorf("unknown input %s/%s", resource, name)
+	}
+	if u.opts.frozen() && len(u.old.Inputs[resource]) != len(u.inputs[resource]) {
+		return source.Entry{}, false, fmt.Errorf("%s inputs are missing or stale in the lockfile; run stemma update", resource)
+	}
+	if entry, ok := u.result.File.Inputs[resource][name]; ok {
+		return entry, u.result.CacheHits[resource][name], nil
+	}
+	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("input", name))
+	done := plugin.Stage(ctx, "Acquiring input")
+	entry, hit, err := u.acquire(ctx, input, u.old.Inputs[resource][name])
+	detail := entry.Content.Filename
+	if hit {
+		detail = strings.TrimSpace(detail + " (cached)")
+	}
+	done(err, plugin.Detail(detail))
+	if err != nil {
+		return source.Entry{}, false, fmt.Errorf("%s input %s: %w", resource, name, err)
+	}
+	return entry, hit, nil
 }
 
 // Changes compares one acquired resource's inputs with its reviewed entries,

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -15,7 +14,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/diskimage"
-	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -148,36 +146,12 @@ func extractBundle(ctx context.Context, installer plugin.Artifact, app plugin.Su
 	if err := os.MkdirAll(bundle, 0o700); err != nil {
 		return "", err
 	}
-	for _, name := range files {
-		node, err := source.At(ctx, path.Join(app.Path, name))
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		info, err := node.Stat()
-		if err != nil {
-			return "", err
-		}
-		if !info.Mode().IsRegular() || info.Size() > 32<<20 {
-			return "", fmt.Errorf("icon resource %s must be a regular file of at most 32 MiB", name)
-		}
-		file, err := node.FS.Open(node.Path)
-		if err != nil {
-			return "", err
-		}
-		data, err := io.ReadAll(io.LimitReader(fileio.Reader{Context: ctx, Reader: file}, info.Size()+1))
-		closeErr := file.Close()
-		if err != nil || closeErr != nil {
-			return "", errors.Join(err, closeErr)
-		}
-		if int64(len(data)) != info.Size() {
-			return "", errors.New("icon resource changed size")
-		}
-		if err := fileio.Write(filepath.Join(bundle, filepath.FromSlash(name)), data, 0o644); err != nil {
-			return "", err
-		}
+	node, err := source.At(ctx, app.Path)
+	if err != nil {
+		return "", err
+	}
+	if err := apple.StageIconFiles(ctx, node.FS, node.Path, bundle, files); err != nil {
+		return "", err
 	}
 	return bundle, nil
 }

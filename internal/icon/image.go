@@ -2,15 +2,19 @@ package icon
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"  // Register native raster artwork formats.
 	_ "image/jpeg" // Register native raster artwork formats.
 	"image/png"
+	"io"
+	"os"
 
 	_ "github.com/mrjoshuak/go-jpeg2000" // Register the JPEG 2000 codec used by ICNS.
-	_ "golang.org/x/image/bmp"           // Register native raster artwork formats.
+	"github.com/woodleighschool/stemma/internal/fileio"
+	_ "golang.org/x/image/bmp" // Register native raster artwork formats.
 	"golang.org/x/image/draw"
 	_ "golang.org/x/image/tiff" // Register native raster artwork formats.
 	_ "golang.org/x/image/webp" // Register native raster artwork formats.
@@ -64,8 +68,8 @@ func checkDimensions(width, height int) error {
 	return nil
 }
 
-// largest retains a usable frame when another cannot be read, but reports
-// decoding failures when none can. Asset bounds apply after normalization.
+// largest prefers a frame that fits without resizing, preserving valid PNG
+// bytes. Otherwise it normalizes the largest readable frame.
 func largest(candidates []candidate) ([]byte, error) {
 	var best image.Image
 	var valid []byte
@@ -81,8 +85,19 @@ func largest(candidates []candidate) ([]byte, error) {
 			continue
 		}
 		pixels := img.Bounds().Dx() * img.Bounds().Dy()
-		if pixels > validArea && Validate(candidate.data) == nil {
-			valid, validArea = candidate.data, pixels
+		frame := candidate.data
+		bounds := img.Bounds()
+		if Validate(frame) != nil && bounds.Dx() == bounds.Dy() &&
+			bounds.Dx() >= minEdge && bounds.Dx() <= maxEdge &&
+			!bytes.HasPrefix(frame, []byte("\x89PNG\r\n\x1a\n")) {
+			var encoded bytes.Buffer
+			if err := png.Encode(&encoded, img); err != nil {
+				return nil, err
+			}
+			frame = encoded.Bytes()
+		}
+		if pixels > validArea && Validate(frame) == nil {
+			valid, validArea = frame, pixels
 		}
 		if pixels > area {
 			best, area = img, pixels
@@ -122,4 +137,39 @@ func largest(candidates []candidate) ([]byte, error) {
 		}
 		return output.Bytes(), nil
 	}
+}
+
+// FromFile reads native artwork or the first icon group in an executable.
+func FromFile(ctx context.Context, name string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	file, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = file.Close() }()
+	var header [2]byte
+	if _, err := file.ReadAt(header[:], 0); err != nil {
+		return nil, err
+	}
+	if string(header[:]) == "MZ" {
+		return FromPE(file)
+	}
+	const limit = 32 << 20
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > limit {
+		return nil, errors.New("artwork must be a regular file of at most 32 MiB")
+	}
+	data, err := io.ReadAll(io.LimitReader(fileio.Reader{Context: ctx, Reader: file}, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > limit {
+		return nil, errors.New("artwork exceeds 32 MiB")
+	}
+	return FromImage(data)
 }
