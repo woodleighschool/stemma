@@ -87,8 +87,8 @@ github.com/danieljoos/wincred v1.2.3 h1:v7dZC2x32Ut3nEfRH+vhoZGvN72+dQ/snVXo/vMF
 github.com/danieljoos/wincred v1.2.3/go.mod h1:6qqX0WNrS4RzPZ1tnroDzq9kY3fu1KwE7MRLQK4X0bs=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/deploymenttheory/go-apfs-v2 v0.17.0 h1:MjYtnrBQhq7rW2JNv6obY76JK4UXLbGEyZMafK66AZE=
-github.com/deploymenttheory/go-apfs-v2 v0.17.0/go.mod h1:txgLJ7F0Te1wZiyg0UUNQIYaiSDmZns+Z+2f0v7zVGw=
+github.com/deploymenttheory/go-apfs-v2 v0.17.1 h1:Ssfv3Se8jzikQaMb2Kc+u68ZyH+rGIjcFAcrECZ9eZ8=
+github.com/deploymenttheory/go-apfs-v2 v0.17.1/go.mod h1:txgLJ7F0Te1wZiyg0UUNQIYaiSDmZns+Z+2f0v7zVGw=
 github.com/deploymenttheory/go-bindings-macosplatform v0.20.1 h1:82pe8s9LENzyL2R2C1Ner6VA7+VIgYIC6nGs3j0CGbw=
 github.com/deploymenttheory/go-bindings-macosplatform v0.20.1/go.mod h1:9nrs7NE5Sr4d5KF+zqWXMR2On1OStd7VpJdiIewBTf0=
 github.com/deploymenttheory/go-macos-pkg v0.7.3 h1:v2+JbbCDI3c7/fZNVywZs6OWMkw4HMaPFOiwl1Vg9ls=
