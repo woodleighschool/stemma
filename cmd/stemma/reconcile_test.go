@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -64,14 +63,8 @@ func TestReconcileStreamsOutcomesAndCountsProposals(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := "Reviewed: main@0123456789ab applied (2 resources, 3 destination changes)\n"
-		if interactive {
-			want += "MacSoftware/chrome: 1 input changed\nMacSoftware/firefox: inputs unchanged\n"
-		}
 		want += "MacSoftware/chrome: created https://github.example/pull/1\n  MacSoftware/chrome 129: 3 planned changes across 1 destination\n" +
 			"MacSoftware/broken: failed\n  error: download returned HTTP 404\n"
-		if interactive {
-			want += "MacSoftware/firefox: unchanged https://github.example/pull/2\n"
-		}
 		want += "Proposals: 1 created, 1 failed, 1 unchanged.\n"
 		if out.String() != want {
 			t.Fatalf("interactive=%v:\n%s\nwant:\n%s", interactive, out.String(), want)
@@ -98,7 +91,8 @@ func TestReconcileShowsEachFailureOnce(t *testing.T) {
 				Apply:  &reconcile.Apply{Commit: head, Error: "plugin downloads: image is not cached", Report: &engine.Report{Error: "plugin downloads: image is not cached"}},
 				Update: &reconcile.Update{Error: "lockfile contains stale plugins; run stemma plugins update"},
 			},
-			err: reconcile.ErrFailed,
+			err:    reconcile.ErrFailed,
+			stderr: "Error: command failed; see report for details\n",
 			stdout: "Reviewed: main@0123456789ab failed\n  error: plugin downloads: image is not cached\n" +
 				"Proposals: failed\n  error: lockfile contains stale plugins; run stemma plugins update\n",
 		},
@@ -108,7 +102,8 @@ func TestReconcileShowsEachFailureOnce(t *testing.T) {
 				Apply:  &reconcile.Apply{Commit: head, Summary: "1 resource failed: chrome", Report: &engine.Report{Error: "MacSoftware/chrome: upload failed"}},
 				Update: &reconcile.Update{Proposals: []reconcile.Proposal{{Resource: "MacSoftware/firefox", Action: "failed", Error: "push rejected"}}},
 			},
-			err: reconcile.ErrFailed,
+			err:    reconcile.ErrFailed,
+			stderr: "Error: command failed; see report for details\n",
 			stdout: "Reviewed: main@0123456789ab failed (1 resource failed: chrome)\n" +
 				"MacSoftware/firefox: failed\n  error: push rejected\nProposals: 1 failed.\n",
 		},
@@ -117,7 +112,7 @@ func TestReconcileShowsEachFailureOnce(t *testing.T) {
 				Apply:  &reconcile.Apply{Commit: head, Summary: "2 resources, 3 destination changes", Report: &engine.Report{}},
 				Update: &reconcile.Update{},
 			},
-			err:    context.Canceled,
+			err:    errInterrupted,
 			stdout: "Reviewed: main@0123456789ab applied (2 resources, 3 destination changes)\nProposals interrupted: none.\n",
 			stderr: "Interrupted.\n",
 		},

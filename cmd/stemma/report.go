@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,20 +54,6 @@ func selected(method string, resource engine.ResourceReport) bool {
 	return include
 }
 
-func selectReport(report engine.Report, method string, all bool) engine.Report {
-	if all {
-		return report
-	}
-	resources := make([]engine.ResourceReport, 0, len(report.Resources))
-	for _, resource := range report.Resources {
-		if selected(method, resource) {
-			resources = append(resources, resource)
-		}
-	}
-	report.Resources = resources
-	return report
-}
-
 // resourceStatus names a resource's outcome for its block heading.
 func resourceStatus(method string, resource engine.ResourceReport) string {
 	switch {
@@ -94,9 +79,9 @@ func resourceStatus(method string, resource engine.ResourceReport) string {
 		case changed == 0:
 			return "unchanged"
 		case method == "apply":
-			return quantity(changed, "change") + " applied"
+			return "applied"
 		default:
-			return quantity(changed, "planned change")
+			return "planned"
 		}
 	}
 	if resource.Cached {
@@ -114,9 +99,9 @@ func destinationStatus(destination engine.DestinationReport) string {
 	case len(destination.Changes) == 0:
 		return "unchanged"
 	case destination.Applied:
-		return quantity(len(destination.Changes), "change") + " applied"
+		return "applied"
 	default:
-		return quantity(len(destination.Changes), "planned change")
+		return "planned"
 	}
 }
 
@@ -145,13 +130,19 @@ func renderResource(style textStyle, method string, resource engine.ResourceRepo
 		}
 		fmt.Fprintf(&text, "  blocked by %s\n", strings.Join(names, ", "))
 	case resource.Error != "" && len(resource.Destinations) == 0:
-		writeError(&text, style, "  ", resource.Error)
+		writeError(&text, style, "  ", resourceError(resource))
 	}
 	for _, destination := range resource.Destinations {
 		fmt.Fprintf(&text, "  %s: %s\n", changes.Text(destination.Name), style.outcome(destinationStatus(destination)))
-		for _, change := range destination.Changes {
-			for index, line := range changes.Lines(change) {
-				fmt.Fprintf(&text, "    %s\n", changeLine(style, change.Action, index, line))
+		if method == "apply" && destination.Applied {
+			for _, line := range appliedActions(destination.Changes) {
+				fmt.Fprintf(&text, "    %s\n", line)
+			}
+		} else {
+			for _, change := range destination.Changes {
+				for index, line := range changes.Lines(change) {
+					fmt.Fprintf(&text, "    %s\n", changeLine(style, change.Action, index, line))
+				}
 			}
 		}
 		if destination.Error != "" {
@@ -162,6 +153,10 @@ func renderResource(style textStyle, method string, resource engine.ResourceRepo
 		switch method {
 		case "signature":
 			text.WriteString(signatureDetails(resource))
+		case "icon":
+			if resource.IconPath != "" {
+				fmt.Fprintf(&text, "  %s\n", changes.Text(resource.IconPath))
+			}
 		case "prepare":
 			for _, name := range slices.Sorted(maps.Keys(resource.Artifacts)) {
 				artifact := resource.Artifacts[name]
@@ -175,6 +170,50 @@ func renderResource(style textStyle, method string, resource engine.ResourceRepo
 	}
 	text.WriteByte('\n')
 	return text.String()
+}
+
+func resourceError(resource engine.ResourceReport) string {
+	message := resource.Error
+	for _, prefix := range []string{resource.Key, resourceName(resource)} {
+		if prefix != "" {
+			message = strings.TrimPrefix(strings.TrimPrefix(message, prefix+": "), prefix+" ")
+		}
+	}
+	return message
+}
+
+// Apply records confirmed actions, without presenting its earlier plan as a
+// second diff. Failed destinations keep their proposed changes for context.
+func appliedActions(items []plugin.Change) []string {
+	var lines []string
+	metadata := 0
+	catalogs := 0
+	for _, change := range items {
+		field := changes.Text(change.Field)
+		switch change.Action {
+		case "create":
+			lines = append(lines, "created "+field)
+		case "upload":
+			lines = append(lines, "uploaded "+field)
+		case "delete":
+			lines = append(lines, "deleted "+field)
+		case "reconcile":
+			if strings.HasPrefix(change.Field, "catalogs/") {
+				catalogs++
+			} else {
+				lines = append(lines, "reconciled "+field)
+			}
+		default:
+			metadata++
+		}
+	}
+	if metadata > 0 {
+		lines = append(lines, "updated "+quantity(metadata, "metadata field"))
+	}
+	if catalogs > 0 {
+		lines = append(lines, "updated "+quantity(catalogs, "catalog"))
+	}
+	return lines
 }
 
 // changeLine colours a change's first line by its action and collection
@@ -289,7 +328,7 @@ func renderSummary(style textStyle, method string, report engine.Report, runErr 
 	var text strings.Builder
 	label := map[string]string{"update": "Update", "prepare": "Preparation", "signature": "Signatures", "icon": "Icons", "plan": "Plan", "apply": "Apply"}[method]
 	switch {
-	case errors.Is(runErr, context.Canceled):
+	case errors.Is(runErr, errInterrupted):
 		label += " interrupted"
 	case runErr != nil || report.Error != "":
 		label += " incomplete"
@@ -301,13 +340,18 @@ func renderSummary(style textStyle, method string, report engine.Report, runErr 
 	case "prepare":
 		fmt.Fprintf(&text, "%d prepared, %d cached", s.Prepared, s.Cached)
 	case "signature":
-		fmt.Fprintf(&text, "%d derived", s.Prepared+s.Cached)
+		fmt.Fprintf(&text, "%d derived", s.Derived)
 	case "icon":
-		fmt.Fprintf(&text, "%d created, %d unchanged", s.Changed, s.Unchanged)
-	case "plan":
-		fmt.Fprintf(&text, "%s with changes across %s, %d unchanged", quantity(s.Changed, "resource"), quantity(s.Destinations, "destination"), s.Unchanged)
-	case "apply":
-		fmt.Fprintf(&text, "%s applied, %s unchanged", quantity(s.Applied, "destination"), quantity(s.Unchanged, "resource"))
+		fmt.Fprintf(&text, "%d created, %d unchanged, %d skipped", s.Created, s.Unchanged, s.Skipped)
+	case "plan", "apply":
+		switch {
+		case s.Changed == 0 && s.Failed == 0 && s.Blocked == 0 && runErr == nil && report.Error == "":
+			fmt.Fprintf(&text, "No changes; %s unchanged", quantity(s.Unchanged, "resource"))
+		case method == "plan":
+			fmt.Fprintf(&text, "%s with changes, %s, %d unchanged", quantity(s.Changed, "resource"), quantity(s.Destinations, "destination"), s.Unchanged)
+		default:
+			fmt.Fprintf(&text, "%s applied; %s, %s; %d unchanged", quantity(s.Applied, "publication"), quantity(s.Resources, "resource"), quantity(s.Destinations, "destination"), s.Unchanged)
+		}
 	}
 	if s.Failed > 0 {
 		text.WriteString(", " + style.paint(fmt.Sprintf("%d failed", s.Failed), color.FgHiRed))
@@ -396,7 +440,7 @@ func printReconcileEnd(out io.Writer, report reconcile.Report, runErr error) err
 	}
 	style := newTextStyle(out)
 	label := "Proposals:"
-	if errors.Is(runErr, context.Canceled) {
+	if errors.Is(runErr, errInterrupted) {
 		label = "Proposals interrupted:"
 	}
 	var text strings.Builder
@@ -429,8 +473,8 @@ func printPlugins(out io.Writer, reports []engine.PluginReport) error {
 	style := newTextStyle(out)
 	var text strings.Builder
 	for _, report := range reports {
-		fields := [][2]string{{"Image", shortImage(report.Image)}, {"Path", changes.Text(report.Path)}}
-		if report.Locked {
+		fields := [][2]string{{"Image", shortImage(report.Image)}, {"Path", changes.Text(report.Path)}, {"Status", report.Status}}
+		if report.Digest != "" && !strings.Contains(report.Image, "@"+report.Digest) {
 			fields = append(fields, [2]string{"Digest", shortDigest(report.Digest)})
 		}
 		version := report.Version

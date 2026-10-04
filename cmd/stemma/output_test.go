@@ -39,7 +39,7 @@ func TestFiniteOutputContainsReportsAndWarningsOnly(t *testing.T) {
 }
 
 func TestFiniteCommandsRejectLoggingFlags(t *testing.T) {
-	for _, flag := range []string{"--log-level", "--log-format", "--quiet", "--verbose", "--debug", "--no-progress"} {
+	for _, flag := range []string{"--log-level", "--log-format", "--quiet", "--verbose", "--debug"} {
 		var out, logs bytes.Buffer
 		cmd, finish := command(&out, &logs)
 		cmd.SetArgs([]string{"plan", flag})
@@ -84,7 +84,7 @@ spec:
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		t.Fatalf("extra stdout: %v", err)
 	}
-	if logs.Len() != 0 {
+	if logs.String() != "Error: command failed; see report for details\n" {
 		t.Fatalf("stderr=%q", logs.String())
 	}
 }
@@ -130,7 +130,7 @@ func TestPluginUpdateNamesWhatHappenedToEachEntry(t *testing.T) {
 	}
 }
 
-func TestPluginListDescribesCodeAndOfferings(t *testing.T) {
+func TestPluginInspectionDescribesCodeAndOfferings(t *testing.T) {
 	reports := []engine.PluginReport{
 		{
 			Name: "downloads", Image: "registry.example/downloads:0.3.0@sha256:" + strings.Repeat("e", 64), Digest: "sha256:" + strings.Repeat("e", 64),
@@ -182,7 +182,7 @@ func TestHumanReportsStreamSelectedResourcesAndTotalTheRun(t *testing.T) {
 			}
 		}
 		streamed := human.String()
-		for _, want := range []string{"MacSoftware/changed: 1 planned change\n  repo: 1 planned change\n    package.version: 1 -> 2\n", "MacSoftware/broken: failed\n  error: invalid signature\n"} {
+		for _, want := range []string{"MacSoftware/changed: planned\n  repo: planned\n    package.version: 1 -> 2\n", "MacSoftware/broken: failed\n  error: invalid signature\n"} {
 			if !strings.Contains(streamed, want) {
 				t.Fatalf("all=%v: block %q did not stream: %s", all, want, streamed)
 			}
@@ -193,7 +193,7 @@ func TestHumanReportsStreamSelectedResourcesAndTotalTheRun(t *testing.T) {
 		if err := o.report(&human, "plan", report, nil); err != nil {
 			t.Fatal(err)
 		}
-		if got := strings.TrimPrefix(human.String(), streamed); got != "Plan: 1 resource with changes across 1 destination, 1 unchanged, 1 failed.\n" {
+		if got := strings.TrimPrefix(human.String(), streamed); got != "Plan: 1 resource with changes, 1 destination, 1 unchanged, 1 failed.\n" {
 			t.Fatalf("all=%v: summary %q", all, got)
 		}
 		o = newCommandOutput(&machine, io.Discard)
@@ -210,10 +210,7 @@ func TestHumanReportsStreamSelectedResourcesAndTotalTheRun(t *testing.T) {
 		if err := json.Unmarshal(machine.Bytes(), &decoded); err != nil {
 			t.Fatal(err)
 		}
-		want := 2
-		if all {
-			want = 3
-		}
+		want := 3
 		if len(decoded.Resources) != want || decoded.Summary.Resources != 3 || decoded.Summary.Unchanged != 1 || decoded.Summary.Failed != 1 {
 			t.Fatalf("all=%v: %+v", all, decoded)
 		}
@@ -227,7 +224,7 @@ func TestApplyReportDoesNotConfirmFailedDestinationChanges(t *testing.T) {
 	}}}}
 	report.Summarize("apply")
 	text := renderResource(textStyle{}, "apply", report.Resources[0]) + renderSummary(textStyle{}, "apply", report, errors.New("upload failed"))
-	for _, want := range []string{"MacSoftware/example: failed\n", "  first: 1 change applied\n    description: old -> new\n", "  second: failed (changes not confirmed)\n", "    error: upload failed\n", "Apply incomplete: 1 destination applied", "1 failed"} {
+	for _, want := range []string{"MacSoftware/example: failed\n", "  first: applied\n    updated 1 metadata field\n", "  second: failed (changes not confirmed)\n", "    error: upload failed\n", "Apply incomplete: 1 publication applied; 1 resource, 2 destinations", "1 failed"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q: %s", want, text)
 		}
@@ -246,11 +243,11 @@ func TestInterruptedRunKeepsStreamedResultsAndSaysSo(t *testing.T) {
 	}
 	report := engine.Report{Error: context.Canceled.Error(), Resources: []engine.ResourceReport{applied}}
 	report.Summarize("apply")
-	if err := o.report(&out, "apply", report, context.Canceled); err != nil {
+	if err := o.report(&out, "apply", report, errInterrupted); err != nil {
 		t.Fatal(err)
 	}
-	o.finish(context.Canceled)
-	if !strings.HasPrefix(out.String(), "MacSoftware/done: 1 change applied\n") || !strings.HasSuffix(out.String(), "Apply interrupted: 1 destination applied, 0 resources unchanged.\n") || logs.String() != "Interrupted.\n" {
+	o.finish(errInterrupted)
+	if !strings.HasPrefix(out.String(), "MacSoftware/done: applied\n") || !strings.HasSuffix(out.String(), "Apply interrupted: 1 publication applied; 1 resource, 1 destination; 0 unchanged.\n") || logs.String() != "Interrupted.\n" {
 		t.Fatalf("stdout=%q stderr=%q", out.String(), logs.String())
 	}
 }
@@ -262,8 +259,8 @@ func TestFinalErrorShowsOnlyWhatNoReportShowed(t *testing.T) {
 		want string
 	}{
 		{errors.Join(resource, errors.New("lockfile: schema violations:\n\tspec.source: required")), "Error: lockfile: schema violations:\n    spec.source: required\n"},
-		{resource, ""},
-		{reconcile.ErrFailed, ""},
+		{resource, "Error: command failed; see report for details\n"},
+		{reconcile.ErrFailed, "Error: command failed; see report for details\n"},
 		// A report that could not be written showed nothing.
 		{errors.Join(reconcile.ErrFailed, errors.New("write stdout: broken pipe")), "Error: reconcile: a phase failed\n  write stdout: broken pipe\n"},
 	} {
@@ -367,5 +364,14 @@ func TestSignatureDetailsKeepInputsApartFromPublishedSignatures(t *testing.T) {
 				t.Fatalf("report lost %q: %s", want, got)
 			}
 		}
+	}
+}
+
+func TestCancellationWithoutInterruptIsFailure(t *testing.T) {
+	var logs bytes.Buffer
+	output := newCommandOutput(io.Discard, &logs)
+	output.finish(context.Canceled)
+	if logs.String() != "Error: context canceled\n" {
+		t.Fatal(logs.String())
 	}
 }

@@ -50,7 +50,7 @@ spec:
 	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "prepare"}
 	lockPath := lockfile.Filename(root)
 
-	reports, err := ListPlugins(t.Context(), opts)
+	reports, err := InspectPlugins(t.Context(), opts)
 	if !errors.Is(err, ErrPluginsFailed) || len(reports) != 1 || !strings.Contains(reports[0].Error, "not locked") {
 		t.Fatalf("unlocked plugin listed as %+v: %v", reports, err)
 	}
@@ -66,7 +66,7 @@ spec:
 		t.Fatalf("plugins update = %+v: %v", update, err)
 	}
 	locked := update.Plugins[0].Digest
-	reports, err = ListPlugins(t.Context(), opts)
+	reports, err = InspectPlugins(t.Context(), opts)
 	if err != nil || reports[0].Version != "1.0.0" || reports[0].Digest != locked || len(reports[0].Operations) != 3 {
 		t.Fatalf("locked plugin listed as %+v: %v", reports, err)
 	}
@@ -116,7 +116,7 @@ spec:
 		t.Fatal(err)
 	}
 	for _, run := range []func() error{
-		func() error { _, err := ListPlugins(t.Context(), opts); return err },
+		func() error { _, err := InspectPlugins(t.Context(), opts); return err },
 		func() error { _, err := UpdatePlugins(t.Context(), opts, nil); return err },
 	} {
 		if err := run(); !errors.Is(err, ErrPluginsFailed) {
@@ -146,5 +146,31 @@ func TestPluginKindsCannotCollideAcrossInterfaceVersions(t *testing.T) {
 				t.Fatalf("colliding kind loaded: %v", ops.failed)
 			}
 		})
+	}
+}
+
+func TestPluginInventoryDoesNotAcquireOrExecute(t *testing.T) {
+	root := t.TempDir()
+	testproject.Write(t, filepath.Join(root, "stemma.yaml"), `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: inventory}
+spec:
+  imports: ["*.software.yaml"]
+  plugins:
+    missing: {path: does-not-exist}
+    remote: {image: example.invalid/plugin:latest}
+`)
+	cache := filepath.Join(root, "cache")
+	reports, err := ListPlugins(t.Context(), filepath.Join(root, "stemma.yaml"))
+	if err != nil || len(reports) != 2 {
+		t.Fatalf("inventory: %+v %v", reports, err)
+	}
+	for _, report := range reports {
+		if report.Status != "unlocked" || report.Error != "" || len(report.Operations) != 0 {
+			t.Fatalf("invented inspection: %+v", report)
+		}
+	}
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Fatal("inventory opened cache", err)
 	}
 }

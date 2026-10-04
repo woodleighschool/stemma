@@ -64,10 +64,14 @@ creates these indexes; see [creating plugins](writing-plugins.md#distribute-a-bu
 
 ```sh
 stemma plugins list
+stemma plugins inspect
 ```
 
-`plugins list` loads each plugin from its lock entry, as every command does, and
-describes it: the code it runs, its version and VCS revision, the runner platforms
+`plugins list` reads declarations and recorded lock entries without executing
+plugins. It identifies unlocked or changed declarations; a recorded pin does not
+verify that local files still match.
+
+`plugins inspect` loads the pinned code and describes it: the code it runs, its version and VCS revision, the runner platforms
 an image has bundles for, and the resolvers, resource kinds and destinations it
 offers. A plugin that does not load, or offers operations this Stemma cannot use,
 is reported with the reason, and the command exits non-zero. `--json` prints the

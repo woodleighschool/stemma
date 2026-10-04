@@ -37,13 +37,18 @@ var version = "dev"
 var commit = "unknown"
 var date = "unknown"
 
+var errInterrupted = errors.New("interrupted")
+
 func main() {
 	ctx, cancel := interruptContext()
 	cmd, finish := command(os.Stdout, os.Stderr)
 	err := cmd.ExecuteContext(ctx)
+	if errors.Is(context.Cause(ctx), errInterrupted) {
+		err = errInterrupted
+	}
 	finish(err)
 	cancel()
-	if errors.Is(err, context.Canceled) {
+	if errors.Is(err, errInterrupted) {
 		os.Exit(130)
 	}
 	if err != nil {
@@ -52,7 +57,7 @@ func main() {
 }
 
 func interruptContext() (context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancelCause(context.Background())
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt)
 	go func() {
@@ -61,12 +66,12 @@ func interruptContext() (context.Context, context.CancelFunc) {
 			// Restore the OS action before publishing cancellation: a second
 			// interrupt can exit even if cleanup or a native call is blocked.
 			signal.Stop(signals)
-			cancel()
+			cancel(errInterrupted)
 		case <-ctx.Done():
 			signal.Stop(signals)
 		}
 	}()
-	return ctx, cancel
+	return ctx, func() { cancel(context.Canceled) }
 }
 
 // cli is what every command shares: the project and cache flags, and the
@@ -95,6 +100,8 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		c.cachePolicy = policy
 		return display.start(cmd)
 	}
+	root.SetVersionTemplate(fmt.Sprintf("stemma %s (commit %s, built %s)\n", version, commit, date))
+	root.PersistentFlags().Bool("no-progress", false, "Disable terminal progress")
 	root.SetOut(c.out)
 	root.SetErr(errOut)
 	root.PersistentFlags().StringVar(&c.rootDir, "root", "", "Stemma project directory (discovered from the current directory)")
@@ -150,7 +157,11 @@ func (c *cli) schemaCommand() *cobra.Command {
 			_, err = c.out.Write(data)
 			return err
 		}
-		return fileio.Write(output, data, 0o644)
+		if err := fileio.Write(output, data, 0o644); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(c.out, "Wrote %s.\n", output)
+		return err
 	}}
 	cmd.Flags().StringVar(&output, "output-file", "", "Required output path; - writes to stdout")
 	_ = cmd.MarkFlagRequired("output-file")
@@ -229,7 +240,7 @@ func (c *cli) runCommand(method string) *cobra.Command {
 		}
 		return runErr
 	}
-	cmd.Flags().Bool("all", false, "Include unchanged resources in the report")
+	cmd.Flags().Bool("all", false, "Include unchanged resources in the human report")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
 	if method == "prepare" {
 		cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the whole lockfile, then prepare only resources whose preparation changed since the Git revision `REV`")
@@ -273,7 +284,7 @@ func (c *cli) reconcileCommand() *cobra.Command {
 	var stateDir string
 	cmd := &cobra.Command{Use: "reconcile", Short: "Apply the reviewed branch of this checkout and propose lock updates as pull requests", Args: cobra.NoArgs}
 	jsonFlag(cmd)
-	cmd.Flags().Bool("all", false, "Include unchanged resources and proposals in the report")
+	cmd.Flags().Bool("all", false, "Include unchanged resources and proposals in the human report")
 	cmd.Flags().StringVar(&stateDir, "state-dir", os.Getenv("STEMMA_STATE_DIR"), "Directory recording the last reviewed commit applied in full")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		path, err := c.project()
@@ -350,16 +361,16 @@ func (c *cli) inspectCommand() *cobra.Command {
 func (c *cli) pluginsCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "plugins", Short: "Inspect, update and publish executable plugins"}
 	var offline bool
-	list := &cobra.Command{Use: "list", Short: "Load each plugin from its lock entry and describe what it offers", Args: cobra.NoArgs}
+	list := &cobra.Command{Use: "list", Short: "List declared plugins and their recorded pins without executing them", Args: cobra.NoArgs}
 	listJSON := jsonFlag(list)
-	list.Flags().BoolVar(&offline, "offline", false, "Require verified cached plugin bundles")
+
 	list.RunE = func(cmd *cobra.Command, _ []string) error {
 		path, err := c.project()
 		if err != nil {
 			return err
 		}
-		reports, listErr := engine.ListPlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}})
-		if listErr != nil && !errors.Is(listErr, engine.ErrPluginsFailed) {
+		reports, listErr := engine.ListPlugins(cmd.Context(), path)
+		if listErr != nil {
 			return listErr
 		}
 		if *listJSON {
@@ -368,9 +379,31 @@ func (c *cli) pluginsCommand() *cobra.Command {
 			err = printPlugins(c.out, reports)
 		}
 		if err != nil {
-			return errors.Join(listErr, fmt.Errorf("write report: %w", err))
+			return fmt.Errorf("write report: %w", err)
 		}
-		return listErr
+		return nil
+	}
+	inspect := &cobra.Command{Use: "inspect", Short: "Load locked plugins and inspect their live capabilities", Args: cobra.NoArgs}
+	inspectJSON := jsonFlag(inspect)
+	inspect.Flags().BoolVar(&offline, "offline", false, "Require verified cached plugin bundles")
+	inspect.RunE = func(cmd *cobra.Command, _ []string) error {
+		path, err := c.project()
+		if err != nil {
+			return err
+		}
+		reports, inspectErr := engine.InspectPlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}})
+		if cmd.Context().Err() != nil {
+			return cmd.Context().Err()
+		}
+		if inspectErr != nil && !errors.Is(inspectErr, engine.ErrPluginsFailed) {
+			return inspectErr
+		}
+		if *inspectJSON {
+			err = writeJSON(c.out, reports)
+		} else {
+			err = printPlugins(c.out, reports)
+		}
+		return errors.Join(inspectErr, err)
 	}
 	update := &cobra.Command{Use: "update [NAME...]", Short: "Lock plugins to the code their declarations select now", Args: cobra.ArbitraryArgs}
 	updateJSON := jsonFlag(update)
@@ -393,7 +426,7 @@ func (c *cli) pluginsCommand() *cobra.Command {
 		}
 		return updateErr
 	}
-	cmd.AddCommand(list, update, publishCommand(c.out))
+	cmd.AddCommand(list, inspect, update, publishCommand(c.out))
 	return cmd
 }
 
@@ -469,7 +502,11 @@ func packageCommand(out io.Writer) *cobra.Command {
 			}
 			options.Timestamp = time.Unix(int64(seconds), 0).UTC()
 		}
-		return pkgbuild.Build(cmd.Context(), args[0], args[1], options)
+		if err := pkgbuild.Build(cmd.Context(), args[0], args[1], options); err != nil {
+			return err
+		}
+		_, err := fmt.Fprintf(out, "Packaged %s.\n", args[1])
+		return err
 	}}
 	pkg.Flags().StringVar(&options.Identifier, "identifier", "", "Package receipt identifier")
 	pkg.Flags().StringVar(&options.Version, "version", "", "Package receipt version")

@@ -32,7 +32,7 @@ func (c *cli) maintainCommands(root *cobra.Command) {
 			continue
 		}
 		switch cmd.CommandPath() {
-		case "stemma update", "stemma prepare", "stemma signature", "stemma icon", "stemma plan", "stemma apply", "stemma artifact", "stemma reconcile", "stemma validate", "stemma schema", "stemma plugins list", "stemma plugins update":
+		case "stemma update", "stemma prepare", "stemma signature", "stemma icon", "stemma plan", "stemma apply", "stemma artifact", "stemma reconcile", "stemma validate", "stemma schema", "stemma plugins inspect", "stemma plugins update":
 		default:
 			continue
 		}

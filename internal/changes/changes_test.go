@@ -126,3 +126,16 @@ func TestOperationWithoutValueDiffRemainsVisible(t *testing.T) {
 func compare(field string, before, after json.RawMessage) []string {
 	return difference(Text(field), decode(before), decode(after))
 }
+
+func TestCreationExpandsCollectionObjectsWithoutExposingScripts(t *testing.T) {
+	change := plugin.Change{Action: "create", Field: "pkginfo", After: json.RawMessage(`{"installs":[{"path":"/Applications/Example.app","version":"2","script":"first\nprivate second"}]}`)}
+	text := strings.Join(Lines(change), "\n")
+	for _, want := range []string{"create pkginfo", "* path: /Applications/Example.app", "script: 2 lines", "version: 2"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q: %s", want, text)
+		}
+	}
+	if strings.Contains(text, "private") || strings.Contains(text, "{\"") {
+		t.Fatal(text)
+	}
+}

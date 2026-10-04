@@ -45,6 +45,9 @@ func Lines(change plugin.Change) []string {
 		}
 		return []string{line}
 	case "upload":
+		if _, absent := before.(missing); absent {
+			return []string{"upload " + field + ": " + summary(after)}
+		}
 		return []string{"upload " + field + ": " + transition(before, after)}
 	default:
 		lines := difference(field, before, after)
@@ -191,7 +194,22 @@ func initial(field string, v any) []string {
 		// "+ " and "- ", so members of a whole new or removed value use
 		// another bullet.
 		for _, item := range v {
-			rows = append(rows, "* "+value(item))
+			fields, object := item.(map[string]any)
+			if !object || len(fields) == 0 {
+				rows = append(rows, "* "+summary(item))
+				continue
+			}
+			var member []string
+			for _, key := range slices.Sorted(maps.Keys(fields)) {
+				member = append(member, initial(Text(key), fields[key])...)
+			}
+			for i, line := range member {
+				prefix := "  "
+				if i == 0 {
+					prefix = "* "
+				}
+				rows = append(rows, prefix+line)
+			}
 		}
 	default:
 		return []string{field + ": " + summary(v)}

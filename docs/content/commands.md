@@ -113,7 +113,7 @@ maintenance protects it for 24 hours after use. `cache prune --all` removes it
 immediately after active runs finish. Use `--output-file PATH` to export to a new
 file or directory outside the cache. Its parent directory must exist; an existing
 output is never overwritten. Exports belong to the caller and are never pruned. Progress and errors stay on
-stderr, and the live tree needs only stderr to be a terminal, so the command
+stderr, and the live display needs only stderr to be a terminal, so the command
 composes with other tools:
 
 ```sh
@@ -191,6 +191,7 @@ not share it without reviewing it.
 
 ```sh
 stemma plugins list
+stemma plugins inspect
 stemma plugins update [NAME...]
 stemma plugins publish IMAGE --goreleaser dist
 stemma cache path
@@ -200,8 +201,8 @@ stemma cache prune
 stemma cache prune --all
 ```
 
-`plugins list` loads each plugin from its lock entry and describes what it runs
-and offers. `plugins update` locks the named plugins, or all of them, to what their
+`plugins list` shows declarations and recorded pins without acquiring or running
+plugins. `plugins inspect` loads the pinned code and reports its capabilities. `plugins update` locks the named plugins, or all of them, to what their
 declarations select now: it resolves a tag again and snapshots local files.
 `update` locks the plugins whose entries are missing or stale; no other command
 changes plugin entries. See [using plugins](plugins.md).
@@ -224,15 +225,14 @@ accounting details.
 ## Reports and diagnostics
 
 Outcome commands write each resource's report to stdout as it finishes, then the
-run's totals. Plan and apply show changed, failed and blocked resources with
-before and after values; update shows the input changes it locks, prepare shows
-newly prepared resources, icon shows changed artwork and signature shows every
-derived signer. Multi-line values, such as scripts, show their line counts
-instead of their text. `--all` includes unchanged resources; totals always
-describe the whole run. `--json` writes one JSON document with the same
-selection when the run ends. Reconcile prints the reviewed commit's publication,
-then looks up every resource before pushing each proposal, printing it as it is
-pushed; in a terminal, each looked-up resource also leaves its outcome line.
+run's totals. Plan shows proposed changes, including initial values for new
+objects. Apply reports confirmed publication actions. Update shows input changes,
+prepare shows newly prepared resources, icon names the artwork file it writes,
+and signature shows derived signers. Multi-line values such as scripts show line
+counts instead of their text. `--all` includes unchanged resources in human
+reports; totals always describe the whole run. JSON includes all resources in the
+selected scope, regardless of `--all`. Reconcile prints the reviewed commit's
+publication followed by proposal outcomes.
 
 ```sh
 stemma plan
@@ -240,18 +240,15 @@ stemma plan --json --all > plan.json
 stemma prepare --all
 ```
 
-When stdout and stderr are both terminals, a live tree on stderr shows each
-unfinished resource's operations with what they work on, the steps of the
-operation in progress and a bar for transfers of known size. A finished resource
-replaces its tree with its report, or with its outcome line when the report
-leaves it out, and reports are coloured. Redirected output and CI get the same
-reports as plain text, without the tree or outcome lines. `NO_COLOR` disables
-colour. Warnings go to stderr as they happen; in JSON mode they are part of the
-document. A failed command exits nonzero and shows each failure once: in its
-report, or after `Error:` on stderr when the failure stopped the run before the
-report could show it.
-
-Ctrl-C requests cancellation and workspace cleanup; results already shown remain.
+When stderr is a suitable terminal, delayed activity shows the current operation
+for each resource in a small live region. Known-size transfers show a bar and
+counts. Fast work stays quiet, completed activity disappears, and durable results
+have the same content in terminals and pipes. Results remain on stdout even when
+it is redirected. JSON, generated documents, CI and dumb terminals suppress the
+live display; `--no-progress` disables it explicitly. `NO_COLOR` controls colour.
+Warnings go to stderr as they happen; in JSON mode they are part of the document.
+Failed commands retain available results and end with a concise stderr diagnostic.
+Interrupting with Ctrl-C clears activity, preserves completed results and exits 130.
 Press Ctrl-C again to exit immediately if cleanup or a native operation is
 taking too long.
 

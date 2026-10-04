@@ -19,7 +19,7 @@ import (
 )
 
 // commandOutput owns what a command shows. Human reports stream to stdout as
-// each resource completes; in a terminal a live tree of unfinished work sits
+// each resource completes; in a terminal a live region of unfinished work sits
 // below them on stderr. JSON reports are one document written at the end.
 type commandOutput struct {
 	mu                 sync.Mutex
@@ -31,6 +31,7 @@ type commandOutput struct {
 	reconciling        bool
 	// resultOnly commands print their result without a resource report.
 	resultOnly bool
+	ctx        context.Context
 	// JSON reports carry the warnings raised while they ran.
 	warnings []string
 }
@@ -49,6 +50,7 @@ func newCommandOutput(out, errOut io.Writer) *commandOutput {
 }
 
 func (o *commandOutput) start(cmd *cobra.Command) error {
+	o.ctx = cmd.Context()
 	o.asJSON, _ = cmd.Flags().GetBool("json")
 	o.all, _ = cmd.Flags().GetBool("all")
 	switch cmd.Name() {
@@ -61,9 +63,9 @@ func (o *commandOutput) start(cmd *cobra.Command) error {
 	case "artifact", "inspect":
 		o.resultOnly = true
 	}
-	// Report blocks print above the live tree, so both streams must share the
-	// terminal; a path alone is written after the tree is gone.
-	o.interactive = cmd.Name() != "mcp" && (o.resultOnly || terminalOutput(o.out)) && terminalOutput(o.errOut) && os.Getenv("CI") == ""
+	// Activity belongs to stderr regardless of where stdout is redirected.
+	noProgress, _ := cmd.Flags().GetBool("no-progress")
+	o.interactive = cmd.Name() != "mcp" && !o.asJSON && !noProgress && terminalOutput(o.errOut) && os.Getenv("CI") == ""
 	cmd.SetContext(plugin.WithLogger(cmd.Context(), slog.New(&activityHandler{output: o})))
 	return nil
 }
@@ -78,28 +80,30 @@ func (o *commandOutput) stop() {
 	}
 }
 
-// emit writes persistent report text to stdout, above the live tree while it
+// emit writes persistent report text to stdout, above the live region while it
 // is on screen. Callers hold o.mu.
 func (o *commandOutput) emit(text string) error {
-	if o.progress != nil && o.progress.running() {
-		o.progress.print(text)
-		return nil
+	if o.progress != nil {
+		return o.progress.write(o.out, text)
 	}
 	_, err := io.WriteString(o.out, text)
 	return err
 }
 
-// notice writes a diagnostic line to stderr, above the live tree while it is
+// notice writes a diagnostic line to stderr, above the live region while it is
 // on screen. Callers hold o.mu.
 func (o *commandOutput) notice(line string) {
-	if o.progress != nil && o.progress.running() {
-		o.progress.print(line)
+	if o.progress != nil {
+		_ = o.progress.write(o.errOut, line)
 		return
 	}
 	_, _ = io.WriteString(o.errOut, line)
 }
 
 func (o *commandOutput) finish(err error) {
+	if o.ctx != nil && errors.Is(context.Cause(o.ctx), errInterrupted) {
+		err = errInterrupted
+	}
 	o.stop()
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -109,13 +113,16 @@ func (o *commandOutput) finish(err error) {
 	o.warnings = nil
 	switch {
 	case err == nil:
-	case errors.Is(err, context.Canceled):
+	case errors.Is(err, errInterrupted):
 		_, _ = fmt.Fprintln(o.errOut, o.errStyle.paint("Interrupted.", color.FgHiYellow))
 	default:
 		text := commandError(err)
 		if o.resultOnly {
 			// No report shows a failed resource, so the error must.
 			text = failureText(err)
+		}
+		if text == "" {
+			text = "command failed; see report for details"
 		}
 		if text != "" {
 			_, _ = fmt.Fprintln(o.errOut, o.errStyle.paint("Error:", color.Bold, color.FgHiRed)+" "+strings.Join(errorLines(text), "\n"))
@@ -170,7 +177,7 @@ func errorLines(text string) []string {
 	return lines
 }
 
-// activityHandler adapts operation telemetry to the live tree. Stage records
+// activityHandler adapts operation telemetry to the live region. Stage records
 // are never logs; warnings reach stderr, or the JSON report while one runs.
 type activityHandler struct {
 	output *commandOutput
@@ -231,10 +238,8 @@ func (h *activityHandler) Handle(_ context.Context, record slog.Record) error {
 	return nil
 }
 
-// resourceDone streams a finished resource's report block. In a terminal, a
-// resource the report leaves out still leaves its outcome line in place of its
-// tree. Reconcile streams what it applies; proposal verification is
-// summarised in the pull request.
+// resourceDone clears a resource's activity and streams its selected outcome.
+// Reconcile reports proposal verification through proposal outcomes.
 func (o *commandOutput) resourceDone(method string, resource engine.ResourceReport) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -245,16 +250,10 @@ func (o *commandOutput) resourceDone(method string, resource engine.ResourceRepo
 	case o.asJSON || o.resultOnly:
 		return nil
 	case o.reconciling && method != "apply":
-		// Proposals report what the lookup found and what their checks showed;
-		// a terminal still marks each resource the lookup finishes.
-		if method == "update" && o.interactive {
-			return o.emit(resourceHeading(o.outStyle, method, resource))
-		}
+		// Proposal outcomes carry the lookup and preparation results.
 		return nil
 	case o.all || selected(method, resource):
 		return o.emit(renderResource(o.outStyle, method, resource))
-	case o.interactive:
-		return o.emit(resourceHeading(o.outStyle, method, resource))
 	}
 	return nil
 }
@@ -269,12 +268,11 @@ func (o *commandOutput) applyDone(report reconcile.Report) error {
 	return o.emit(renderReviewed(o.outStyle, report))
 }
 
-// proposalDone streams a proposal branch's outcome. Without --all, an
-// unchanged branch shows only in a terminal.
+// proposalDone streams selected proposal outcomes.
 func (o *commandOutput) proposalDone(proposal reconcile.Proposal) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.asJSON || !o.all && !o.interactive && proposal.Action == "unchanged" && proposal.Error == "" {
+	if o.asJSON || !o.all && proposal.Action == "unchanged" && proposal.Error == "" {
 		return nil
 	}
 	return o.emit(renderProposal(o.outStyle, proposal))
@@ -291,18 +289,24 @@ func (o *commandOutput) takeWarnings() []string {
 // report ends an outcome command: the JSON document, or the human summary
 // below the blocks already streamed.
 func (o *commandOutput) report(out io.Writer, method string, report engine.Report, runErr error) error {
+	if o.ctx != nil && errors.Is(context.Cause(o.ctx), errInterrupted) {
+		runErr = errInterrupted
+	}
 	o.stop()
 	report.Warnings = append(report.Warnings, o.takeWarnings()...)
 	if report.Resources == nil && report.LockChanged == nil && len(report.Warnings) == 0 {
 		return nil
 	}
 	if o.asJSON {
-		return writeJSON(out, selectReport(report, method, o.all))
+		return writeJSON(out, report)
 	}
 	return printReportEnd(out, method, report, runErr)
 }
 
 func (o *commandOutput) reconciled(out io.Writer, report reconcile.Report, runErr error) error {
+	if o.ctx != nil && errors.Is(context.Cause(o.ctx), errInterrupted) {
+		runErr = errInterrupted
+	}
 	o.stop()
 	report.Warnings = append(report.Warnings, o.takeWarnings()...)
 	if report.Head == "" && len(report.Warnings) == 0 {
@@ -310,26 +314,6 @@ func (o *commandOutput) reconciled(out io.Writer, report reconcile.Report, runEr
 	}
 	if !o.asJSON {
 		return printReconcileEnd(out, report, runErr)
-	}
-	if report.Apply != nil && report.Apply.Report != nil {
-		apply := *report.Apply
-		selected := selectReport(*apply.Report, "apply", o.all)
-		apply.Report = &selected
-		report.Apply = &apply
-	}
-	if report.Update != nil {
-		update := reconcile.Update{Error: report.Update.Error}
-		for _, proposal := range report.Update.Proposals {
-			if !o.all && proposal.Action == "unchanged" && proposal.Error == "" {
-				continue
-			}
-			if proposal.Plan != nil {
-				selected := selectReport(*proposal.Plan, "plan", o.all)
-				proposal.Plan = &selected
-			}
-			update.Proposals = append(update.Proposals, proposal)
-		}
-		report.Update = &update
 	}
 	return writeJSON(out, report)
 }

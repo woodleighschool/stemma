@@ -73,7 +73,7 @@ func TestIconReportNamesEachOutcome(t *testing.T) {
 		"MacSoftware/teams: unchanged\n",
 		"MacSoftware/rosetta: no artwork\n",
 		"MacSoftware/zoom: failed\n  error: quick look icon rendering: timed out\n",
-		"Icons: 2 created, 2 unchanged, 1 failed.",
+		"Icons: 2 created, 1 unchanged, 1 skipped, 1 failed.",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("report missing %q: %s", want, out.String())
@@ -184,8 +184,8 @@ spec:
 	}
 	filename := filepath.Join(t.TempDir(), "editor", "schema.json")
 	for range 2 {
-		if output := invoke(true, "schema", "--offline", "--output-file", filename); len(output) != 0 {
-			t.Fatalf("file output also wrote stdout: %s", output)
+		if output := invoke(true, "schema", "--offline", "--output-file", filename); string(output) != "Wrote "+filename+".\n" {
+			t.Fatalf("file result: %s", output)
 		}
 		data, err := os.ReadFile(filename)
 		if err != nil || !bytes.Equal(stdoutSchema, data) {
@@ -556,8 +556,8 @@ spec:
 					}
 				}
 			}
-			// The report shows each failure; stderr repeats none of them.
-			if logs.Len() != 0 {
+			// The diagnostic names command failure without repeating item errors.
+			if logs.String() != "Error: command failed; see report for details\n" {
 				t.Fatalf("stderr repeated the report: %s", logs.String())
 			}
 		})

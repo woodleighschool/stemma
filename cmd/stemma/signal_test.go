@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,6 +21,9 @@ func TestInterruptCancelsThenExits(t *testing.T) {
 		defer stop()
 		fmt.Println("ready")
 		<-ctx.Done()
+		if !errors.Is(context.Cause(ctx), errInterrupted) {
+			t.Fatalf("interrupt cause: %v", context.Cause(ctx))
+		}
 		fmt.Println("canceled")
 		time.Sleep(time.Minute)
 		return

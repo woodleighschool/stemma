@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
@@ -485,6 +486,9 @@ func (e *execution) complete(ctx context.Context, item *ResourceReport) error {
 	}
 	if item.Error == "" {
 		item.Inputs = e.locked.Changes(item.Key)
+	}
+	if e.opts.Method == "icon" && item.Error == "" && (item.Icon == "unchanged" || strings.HasPrefix(item.Icon, "created ")) {
+		item.IconPath = icon.Relative(e.plans[item.Key].Icon)
 	}
 	if e.opts.ResourceDone != nil {
 		if err := e.opts.ResourceDone(*item); err != nil {

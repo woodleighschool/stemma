@@ -336,7 +336,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 					return response, fmt.Errorf("installer %s is shared with %s, so its bytes cannot be replaced", input.InstallerLocation, other.path)
 				}
 			}
-			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "installer_item_hash", Action: "upload", Before: raw(old["installer_item_hash"]), After: raw(request.Artifact.SHA256)})
+			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "installer", Action: "upload", After: raw(input.InstallerLocation)})
 		}
 	}
 	iconPath := ""
@@ -348,17 +348,21 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 			return response, err
 		}
 		if !matches {
-			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "icon_hash", Action: "upload", After: raw(request.Inputs["icon"].SHA256)})
+			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "icon", Action: "upload", After: raw(request.Inputs["icon"].Filename)})
 		}
 	}
-	for key, value := range desired {
-		if hashValue(old[key]) != hashValue(value) {
-			response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: key, Action: "set", Before: raw(old[key]), After: raw(value)})
+	if len(old) == 0 {
+		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "pkginfo", Action: "create", After: raw(desired)})
+	} else {
+		for key, value := range desired {
+			if hashValue(old[key]) != hashValue(value) {
+				response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: key, Action: "set", Before: raw(old[key]), After: raw(value)})
+			}
 		}
-	}
-	for key, value := range old {
-		if _, exists := desired[key]; !exists {
-			response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: key, Action: "clear", Before: raw(value)})
+		for key, value := range old {
+			if _, exists := desired[key]; !exists {
+				response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: key, Action: "clear", Before: raw(value)})
+			}
 		}
 	}
 	catalogs, err := catalogChanges(root, old, desired)
@@ -530,11 +534,14 @@ func fileMatches(ctx context.Context, path string, artifact plugin.Artifact) (bo
 	return hex.EncodeToString(h.Sum(nil)) == artifact.SHA256, nil
 }
 func publishContent(ctx context.Context, path string, artifact plugin.Artifact) (err error) {
-	done := plugin.Stage(ctx, "Publishing Munki installer", plugin.Detail(filepath.Base(path)))
-	defer func() { done(err) }()
-	if matches, err := fileMatches(ctx, path, artifact); err != nil || matches {
+	check := plugin.Stage(ctx, "Checking Munki content", plugin.Detail(filepath.Base(path)))
+	matches, err := fileMatches(ctx, path, artifact)
+	check(err)
+	if err != nil || matches {
 		return err
 	}
+	done := plugin.Stage(ctx, "Publishing Munki content", plugin.Detail(filepath.Base(path)))
+	defer func() { done(err) }()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

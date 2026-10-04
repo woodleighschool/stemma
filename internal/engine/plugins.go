@@ -33,6 +33,7 @@ type PluginReport struct {
 	// the declaration.
 	Digest string `json:"digest,omitempty"`
 	Locked bool   `json:"locked,omitempty"`
+	Status string `json:"status,omitempty"`
 	// Before is the digest the lockfile held before an update.
 	Before      string               `json:"before,omitempty"`
 	Version     string               `json:"version,omitempty"`
@@ -59,10 +60,43 @@ type PluginUpdate struct {
 	LockChanged bool           `json:"lock_changed"`
 }
 
-// ListPlugins loads every declared plugin from its lock entry, as runs do,
+// ListPlugins reads declarations and recorded pins without acquiring or
+// executing plugin code. A recorded pin does not verify local file contents.
+func ListPlugins(ctx context.Context, configPath string) ([]PluginReport, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	project, err := config.LoadProjectDocument(configPath)
+	if err != nil {
+		return nil, err
+	}
+	locked, err := lockfile.Load(lockfile.Filename(filepath.Dir(configPath)))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	reports := make([]PluginReport, 0, len(project.Plugins))
+	for _, name := range slices.Sorted(maps.Keys(project.Plugins)) {
+		declaration := project.Plugins[name]
+		entry := locked.Plugins[name]
+		report := PluginReport{Name: name, Image: declaration.Image, Path: declaration.Path, Digest: plugins.Pin(declaration, entry), Status: "unlocked"}
+		switch {
+		case strings.Contains(declaration.Image, "@"):
+			report.Status = "pinned"
+		case report.Digest != "":
+			report.Locked = true
+			report.Status = "locked"
+		case entry.Digest != "":
+			report.Status = "declaration changed"
+		}
+		reports = append(reports, report)
+	}
+	return reports, nil
+}
+
+// InspectPlugins loads every declared plugin from its lock entry, as runs do,
 // and reports each one. It returns ErrPluginsFailed when a report holds a
 // failure.
-func ListPlugins(ctx context.Context, opts Options) ([]PluginReport, error) {
+func InspectPlugins(ctx context.Context, opts Options) ([]PluginReport, error) {
 	p, err := config.LoadProjectDocument(opts.ConfigPath)
 	if err != nil {
 		return nil, err
