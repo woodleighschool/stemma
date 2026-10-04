@@ -223,8 +223,8 @@ github.com/mikelolasagasti/xz v1.0.1 h1:Q2F2jX0RYJUG3+WsM+FJknv+6eVjsjXNDV0KJXZz
 github.com/mikelolasagasti/xz v1.0.1/go.mod h1:muAirjiOUxPRXwm9HdDtB3uoRPrGnL85XHtokL9Hcgc=
 github.com/minio/minlz v1.2.0 h1:6IOBuiHg04QxvbFfgFLT/9sMaO/UhL7S+ApW1mK8q5A=
 github.com/minio/minlz v1.2.0/go.mod h1:Ls9H7nlkASeCcdl5thjVD5Eraj6z+zGa7xtq57jIKD4=
-github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261002152441-25a53e3f27df h1:9F9SZ5loy99VcEGdzGgSGumM++hL+gtpIZY3Dmjabfk=
-github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261002152441-25a53e3f27df/go.mod h1:dL7u98E/zjJTGzEq+j30jQ8K2k1mb6LeAH4inEcSGts=
+github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261004141724-b7d283d7b278 h1:AyGoGMVjmFDgsKJXxtyYom2zQxuw2wwk7UqXo5bSPTc=
+github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261004141724-b7d283d7b278/go.mod h1:dL7u98E/zjJTGzEq+j30jQ8K2k1mb6LeAH4inEcSGts=
 github.com/mrjoshuak/go-jpeg2000 v1.5.12 h1:i4LMEJo3sdQbwwpax52vA7Gwpo5WYzv4w1YVdfY0cU4=
 github.com/mrjoshuak/go-jpeg2000 v1.5.12/go.mod h1:Zvb2bdmP52/rpmJOuzMo1HQR75zex//CvqEvopdTweo=
 github.com/muesli/cancelreader v0.2.2 h1:3I4Kt4BQjOR54NavqnDogx/MIoWBFa0StPA8ELUXHmA=
