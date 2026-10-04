@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.9.2](https://github.com/woodleighschool/stemma/compare/v0.9.1...v0.9.2) (2026-10-04)
+
+
+### Bug Fixes
+
+* **go:** update module github.com/deploymenttheory/go-macos-pkg (v0.7.2 → v0.7.3) ([#108](https://github.com/woodleighschool/stemma/issues/108)) ([447ca6d](https://github.com/woodleighschool/stemma/commit/447ca6df36784526132c0ee14c1ec7a01e8d08fe))
+* **go:** update module github.com/google/go-github/v92 (4a73e54 → 52908e2) ([#107](https://github.com/woodleighschool/stemma/issues/107)) ([48d2e2d](https://github.com/woodleighschool/stemma/commit/48d2e2d95a123d49bd1855bff64be4feb2f3b25c))
+* **npm:** update dependency docusaurus-plugin-llms (0.6.0 → 0.6.1) ([#113](https://github.com/woodleighschool/stemma/issues/113)) ([b5d3204](https://github.com/woodleighschool/stemma/commit/b5d3204f8910ed1c0e6b1bbd624b3f7a99c5fdff))
+
 ## [0.9.1](https://github.com/woodleighschool/stemma/compare/v0.9.0...v0.9.1) (2026-10-03)
 
 
