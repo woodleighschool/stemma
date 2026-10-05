@@ -108,14 +108,16 @@ func Prepare(ctx context.Context, request plugin.ResourceRequest[json.RawMessage
 		}
 	}
 	artifact, err := build(ctx, spec, sources, request.Workspace)
-	if err != nil || len(observed) == 0 {
+	if err != nil {
 		return artifact, err
 	}
-	encoded, err = json.Marshal(observed)
-	if err != nil {
-		return plugin.Artifact{}, err
+	// The builder never signs, so the package's signing state is its own to state.
+	artifact.Evidence = map[string]json.RawMessage{signature.BuildEvidence: json.RawMessage(`"unsigned"`)}
+	if len(observed) > 0 {
+		if artifact.Evidence["signatures"], err = json.Marshal(observed); err != nil {
+			return plugin.Artifact{}, err
+		}
 	}
-	artifact.Evidence = map[string]json.RawMessage{"signatures": encoded}
 	return artifact, nil
 }
 
@@ -145,6 +147,11 @@ func verifyInputs(ctx context.Context, sources *sources, spec Spec, derive bool)
 		source, err := sources.get(ctx, name)
 		if err != nil {
 			return nil, err
+		}
+		// A package another build left unsigned has no publisher to expect; an
+		// expectation declared for it is still verified.
+		if signature.BuiltUnsigned(source.Artifact()) && len(policies[name]) == 0 {
+			continue
 		}
 		targets := map[string]plugin.Subject{}
 		paths := selections[name]

@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -25,7 +26,10 @@ func SelectSubject(facts Facts, selector SubjectSelector) (Subject, error) {
 		}
 		matches = append(matches, subject)
 	}
-	if len(matches) == 1 {
+	switch len(matches) {
+	case 0:
+		return Subject{}, errors.New("selector matched no subject")
+	case 1:
 		return matches[0], nil
 	}
 	var candidates []string

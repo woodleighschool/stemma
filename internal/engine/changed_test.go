@@ -38,6 +38,7 @@ metadata: {name: app}
 spec:
   extends: app
   source: {path: app.pkg}
+  signatures: [{signer: apple:developer-id:SMLKBTR495}]
   destinations:
     repo: {pkginfo: {description: App}}
 `,

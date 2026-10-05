@@ -51,9 +51,7 @@ spec:
     repository: company/application
     asset: Example-*.zip
   signatures:
-    - subject:
-        path: Example.app
-      signer: apple:developer-id:ABCDE12345
+    - signer: apple:developer-id:ABCDE12345
   destinations:
     munki:
       pkginfo:
@@ -216,17 +214,29 @@ Declare one exact signing expectation for each published signing subject:
 
 ```yaml
 signatures:
-  - subject:
-      path: .
-    signer: apple:developer-id:UBF8T346G9 # Microsoft Corporation
+  - signer: apple:developer-id:UBF8T346G9 # Microsoft Corporation
 ```
 
-For a PKG, `path: .` selects the outer package signature. Component receipts and
-payload applications do not prove that the published PKG is signed. For a DMG,
-select each top-level application by its exact path or bundle identifier. Every
-shipped top-level app requires an entry when `signatures` is present, including
-companion apps. Nested code is covered by its enclosing app's signature. An app
-selected from an archive is published alone at the new image's root.
+An entry without `subject` covers the artifact's only signing subject. For a PKG
+that is the outer package signature: component receipts and payload applications
+do not prove that the published PKG is signed. For a DMG it is the application
+the image holds. An image holding several top-level applications needs an entry
+for each, selected by its exact path or bundle identifier:
+
+```yaml
+signatures:
+  - subject:
+      path: Example.app
+    signer: apple:developer-id:ABCDE12345
+  - subject:
+      path: Example Helper.app
+    signer: apple:developer-id:ABCDE12345
+```
+
+Every shipped top-level app requires an entry when `signatures` is present,
+including companion apps. Nested code is covered by its enclosing app's
+signature. An app selected from an archive is published alone at the new image's
+root, so its entry needs no `subject`.
 
 `stemma signature MacSoftware/<name>` inspects every signing subject and prints a
 complete fragment, independently of existing expectations. It needs no placeholder
@@ -237,9 +247,7 @@ Unsigned software can be asserted explicitly:
 
 ```yaml
 signatures:
-  - subject:
-      path: .
-    unsigned: true
+  - unsigned: true
 ```
 
 Each entry requires exactly one of `signer` or `unsigned: true`. Omitting
@@ -247,6 +255,10 @@ Each entry requires exactly one of `signer` or `unsigned: true`. Omitting
 becomes signed; a signer expectation fails when it becomes unsigned or changes
 publisher. Malformed, tampered, ad-hoc and unsupported signatures remain errors in
 both preparation and derivation.
+
+A package from [BuildMacPkg](building-packages.md) needs no entry. The builder
+never signs, so the package has no publisher to verify and `stemma signature`
+reports nothing for it. `unsigned: true` is still checked when declared.
 
 Apple verification covers every architecture's code, Info.plist, the resource
 envelope, symlinks and nested code, chained to Apple's roots at the signature's

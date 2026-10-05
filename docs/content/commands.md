@@ -107,7 +107,8 @@ signed or unsigned state and prints a complete `signatures` fragment. It never
 writes documents and ignores existing signing expectations while deriving their
 replacement. Invalid or unsupported signatures still fail. For `BuildMacPkg`, the
 command reports the signing subjects its resolved layout consumes, labelled with
-their input. See [macOS](mac-software.md#signature),
+their input. It reports nothing for the package a build produced, which needs no
+expectation. See [macOS](mac-software.md#signature),
 [Windows](windows-software.md#signature) and
 [builder](building-packages.md#verify-the-wrapped-input) signing expectations.
 

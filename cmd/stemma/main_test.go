@@ -139,7 +139,7 @@ metadata:
   name: fixture
 spec:
   source: {url: %s/fixture.pkg}
-  signatures: [{subject: {path: .}, signer: apple:developer-id:SMLKBTR495}]
+  signatures: [{signer: apple:developer-id:SMLKBTR495}]
   destinations:
     first: {pkginfo: {description: original, unattended_install: false, catalogs: [testing]}}
     second: {pkginfo: {catalogs: [testing]}}

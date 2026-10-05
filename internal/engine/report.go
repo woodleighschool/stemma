@@ -165,7 +165,9 @@ func (r *Report) Summarize(method string) {
 				s.Skipped++
 			}
 		case method == "signature":
-			s.Derived++
+			if derivedSignatures(resource) {
+				s.Derived++
+			}
 		case resource.Cached:
 			s.Cached++
 		default:
@@ -193,6 +195,18 @@ func (r *Report) Summarize(method string) {
 	}
 	s.Destinations = len(destinations)
 	r.Summary = s
+}
+
+// derivedSignatures reports whether derivation observed a signing subject of
+// the resource. A package its builder left unsigned has none to declare.
+func derivedSignatures(resource ResourceReport) bool {
+	for _, artifact := range resource.Artifacts {
+		var observations []json.RawMessage
+		if json.Unmarshal(artifact.Evidence["signatures"], &observations) == nil && len(observations) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // MarshalJSON exposes predictable counters relevant to the command that ran.

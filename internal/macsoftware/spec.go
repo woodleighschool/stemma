@@ -25,7 +25,7 @@ type Spec struct {
 	// PackagePath selects one installer by archive-relative path or glob.
 	PackagePath string                  `json:"package_path,omitempty" yaml:"package_path,omitempty" jsonschema_description:"Archive-relative path or glob selecting one installer package. Selection must be unambiguous."`
 	DiskImage   *DiskImage              `json:"disk_image,omitempty" yaml:"disk_image,omitempty" jsonschema_description:"How preparation encodes the disk image it creates for an application from an archive or tree."`
-	Signatures  []signature.Expectation `json:"signatures,omitempty" yaml:"signatures,omitempty" jsonschema:"minItems=1" jsonschema_description:"Explicit signing expectations for the published PKG root or every top-level application in the published disk image. Omit to make no signing assertion. Derive with stemma signature."`
+	Signatures  []signature.Expectation `json:"signatures,omitempty" yaml:"signatures,omitempty" jsonschema:"minItems=1" jsonschema_description:"Signing expectations for the published PKG or every top-level application in the published disk image. Omit to make no signing assertion; a package BuildMacPkg built needs none. Derive with stemma signature."`
 	// MinimumOS replaces the installer's and the selected application's macOS
 	// requirements for every destination.
 	MinimumOS string `json:"minimum_os,omitempty" yaml:"minimum_os,omitempty" jsonschema:"pattern=^[0-9]+([.][0-9]+)?([.][0-9]+)?$" jsonschema_description:"Minimum macOS release, such as 14.0. Destinations receive this instead of the installer's and the selected application's requirements. Omit to use the latest of those."`

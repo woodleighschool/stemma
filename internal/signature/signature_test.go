@@ -50,7 +50,7 @@ func TestFragmentPreservesSubjectsAndInputs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			observations := []Observation{
 				{Input: name, Subject: plugin.SubjectSelector{Path: "Suite/Install.app"}, State: "signed", Signer: "apple:developer-id:UBF8T346G9", Name: "Publisher\nName"},
-				{Input: name, Subject: plugin.SubjectSelector{Path: "."}, State: "unsigned"},
+				{Input: name, Subject: plugin.SubjectSelector{Path: "Suite/Tool: 1.app"}, State: "unsigned"},
 			}
 			var parsed struct {
 				Signatures []InputExpectation `yaml:"signatures"`
@@ -58,10 +58,32 @@ func TestFragmentPreservesSubjectsAndInputs(t *testing.T) {
 			if err := yaml.Unmarshal([]byte(Fragment(observations)), &parsed); err != nil {
 				t.Fatal(err)
 			}
-			if len(parsed.Signatures) != 2 || parsed.Signatures[0].Input != name || parsed.Signatures[0].Subject.Path != "Suite/Install.app" || parsed.Signatures[0].Signer != observations[0].Signer || !parsed.Signatures[1].Unsigned {
+			if len(parsed.Signatures) != 2 {
 				t.Fatalf("fragment lost observations: %+v", parsed)
 			}
+			signed, unsigned := parsed.Signatures[0], parsed.Signatures[1]
+			if signed.Input != name || signed.Subject.Path != "Suite/Install.app" || signed.Signer != observations[0].Signer || unsigned.Input != name || unsigned.Subject.Path != "Suite/Tool: 1.app" || !unsigned.Unsigned {
+				t.Fatalf("fragment changed observations: %+v", parsed)
+			}
 		})
+	}
+}
+
+func TestFragmentNamesSubjectsOnlyWhereAScopeHasSeveral(t *testing.T) {
+	signed := func(input, subject string) Observation {
+		return Observation{Input: input, Subject: plugin.SubjectSelector{Path: subject}, State: "signed", Signer: "apple:developer-id:UBF8T346G9"}
+	}
+	for name, test := range map[string]struct {
+		observations []Observation
+		want         string
+	}{
+		"one application":  {[]Observation{signed("", "Example.app")}, "signatures:\n  - signer: apple:developer-id:UBF8T346G9\n"},
+		"two applications": {[]Observation{signed("", "A.app"), signed("", "B.app")}, "signatures:\n  - subject:\n      path: \"A.app\"\n    signer: apple:developer-id:UBF8T346G9\n  - subject:\n      path: \"B.app\"\n    signer: apple:developer-id:UBF8T346G9\n"},
+		"one per input":    {[]Observation{signed("first", "Install.app"), signed("second", "Other.app")}, "signatures:\n  - input: \"first\"\n    signer: apple:developer-id:UBF8T346G9\n  - input: \"second\"\n    signer: apple:developer-id:UBF8T346G9\n"},
+	} {
+		if got := Fragment(test.observations); got != test.want {
+			t.Errorf("%s:\n%s\nwant:\n%s", name, got, test.want)
+		}
 	}
 }
 
@@ -79,8 +101,8 @@ func TestExpectationsAndSchemaRequireOneState(t *testing.T) {
 		{`{"subject":{"path":"."},"unsigned":false}`, false},
 		{`{"subject":{"path":"."},"unsigned":true,"signer":"apple:developer-id:ABCDE12345"}`, false},
 		{`{"subject":{"path":"."}}`, false},
-		{`{"unsigned":true}`, false},
-		{`{"subject":{},"unsigned":true}`, false},
+		{`{"unsigned":true}`, true},
+		{`{"signer":"apple:developer-id:ABCDE12345"}`, true},
 	} {
 		var expected Expectation
 		_ = json.Unmarshal([]byte(test.declaration), &expected)
@@ -91,12 +113,16 @@ func TestExpectationsAndSchemaRequireOneState(t *testing.T) {
 			t.Errorf("schema %s: %v", test.declaration, err)
 		}
 	}
+	// A subject that is declared selects something.
+	if err := plugin.ValidateSchema(schema, []byte(`{"subject":{},"unsigned":true}`)); err == nil {
+		t.Error("schema accepted a subject without a selector")
+	}
 	// The embedded assertion must not hide the builder's input field.
 	schema, err = json.Marshal(plugin.SchemaFor[InputExpectation]())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := plugin.ValidateSchema(schema, []byte(`{"input":"vendor","subject":{"path":"."},"unsigned":true}`)); err != nil {
+	if err := plugin.ValidateSchema(schema, []byte(`{"input":"vendor","unsigned":true}`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := plugin.ValidateSchema(schema, []byte(`{"subject":{"path":"."},"unsigned":true}`)); err == nil {
@@ -128,6 +154,21 @@ func TestVerifyCoverageAndStates(t *testing.T) {
 				t.Fatal("accepted invalid coverage")
 			}
 		})
+	}
+	// An entry that names no subject covers a scope's only subject, and names
+	// the candidates where there are several. A path it does name is literal.
+	only := Expectation{Signer: a.Signer}
+	if observed, err := Verify(t.Context(), []Expectation{only}, subjects[:1], false, check); err != nil || len(observed) != 1 || observed[0].Subject.Path != first.Path {
+		t.Fatalf("an entry without subject over one application: %+v, %v", observed, err)
+	}
+	if _, err := Verify(t.Context(), []Expectation{{Signer: b.Signer}}, subjects[:1], false, check); !errors.Is(err, ErrMismatch) {
+		t.Fatalf("an entry without subject accepted another signer: %v", err)
+	}
+	if _, err := Verify(t.Context(), []Expectation{only}, subjects, false, check); err == nil || !strings.Contains(err.Error(), "signing subjects: Suite/A.app, Suite/B.app") {
+		t.Fatalf("an entry without subject over applications: %v", err)
+	}
+	if _, err := Verify(t.Context(), []Expectation{{Subject: plugin.SubjectSelector{Path: "."}, Signer: a.Signer}}, subjects[:1], false, check); err == nil || !strings.Contains(err.Error(), "signing subjects: Suite/A.app") {
+		t.Fatalf("the root path selected an application: %v", err)
 	}
 	unsigned := Expectation{Subject: a.Subject, Unsigned: true}
 	for _, test := range []struct {

@@ -244,16 +244,17 @@ layout consumes:
 ```yaml
 signatures:
   - input: vendor
-    subject:
-      path: Install.app
     signer: apple:developer-id:JQ525L2MZD # Adobe Inc.
 ```
 
-Each subject uses its path within the named input. Selecting one app excludes its
-unused siblings; copying a whole directory, archive or DMG includes its top-level
-apps and packages. A PKG is verified by its outer signature, never a component
+An entry without `subject` covers the only signing subject the layout consumes
+from the input, such as a PKG or the one app it copies. Where it consumes several,
+each needs an entry with `subject.path`, its path within that input. Selecting one
+app excludes its unused siblings; copying a whole directory, archive or DMG
+includes its top-level apps and packages. A PKG is verified by its outer signature, never a component
 receipt. When `signatures` is present, every consumed signing subject needs an
-expectation. Literal text and ordinary data files are outside this scope.
+expectation, except a package another `BuildMacPkg` resource built. Literal text
+and ordinary data files are outside this scope.
 
 The [MacSoftware signing rules](mac-software.md#signature) also apply here,
 including `unsigned: true`. Run `stemma signature BuildMacPkg/<name>` with no
@@ -261,3 +262,5 @@ placeholder declaration to derive every consumed subject's signing state.
 
 Evidence records each input and subject separately. The built package stays
 unsigned, so input verification cannot satisfy Intune line-of-business validation.
+Its `build.signature` evidence records that state, and the `MacSoftware` resource
+publishing it needs no `signatures`.

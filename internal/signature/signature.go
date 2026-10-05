@@ -4,6 +4,7 @@ package signature
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -30,14 +31,29 @@ var ErrMismatch = errors.New("signature: unexpected signer")
 // artifact. Invalid, partial and unsupported signatures must not wrap it.
 var ErrUnsigned = errors.New("signature: not signed")
 
+// BuildEvidence is the artifact evidence in which an operation that builds an
+// artifact states the signing state it gave it. A builder that never signs
+// records "unsigned".
+const BuildEvidence = "build.signature"
+
+// BuiltUnsigned reports whether the operation that produced artifact built it
+// and left it unsigned. Its signing state is then the builder's own, with no
+// publisher to expect: derivation reports nothing for it, and a declared
+// expectation still verifies it.
+func BuiltUnsigned(artifact plugin.Artifact) bool {
+	var state string
+	return json.Unmarshal(artifact.Evidence[BuildEvidence], &state) == nil && state == "unsigned"
+}
+
 // Expectation asserts the signing state of one physical subject.
 type Expectation struct {
-	Subject  plugin.SubjectSelector `json:"subject" yaml:"subject" jsonschema_description:"Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."`
+	Subject  plugin.SubjectSelector `json:"subject,omitzero" yaml:"subject,omitempty" jsonschema_description:"One physical signing subject. Omit it where there is only one, such as the PKG itself or the only application in an image. Component receipts do not carry the outer PKG signature."`
 	Signer   string                 `json:"signer,omitempty" yaml:"signer,omitempty" jsonschema:"minLength=1" jsonschema_description:"Expected apple:developer-id:<TEAMID> or authenticode:<SHA256> publisher. Mutually exclusive with unsigned."`
 	Unsigned bool                   `json:"unsigned,omitempty" yaml:"unsigned,omitempty" jsonschema_description:"Assert that the subject has no signature. A signed, invalid or unsupported signature fails this assertion."`
 }
 
-// JSONSchemaExtend requires exactly one assertion, with unsigned always true.
+// JSONSchemaExtend requires exactly one assertion, with unsigned always true,
+// and a selector in a subject that is declared.
 func (Expectation) JSONSchemaExtend(s *jsonschema.Schema) {
 	s.OneOf = []*jsonschema.Schema{{Required: []string{"signer"}}, {Required: []string{"unsigned"}}}
 	field, _ := s.Properties.Get("unsigned")
@@ -46,10 +62,8 @@ func (Expectation) JSONSchemaExtend(s *jsonschema.Schema) {
 	subject.MinProperties = new(uint64(1))
 }
 
+// Validate checks a declaration.
 func (e Expectation) Validate(scheme string) error {
-	if e.Subject == (plugin.SubjectSelector{}) {
-		return errors.New("subject requires an explicit selector")
-	}
 	if p := e.Subject.Path; p != "" && (!fs.ValidPath(p) || strings.ContainsAny(p, "\\\x00\r\n\t")) {
 		return errors.New("subject.path must be an exact confined path")
 	}
@@ -172,9 +186,13 @@ func Verify(ctx context.Context, expectations []Expectation, subjects []plugin.S
 	policies := map[string]Expectation{}
 	if !derive {
 		for _, expected := range expectations {
-			subject, err := plugin.SelectSubject(plugin.Facts{Subjects: subjects}, expected.Subject)
+			subject, err := selectSubject(subjects, expected.Subject)
 			if err != nil {
-				return nil, fmt.Errorf("signature subject: %w", err)
+				paths := make([]string, len(subjects))
+				for i, candidate := range subjects {
+					paths[i] = candidate.Path
+				}
+				return nil, fmt.Errorf("signature subject: %w; signing subjects: %s", err, strings.Join(paths, ", "))
 			}
 			if _, exists := policies[subject.ID]; exists {
 				return nil, fmt.Errorf("duplicate signature expectation for %q", subject.Path)
@@ -228,10 +246,27 @@ func Verify(ctx context.Context, expectations []Expectation, subjects []plugin.S
 	return observations, nil
 }
 
+// selectSubject resolves a declaration within a signing scope. One that names
+// no subject covers the scope's only subject.
+func selectSubject(subjects []plugin.Subject, selector plugin.SubjectSelector) (plugin.Subject, error) {
+	if selector != (plugin.SubjectSelector{}) {
+		return plugin.SelectSubject(plugin.Facts{Subjects: subjects}, selector)
+	}
+	if len(subjects) != 1 {
+		return plugin.Subject{}, errors.New("an entry without subject needs exactly one signing subject")
+	}
+	return subjects[0], nil
+}
+
 // Fragment renders all observations as a complete declaration for review.
 func Fragment(observations []Observation) string {
 	if len(observations) == 0 {
 		return ""
+	}
+	// The published artifact is one signing scope and each build input another.
+	scope := map[string]int{}
+	for _, observed := range observations {
+		scope[observed.Input]++
 	}
 	var text strings.Builder
 	text.WriteString("signatures:\n")
@@ -240,12 +275,16 @@ func Fragment(observations []Observation) string {
 		if observed.Input != "" {
 			fmt.Fprintf(&text, "input: %s\n    ", strconv.Quote(observed.Input))
 		}
-		fmt.Fprintf(&text, "subject:\n      path: %s\n", strconv.Quote(observed.Subject.Path))
+		// A declaration that names no subject covers the only subject of its
+		// scope.
+		if scope[observed.Input] > 1 {
+			fmt.Fprintf(&text, "subject:\n      path: %s\n    ", strconv.Quote(observed.Subject.Path))
+		}
 		if observed.State == "unsigned" {
-			text.WriteString("    unsigned: true\n")
+			text.WriteString("unsigned: true\n")
 			continue
 		}
-		fmt.Fprintf(&text, "    signer: %s", observed.Signer)
+		fmt.Fprintf(&text, "signer: %s", observed.Signer)
 		if observed.Name != "" {
 			fmt.Fprintf(&text, " # %s", strings.NewReplacer("\n", " ", "\r", " ").Replace(observed.Name))
 		}

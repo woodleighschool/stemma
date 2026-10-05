@@ -31,7 +31,7 @@ type Spec struct {
 	// VersionFile selects the managed version from the setup MSI's File table.
 	VersionFile string                  `json:"version_file,omitempty" yaml:"version_file,omitempty" jsonschema_description:"Name of the file the setup MSI installs whose File table version is the managed version, such as Zoom.exe. It must name one versioned file. Omit to use the MSI ProductVersion."`
 	Content     *Content                `json:"content,omitempty" yaml:"content,omitempty" jsonschema_description:"Supporting files added to the setup directory beside the vendor installer."`
-	Signatures  []signature.Expectation `json:"signatures,omitempty" yaml:"signatures,omitempty" jsonschema:"minItems=1" jsonschema_description:"Signing expectations for the selected setup entry point. Use path: . for a scalar installer or its exact path in the prepared setup tree. Omit to make no signing assertion."`
+	Signatures  []signature.Expectation `json:"signatures,omitempty" yaml:"signatures,omitempty" jsonschema:"minItems=1" jsonschema_description:"Signing expectation for the selected setup entry point, the only signing subject, so its entry needs no subject. Omit to make no signing assertion."`
 	// Icon names the catalog asset icons/<name>.png that destinations publish;
 	// documents that name the same asset share it.
 	Icon         string                            `json:"icon,omitempty" yaml:"icon,omitempty" jsonschema:"pattern=^[A-Za-z0-9][A-Za-z0-9._-]*$,maxLength=128,description=Name of the icon asset icons/<name>.png that destinations publish. Create it with stemma icon or commit a square PNG."`

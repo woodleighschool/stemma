@@ -390,6 +390,58 @@ func TestPrepareVerifiesPackageInputsAndRejectsUnsignedApplications(t *testing.T
 	}
 }
 
+func TestBuiltPackageInputNeedsNoSigningExpectation(t *testing.T) {
+	const signer = "apple:developer-id:SMLKBTR495"
+	data, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	vendor := filepath.Join(t.TempDir(), "vendor.pkg")
+	if err := os.WriteFile(vendor, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	built, err := Prepare(t.Context(), prepareRequest(t, map[string]any{
+		"package": map[string]any{"identifier": "org.example.inner", "version": "1.0"},
+		"payload": map[string]any{"/Library/Example/inner.txt": map[string]any{"content": "inner"}},
+	}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := map[string]plugin.Artifact{"vendor": {Path: vendor, Filename: "vendor.pkg"}, "inner": built}
+	expectation := func(input string) map[string]any {
+		return map[string]any{"input": input, "subject": map[string]any{"path": "."}, "signer": signer}
+	}
+	config := map[string]any{
+		"package":    map[string]any{"identifier": "org.example.outer", "version": "1.0"},
+		"scripts":    map[string]any{"vendor.pkg": map[string]any{"$input": "vendor"}, "inner.pkg": map[string]any{"$input": "inner"}, "postinstall": "#!/bin/sh\nexit 0\n"},
+		"signatures": []any{expectation("vendor")},
+	}
+	for _, derive := range []bool{false, true} {
+		request := prepareRequest(t, config, inputs)
+		if derive {
+			request.Derive = "signature"
+		}
+		artifact, err := Prepare(t.Context(), request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var observations []signature.Observation
+		if err := json.Unmarshal(artifact.Evidence["signatures"], &observations); err != nil || len(observations) != 1 || observations[0].Input != "vendor" {
+			t.Fatalf("derive %t: %+v, %v", derive, observations, err)
+		}
+	}
+	// A vendor's unsigned package is a signing subject like any other.
+	vendored := built
+	vendored.Evidence = nil
+	if _, err := Prepare(t.Context(), prepareRequest(t, config, map[string]plugin.Artifact{"vendor": inputs["vendor"], "inner": vendored})); err == nil || !strings.Contains(err.Error(), "missing signature expectation") {
+		t.Fatalf("vendor package went unverified: %v", err)
+	}
+	config["signatures"] = []any{expectation("vendor"), expectation("inner")}
+	if _, err := Prepare(t.Context(), prepareRequest(t, config, inputs)); !errors.Is(err, signature.ErrUnsigned) {
+		t.Fatalf("declared expectation was not held to the built package: %v", err)
+	}
+}
+
 func TestBuilderSignatureScopeFollowsConsumedSelections(t *testing.T) {
 	root := t.TempDir()
 	if err := os.CopyFS(filepath.Join(root, "Selected.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {

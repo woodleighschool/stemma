@@ -78,8 +78,10 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 		return nil, err
 	}
 	installer.Version = installerVersion(installer.Facts)
+	// An input's signing evidence describes the input, not what is published.
 	installer.Evidence = maps.Clone(input.Evidence)
 	delete(installer.Evidence, "signatures")
+	delete(installer.Evidence, signature.BuildEvidence)
 	if installer.Evidence == nil {
 		installer.Evidence = map[string]json.RawMessage{}
 	}
@@ -197,9 +199,13 @@ func publishPackage(ctx context.Context, spec Spec, request Request, source *con
 	if options := spec.Application; app != nil && options != nil && options.InstalledPath != "" {
 		app.InstalledPath = options.InstalledPath
 	}
+	// A package its builder left unsigned has no publisher to derive.
+	built := pkg == "." && signature.BuiltUnsigned(request.Input)
+	enforce := !request.DeriveSignature && len(spec.Signatures) > 0
+	derive := request.DeriveSignature && !built
 	var verified []signature.Observation
-	if len(spec.Signatures) > 0 || request.DeriveSignature {
-		verified, err = signature.Verify(ctx, spec.Signatures, facts.Subjects[:1], request.DeriveSignature, func(plugin.Subject) (signature.Result, error) {
+	if enforce || derive {
+		verified, err = signature.Verify(ctx, spec.Signatures, facts.Subjects[:1], derive, func(plugin.Subject) (signature.Result, error) {
 			return apple.VerifyPackage(ctx, local, signature.Signer{})
 		})
 		if err != nil {

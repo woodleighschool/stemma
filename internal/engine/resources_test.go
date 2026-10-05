@@ -187,6 +187,81 @@ spec:
 	}
 }
 
+func TestBuiltPackageNeedsNoSigningExpectation(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	installer, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "vendor.pkg"), installer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: built}
+spec:
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata: {name: tool}
+spec:
+  payload:
+    /Library/Example/tool.txt: {content: tool}
+  package: {identifier: com.example.tool, version: '1.0'}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: tool}
+spec:
+  source: {resource: {kind: BuildMacPkg, name: tool}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: vendor}
+spec:
+  source: {path: vendor.pkg}
+`
+	testproject.Write(t, filename, manifest)
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	options.Method = "signature"
+	derived, err := Run(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the vendor package has a publisher to declare.
+	var proposed []string
+	for _, resource := range derived.Resources {
+		if resource.Artifacts["installer"].Evidence["signatures"] != nil {
+			proposed = append(proposed, resource.Kind+"/"+resource.Name)
+		}
+	}
+	if !slices.Equal(proposed, []string{"MacSoftware/vendor"}) || derived.Summary.Derived != 1 {
+		t.Fatalf("derived expectations for %v, counted %d", proposed, derived.Summary.Derived)
+	}
+	// An expectation declared for the built package is still held to it.
+	options.Method = "prepare"
+	for declared, message := range map[string]string{"unsigned: true": "", "signer: apple:developer-id:SMLKBTR495": "not signed"} {
+		testproject.Write(t, filename, strings.Replace(manifest, "name: tool}}\n", "name: tool}}\n  signatures: [{"+declared+"}]\n", 1))
+		report, _ := Run(t.Context(), options)
+		index := slices.IndexFunc(report.Resources, func(resource ResourceReport) bool {
+			return resource.Kind == "MacSoftware" && resource.Name == "tool"
+		})
+		if index < 0 {
+			t.Fatalf("%s: software was not prepared: %+v", declared, report.Resources)
+		}
+		resource := report.Resources[index]
+		verified := resource.Artifacts["installer"].Evidence["signatures"] != nil
+		if message == "" && !verified || message != "" && !strings.Contains(resource.Error, message) {
+			t.Fatalf("%s: verified %t, error %q", declared, verified, resource.Error)
+		}
+	}
+}
+
 // suspendedProject keeps a private build and the software consuming it out of
 // implicit runs while a vendor package stays in them.
 const suspendedProject = `apiVersion: stemma/v1alpha1

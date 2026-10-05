@@ -183,7 +183,8 @@ func TestZIPSignatureVerifiesTheApplication(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "WoodSweep-1.2.3.zip")
 	testarchive.Zip(t, filename, release)
 	input := plugin.Artifact{Path: filename, Filename: "WoodSweep-1.2.3.zip", Format: "zip"}
-	outputs, err := Prepare(t.Context(), Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: "WoodSweep.app"}, Signer: signer}}}, Request{Input: input, Workspace: t.TempDir()})
+	// An entry without subject covers the one application the image holds.
+	outputs, err := Prepare(t.Context(), Spec{Signatures: []signature.Expectation{{Signer: signer}}}, Request{Input: input, Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}

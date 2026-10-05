@@ -63,7 +63,7 @@ kind: MacSoftware
 metadata: {name: missing-installer}
 spec:
   source: {path: missing.pkg}
-  signatures: [{subject: {path: .}, signer: apple:developer-id:SMLKBTR495}]
+  signatures: [{signer: apple:developer-id:SMLKBTR495}]
 `)
 	var out, logs bytes.Buffer
 	cmd, finish := command(&out, &logs)
@@ -330,7 +330,7 @@ kind: MacSoftware
 metadata: {name: missing-installer}
 spec:
   source: {path: missing.pkg}
-  signatures: [{subject: {path: .}, signer: apple:developer-id:SMLKBTR495}]
+  signatures: [{signer: apple:developer-id:SMLKBTR495}]
 `)
 	var stderr bytes.Buffer
 	cmd, finish := command(failingReportWriter{}, &stderr)
@@ -349,7 +349,7 @@ func TestSignatureDetailsKeepInputsApartFromPublishedSignatures(t *testing.T) {
 		observation signature.Observation
 		want        []string
 	}{
-		{signature.Observation{Subject: plugin.SubjectSelector{Path: "."}, State: "signed", Signer: "apple:developer-id:UBF8T346G9", Name: "Microsoft Corporation", Authority: "Developer ID Installer"}, []string{"Subject: .", "Signer: Microsoft Corporation (Developer ID Installer)", "signatures:", `path: "."`, "signer: apple:developer-id:UBF8T346G9"}},
+		{signature.Observation{Subject: plugin.SubjectSelector{Path: "."}, State: "signed", Signer: "apple:developer-id:UBF8T346G9", Name: "Microsoft Corporation", Authority: "Developer ID Installer"}, []string{"Subject: .", "Signer: Microsoft Corporation (Developer ID Installer)", "signatures:", "- signer: apple:developer-id:UBF8T346G9"}},
 		{signature.Observation{Subject: plugin.SubjectSelector{Path: "Example.app"}, State: "signed", Signer: "apple:developer-id:ABCDE12345", Name: "Example", Authority: "Developer ID Application", Replaced: []signature.Replacement{{Path: "Contents/Frameworks/helper.so", Sealed: "aa", CDHashes: []string{"bb"}}}}, []string{"Signer: Example (Developer ID Application)", "Replaced nested code: Contents/Frameworks/helper.so"}},
 		{signature.Observation{Input: "vendor", Subject: plugin.SubjectSelector{Path: "Install.app"}, State: "unsigned"}, []string{"Input: vendor", "Subject: Install.app", "Signing state: unsigned", `input: "vendor"`, "unsigned: true"}},
 	} {
@@ -364,6 +364,13 @@ func TestSignatureDetailsKeepInputsApartFromPublishedSignatures(t *testing.T) {
 				t.Fatalf("report lost %q: %s", want, got)
 			}
 		}
+		if status := resourceStatus("signature", resource); status != "signer derived" {
+			t.Fatalf("status %q", status)
+		}
+	}
+	built := engine.ResourceReport{Artifacts: map[string]engine.Prepared{"installer": {Filename: "built.pkg"}}}
+	if status := resourceStatus("signature", built); status != "nothing to declare" {
+		t.Fatalf("status %q for a package without a publisher", status)
 	}
 }
 

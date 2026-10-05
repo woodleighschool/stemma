@@ -431,7 +431,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                                "description": "One physical signing subject. Omit it where there is only one, such as the PKG itself or the only application in an image. Component receipts do not carry the outer PKG signature."
                               },
                               "unsigned": {
                                 "anyOf": [
@@ -455,7 +455,6 @@
                               }
                             },
                             "required": [
-                              "subject",
                               "input"
                             ],
                             "type": "object"
@@ -474,7 +473,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Signing expectations for every physical signing subject consumed by the resolved payload and scripts layout. Unused siblings are excluded. The built package itself is unsigned."
+                  "description": "Signing expectations for every physical signing subject consumed by the resolved payload and scripts layout. Unused siblings are excluded, and a package another build produced needs none. The built package itself is unsigned."
                 }
               },
               "propertyNames": {
@@ -884,7 +883,7 @@
                                         "type": "string"
                                       }
                                     ],
-                                    "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                                    "description": "One physical signing subject. Omit it where there is only one, such as the PKG itself or the only application in an image. Component receipts do not carry the outer PKG signature."
                                   },
                                   "unsigned": {
                                     "anyOf": [
@@ -923,7 +922,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Signing expectations for every physical signing subject consumed by the resolved payload and scripts layout. Unused siblings are excluded. The built package itself is unsigned."
+                      "description": "Signing expectations for every physical signing subject consumed by the resolved payload and scripts layout. Unused siblings are excluded, and a package another build produced needs none. The built package itself is unsigned."
                     }
                   },
                   "propertyNames": {
@@ -2057,7 +2056,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                                "description": "One physical signing subject. Omit it where there is only one, such as the PKG itself or the only application in an image. Component receipts do not carry the outer PKG signature."
                               },
                               "unsigned": {
                                 "anyOf": [
@@ -2080,9 +2079,6 @@
                                 "pattern": "\\{\\{"
                               }
                             },
-                            "required": [
-                              "subject"
-                            ],
                             "type": "object"
                           },
                           {
@@ -2099,7 +2095,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Explicit signing expectations for the published PKG root or every top-level application in the published disk image. Omit to make no signing assertion. Derive with stemma signature."
+                  "description": "Signing expectations for the published PKG or every top-level application in the published disk image. Omit to make no signing assertion; a package BuildMacPkg built needs none. Derive with stemma signature."
                 },
                 "source": {
                   "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/Input",
@@ -2472,7 +2468,7 @@
                                         "type": "string"
                                       }
                                     ],
-                                    "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                                    "description": "One physical signing subject. Omit it where there is only one, such as the PKG itself or the only application in an image. Component receipts do not carry the outer PKG signature."
                                   },
                                   "unsigned": {
                                     "anyOf": [
@@ -2511,7 +2507,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Explicit signing expectations for the published PKG root or every top-level application in the published disk image. Omit to make no signing assertion. Derive with stemma signature."
+                      "description": "Signing expectations for the published PKG or every top-level application in the published disk image. Omit to make no signing assertion; a package BuildMacPkg built needs none. Derive with stemma signature."
                     },
                     "source": {
                       "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/PartialInput",
@@ -9150,7 +9146,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                                "description": "One physical signing subject. Omit it where there is only one, such as the PKG itself or the only application in an image. Component receipts do not carry the outer PKG signature."
                               },
                               "unsigned": {
                                 "anyOf": [
@@ -9173,9 +9169,6 @@
                                 "pattern": "\\{\\{"
                               }
                             },
-                            "required": [
-                              "subject"
-                            ],
                             "type": "object"
                           },
                           {
@@ -9192,7 +9185,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Signing expectations for the selected setup entry point. Use path: . for a scalar installer or its exact path in the prepared setup tree. Omit to make no signing assertion."
+                  "description": "Signing expectation for the selected setup entry point, the only signing subject, so its entry needs no subject. Omit to make no signing assertion."
                 },
                 "source": {
                   "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/Input",
@@ -9499,7 +9492,7 @@
                                         "type": "string"
                                       }
                                     ],
-                                    "description": "Exactly one physical signing subject. A scalar artifact uses path: .; component receipts do not carry the outer PKG signature."
+                                    "description": "One physical signing subject. Omit it where there is only one, such as the PKG itself or the only application in an image. Component receipts do not carry the outer PKG signature."
                                   },
                                   "unsigned": {
                                     "anyOf": [
@@ -9538,7 +9531,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Signing expectations for the selected setup entry point. Use path: . for a scalar installer or its exact path in the prepared setup tree. Omit to make no signing assertion."
+                      "description": "Signing expectation for the selected setup entry point, the only signing subject, so its entry needs no subject. Omit to make no signing assertion."
                     },
                     "source": {
                       "$ref": "https://stemma.invalid/catalog.schema.json#/$defs/PartialInput",

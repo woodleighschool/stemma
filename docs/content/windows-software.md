@@ -113,14 +113,12 @@ Declare the selected setup entry point's signing expectation:
 
 ```yaml
 signatures:
-  - subject:
-      path: bin/setup.exe
-    signer: authenticode:4a6519d3c145fc3838df20b3009980fe59b9bc68ee5871e59aaa0097a523e333 # Google LLC
+  - signer: authenticode:4a6519d3c145fc3838df20b3009980fe59b9bc68ee5871e59aaa0097a523e333 # Google LLC
 ```
 
-Paths are relative to the prepared setup directory. A scalar MSI or EXE uses
-`path: .`. Only the selected entry point is a signing subject; auxiliary executables
-are outside this scope.
+The entry point is the only signing subject, whether it is a single MSI or EXE or
+the selected file of a setup directory, so its entry needs no `subject`.
+Auxiliary executables are outside this scope.
 
 `stemma signature WindowsSoftware/<name>` derives a complete fragment without
 requiring an existing declaration. It reports unsigned installers normally, as

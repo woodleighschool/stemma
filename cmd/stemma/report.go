@@ -66,6 +66,10 @@ func resourceStatus(method string, resource engine.ResourceReport) string {
 	case method == "update":
 		return "inputs unchanged"
 	case method == "signature":
+		// A resource without a publisher to verify has no expectation to print.
+		if signatureDetails(resource) == "" {
+			return "nothing to declare"
+		}
 		return "signer derived"
 	case method == "icon" && resource.Icon != "":
 		return resource.Icon
