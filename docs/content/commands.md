@@ -123,7 +123,7 @@ pkgutil --check-signature "$(stemma artifact MacSoftware/foo)"
 stemma artifact MacSoftware/foo --output-file ./foo.pkg
 ```
 
-`--offline` requires cached network inputs and plugin bundles; destination calls
+`--offline` requires cached network inputs and plugins; destination calls
 are still allowed. Only `plan` is the publication dry run. See
 [sources](sources.md) for lock behaviour.
 
@@ -192,6 +192,7 @@ not share it without reviewing it.
 ```sh
 stemma plugins list
 stemma plugins inspect
+stemma plugins inspect --verify
 stemma plugins update [NAME...]
 stemma plugins publish IMAGE --goreleaser dist
 stemma cache path
@@ -202,7 +203,8 @@ stemma cache prune --all
 ```
 
 `plugins list` shows declarations and recorded pins without acquiring or running
-plugins. `plugins inspect` loads the pinned code and reports its capabilities. `plugins update` locks the named plugins, or all of them, to what their
+plugins. `plugins inspect` loads the pinned code and reports its capabilities;
+`--verify` also compares each installed plugin with its pinned code. `plugins update` locks the named plugins, or all of them, to what their
 declarations select now: it resolves a tag again and snapshots local files.
 `update` locks the plugins whose entries are missing or stale; no other command
 changes plugin entries. See [using plugins](plugins.md).

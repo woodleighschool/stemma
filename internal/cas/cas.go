@@ -40,8 +40,9 @@ type Store struct {
 }
 
 // dirs are the cache's disposable directories. Materialized copies of prepared
-// artifacts are for the operator; no run reads them back.
-var dirs = []string{"objects", "work", "sources", "derivations", "materialized", "uses"}
+// artifacts are for the operator; no run reads them back. Plugin installations
+// are executed in place.
+var dirs = []string{"objects", "work", "sources", "derivations", "materialized", "plugins", "uses"}
 
 // Open creates the cache directories. Call Lease while using cache objects.
 func Open(dir string) (*Store, error) {

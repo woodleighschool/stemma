@@ -133,18 +133,13 @@ func projectOperations(ctx context.Context, p config.Project, opts Options) (*op
 	if err != nil {
 		return nil, nil, err
 	}
-	work, err := os.MkdirTemp(filepath.Join(store.Dir, "work"), "operations-*")
-	if err != nil {
-		cleanupError(ctx, release())
-		return nil, nil, err
-	}
-	cleanup := func() { cleanupError(ctx, errors.Join(os.RemoveAll(work), release())) }
+	cleanup := func() { cleanupError(ctx, release()) }
 	root, err := filepath.Abs(filepath.Dir(opts.ConfigPath))
 	if err != nil {
 		cleanup()
 		return nil, nil, err
 	}
-	ops, err := loadOperations(ctx, p, source.New(store, root, opts.Lock.Offline), work, opts.Handlers, false)
+	ops, err := loadOperations(ctx, p, source.New(store, root, opts.Lock.Offline), opts.Handlers, false)
 	if err != nil {
 		cleanup()
 		return nil, nil, err
@@ -364,7 +359,7 @@ func (o *operations) call(ctx context.Context, name, method string, input, outpu
 // a run that resolves plugins changes their lock entries: it locks a tag or
 // local path whose entry is missing or stale and keeps the entry of a plugin
 // that does not load.
-func loadOperations(ctx context.Context, p config.Project, manager *source.Manager, work string, handlers map[string]reconcileHandler, resolve bool) (*operations, error) {
+func loadOperations(ctx context.Context, p config.Project, manager *source.Manager, handlers map[string]reconcileHandler, resolve bool) (*operations, error) {
 	ops, err := builtins(handlers)
 	if err != nil || len(p.Plugins) == 0 {
 		return ops, err
@@ -379,7 +374,7 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 	}
 	store := plugins.New(manager.Store, manager.Offline)
 	for _, name := range slices.Sorted(maps.Keys(p.Plugins)) {
-		loaded := loadPlugin(ctx, store, manager.Root, work, name, p.Plugins[name], locked.Plugins[name], resolve)
+		loaded := loadPlugin(ctx, store, manager.Root, name, p.Plugins[name], locked.Plugins[name], resolve)
 		entry := loaded.entry
 		if !ops.add(loaded) {
 			entry = locked.Plugins[name]

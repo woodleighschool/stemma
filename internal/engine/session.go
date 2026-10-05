@@ -70,7 +70,7 @@ func open(ctx context.Context, opts Options, resolvePlugins bool) (_ *session, e
 			return nil, err
 		}
 	}
-	s.ops, err = loadOperations(ctx, p, s.manager, work, opts.Handlers, resolvePlugins)
+	s.ops, err = loadOperations(ctx, p, s.manager, opts.Handlers, resolvePlugins)
 	if err != nil {
 		return nil, err
 	}

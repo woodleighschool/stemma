@@ -94,9 +94,10 @@ func ListPlugins(ctx context.Context, configPath string) ([]PluginReport, error)
 }
 
 // InspectPlugins loads every declared plugin from its lock entry, as runs do,
-// and reports each one. It returns ErrPluginsFailed when a report holds a
-// failure.
-func InspectPlugins(ctx context.Context, opts Options) ([]PluginReport, error) {
+// and reports each one. With verify, an installed plugin that differs from its
+// pinned files fails to load. It returns ErrPluginsFailed when a report holds
+// a failure.
+func InspectPlugins(ctx context.Context, opts Options, verify bool) ([]PluginReport, error) {
 	p, err := config.LoadProjectDocument(opts.ConfigPath)
 	if err != nil {
 		return nil, err
@@ -110,9 +111,11 @@ func InspectPlugins(ctx context.Context, opts Options) ([]PluginReport, error) {
 		return nil, err
 	}
 	var reports []PluginReport
-	err = withPluginWorkspace(ctx, opts.CacheDir, func(store *cas.Store, work string) error {
+	err = withCacheLease(ctx, opts.CacheDir, func(cache *cas.Store) error {
+		store := plugins.New(cache, opts.Lock.Offline)
+		store.Verify = verify
 		var err error
-		reports, _, err = describePlugins(ctx, p, plugins.New(store, opts.Lock.Offline), root, work, slices.Sorted(maps.Keys(p.Plugins)), locked.Plugins, false)
+		reports, _, err = describePlugins(ctx, p, store, root, slices.Sorted(maps.Keys(p.Plugins)), locked.Plugins, false)
 		return err
 	})
 	if err != nil {
@@ -153,8 +156,8 @@ func UpdatePlugins(ctx context.Context, opts Options, names []string) (update Pl
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return update, err
 	}
-	err = withPluginWorkspace(ctx, opts.CacheDir, func(store *cas.Store, work string) error {
-		reports, resolved, err := describePlugins(ctx, p, plugins.New(store, false), root, work, names, nil, true)
+	err = withCacheLease(ctx, opts.CacheDir, func(store *cas.Store) error {
+		reports, resolved, err := describePlugins(ctx, p, plugins.New(store, false), root, names, nil, true)
 		if err != nil {
 			return err
 		}
@@ -192,9 +195,9 @@ func UpdatePlugins(ctx context.Context, opts Options, names []string) (update Pl
 	return update, pluginsFailed(update.Plugins)
 }
 
-// withPluginWorkspace leases the cache and gives plugins a workspace to
-// materialize in for the duration of run.
-func withPluginWorkspace(ctx context.Context, cacheDir string, run func(*cas.Store, string) error) error {
+// withCacheLease leases the cache, which holds plugin installations, for the
+// duration of run.
+func withCacheLease(ctx context.Context, cacheDir string, run func(*cas.Store) error) error {
 	store, err := cas.Open(cacheDir)
 	if err != nil {
 		return err
@@ -204,17 +207,12 @@ func withPluginWorkspace(ctx context.Context, cacheDir string, run func(*cas.Sto
 		return err
 	}
 	defer func() { cleanupError(ctx, release()) }()
-	work, err := os.MkdirTemp(filepath.Join(store.Dir, "work"), "plugins-*")
-	if err != nil {
-		return err
-	}
-	defer func() { cleanupError(ctx, os.RemoveAll(work)) }()
-	return run(store, work)
+	return run(store)
 }
 
 // describePlugins loads the named plugins and reports each as a run would
 // register it, with the lock entries of those that loaded.
-func describePlugins(ctx context.Context, p config.Project, store *plugins.Store, root, work string, names []string, previous map[string]plugins.Entry, resolve bool) ([]PluginReport, map[string]plugins.Entry, error) {
+func describePlugins(ctx context.Context, p config.Project, store *plugins.Store, root string, names []string, previous map[string]plugins.Entry, resolve bool) ([]PluginReport, map[string]plugins.Entry, error) {
 	ops, err := builtins(nil)
 	if err != nil {
 		return nil, nil, err
@@ -223,7 +221,7 @@ func describePlugins(ctx context.Context, p config.Project, store *plugins.Store
 	entries := map[string]plugins.Entry{}
 	for _, name := range names {
 		declaration := p.Plugins[name]
-		loaded := loadPlugin(ctx, store, root, work, name, declaration, previous[name], resolve)
+		loaded := loadPlugin(ctx, store, root, name, declaration, previous[name], resolve)
 		report := PluginReport{Name: name, Image: declaration.Image, Path: declaration.Path, Version: loaded.description.Version, Revision: loaded.description.Revision, Interfaces: loaded.description.Interfaces, Platforms: loaded.bundle.Platforms, Unavailable: loaded.description.Unavailable}
 		report.Digest = plugins.Pin(declaration, loaded.entry)
 		report.Locked = loaded.entry.Digest != ""
@@ -257,13 +255,13 @@ type loadedPlugin struct {
 	name        string
 	entry       plugins.Entry
 	bundle      plugins.Bundle
-	executable  string
 	description plugin.Description
 	err         error
 }
 
-// loadPlugin selects a plugin's code, materializes it in work and describes it.
-func loadPlugin(ctx context.Context, store *plugins.Store, root, work, name string, declaration config.Plugin, previous plugins.Entry, resolve bool) (loaded loadedPlugin) {
+// loadPlugin selects a plugin's code, installs it when the cache has not, and
+// describes it.
+func loadPlugin(ctx context.Context, store *plugins.Store, root, name string, declaration config.Plugin, previous plugins.Entry, resolve bool) (loaded loadedPlugin) {
 	loaded.name = name
 	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("plugin", name))
 	done := plugin.Stage(ctx, "Loading plugin")
@@ -272,11 +270,7 @@ func loadPlugin(ctx context.Context, store *plugins.Store, root, work, name stri
 	if loaded.err != nil {
 		return loaded
 	}
-	loaded.executable, loaded.err = store.Materialize(ctx, loaded.bundle, filepath.Join(work, name))
-	if loaded.err != nil {
-		return loaded
-	}
-	loaded.description, loaded.err = plugin.Describe(ctx, loaded.executable)
+	loaded.description, loaded.err = plugin.Describe(ctx, loaded.bundle.Executable)
 	return loaded
 }
 
@@ -351,7 +345,7 @@ func (o *operations) register(loaded loadedPlugin) error {
 		Manifest   string
 		Descriptor plugin.Descriptor
 	}{loaded.bundle.Manifest, loaded.description.Descriptor})
-	executable := loaded.executable
+	executable := loaded.bundle.Executable
 	for _, operation := range loaded.description.Operations {
 		if err := o.registry.Register(operation, func(ctx context.Context, request plugin.Request) (plugin.Response, error) {
 			return plugin.Run(ctx, executable, request)

@@ -88,6 +88,21 @@ catalog-tools
 
 `stemma schema --output-file -` includes the schemas of every operation.
 
+## Installation
+
+Each plugin version is installed in the cache the first time it loads and runs
+from there afterwards. A complete installation is trusted: later runs do not read
+the bundle or the installed files again. Local files are hashed on every run, so
+a changed plugin still does not load until it is locked again.
+
+```sh
+stemma plugins inspect --verify
+```
+
+`--verify` stages a fresh copy of each plugin from its pinned code and reports any
+installation that differs, naming the directory to remove. A removed or pruned
+installation is installed again by the next run.
+
 ## Updates
 
 A declaration that names its digest suits automated updates: the tag and digest

@@ -176,15 +176,11 @@ func TestPinnedPlatformBundleSurvivesTagMovementAndCacheLoss(t *testing.T) {
 	if !slices.Equal(bundle.Platforms, []string{"darwin/arm64", "linux/amd64"}) {
 		t.Fatalf("index platforms = %v", bundle.Platforms)
 	}
-	executable, err := s.Materialize(ctx, bundle, filepath.Join(t.TempDir(), "installed"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(executable)
+	data, err := os.ReadFile(bundle.Executable)
 	if err != nil || string(data) != "original" {
 		t.Fatalf("entrypoint=%q error=%v", data, err)
 	}
-	resource, err := os.ReadFile(filepath.Join(filepath.Dir(executable), "resources", "message.txt"))
+	resource, err := os.ReadFile(filepath.Join(filepath.Dir(bundle.Executable), "resources", "message.txt"))
 	if err != nil || string(resource) != "original resource" {
 		t.Fatalf("resource=%q error=%v", resource, err)
 	}
@@ -201,14 +197,41 @@ func TestPinnedPlatformBundleSurvivesTagMovementAndCacheLoss(t *testing.T) {
 	if len(remote.resolves) != resolved || remote.fetches[linuxBlob.Digest] != 1 {
 		t.Fatal("warm run contacted registry")
 	}
-	path, err := cache.Path(bundle.Artifact)
+	// A complete installation is trusted as it is; only Verify reads it again.
+	s.Verify = true
+	if verified, err := s.Acquire(ctx, image, indexDigest); err != nil || !reflect.DeepEqual(verified, bundle) {
+		t.Fatalf("verification rejected an intact installation: %+v %v", verified, err)
+	}
+	s.Verify = false
+	if err := os.Chmod(bundle.Executable, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bundle.Executable, []byte("edited"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if trusted, err := s.Acquire(ctx, image, indexDigest); err != nil || !reflect.DeepEqual(trusted, bundle) {
+		t.Fatalf("load did not trust a complete installation: %+v %v", trusted, err)
+	}
+	if data, err := os.ReadFile(bundle.Executable); err != nil || string(data) != "edited" {
+		t.Fatalf("load installed again: %q %v", data, err)
+	}
+	s.Verify = true
+	if _, err := s.Acquire(ctx, image, indexDigest); err == nil || !strings.Contains(err.Error(), "differ") {
+		t.Fatalf("verification accepted edited installed files: %v", err)
+	}
+	s.Verify = false
+	// Without an installation the cached bundle is verified before use.
+	if err := os.RemoveAll(filepath.Dir(filepath.Dir(bundle.Executable))); err != nil {
+		t.Fatal(err)
+	}
+	path, err := cache.Path(cas.Ref{SHA256: linuxBlob.Digest.Encoded(), Size: linuxBlob.Size})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(path, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), int(bundle.Artifact.Size)), 0o600); err != nil {
+	if err := os.WriteFile(path, bytes.Repeat([]byte("x"), int(linuxBlob.Size)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.Acquire(ctx, image, indexDigest); err == nil {
@@ -220,6 +243,9 @@ func TestPinnedPlatformBundleSurvivesTagMovementAndCacheLoss(t *testing.T) {
 	}
 	if cold, err := s.Acquire(ctx, image, indexDigest); err != nil || !reflect.DeepEqual(cold, bundle) {
 		t.Fatalf("cold run followed moved tag: %+v %v", cold, err)
+	}
+	if data, err := os.ReadFile(bundle.Executable); err != nil || string(data) != "original" {
+		t.Fatalf("cold run installed %q: %v", data, err)
 	}
 	if remote.resolves[image] != 1 {
 		t.Fatal("cold recovery resolved a mutable tag")
@@ -245,25 +271,31 @@ func TestBundleEntrypointAndExtractionContract(t *testing.T) {
 		{"traversal", "../plugin.exe", false, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			target := memory.New()
+			manifest, _ := fixtureManifest(t, target, "windows", "amd64", fixtureArchive(t, test.entrypoint, "payload", test.link))
+			index := fixtureIndex(t, target, manifest)
 			cache, err := cas.Open(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
-			ref, err := cache.Import(t.Context(), bytes.NewReader(fixtureArchive(t, test.entrypoint, "payload", test.link)), "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			s := New(cache, true)
-			s.platform.OS = "windows"
-			destination := filepath.Join(t.TempDir(), "bundle")
-			_, err = s.Materialize(t.Context(), Bundle{Artifact: ref}, destination)
+			s := New(cache, false)
+			s.platform = *manifest.Platform
+			s.registry = func(string) (oras.ReadOnlyTarget, error) { return target, nil }
+			bundle, err := s.Acquire(t.Context(), "registry.example/plugin:v1", index.Digest.String())
 			if (err == nil) != test.valid {
 				t.Fatalf("valid=%v error=%v", test.valid, err)
 			}
-			if !test.valid {
-				if _, err := os.Stat(destination); !os.IsNotExist(err) {
-					t.Fatalf("failed extraction left a partial bundle: %v", err)
+			if test.valid {
+				if filepath.Base(bundle.Executable) != "plugin.exe" {
+					t.Fatalf("entrypoint = %s", bundle.Executable)
 				}
+				return
+			}
+			if _, err := s.Acquire(t.Context(), "registry.example/plugin:v1", index.Digest.String()); err == nil {
+				t.Fatal("failed extraction was kept as an installation")
+			}
+			if left, err := filepath.Glob(filepath.Join(cache.Dir, "plugins", "*", "files")); err != nil || len(left) != 0 {
+				t.Fatalf("failed extraction left a partial bundle: %v %v", left, err)
 			}
 		})
 	}

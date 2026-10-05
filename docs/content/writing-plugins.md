@@ -216,6 +216,7 @@ and namespaced JSON `Evidence`.
 Create new outputs inside `request.Workspace`. Treat leased inputs as immutable;
 the host recomputes identity, checks declared hashes and detects input mutation.
 Do not retain workspace paths between requests or reach into the host's cache.
+Runs share one installed copy of a bundle, so do not write beside the executable.
 Plugin bundle identity participates in preparation cache keys.
 
 Typed facts retain separate subjects: a package receipt, contained application or

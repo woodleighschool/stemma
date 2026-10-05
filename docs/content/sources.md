@@ -295,7 +295,7 @@ maintain the cache per call. An idle machine does no maintenance.
 
 `--cache-max-size` / `STEMMA_CACHE_MAX_SIZE` sets the retained-cache budget,
 defaulting to `32GiB`; `0` disables automatic content eviction. The budget includes
-downloads, prepared objects, plugin bundles, materialized copies and disposable
+downloads, prepared objects, plugins, materialized copies and disposable
 metadata. Under size pressure, least recently used entries are removed first.
 Successful reuse refreshes recency; inspection does not. Entries used within the
 last 24 hours are protected. This is a soft target: recent content and temporary

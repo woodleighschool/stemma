@@ -1,9 +1,12 @@
-// Package plugins snapshots local executables and acquires pinned OCI bundles.
+// Package plugins selects local executables and pinned OCI bundles and installs
+// them in the cache.
 package plugins
 
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +28,6 @@ import (
 	"github.com/oras-project/oras-go/v3/registry/remote/retry"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
-	"github.com/woodleighschool/stemma/internal/source"
 )
 
 const ArtifactType = "application/vnd.stemma.plugin.v1"
@@ -45,18 +47,22 @@ type Entry struct {
 	Digest      string `json:"digest" yaml:"digest"`
 }
 
-// Bundle identifies the entire selected package, including executable
-// resources. Platforms lists the runners an image has bundles for.
+// Bundle is a selected package as the cache installed it. Manifest identifies
+// the entire package, including executable resources. Platforms lists the
+// runners an image has bundles for.
 type Bundle struct {
 	Manifest   string
-	Artifact   cas.Ref
-	Local      *source.Content
-	Entrypoint string
+	Executable string
 	Platforms  []string
 }
 
-// Store keeps registry content in the shared disposable cache. Callers hold a lease.
+// Store keeps registry content and plugin installations in the shared
+// disposable cache. Callers hold a lease.
 type Store struct {
+	// Verify stages every plugin again from its pinned files and requires an
+	// existing installation to match, where a load otherwise trusts it.
+	Verify bool
+
 	cache    *cas.Store
 	offline  bool
 	platform ocispec.Platform
@@ -125,9 +131,10 @@ func (s *Store) Resolve(ctx context.Context, image string) (string, error) {
 	return desc.Digest.String(), nil
 }
 
-// Acquire uses the platform index indexDigest names, even if the image's tag
-// has moved. It fetches only the runner's manifest, config and bundle; cached
-// bytes are verified first.
+// Acquire installs this runner's bundle from the platform index indexDigest
+// names, even if the image's tag has moved. A complete installation is used as
+// it is. Otherwise only the runner's manifest, config and bundle are fetched,
+// and cached bytes are verified first.
 func (s *Store) Acquire(ctx context.Context, image, indexDigest string) (Bundle, error) {
 	fetcher := &fetcher{store: s, image: image}
 	desc, err := fetcher.index(ctx, digest.Digest(indexDigest))
@@ -163,73 +170,79 @@ func (s *Store) Acquire(ctx context.Context, image, indexDigest string) (Bundle,
 	if selected.Digest == "" {
 		return Bundle{}, fmt.Errorf("plugin has no bundle for %s/%s", s.platform.OS, s.platform.Architecture)
 	}
-	var manifest ocispec.Manifest
-	if err := fetcher.metadata(ctx, selected, &manifest); err != nil {
+	if _, err := reference(selected, maxMetadataSize); err != nil {
 		return Bundle{}, err
 	}
-	if manifest.SchemaVersion != 2 || manifest.MediaType != ocispec.MediaTypeImageManifest || manifest.ArtifactType != ArtifactType || len(manifest.Layers) != 1 || manifest.Layers[0].MediaType != BundleType {
-		return Bundle{}, errors.New("plugin manifest requires one Stemma tar.zst bundle")
-	}
-	if _, err := reference(manifest.Config, maxMetadataSize); err != nil {
-		return Bundle{}, err
-	}
-	config, err := fetcher.Fetch(ctx, manifest.Config)
+	executable, err := s.install(ctx, selected.Digest.Encoded(), entrypoint(s.platform.OS), func(dir string) error {
+		return fetcher.extract(ctx, selected, dir)
+	})
 	if err != nil {
 		return Bundle{}, err
 	}
-	if err := config.Close(); err != nil {
-		return Bundle{}, err
-	}
-	layer := manifest.Layers[0]
-	ref, err := reference(layer, cas.MaxObjectSize)
-	if err != nil {
-		return Bundle{}, err
-	}
-	blob, err := fetcher.Fetch(ctx, layer)
-	if err != nil {
-		return Bundle{}, err
-	}
-	defer func() { _ = blob.Close() }()
-	var magic [4]byte
-	if _, err := io.ReadFull(blob, magic[:]); err != nil || magic != zstdMagic {
-		return Bundle{}, errors.New("plugin bundle is not a Zstandard archive")
-	}
-	return Bundle{Manifest: selected.Digest.String(), Artifact: ref, Platforms: platforms}, nil
+	return Bundle{Manifest: selected.Digest.String(), Executable: executable, Platforms: platforms}, nil
 }
 
-// Materialize extracts into a new leased workspace and returns its fixed entrypoint.
-func (s *Store) Materialize(ctx context.Context, bundle Bundle, destination string) (executable string, err error) {
-	if err := s.cache.Verify(ctx, bundle.Artifact); err != nil {
-		return "", err
+// install returns the entrypoint of the installation key names, staging it
+// when the cache holds none. A complete installation is trusted as it is; with
+// Verify, the plugin is staged again and the installation must match.
+func (s *Store) install(ctx context.Context, key, entrypoint string, stage func(dir string) error) (string, error) {
+	prepare := func(dir string) error {
+		if err := stage(dir); err != nil {
+			return err
+		}
+		executable, err := regularFile(dir, entrypoint)
+		if err != nil {
+			return err
+		}
+		// Runs trust the installation from here on, so its entrypoint is not
+		// left writable.
+		return os.Chmod(executable, 0o500)
 	}
-	path, err := s.cache.Path(bundle.Artifact)
-	if err != nil {
-		return "", err
-	}
-	if bundle.Local != nil && !bundle.Local.Tree {
-		if err := s.cache.Materialize(ctx, bundle.Artifact, filepath.Join(destination, bundle.Entrypoint)); err != nil {
+	if dir, ok := s.cache.Installed(ctx, key); ok && s.Verify {
+		if err := s.verify(ctx, dir, prepare); err != nil {
 			return "", err
 		}
-	} else if err := archive.Extract(ctx, path, destination); err != nil {
-		return "", err
 	}
-	defer func() {
-		if err != nil {
-			_ = os.RemoveAll(destination)
-		}
-	}()
-	name := entrypoint(s.platform.OS)
-	if bundle.Entrypoint != "" {
-		name = bundle.Entrypoint
-	}
-	executable, err = regularFile(destination, name)
+	dir, err := s.cache.Install(ctx, key, prepare)
 	if err != nil {
 		return "", err
 	}
-	if err := os.Chmod(executable, 0o700); err != nil {
+	return filepath.Join(dir, entrypoint), nil
+}
+
+// verify stages a plugin again and fails when its installation differs.
+func (s *Store) verify(ctx context.Context, installed string, stage func(dir string) error) error {
+	work, err := os.MkdirTemp(filepath.Join(s.cache.Dir, "work"), "plugin-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(work) }()
+	staged := filepath.Join(work, "files")
+	if err := stage(staged); err != nil {
+		return err
+	}
+	want, err := treeDigest(ctx, staged)
+	if err != nil {
+		return err
+	}
+	got, err := treeDigest(ctx, installed)
+	if err != nil {
+		return fmt.Errorf("plugin installation: %w", err)
+	}
+	if got != want {
+		return fmt.Errorf("installed files differ from the pinned plugin; remove %s", filepath.Dir(installed))
+	}
+	return nil
+}
+
+// treeDigest hashes a directory's canonical archive: its names, modes, link
+// targets and bytes.
+func treeDigest(ctx context.Context, dir string) (string, error) {
+	h := sha256.New()
+	if err := archive.Pack(ctx, dir, h); err != nil {
 		return "", err
 	}
-	return executable, nil
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // entrypoint names the executable at the root of a bundle for goos.
@@ -321,6 +334,47 @@ func (f *fetcher) metadata(ctx context.Context, desc ocispec.Descriptor, value a
 		return err
 	}
 	return json.Unmarshal(data, value)
+}
+
+// extract fetches the selected manifest's config and bundle, verifying cached
+// bytes first, and extracts the bundle into the new directory dir.
+func (f *fetcher) extract(ctx context.Context, selected ocispec.Descriptor, dir string) error {
+	var manifest ocispec.Manifest
+	if err := f.metadata(ctx, selected, &manifest); err != nil {
+		return err
+	}
+	if manifest.SchemaVersion != 2 || manifest.MediaType != ocispec.MediaTypeImageManifest || manifest.ArtifactType != ArtifactType || len(manifest.Layers) != 1 || manifest.Layers[0].MediaType != BundleType {
+		return errors.New("plugin manifest requires one Stemma tar.zst bundle")
+	}
+	if _, err := reference(manifest.Config, maxMetadataSize); err != nil {
+		return err
+	}
+	config, err := f.Fetch(ctx, manifest.Config)
+	if err != nil {
+		return err
+	}
+	if err := config.Close(); err != nil {
+		return err
+	}
+	layer := manifest.Layers[0]
+	ref, err := reference(layer, cas.MaxObjectSize)
+	if err != nil {
+		return err
+	}
+	blob, err := f.Fetch(ctx, layer)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = blob.Close() }()
+	var magic [4]byte
+	if _, err := io.ReadFull(blob, magic[:]); err != nil || magic != zstdMagic {
+		return errors.New("plugin bundle is not a Zstandard archive")
+	}
+	path, err := f.store.cache.Path(ref)
+	if err != nil {
+		return err
+	}
+	return archive.Extract(ctx, path, dir)
 }
 
 func (f *fetcher) Fetch(ctx context.Context, desc ocispec.Descriptor) (io.ReadCloser, error) {

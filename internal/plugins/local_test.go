@@ -58,8 +58,27 @@ func TestLocalSnapshot(t *testing.T) {
 			}
 			store = New(cache, true)
 			recovered, locked, err := store.Load(t.Context(), root, declaration, entry, false)
-			if err != nil || recovered.Manifest != bundle.Manifest || locked != entry {
-				t.Fatalf("cold recovery changed plugin: %v", err)
+			if err != nil || recovered.Manifest != bundle.Manifest || recovered.Executable != bundle.Executable || locked != entry {
+				t.Fatalf("cold recovery changed plugin: %+v %v", recovered, err)
+			}
+			store.Verify = true
+			if _, _, err := store.Load(t.Context(), root, declaration, entry, false); err != nil {
+				t.Fatalf("verification rejected an intact installation: %v", err)
+			}
+			// A complete installation is trusted as it is; only Verify reads it again.
+			installed := filepath.Join(filepath.Dir(bundle.Executable), "added.txt")
+			if err := os.WriteFile(installed, []byte("added"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := store.Load(t.Context(), root, declaration, entry, false); err == nil || !strings.Contains(err.Error(), "differ") {
+				t.Fatalf("verification accepted edited installed files: %v", err)
+			}
+			store.Verify = false
+			if _, _, err := store.Load(t.Context(), root, declaration, entry, false); err != nil {
+				t.Fatalf("load did not trust a complete installation: %v", err)
+			}
+			if _, err := os.Stat(installed); err != nil {
+				t.Fatalf("load installed again: %v", err)
 			}
 			if err := os.WriteFile(path, []byte("changed"), 0o755); err != nil {
 				t.Fatal(err)
@@ -67,16 +86,12 @@ func TestLocalSnapshot(t *testing.T) {
 			if _, _, err := store.Load(t.Context(), root, declaration, entry, false); err == nil || !strings.Contains(err.Error(), "changed") {
 				t.Fatalf("locked load accepted changed local code: %v", err)
 			}
-			executable, err := store.Materialize(t.Context(), bundle, filepath.Join(t.TempDir(), "snapshot"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			original, err := os.ReadFile(executable)
+			original, err := os.ReadFile(bundle.Executable)
 			if err != nil || string(original) != "original executable" {
-				t.Fatalf("snapshot used live code: %s %v", original, err)
+				t.Fatalf("installation followed live code: %s %v", original, err)
 			}
 			if tree {
-				helper, err := os.ReadFile(filepath.Join(filepath.Dir(executable), "helper.txt"))
+				helper, err := os.ReadFile(filepath.Join(filepath.Dir(bundle.Executable), "helper.txt"))
 				if err != nil || string(helper) != "original helper" {
 					t.Fatalf("lost helper snapshot: %s %v", helper, err)
 				}
@@ -84,6 +99,9 @@ func TestLocalSnapshot(t *testing.T) {
 			changed, updated, err := store.Load(t.Context(), root, declaration, entry, true)
 			if err != nil || changed.Manifest == bundle.Manifest || updated.Digest == entry.Digest {
 				t.Fatalf("local change kept old identity: %v", err)
+			}
+			if data, err := os.ReadFile(filepath.Join(filepath.Dir(changed.Executable), filepath.Base(path))); err != nil || string(data) != "changed" {
+				t.Fatalf("update installed %q: %v", data, err)
 			}
 		})
 	}

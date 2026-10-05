@@ -91,11 +91,7 @@ func TestPublishedGoReleaserReleaseRunsOnEachPlatform(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			executable, err := s.Materialize(t.Context(), bundle, filepath.Join(t.TempDir(), "bundle"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if data, err := os.ReadFile(executable); err != nil || string(data) != "tools for "+p.OS {
+			if data, err := os.ReadFile(bundle.Executable); err != nil || string(data) != "tools for "+p.OS {
 				t.Fatalf("entrypoint = %q, %v", data, err)
 			}
 		})

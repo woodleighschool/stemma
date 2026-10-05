@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 
 	"github.com/woodleighschool/stemma/internal/config"
@@ -88,11 +87,7 @@ func (s *session) catalogAt(ctx context.Context, opts Options) (_ catalog, err e
 	if err != nil {
 		return catalog{}, err
 	}
-	work, err := os.MkdirTemp(s.work, "base-operations-*")
-	if err != nil {
-		return catalog{}, err
-	}
-	result.ops, err = loadOperations(ctx, result.project, source.New(s.store, base, opts.Lock.Offline), work, opts.Handlers, false)
+	result.ops, err = loadOperations(ctx, result.project, source.New(s.store, base, opts.Lock.Offline), opts.Handlers, false)
 	return result, err
 }
 

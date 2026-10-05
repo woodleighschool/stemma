@@ -27,8 +27,9 @@ const Grace = 24 * time.Hour
 // Policy belongs to the runner, not the catalog. Zero MaxSize disables eviction.
 type Policy struct{ MaxSize int64 }
 
-// Usage counts logical file bytes, including metadata and materialized copies.
-// Work is reported separately because it is not retained content.
+// Usage counts logical file bytes, including metadata and materialized copies;
+// plugin installations count as materialized. Work is reported separately
+// because it is not retained content.
 type Usage struct {
 	Retained     int64 `json:"retained_bytes"`
 	Objects      int64 `json:"object_bytes"`
@@ -236,10 +237,11 @@ func (s *Store) inventory(ctx context.Context) ([]*entry, Usage, error) {
 				e.usage.Work += size
 				continue
 			}
-			switch dir {
-			case "objects":
+			tree := dir == "materialized" || dir == "plugins"
+			switch {
+			case dir == "objects":
 				e.usage.Objects += size
-			case "materialized":
+			case tree:
 				e.usage.Materialized += size
 			default:
 				e.usage.Metadata += size
@@ -251,8 +253,14 @@ func (s *Store) inventory(ctx context.Context) ([]*entry, Usage, error) {
 				}
 				continue
 			}
-			if !validDigest(name) || dir != "materialized" && !child.Type().IsRegular() || dir == "materialized" && !child.IsDir() {
+			if !validDigest(name) || !tree && !child.Type().IsRegular() || tree && !child.IsDir() {
 				e.invalid = true
+			}
+			if dir == "plugins" && !e.invalid {
+				// Install marks an installation last, so one without its marker
+				// stopped partway.
+				_, err := os.Lstat(filepath.Join(s.Dir, path, "complete"))
+				e.invalid = err != nil
 			}
 			if (dir == "sources" || dir == "derivations") && !e.invalid {
 				var index index

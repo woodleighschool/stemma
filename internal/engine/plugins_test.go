@@ -50,7 +50,7 @@ spec:
 	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "prepare"}
 	lockPath := lockfile.Filename(root)
 
-	reports, err := InspectPlugins(t.Context(), opts)
+	reports, err := InspectPlugins(t.Context(), opts, false)
 	if !errors.Is(err, ErrPluginsFailed) || len(reports) != 1 || !strings.Contains(reports[0].Error, "not locked") {
 		t.Fatalf("unlocked plugin listed as %+v: %v", reports, err)
 	}
@@ -66,7 +66,7 @@ spec:
 		t.Fatalf("plugins update = %+v: %v", update, err)
 	}
 	locked := update.Plugins[0].Digest
-	reports, err = InspectPlugins(t.Context(), opts)
+	reports, err = InspectPlugins(t.Context(), opts, true)
 	if err != nil || reports[0].Version != "1.0.0" || reports[0].Digest != locked || len(reports[0].Operations) != 3 {
 		t.Fatalf("locked plugin listed as %+v: %v", reports, err)
 	}
@@ -75,6 +75,25 @@ spec:
 		if _, err := Run(t.Context(), opts); err != nil {
 			t.Fatalf("%s: %v", method, err)
 		}
+	}
+
+	// Runs trust the installation; inspection reads it again only on request.
+	installed, err := filepath.Glob(filepath.Join(opts.CacheDir, "plugins", "*", "files"))
+	if err != nil || len(installed) != 1 {
+		t.Fatalf("installations = %v: %v", installed, err)
+	}
+	if err := os.WriteFile(filepath.Join(installed[0], "added.txt"), []byte("added"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(t.Context(), opts); err != nil {
+		t.Fatalf("prepare with an edited installation: %v", err)
+	}
+	if _, err := InspectPlugins(t.Context(), opts, false); err != nil {
+		t.Fatalf("inspection of an edited installation: %v", err)
+	}
+	reports, err = InspectPlugins(t.Context(), opts, true)
+	if !errors.Is(err, ErrPluginsFailed) || !strings.Contains(reports[0].Error, "installed files differ") {
+		t.Fatalf("verification of an edited installation = %+v: %v", reports, err)
 	}
 
 	if err := os.WriteFile(filepath.Join(root, "local-plugin", "notes.txt"), []byte("rebuilt"), 0o644); err != nil {
@@ -116,7 +135,7 @@ spec:
 		t.Fatal(err)
 	}
 	for _, run := range []func() error{
-		func() error { _, err := InspectPlugins(t.Context(), opts); return err },
+		func() error { _, err := InspectPlugins(t.Context(), opts, false); return err },
 		func() error { _, err := UpdatePlugins(t.Context(), opts, nil); return err },
 	} {
 		if err := run(); !errors.Is(err, ErrPluginsFailed) {

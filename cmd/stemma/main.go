@@ -166,7 +166,7 @@ func (c *cli) schemaCommand() *cobra.Command {
 	cmd.Flags().StringVar(&output, "output-file", "", "Required output path; - writes to stdout")
 	_ = cmd.MarkFlagRequired("output-file")
 	cmd.Flags().BoolVar(&builtins, "builtins", false, "Describe built-in operations without loading a project")
-	cmd.Flags().BoolVar(&offline, "offline", false, "Require verified cached plugin bundles")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Use cached plugins without contacting a registry")
 	cmd.MarkFlagsMutuallyExclusive("builtins", "offline")
 	return cmd
 }
@@ -189,7 +189,7 @@ func (c *cli) validateCommand() *cobra.Command {
 		return err
 	}}
 	cmd.Flags().BoolVar(&resolved, "resolved", false, "Evaluate environment values as runs do and print the resolved composition as JSON")
-	cmd.Flags().BoolVar(&offline, "offline", false, "Require verified cached plugin bundles")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Use cached plugins without contacting a registry")
 	return cmd
 }
 
@@ -387,15 +387,17 @@ func (c *cli) pluginsCommand() *cobra.Command {
 		}
 		return nil
 	}
+	var verify bool
 	inspect := &cobra.Command{Use: "inspect", Short: "Load locked plugins and inspect their live capabilities", Args: cobra.NoArgs}
 	inspectJSON := jsonFlag(inspect)
-	inspect.Flags().BoolVar(&offline, "offline", false, "Require verified cached plugin bundles")
+	inspect.Flags().BoolVar(&offline, "offline", false, "Use cached plugins without contacting a registry")
+	inspect.Flags().BoolVar(&verify, "verify", false, "Compare installed plugin files with the pinned code")
 	inspect.RunE = func(cmd *cobra.Command, _ []string) error {
 		path, err := c.project()
 		if err != nil {
 			return err
 		}
-		reports, inspectErr := engine.InspectPlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}})
+		reports, inspectErr := engine.InspectPlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}}, verify)
 		if cmd.Context().Err() != nil {
 			return cmd.Context().Err()
 		}
