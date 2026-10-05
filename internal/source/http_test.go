@@ -365,3 +365,38 @@ func TestHTTPDiscoveryResolvesURLReferences(t *testing.T) {
 		})
 	}
 }
+
+func TestHTTPFailureIdentifiesTheRespondingEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/blocked.pkg?token=private", http.StatusFound)
+			return
+		}
+		http.Error(w, "untrusted response body", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	m := manager(t)
+	_, _, err := m.download(t.Context(), Download{URL: server.URL + "/start"}, nil)
+	want := "download " + server.URL + "/blocked.pkg: HTTP 503 Service Unavailable"
+	if err == nil || err.Error() != want {
+		t.Fatalf("error=%v, want %q", err, want)
+	}
+	_, err = m.discoverLink(t.Context(), httpConfig{URL: server.URL + "/start", Match: "pkg"})
+	if err == nil || err.Error() != "download page "+server.URL+"/blocked.pkg: HTTP 503 Service Unavailable" {
+		t.Fatalf("discovery error=%v", err)
+	}
+}
+
+func TestHTTPFailureOmitsCredentialsAndQueryWithNoResponseRequest(t *testing.T) {
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://person:password@downloads.example/App.pkg?token=secret#private", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := &http.Response{StatusCode: http.StatusForbidden}
+	if got := httpStatusError("download", req, response).Error(); got != "download https://downloads.example/App.pkg: HTTP 403 Forbidden" {
+		t.Fatal(got)
+	}
+	if req.URL.User == nil || req.URL.RawQuery == "" || req.URL.Fragment == "" {
+		t.Fatal("diagnostic modified request")
+	}
+}

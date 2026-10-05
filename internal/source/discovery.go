@@ -36,7 +36,7 @@ func (m *Manager) discoverLink(ctx context.Context, s httpConfig) (link string, 
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download page returned HTTP %d", res.StatusCode)
+		return "", httpStatusError("download page", req, res)
 	}
 	const limit = 4 << 20
 	data, err := io.ReadAll(io.LimitReader(res.Body, limit+1))

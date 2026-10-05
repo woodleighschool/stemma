@@ -105,6 +105,9 @@ func (transport metadataTransport) RoundTrip(req *http.Request) (*http.Response,
 			}
 		}
 		if current.Status != http.StatusOK {
+			if response.Request != nil && response.Request.URL != nil {
+				current.URL = diagnosticURL(response.Request.URL)
+			}
 			return current, nil
 		}
 		if err := m.Store.RememberSource(req.Context(), key, current); err != nil {

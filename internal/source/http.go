@@ -60,7 +60,7 @@ func (m *Manager) download(ctx context.Context, s Download, previous *record) (r
 		return *previous, true, nil
 	}
 	if res.StatusCode != http.StatusOK {
-		return record{}, false, fmt.Errorf("download returned HTTP %d", res.StatusCode)
+		return record{}, false, httpStatusError("download", req, res)
 	}
 	// Hosts that ignore conditional requests still send validators; the same
 	// strong ETag confirms the previous bytes without transferring them.
@@ -149,4 +149,28 @@ func transportError(operation string, err error) error {
 		err = requestError.Err
 	}
 	return fmt.Errorf("%s failed: %w", operation, err)
+}
+
+// httpStatusError names the responding endpoint without exposing signed query
+// parameters or URL credentials. A redirect can fail on a different host.
+func httpStatusError(operation string, request *http.Request, response *http.Response) error {
+	address := request.URL
+	if response.Request != nil && response.Request.URL != nil {
+		address = response.Request.URL
+	}
+	status := fmt.Sprintf("HTTP %d", response.StatusCode)
+	if description := http.StatusText(response.StatusCode); description != "" {
+		status += " " + description
+	}
+	return fmt.Errorf("%s %s: %s", operation, diagnosticURL(address), status)
+}
+
+func diagnosticURL(address *url.URL) string {
+	public := *address
+	public.User = nil
+	public.RawQuery = ""
+	public.ForceQuery = false
+	public.Fragment = ""
+	public.RawFragment = ""
+	return public.String()
 }

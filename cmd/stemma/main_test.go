@@ -557,7 +557,7 @@ spec:
 				}
 			}
 			// The diagnostic names command failure without repeating item errors.
-			if logs.String() != "Error: MacSoftware/broken: input source: download returned HTTP 404\n" {
+			if logs.String() != "Error: MacSoftware/broken: input source: download "+server.URL+"/broken.pkg: HTTP 404 Not Found\n" {
 				t.Fatalf("stderr repeated the report: %s", logs.String())
 			}
 		})
