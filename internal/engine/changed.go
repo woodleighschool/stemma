@@ -108,6 +108,7 @@ func changedSince(ctx context.Context, s *session, rev string, roots, profiles [
 	current := map[string]preparation{}
 	inputs := map[string]map[string]plugin.Input{}
 	consumers := map[string][]string{}
+	affected := map[string]bool{}
 	var read func(string) error
 	read = func(key string) error {
 		if _, seen := current[key]; seen {
@@ -126,11 +127,13 @@ func changedSince(ctx context.Context, s *session, rev string, roots, profiles [
 			}
 			producer := input.Resource.Key()
 			consumers[producer] = append(consumers[producer], key)
-			// The run's own evaluation rejects an undeclared or suspended producer.
 			if resource, declared := s.project.Resources[producer]; declared && !resource.Suspend {
 				if err := read(producer); err != nil {
 					return err
 				}
+			} else {
+				// Keep the consumer selected so normal evaluation rejects the dependency.
+				affected[key] = true
 			}
 		}
 		return nil
@@ -143,7 +146,6 @@ func changedSince(ctx context.Context, s *session, rev string, roots, profiles [
 	if err := lockfile.Check(s.root, inputs, unselected(s.project.Resources, sortedKeys(current))); err != nil {
 		return nil, err
 	}
-	affected := map[string]bool{}
 	for key, prepared := range current {
 		previous, declared := s.base.project.Resources[key]
 		// A resource the same run would not have taken at the base counts as new.

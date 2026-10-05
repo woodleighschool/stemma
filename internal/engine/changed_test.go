@@ -317,6 +317,23 @@ func TestChangedSincePropagatesEditedBuildInputs(t *testing.T) {
 	}
 }
 
+func TestChangedSinceRejectsUnavailableProducer(t *testing.T) {
+	for _, tc := range []struct {
+		name, before, after, want string
+	}{
+		{"suspended", "metadata: {name: build}", "metadata: {name: build}\nsuspend: true", "depends on suspended resource stemma/v1alpha1/BuildMacPkg/build"},
+		{"removed", "metadata: {name: build}", "metadata: {name: renamed}", "unknown resource stemma/v1alpha1/BuildMacPkg/build"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, _, prepare := changedCatalog(t)
+			writeFileText(t, filepath.Join(root, "software", "build.yaml"), strings.Replace(changedResources["build.yaml"], tc.before, tc.after, 1))
+			if _, err := prepare(); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("prepare error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestChangedSinceReadsEnvironmentOnlyForWhatItPrepares(t *testing.T) {
 	fixture, err := os.ReadFile("../apple/testdata/fixture.pkg")
 	if err != nil {
