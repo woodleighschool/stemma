@@ -321,7 +321,7 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 		return nil, nil, fmt.Errorf("unknown input resource %q", resource)
 	}
 	if u.opts.frozen() && len(u.old.Inputs[resource]) != len(inputs) {
-		return nil, nil, fmt.Errorf("%s inputs are missing or stale in the lockfile; run stemma update", resource)
+		return nil, nil, errors.New("inputs are missing or stale in the lockfile; run stemma update")
 	}
 	entries := map[string]source.Entry{}
 	hits := map[string]bool{}
@@ -355,7 +355,7 @@ func (u *Update) ReadInput(ctx context.Context, resource, name string) (source.E
 		return source.Entry{}, false, fmt.Errorf("unknown input %s/%s", resource, name)
 	}
 	if u.opts.frozen() && len(u.old.Inputs[resource]) != len(u.inputs[resource]) {
-		return source.Entry{}, false, fmt.Errorf("%s inputs are missing or stale in the lockfile; run stemma update", resource)
+		return source.Entry{}, false, errors.New("inputs are missing or stale in the lockfile; run stemma update")
 	}
 	if entry, ok := u.result.File.Inputs[resource][name]; ok {
 		return entry, u.result.CacheHits[resource][name], nil
@@ -369,7 +369,7 @@ func (u *Update) ReadInput(ctx context.Context, resource, name string) (source.E
 	}
 	done(err, plugin.Detail(detail))
 	if err != nil {
-		return source.Entry{}, false, fmt.Errorf("%s input %s: %w", resource, name, err)
+		return source.Entry{}, false, fmt.Errorf("input %s: %w", name, err)
 	}
 	return entry, hit, nil
 }
@@ -481,7 +481,7 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 	if !opts.PluginsOnly {
 		for _, resource := range names(inputs) {
 			if _, _, err := update.Acquire(ctx, resource); err != nil {
-				return Result{}, err
+				return Result{}, fmt.Errorf("%s: %w", resource, err)
 			}
 		}
 	}

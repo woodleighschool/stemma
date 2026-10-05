@@ -139,3 +139,21 @@ func TestCreationExpandsCollectionObjectsWithoutExposingScripts(t *testing.T) {
 		t.Fatal(text)
 	}
 }
+
+func TestUploadNamesFileWithoutReplacingContentIdentity(t *testing.T) {
+	change := plugin.Change{Action: "upload", Field: "package.installer", Filename: "Example-2.pkg", Before: json.RawMessage(`"old-digest"`), After: json.RawMessage(`"new-digest"`)}
+	got := strings.Join(Lines(change), "\n")
+	if got != "upload package.installer: Example-2.pkg" {
+		t.Fatal(got)
+	}
+	if string(change.After) != `"new-digest"` || string(change.Before) != `"old-digest"` {
+		t.Fatal("lost content identity")
+	}
+}
+
+func TestUploadKeepsDigestOutOfHumanReview(t *testing.T) {
+	change := plugin.Change{Action: "upload", Field: "package.installer", Before: json.RawMessage(`"old-digest"`), After: json.RawMessage(`"new-digest"`)}
+	if got := strings.Join(Lines(change), "\n"); got != "upload package.installer" {
+		t.Fatal(got)
+	}
+}

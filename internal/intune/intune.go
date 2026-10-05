@@ -165,7 +165,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		response.Changes = append(response.Changes, plugin.Change{Kind: "destination", Action: "create", Field: "app", After: raw(desired)})
 	}
 	if contentChanged {
-		response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "payload_sha256", Action: "upload", Before: raw(published.active(current)), After: raw(artifact.identity)})
+		response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "payload_sha256", Action: "upload", Filename: uploadFilename(req.Identity.Resource.Name, req.Artifact, artifact), Before: raw(published.active(current)), After: raw(artifact.identity)})
 	}
 	if c.appType == win32Type {
 		desired["setupFilePath"] = artifact.setup

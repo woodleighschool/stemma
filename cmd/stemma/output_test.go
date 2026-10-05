@@ -84,7 +84,7 @@ spec:
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		t.Fatalf("extra stdout: %v", err)
 	}
-	if logs.String() != "Error: command failed; see report for details\n" {
+	if !strings.HasPrefix(logs.String(), "Error: MacSoftware/missing-installer: input source: open ") || strings.Count(logs.String(), "\n") != 1 {
 		t.Fatalf("stderr=%q", logs.String())
 	}
 }
@@ -124,7 +124,7 @@ func TestPluginUpdateNamesWhatHappenedToEachEntry(t *testing.T) {
 	if err := printPluginUpdate(&out, update); err != nil {
 		t.Fatal(err)
 	}
-	want := "echo: updated\n  sha256:aaaaaaaaaaaa -> sha256:bbbbbbbbbbbb\nkept: unchanged\nnew: locked\n  sha256:dddddddddddd\npinned: pinned\nstale: failed\n  error: image tag is not locked; run stemma plugins update\nretired: no longer declared\nLockfile updated.\n"
+	want := "echo: updated\n  sha256:aaaaaaaaaaaa -> sha256:bbbbbbbbbbbb\nkept: unchanged\nnew: locked\n  sha256:dddddddddddd\npinned: pinned\nstale: failed\n  ✗ image tag is not locked; run stemma plugins update\nretired: no longer declared\nLockfile updated.\n"
 	if out.String() != want {
 		t.Fatalf("plugins update:\n%s", out.String())
 	}
@@ -158,7 +158,7 @@ tools
   Digest:          sha256:ffffffffffff
   Version:         dev (df2cf21a6fa9+dirty)
   Resource kinds:  example.org/v1/VendorPackage
-  error: tools.publish, tools.mirror: implements reconcile interface 2; this Stemma uses 1
+  ✗ tools.publish, tools.mirror: implements reconcile interface 2; this Stemma uses 1
 `
 	if out.String() != want {
 		t.Fatalf("plugins list:\n%s", out.String())
@@ -182,7 +182,7 @@ func TestHumanReportsStreamSelectedResourcesAndTotalTheRun(t *testing.T) {
 			}
 		}
 		streamed := human.String()
-		for _, want := range []string{"MacSoftware/changed: planned\n  repo: planned\n    package.version: 1 -> 2\n", "MacSoftware/broken: failed\n  error: invalid signature\n"} {
+		for _, want := range []string{"➤ MacSoftware/changed\n  repo\n    → package.version: 1 -> 2\n", "➤ MacSoftware/broken · failed\n  ✗ invalid signature\n"} {
 			if !strings.Contains(streamed, want) {
 				t.Fatalf("all=%v: block %q did not stream: %s", all, want, streamed)
 			}
@@ -223,8 +223,8 @@ func TestApplyReportDoesNotConfirmFailedDestinationChanges(t *testing.T) {
 		{Name: "second", Error: "upload failed", Changes: []plugin.Change{{Action: "upload", Field: "installer", After: json.RawMessage(`"payload"`)}}},
 	}}}}
 	report.Summarize("apply")
-	text := renderResource(textStyle{}, "apply", report.Resources[0]) + renderSummary(textStyle{}, "apply", report, errors.New("upload failed"))
-	for _, want := range []string{"MacSoftware/example: failed\n", "  first: applied\n    updated 1 metadata field\n", "  second: failed (changes not confirmed)\n", "    error: upload failed\n", "Apply incomplete: 1 publication applied; 1 resource, 2 destinations", "1 failed"} {
+	text := renderResourceDetail(textStyle{}, "apply", report.Resources[0], false) + renderSummary(textStyle{}, "apply", report, errors.New("upload failed"))
+	for _, want := range []string{"➤ MacSoftware/example\n", "  first\n    ✓ Updated 1 metadata field\n", "  second · failed (changes not confirmed)\n", "    ✗ upload failed\n", "Apply incomplete: 1 publication applied; 1 resource, 2 destinations", "1 failed"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q: %s", want, text)
 		}
@@ -247,7 +247,7 @@ func TestInterruptedRunKeepsStreamedResultsAndSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	o.finish(errInterrupted)
-	if !strings.HasPrefix(out.String(), "MacSoftware/done: applied\n") || !strings.HasSuffix(out.String(), "Apply interrupted: 1 publication applied; 1 resource, 1 destination; 0 unchanged.\n") || logs.String() != "Interrupted.\n" {
+	if !strings.HasPrefix(out.String(), "➤ MacSoftware/done\n") || !strings.HasSuffix(out.String(), "Apply interrupted: 1 publication applied; 1 resource, 1 destination; 0 unchanged.\n") || logs.String() != "Interrupted.\n" {
 		t.Fatalf("stdout=%q stderr=%q", out.String(), logs.String())
 	}
 }
@@ -259,8 +259,8 @@ func TestFinalErrorShowsOnlyWhatNoReportShowed(t *testing.T) {
 		want string
 	}{
 		{errors.Join(resource, errors.New("lockfile: schema violations:\n\tspec.source: required")), "Error: lockfile: schema violations:\n    spec.source: required\n"},
-		{resource, "Error: command failed; see report for details\n"},
-		{reconcile.ErrFailed, "Error: command failed; see report for details\n"},
+		{resource, "Error: MacSoftware/example: upload failed\n"},
+		{reconcile.ErrFailed, "Error: reconcile: a phase failed\n"},
 		// A report that could not be written showed nothing.
 		{errors.Join(reconcile.ErrFailed, errors.New("write stdout: broken pipe")), "Error: reconcile: a phase failed\n  write stdout: broken pipe\n"},
 	} {
@@ -373,5 +373,83 @@ func TestCancellationWithoutInterruptIsFailure(t *testing.T) {
 	output.finish(context.Canceled)
 	if logs.String() != "Error: context canceled\n" {
 		t.Fatal(logs.String())
+	}
+}
+
+func TestPlanCreationReviewIsOptionalAndDetailsPreserveTheObject(t *testing.T) {
+	resource := engine.ResourceReport{Kind: "MacSoftware", Name: "example", Destinations: []engine.DestinationReport{{Name: "repo", Artifact: "alternate.pkg", Changes: []plugin.Change{{Action: "create", Field: "pkginfo", After: json.RawMessage(`{"future_field":{"enabled":false}}`), Review: []string{"Other fields", "  future_field: configured"}}}}}}
+	normal := renderResourceDetail(textStyle{}, "plan", resource, false)
+	detailed := renderResourceDetail(textStyle{}, "plan", resource, true)
+	if !strings.Contains(normal, "alternate.pkg → repo") || !strings.Contains(normal, "future_field: configured") || !strings.Contains(normal, "--details") {
+		t.Fatalf("normal review: %s", normal)
+	}
+	if !strings.Contains(detailed, `"enabled": false`) || strings.Contains(detailed, "configured") {
+		t.Fatalf("detailed object: %s", detailed)
+	}
+	resource.Destinations[0].Changes[0].Review = nil
+	if got := renderResourceDetail(textStyle{}, "plan", resource, false); !strings.Contains(got, "future_field:") || !strings.Contains(got, "enabled: false") {
+		t.Fatalf("plugin without review lost fields: %s", got)
+	}
+}
+
+func TestAppliedUploadNamesArtifactInsteadOfDigest(t *testing.T) {
+	changes := []plugin.Change{{Action: "upload", Field: "software.icon", Filename: "Example.png", After: json.RawMessage(`"content-digest"`)}}
+	if got := strings.Join(appliedActions(changes), "\n"); got != "Uploaded software.icon: Example.png" {
+		t.Fatal(got)
+	}
+}
+
+func TestAppliedRetentionNamesDeletedVersion(t *testing.T) {
+	items := []plugin.Change{{Kind: "retention", Action: "delete", Field: "package", Before: json.RawMessage(`"11.4.2"`)}, {Action: "upload", Field: "package.installer", After: json.RawMessage(`"9dc0e5f4abecfe9dc02d45fafc9813881bd24ecb84125eabe522b01b11a039ca"`)}}
+	got := strings.Join(appliedActions(items), "\n")
+	if got != "Deleted package: 11.4.2 (retention)\nUploaded package.installer" {
+		t.Fatal(got)
+	}
+}
+
+func TestExplicitSelectionAcknowledgesUnchangedResource(t *testing.T) {
+	resource := engine.ResourceReport{Kind: "MacSoftware", Name: "example", Key: "stemma/v1alpha1/MacSoftware/example", Destinations: []engine.DestinationReport{{Name: "repo"}}}
+	for _, selector := range []string{"", "example", "MacSoftware/example", resource.Key, "MacSoftware/other"} {
+		t.Run(selector, func(t *testing.T) {
+			var out, logs bytes.Buffer
+			output := newCommandOutput(&out, &logs)
+			if selector != "" {
+				output.selectors = []string{selector}
+			}
+			if err := output.resourceDone("apply", resource); err != nil {
+				t.Fatal(err)
+			}
+			want := selector != "" && selector != "MacSoftware/other"
+			if strings.Contains(out.String(), "No changes") != want {
+				t.Fatalf("output: %q", out.String())
+			}
+		})
+	}
+}
+
+func TestPublicationVersionsFollowSelectedOutputs(t *testing.T) {
+	for _, tt := range []struct {
+		name         string
+		destinations []engine.DestinationReport
+		want, absent []string
+	}{
+		{"alternate only", []engine.DestinationReport{{Name: "repo", Artifact: "alternate.pkg", Version: "2.0"}}, []string{"➤ MacSoftware/example · 2.0", "alternate.pkg → repo"}, []string{"· 1.0"}},
+		{"different outputs", []engine.DestinationReport{{Name: "first", Artifact: "default.pkg", Version: "1.0"}, {Name: "second", Artifact: "alternate.pkg", Version: "2.0"}}, []string{"➤ MacSoftware/example\n", "default.pkg → first · 1.0", "alternate.pkg → second · 2.0"}, []string{"➤ MacSoftware/example ·"}},
+		{"unknown version", []engine.DestinationReport{{Name: "repo", Artifact: "alternate.pkg"}}, []string{"➤ MacSoftware/example\n", "alternate.pkg → repo"}, []string{"· 1.0"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			resource := engine.ResourceReport{Kind: "MacSoftware", Name: "example", Artifacts: map[string]engine.Prepared{"installer": {Version: "1.0"}}, Destinations: tt.destinations}
+			got := renderResourceDetail(textStyle{}, "plan", resource, false)
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("missing %q: %s", want, got)
+				}
+			}
+			for _, absent := range tt.absent {
+				if strings.Contains(got, absent) {
+					t.Errorf("unexpected %q: %s", absent, got)
+				}
+			}
+		})
 	}
 }

@@ -95,7 +95,8 @@ const progressDelay = 250 * time.Millisecond
 type progressLine struct {
 	activity
 
-	started time.Time
+	started   time.Time
+	announced time.Time
 }
 
 type progressGroup struct {
@@ -115,6 +116,7 @@ type terminalProgress struct {
 	last         string
 	quit, exited chan struct{}
 	stopped      bool
+	plain        bool
 }
 
 func newTerminalProgress(out io.Writer) *terminalProgress {
@@ -124,6 +126,18 @@ func newTerminalProgress(out io.Writer) *terminalProgress {
 		go p.run()
 	}
 	return p
+}
+
+// startPlain uses the same operation lifetime but emits sparse append-only
+// milestones. Fast phases stay quiet, and transfer chunks never become logs.
+func (p *terminalProgress) startPlain() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.plain = true
+	if p.quit == nil {
+		p.quit, p.exited = make(chan struct{}), make(chan struct{})
+		go p.run()
+	}
 }
 
 func (p *terminalProgress) run() {
@@ -251,7 +265,7 @@ func (p *terminalProgress) view(now time.Time, width, height int) string {
 			break
 		}
 		if group.scope != "" {
-			lines = append(lines, p.style.paint(runewidth.Truncate(cleanLine(group.scope), max(0, width-1), "…"), color.Bold))
+			lines = append(lines, p.style.paint(runewidth.Truncate(cleanLine(group.scope), max(0, width-1), "…"), color.Bold, color.FgHiMagenta))
 		}
 		lines = append(lines, progressText(p.style, &row, width, now, frame))
 	}
@@ -259,6 +273,31 @@ func (p *terminalProgress) view(now time.Time, width, height int) string {
 }
 
 func (p *terminalProgress) draw(now time.Time) {
+	if p.plain {
+		for _, group := range p.groups {
+			if len(group.rows) == 0 {
+				continue
+			}
+			row := &group.rows[len(group.rows)-1]
+			if now.Sub(row.started) < 2*time.Second || !row.announced.IsZero() && now.Sub(row.announced) < 30*time.Second {
+				continue
+			}
+			line := cleanLine(row.name())
+			if group.scope != "" {
+				line = cleanLine(group.scope) + ": " + line
+			}
+			if row.detail != "" {
+				line += " · " + cleanLine(row.detail)
+			}
+			if row.total > 0 && row.unit == "bytes" {
+				line += fmt.Sprintf(" · %s / %s", humanize.IBytes(uint64(max(0, row.current))), humanize.IBytes(uint64(row.total)))
+			}
+			_, _ = fmt.Fprintf(p.out, "%s (%s)\n", line, now.Sub(row.started).Round(time.Second))
+			row.announced = now
+		}
+		return
+	}
+
 	width, height := p.size()
 	text := p.view(now, width, height)
 	if text == p.last {

@@ -44,11 +44,16 @@ func Lines(change plugin.Change) []string {
 			line += " (retention)"
 		}
 		return []string{line}
-	case "upload":
-		if _, absent := before.(missing); absent {
-			return []string{"upload " + field + ": " + summary(after)}
+	case "reconcile":
+		if _, absent := after.(missing); absent {
+			return []string{"reconcile " + field}
 		}
-		return []string{"upload " + field + ": " + transition(before, after)}
+		return []string{"reconcile " + field + ": " + summary(after)}
+	case "upload":
+		if change.Filename != "" {
+			return []string{"upload " + field + ": " + Text(change.Filename)}
+		}
+		return []string{"upload " + field}
 	default:
 		lines := difference(field, before, after)
 		if len(lines) == 0 {

@@ -229,7 +229,8 @@ run's totals. Plan shows proposed changes, including initial values for new
 objects. Apply reports confirmed publication actions. Update shows input changes,
 prepare shows newly prepared resources, icon names the artwork file it writes,
 and signature shows derived signers. Multi-line values such as scripts show line
-counts instead of their text. `--all` includes unchanged resources in human
+counts instead of their text. Explicitly selected resources are shown even when
+unchanged. `--all` includes unchanged resources in human
 reports; totals always describe the whole run. JSON includes all resources in the
 selected scope, regardless of `--all`. Reconcile prints the reviewed commit's
 publication followed by proposal outcomes.

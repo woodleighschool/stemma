@@ -35,8 +35,14 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	publication, err := c.handle(t.Context(), req, desired)
+	if err != nil {
 		t.Fatal(err)
+	}
+	for _, change := range publication.Changes {
+		if change.Action == "upload" && change.Field == "payload_sha256" && change.Filename != fake.app["fileName"] {
+			t.Fatalf("reported upload %q differs from published %v", change.Filename, fake.app["fileName"])
+		}
 	}
 	published := publishedMarker(t, fake)
 	if published.identity != req.Identity.Digest() || published.content != "1" || published.payload == "" {

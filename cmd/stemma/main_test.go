@@ -39,13 +39,13 @@ func TestReportRetainsIndependentDestinationResults(t *testing.T) {
 	}}
 	var out strings.Builder
 	for _, resource := range report.Resources {
-		out.WriteString(renderResource(textStyle{}, "apply", resource))
+		out.WriteString(renderResourceDetail(textStyle{}, "apply", resource, false))
 	}
 	for _, want := range []string{
-		"missing: failed\n  error: source unavailable\n",
-		"MacSoftware/Example: failed\n",
-		"  unavailable: failed\n    error: remote unavailable\n",
-		"  local: unchanged\n",
+		"➤ missing · failed\n  ✗ source unavailable\n",
+		"➤ MacSoftware/Example\n",
+		"  unavailable · failed\n    ✗ remote unavailable\n",
+		"  local\n    ✓ No changes\n",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("report missing %q: %s", want, out.String())
@@ -63,16 +63,16 @@ func TestIconReportNamesEachOutcome(t *testing.T) {
 	}}
 	var out strings.Builder
 	for _, resource := range report.Resources {
-		out.WriteString(renderResource(textStyle{}, "icon", resource))
+		out.WriteString(renderResourceDetail(textStyle{}, "icon", resource, false))
 	}
 	report.Summarize("icon")
 	out.WriteString(renderSummary(textStyle{}, "icon", report, nil))
 	for _, want := range []string{
-		"MacSoftware/word: created glassy\n",
-		"WindowsSoftware/chrome: created raw\n",
-		"MacSoftware/teams: unchanged\n",
-		"MacSoftware/rosetta: no artwork\n",
-		"MacSoftware/zoom: failed\n  error: quick look icon rendering: timed out\n",
+		"➤ MacSoftware/word · created glassy\n",
+		"➤ WindowsSoftware/chrome · created raw\n",
+		"➤ MacSoftware/teams · unchanged\n",
+		"➤ MacSoftware/rosetta · no artwork\n",
+		"➤ MacSoftware/zoom · failed\n  ✗ quick look icon rendering: timed out\n",
 		"Icons: 2 created, 1 unchanged, 1 skipped, 1 failed.",
 	} {
 		if !strings.Contains(out.String(), want) {
@@ -94,7 +94,7 @@ func TestIconRunsShowCreatedIconsAndMissingArtwork(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := out.String(); !strings.Contains(got, "MacSoftware/word: created glassy\n") || !strings.Contains(got, "WindowsSoftware/chrome: no artwork\n") || strings.Contains(got, "teams") || strings.Contains(got, "fonts") {
+	if got := out.String(); !strings.Contains(got, "➤ MacSoftware/word · created glassy\n") || !strings.Contains(got, "➤ WindowsSoftware/chrome · no artwork\n") || strings.Contains(got, "teams") || strings.Contains(got, "fonts") {
 		t.Fatalf("icon output: %s", got)
 	}
 }
@@ -550,14 +550,14 @@ spec:
 					t.Fatalf("incomplete JSON report: %+v", report)
 				}
 			} else {
-				for _, want := range []string{"MacSoftware/broken: failed\n", "MacSoftware/consumer: blocked\n  blocked by MacSoftware/broken\n", "MacSoftware/healthy: 1 input changed\n  source (content changed): healthy.pkg\n", "Update incomplete: 1 input change, 3 resources checked, 1 failed, 1 blocked.", "Lockfile updated."} {
+				for _, want := range []string{"➤ MacSoftware/broken · failed\n", "➤ MacSoftware/consumer · blocked\n  blocked by MacSoftware/broken\n", "➤ MacSoftware/healthy · 1 input changed\n  source (content changed): healthy.pkg\n", "Update incomplete: 1 input change, 3 resources checked, 1 failed, 1 blocked.", "Lockfile updated."} {
 					if !strings.Contains(out.String(), want) {
 						t.Fatalf("report missing %q: %s", want, out.String())
 					}
 				}
 			}
 			// The diagnostic names command failure without repeating item errors.
-			if logs.String() != "Error: command failed; see report for details\n" {
+			if logs.String() != "Error: MacSoftware/broken: input source: download returned HTTP 404\n" {
 				t.Fatalf("stderr repeated the report: %s", logs.String())
 			}
 		})
@@ -587,5 +587,35 @@ spec:
 	finish(err)
 	if err == nil || out.Len() != 0 || !strings.Contains(logs.String(), "Error: BuildMacPkg/example:") || !strings.Contains(logs.String(), "missing.zip") {
 		t.Fatalf("error=%v stdout=%q stderr=%q", err, out.String(), logs.String())
+	}
+}
+
+func TestIntunewinJSONIdentifiesTheGeneratedFile(t *testing.T) {
+	source := t.TempDir()
+	testproject.Write(t, filepath.Join(source, "setup.exe"), "synthetic input; never executed")
+	output := filepath.Join(t.TempDir(), "output.intunewin")
+	var stdout, stderr bytes.Buffer
+	cmd, finish := command(&stdout, &stderr)
+	cmd.SetArgs([]string{"package", "intunewin", source, "setup.exe", output, "--json"})
+	err := cmd.ExecuteContext(t.Context())
+	finish(err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Output    string `json:"output"`
+		SetupFile string `json:"setupFile"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.Output != output || result.SetupFile != "setup.exe" {
+		t.Fatalf("output missing: %s", stdout.String())
+	}
+	if _, err := os.Stat(result.Output); err != nil {
+		t.Fatal(err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("machine activity: %s", stderr.String())
 	}
 }

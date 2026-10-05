@@ -101,7 +101,7 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	if reference, ok := software.Destinations[destination]["installer"].(string); ok {
 		prepared, present = resource.outputs[reference]
 		if !present {
-			return fmt.Errorf("destination %s references missing output %s", destination, reference)
+			return fmt.Errorf("references missing output %s", reference)
 		}
 	}
 	d := s.project.Destinations[destination]
@@ -112,7 +112,7 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	}
 	if operation.Content != nil {
 		if err := operation.Content.Accepts(prepared.artifact()); err != nil {
-			return fmt.Errorf("destination %s: %w", destination, err)
+			return err
 		}
 	}
 	roots, err := expression.Roots(metadata)
@@ -122,12 +122,12 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	if present && !prepared.SuppliedFacts && (operation.RequiresInspection || slices.Contains(roots, "facts")) {
 		prepared.Facts, err = inspection.Read(ctx, prepared.Path)
 		if err != nil {
-			return fmt.Errorf("destination %s required inspection: %w", destination, err)
+			return fmt.Errorf("required inspection: %w", err)
 		}
 	}
 	effective, origins, err := resolveMetadata(software.ResourceResult, metadata, prepared.Facts, prepared.Evidence)
 	if err != nil {
-		return fmt.Errorf("destination %s metadata: %w", destination, err)
+		return fmt.Errorf("metadata: %w", err)
 	}
 	work := filepath.Join(resource.work, "destinations", destination)
 	if present {
@@ -150,7 +150,7 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	for input, reference := range references {
 		artifact, exists := resource.outputs[reference]
 		if !exists {
-			return fmt.Errorf("destination %s missing input %s output %s", destination, input, reference)
+			return fmt.Errorf("missing input %s output %s", input, reference)
 		}
 		artifact, err = materialize(ctx, s.store, artifact, filepath.Join(work, "inputs", input))
 		if err != nil {
@@ -161,12 +161,12 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	if software.Icon != "" && e.publishing() {
 		artifact, err := iconInput(s.root, software.Icon, filepath.Join(work, "inputs", "icon"))
 		if err != nil {
-			return fmt.Errorf("destination %s: %w", destination, err)
+			return err
 		}
 		request.Inputs["icon"] = artifact
 	}
 	if err := s.ops.call(ctx, d.Operation, "validate", request, nil); err != nil {
-		return fmt.Errorf("destination %s: %w", destination, err)
+		return err
 	}
 	if err := verifyLeases(ctx, s.store, resource.work, request); err != nil {
 		return err
@@ -175,7 +175,7 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 		return nil
 	}
 	done(nil)
-	report := DestinationReport{Name: destination, Origins: origins}
+	report := DestinationReport{Name: destination, Origins: origins, Artifact: prepared.Filename, Version: prepared.Version}
 	done = plugin.Stage(ctx, "Planning destination")
 	request.Method = "plan"
 	request.Config = e.connections[destination]
@@ -193,7 +193,7 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	}
 	item.Destinations = append(item.Destinations, report)
 	if err != nil {
-		return fmt.Errorf("destination %s: %w", destination, err)
+		return err
 	}
 	return nil
 }

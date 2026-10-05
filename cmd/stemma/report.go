@@ -107,11 +107,31 @@ func destinationStatus(destination engine.DestinationReport) string {
 
 // resourceHeading names a resource and its outcome.
 func resourceHeading(style textStyle, method string, resource engine.ResourceReport) string {
-	return style.paint(changes.Text(resourceName(resource)), color.Bold) + ": " + style.outcome(resourceStatus(method, resource)) + "\n"
+	heading := "➤ " + changes.Text(resourceName(resource))
+	if version := resourceVersion(resource); version != "" {
+		heading += " · " + changes.Text(version)
+	}
+	if len(resource.Destinations) == 0 {
+		heading += " · " + resourceStatus(method, resource)
+	}
+	return style.paint(heading, color.Bold, color.FgHiMagenta) + "\n"
 }
 
-// renderResource renders one resource's report block.
-func renderResource(style textStyle, method string, resource engine.ResourceReport) string {
+// A shared heading version must describe every selected publication.
+func resourceVersion(resource engine.ResourceReport) string {
+	if len(resource.Destinations) == 0 {
+		return resource.Artifacts["installer"].Version
+	}
+	version := resource.Destinations[0].Version
+	for _, destination := range resource.Destinations[1:] {
+		if destination.Version != version {
+			return ""
+		}
+	}
+	return version
+}
+
+func renderResourceDetail(style textStyle, method string, resource engine.ResourceReport, detailed bool) string {
 	var text strings.Builder
 	text.WriteString(resourceHeading(style, method, resource))
 	for _, input := range resource.Inputs {
@@ -133,15 +153,47 @@ func renderResource(style textStyle, method string, resource engine.ResourceRepo
 		writeError(&text, style, "  ", resourceError(resource))
 	}
 	for _, destination := range resource.Destinations {
-		fmt.Fprintf(&text, "  %s: %s\n", changes.Text(destination.Name), style.outcome(destinationStatus(destination)))
+		label := changes.Text(destination.Name)
+		if destination.Artifact != "" {
+			label = changes.Text(destination.Artifact) + " → " + label
+		}
+		if destination.Version != "" && destination.Version != resourceVersion(resource) {
+			label += " · " + changes.Text(destination.Version)
+		}
+		if destination.Error != "" {
+			label += " · " + destinationStatus(destination)
+		}
+		fmt.Fprintf(&text, "  %s\n", style.paint(label, color.Bold))
+		if len(destination.Changes) == 0 && destination.Error == "" {
+			fmt.Fprintf(&text, "    %s No changes\n", style.paint("✓", color.Faint))
+		}
 		if method == "apply" && destination.Applied {
 			for _, line := range appliedActions(destination.Changes) {
-				fmt.Fprintf(&text, "    %s\n", line)
+				fmt.Fprintf(&text, "    %s %s\n", style.paint("✓", color.FgHiGreen), line)
 			}
 		} else {
 			for _, change := range destination.Changes {
-				for index, line := range changes.Lines(change) {
-					fmt.Fprintf(&text, "    %s\n", changeLine(style, change.Action, index, line))
+				lines := changes.Lines(change)
+				if detailed && change.Action == "create" && len(change.After) > 0 {
+					if data, err := json.MarshalIndent(change.After, "", "  "); err == nil {
+						lines = []string{"create " + changes.Text(change.Field)}
+						for line := range strings.SplitSeq(string(data), "\n") {
+							lines = append(lines, "  "+changes.Text(line))
+						}
+					}
+				} else if change.Action == "create" && len(change.Review) > 0 {
+					lines = []string{"create " + changes.Text(change.Field)}
+					for _, line := range change.Review {
+						lines = append(lines, "  "+changes.Text(line))
+					}
+					lines = append(lines, "  Full initial fields: --details")
+				}
+				for index, line := range lines {
+					prefix := "  "
+					if index == 0 {
+						prefix = style.paint("→ ", color.FgHiYellow)
+					}
+					fmt.Fprintf(&text, "    %s%s\n", prefix, changeLine(style, change.Action, index, line))
 				}
 			}
 		}
@@ -187,31 +239,31 @@ func resourceError(resource engine.ResourceReport) string {
 func appliedActions(items []plugin.Change) []string {
 	var lines []string
 	metadata := 0
-	catalogs := 0
 	for _, change := range items {
-		field := changes.Text(change.Field)
-		switch change.Action {
-		case "create":
-			lines = append(lines, "created "+field)
-		case "upload":
-			lines = append(lines, "uploaded "+field)
-		case "delete":
-			lines = append(lines, "deleted "+field)
-		case "reconcile":
-			if strings.HasPrefix(change.Field, "catalogs/") {
-				catalogs++
-			} else {
-				lines = append(lines, "reconciled "+field)
-			}
-		default:
+		verb := map[string]string{"create": "Created", "upload": "Uploaded", "delete": "Deleted", "reconcile": "Reconciled"}[change.Action]
+		if verb == "" {
 			metadata++
+			continue
 		}
+		line := verb + " " + changes.Text(change.Field)
+		var name string
+		var names []string
+		switch {
+		case change.Action == "upload":
+			if change.Filename != "" {
+				line += ": " + changes.Text(change.Filename)
+			}
+		case change.Action == "delete":
+			line = "Deleted" + strings.TrimPrefix(changes.Lines(change)[0], "delete")
+		case json.Unmarshal(change.After, &name) == nil && name != "":
+			line += ": " + changes.Text(name)
+		case json.Unmarshal(change.After, &names) == nil && len(names) > 0:
+			line += ": " + changes.Text(strings.Join(names, ", "))
+		}
+		lines = append(lines, line)
 	}
 	if metadata > 0 {
-		lines = append(lines, "updated "+quantity(metadata, "metadata field"))
-	}
-	if catalogs > 0 {
-		lines = append(lines, "updated "+quantity(catalogs, "catalog"))
+		lines = append(lines, "Updated "+quantity(metadata, "metadata field"))
 	}
 	return lines
 }
@@ -237,7 +289,7 @@ func changeLine(style textStyle, action string, index int, line string) string {
 func writeError(text *strings.Builder, style textStyle, indent, message string) {
 	for index, line := range errorLines(message) {
 		if index == 0 {
-			line = "error: " + line
+			line = "✗ " + line
 		}
 		fmt.Fprintf(text, "%s%s\n", indent, style.paint(line, color.FgHiRed))
 	}

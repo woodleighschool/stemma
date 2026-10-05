@@ -336,7 +336,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 					return response, fmt.Errorf("installer %s is shared with %s, so its bytes cannot be replaced", input.InstallerLocation, other.path)
 				}
 			}
-			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "installer", Action: "upload", After: raw(input.InstallerLocation)})
+			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "installer", Action: "upload", Filename: input.InstallerLocation, Before: raw(old["installer_item_hash"]), After: raw(request.Artifact.SHA256)})
 		}
 	}
 	iconPath := ""
@@ -348,11 +348,11 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 			return response, err
 		}
 		if !matches {
-			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "icon", Action: "upload", After: raw(request.Inputs["icon"].Filename)})
+			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "icon", Action: "upload", Filename: request.Inputs["icon"].Filename, Before: raw(old["icon_hash"]), After: raw(request.Inputs["icon"].SHA256)})
 		}
 	}
 	if len(old) == 0 {
-		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "pkginfo", Action: "create", After: raw(desired)})
+		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "pkginfo", Action: "create", After: raw(desired), Review: reviewCreation(desired)})
 	} else {
 		for key, value := range desired {
 			if hashValue(old[key]) != hashValue(value) {
@@ -369,8 +369,13 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	if err != nil {
 		return response, err
 	}
-	for name := range catalogs {
-		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "catalogs/" + name, Action: "reconcile"})
+	if len(catalogs) > 0 {
+		names := make([]string, 0, len(catalogs))
+		for name := range catalogs {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "catalogs", Action: "reconcile", After: raw(names)})
 	}
 	sort.Slice(response.Changes, func(i, j int) bool {
 		a, b := response.Changes[i], response.Changes[j]

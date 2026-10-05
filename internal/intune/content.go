@@ -112,10 +112,7 @@ func contentInfo(m intunewin.Metadata) intunecontent.Info {
 }
 
 func prepareArtifact(ctx context.Context, software string, artifact plugin.Artifact, identity artifactIdentity) (*preparedArtifact, error) {
-	name := artifact.Filename
-	if !identity.raw {
-		name = artifactname.Filename(software, artifact.Version, artifact.SHA256, "intunewin")
-	}
+	name := uploadFilename(software, artifact, identity)
 	if identity.envelope {
 		return &preparedArtifact{path: artifact.Path, name: name, metadata: contentInfo(identity.metadata), setup: identity.setup}, nil
 	}
@@ -452,4 +449,11 @@ func azureError(ctx context.Context, err error) error {
 		return fmt.Errorf("azure upload HTTP status %d", responseErr.StatusCode)
 	}
 	return errors.New("azure upload failed; SAS URL omitted from error")
+}
+
+func uploadFilename(software string, artifact plugin.Artifact, identity artifactIdentity) string {
+	if identity.raw {
+		return artifact.Filename
+	}
+	return artifactname.Filename(software, artifact.Version, artifact.SHA256, "intunewin")
 }

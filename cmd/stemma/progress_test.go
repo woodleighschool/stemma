@@ -71,7 +71,7 @@ func TestHumanSelectionDoesNotDependOnTerminal(t *testing.T) {
 		if err := o.resourceDone("plan", unchanged); err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(out.String(), "MacSoftware/example: unchanged") {
+		if !strings.Contains(out.String(), "➤ MacSoftware/example\n  repo\n    ✓ No changes") {
 			t.Fatal(out.String())
 		}
 	}
@@ -152,5 +152,38 @@ func TestTransferProgressBelongsToItsInput(t *testing.T) {
 	p.update(activity{scope: "example", qualifier: "icon", label: "Downloading", status: true})
 	if got := p.view(time.Now().Add(time.Second), 100, 28); !strings.Contains(got, "1 B / 2 B") {
 		t.Fatal(got)
+	}
+}
+
+func TestPlainProgressIsDelayedSparseAndStopsWithItsOperation(t *testing.T) {
+	var out bytes.Buffer
+	p := newTerminalProgress(&out)
+	p.plain = true
+	p.update(activity{scope: "MacSoftware/example", label: "Downloading input", stage: true, detail: "example.pkg"})
+	now := time.Now()
+	p.draw(now)
+	if out.Len() != 0 {
+		t.Fatal("fast activity printed")
+	}
+	p.draw(now.Add(3 * time.Second))
+	first := out.String()
+	if !strings.Contains(first, "MacSoftware/example: Downloading input · example.pkg") || strings.Contains(first, "\x1b") {
+		t.Fatalf("milestone: %q", first)
+	}
+	p.update(activity{scope: "MacSoftware/example", progress: true, current: 1, total: 4, unit: "bytes"})
+	p.draw(now.Add(4 * time.Second))
+	if out.String() != first {
+		t.Fatal("chunk produced a line")
+	}
+	p.draw(now.Add(34 * time.Second))
+	if !strings.Contains(out.String(), "1 B / 4 B") {
+		t.Fatalf("no periodic observation: %s", out.String())
+	}
+	p.update(activity{scope: "MacSoftware/example", label: "Downloading input", status: true})
+	length := out.Len()
+	p.draw(now.Add(time.Minute))
+	p.stop()
+	if out.Len() != length {
+		t.Fatal("finished work printed")
 	}
 }

@@ -229,6 +229,7 @@ func (c *cli) runCommand(method string) *cobra.Command {
 				return err
 			}
 		}
+		c.display.selectors = slices.Clone(args)
 		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: method, Resources: args, ChangedSince: changedSince, Icons: icons, Input: input, ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone(method, resource)
 		}, Lock: lockfile.Options{Offline: offline}})
@@ -241,6 +242,9 @@ func (c *cli) runCommand(method string) *cobra.Command {
 		return runErr
 	}
 	cmd.Flags().Bool("all", false, "Include unchanged resources in the human report")
+	if method == "plan" || method == "apply" {
+		cmd.Flags().Bool("details", false, "Show complete initial object fields")
+	}
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
 	if method == "prepare" {
 		cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the whole lockfile, then prepare only resources whose preparation changed since the Git revision `REV`")
@@ -487,7 +491,11 @@ func packageCommand(out io.Writer) *cobra.Command {
 			return err
 		}
 		if *envelopeJSON {
-			return writeJSON(out, result)
+			return writeJSON(out, struct {
+				intunewin.Metadata
+
+				Output string `json:"output"`
+			}{Output: args[2], Metadata: result})
 		}
 		_, err = fmt.Fprintf(out, "Packaged %s: setup file %s, %s encrypted.\n", args[2], result.SetupFile, humanize.IBytes(uint64(max(0, result.EncryptedContentSize))))
 		return err

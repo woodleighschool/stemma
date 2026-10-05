@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
@@ -22,13 +23,15 @@ import (
 // each resource completes; in a terminal a live region of unfinished work sits
 // below them on stderr. JSON reports are one document written at the end.
 type commandOutput struct {
-	mu                 sync.Mutex
-	out, errOut        io.Writer
-	outStyle, errStyle textStyle
-	interactive        bool
-	progress           *terminalProgress
-	asJSON, all        bool
-	reconciling        bool
+	activityEnabled      bool
+	mu                   sync.Mutex
+	out, errOut          io.Writer
+	outStyle, errStyle   textStyle
+	interactive          bool
+	progress             *terminalProgress
+	asJSON, all, details bool
+	reconciling          bool
+	selectors            []string
 	// resultOnly commands print their result without a resource report.
 	resultOnly bool
 	ctx        context.Context
@@ -53,6 +56,7 @@ func (o *commandOutput) start(cmd *cobra.Command) error {
 	o.ctx = cmd.Context()
 	o.asJSON, _ = cmd.Flags().GetBool("json")
 	o.all, _ = cmd.Flags().GetBool("all")
+	o.details, _ = cmd.Flags().GetBool("details")
 	switch cmd.Name() {
 	case "schema":
 		o.asJSON = true
@@ -65,7 +69,8 @@ func (o *commandOutput) start(cmd *cobra.Command) error {
 	}
 	// Activity belongs to stderr regardless of where stdout is redirected.
 	noProgress, _ := cmd.Flags().GetBool("no-progress")
-	o.interactive = cmd.Name() != "mcp" && !o.asJSON && !noProgress && terminalOutput(o.errOut) && os.Getenv("CI") == ""
+	o.activityEnabled = cmd.Name() != "mcp" && !o.asJSON && !noProgress
+	o.interactive = o.activityEnabled && terminalOutput(o.errOut) && os.Getenv("CI") == ""
 	cmd.SetContext(plugin.WithLogger(cmd.Context(), slog.New(&activityHandler{output: o})))
 	return nil
 }
@@ -74,6 +79,7 @@ func (o *commandOutput) stop() {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.interactive = false
+	o.activityEnabled = false
 	if o.progress != nil {
 		o.progress.stop()
 		o.progress = nil
@@ -122,7 +128,7 @@ func (o *commandOutput) finish(err error) {
 			text = failureText(err)
 		}
 		if text == "" {
-			text = "command failed; see report for details"
+			text = strings.SplitN(failureText(err), "\n", 2)[0]
 		}
 		if text != "" {
 			_, _ = fmt.Fprintln(o.errOut, o.errStyle.paint("Error:", color.Bold, color.FgHiRed)+" "+strings.Join(errorLines(text), "\n"))
@@ -225,7 +231,7 @@ func (h *activityHandler) Handle(_ context.Context, record slog.Record) error {
 		}
 		return nil
 	}
-	if !o.interactive || !a.stage && !a.progress && !a.status {
+	if !o.activityEnabled && !o.interactive || !a.stage && !a.progress && !a.status {
 		return nil
 	}
 	if o.progress == nil {
@@ -233,6 +239,9 @@ func (h *activityHandler) Handle(_ context.Context, record slog.Record) error {
 			return nil
 		}
 		o.progress = newTerminalProgress(o.errOut)
+		if !o.interactive {
+			o.progress.startPlain()
+		}
 	}
 	o.progress.update(a)
 	return nil
@@ -252,8 +261,8 @@ func (o *commandOutput) resourceDone(method string, resource engine.ResourceRepo
 	case o.reconciling && method != "apply":
 		// Proposal outcomes carry the lookup and preparation results.
 		return nil
-	case o.all || selected(method, resource):
-		return o.emit(renderResource(o.outStyle, method, resource))
+	case o.all || slices.Contains(o.selectors, resource.Key) || slices.Contains(o.selectors, resourceName(resource)) || slices.Contains(o.selectors, resource.Name) || selected(method, resource):
+		return o.emit(renderResourceDetail(o.outStyle, method, resource, o.details))
 	}
 	return nil
 }

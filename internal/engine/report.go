@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 
@@ -48,11 +49,49 @@ type ResourceReport struct {
 
 // DestinationReport describes semantic drift independently of cache hits.
 type DestinationReport struct {
-	Name    string            `json:"name"`
-	Origins map[string]string `json:"origins,omitempty"`
-	Changes []plugin.Change   `json:"changes"`
-	Applied bool              `json:"applied"`
-	Error   string            `json:"error,omitempty"`
+	Artifact string            `json:"artifact,omitempty"`
+	Version  string            `json:"version,omitempty"`
+	Name     string            `json:"name"`
+	Origins  map[string]string `json:"origins,omitempty"`
+	Changes  []plugin.Change   `json:"changes"`
+	Applied  bool              `json:"reconciled"`
+	Error    string            `json:"error,omitempty"`
+}
+
+// MarshalJSON keeps preparation cache state out of unrelated command results.
+func (r ResourceReport) MarshalJSON() ([]byte, error) {
+	type resource ResourceReport
+	var cached *bool
+	if len(r.Artifacts) > 0 && r.Icon == "" {
+		cached = &r.Cached
+	}
+	return json.Marshal(struct {
+		resource
+
+		Cached *bool `json:"cached,omitempty"`
+	}{resource: resource(r), Cached: cached})
+}
+
+// MarshalJSON distinguishes planned drift, successful reconciliation and failure.
+func (r DestinationReport) MarshalJSON() ([]byte, error) {
+	type destination DestinationReport
+	if r.Changes == nil {
+		r.Changes = []plugin.Change{}
+	}
+	status := "planned"
+	switch {
+	case r.Error != "":
+		status = "failed"
+	case len(r.Changes) == 0:
+		status = "unchanged"
+	case r.Applied:
+		status = "applied"
+	}
+	return json.Marshal(struct {
+		destination
+
+		Status string `json:"status"`
+	}{destination: destination(r), Status: status})
 }
 
 // ResourceError identifies a resource failure independently of command-wide failures.
@@ -86,6 +125,7 @@ func Unreported(err error) error {
 
 // Summary counts the entire run, including resources omitted from its presentation.
 type Summary struct {
+	method                string
 	Resources             int `json:"resources"`
 	InputChanges          int `json:"input_changes,omitempty"`
 	Changed               int `json:"changed,omitempty"`
@@ -105,7 +145,7 @@ type Summary struct {
 
 // Summarize records totals before any presentation filter is applied.
 func (r *Report) Summarize(method string) {
-	s := Summary{Resources: len(r.Resources), InputChanges: len(r.RemovedInputs)}
+	s := Summary{method: method, Resources: len(r.Resources), InputChanges: len(r.RemovedInputs)}
 	destinations := map[string]bool{}
 	for _, resource := range r.Resources {
 		s.InputChanges += len(resource.Inputs)
@@ -153,4 +193,30 @@ func (r *Report) Summarize(method string) {
 	}
 	s.Destinations = len(destinations)
 	r.Summary = s
+}
+
+// MarshalJSON exposes predictable counters relevant to the command that ran.
+func (s Summary) MarshalJSON() ([]byte, error) {
+	counts := map[string]int{"resources": s.Resources, "failed": s.Failed, "blocked": s.Blocked}
+	switch s.method {
+	case "":
+		type summary Summary
+		return json.Marshal(summary(s))
+	case "icon":
+		counts["created"], counts["unchanged"], counts["skipped"] = s.Created, s.Unchanged, s.Skipped
+	case "update":
+		counts["resolved"], counts["input_changes"], counts["unchanged"] = s.Resolved, s.InputChanges, s.Unchanged
+	case "signature":
+		counts["derived"] = s.Derived
+	default:
+		counts["prepared"], counts["cached"] = s.Prepared, s.Cached
+		if s.method == "plan" || s.method == "apply" {
+			counts["changed"], counts["unchanged"] = s.Changed, s.Unchanged
+			counts["destinations"], counts["destination_operations"] = s.Destinations, s.DestinationOperations
+			if s.method == "apply" {
+				counts["applied"] = s.Applied
+			}
+		}
+	}
+	return json.Marshal(counts)
 }

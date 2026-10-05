@@ -454,6 +454,25 @@ func TestPreparedIconPublishesAndRetainsExplicitOverride(t *testing.T) {
 	digest := sha256.Sum256(data)
 	artifact := plugin.Artifact{Path: icon, Filename: "icon.png", Format: "png", Size: int64(len(data)), SHA256: hex.EncodeToString(digest[:])}
 	request.Inputs = map[string]plugin.Artifact{"icon": artifact}
+	request.Method = "plan"
+	planned, err := munkirepo.Handle(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploads := map[string]string{}
+	for _, change := range planned.Changes {
+		if change.Action != "upload" {
+			continue
+		}
+		var digest string
+		if err := json.Unmarshal(change.After, &digest); err != nil || change.Filename == "" {
+			t.Fatalf("upload lost identity: %+v %v", change, err)
+		}
+		uploads[change.Field] = digest
+	}
+	if uploads["installer"] != request.Artifact.SHA256 || uploads["icon"] != artifact.SHA256 {
+		t.Fatalf("upload evidence: %v", uploads)
+	}
 	pkginfo := apply(t, root, &request)
 	values := readNative[map[string]any](t, pkginfo)
 	name, _ := values["icon_name"].(string)
@@ -517,6 +536,14 @@ func TestDeclaredIconReplacesOnChangeAndStaysWhenUndeclared(t *testing.T) {
 		t.Fatalf("changed icon plan: %+v %v", response, err)
 	}
 	check(first)
+	for _, change := range response.Changes {
+		if change.Action == "upload" && change.Field == "icon" {
+			var before, after string
+			if json.Unmarshal(change.Before, &before) != nil || json.Unmarshal(change.After, &after) != nil || before != first.SHA256 || after != second.SHA256 {
+				t.Fatalf("icon upload lost before/after evidence: %+v", change)
+			}
+		}
+	}
 	apply(t, root, &request)
 	check(second)
 	assertConverged(t, request)

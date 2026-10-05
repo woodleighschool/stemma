@@ -1,7 +1,9 @@
 package engine
 
 import (
+	"encoding/json"
 	"github.com/woodleighschool/stemma/plugin"
+	"strings"
 	"testing"
 )
 
@@ -36,5 +38,36 @@ func TestIconSummaryDoesNotClaimPreparationOrUnchangedForSkippedWork(t *testing.
 	got := report.Summary
 	if got.Created != 1 || got.Unchanged != 1 || got.Skipped != 1 || got.Prepared != 0 || got.Cached != 0 {
 		t.Fatalf("counts: %+v", got)
+	}
+}
+
+func TestMachineReportSeparatesReconciliationMutationAndCache(t *testing.T) {
+	report := Report{Resources: []ResourceReport{{Icon: "unchanged"}}}
+	report.Summarize("icon")
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if strings.Contains(text, "cached") || strings.Contains(text, "prepared") || !strings.Contains(text, `"created":0`) {
+		t.Fatalf("icon projection: %s", text)
+	}
+	for _, test := range []struct {
+		report DestinationReport
+		status string
+	}{
+		{DestinationReport{Applied: true}, "unchanged"},
+		{DestinationReport{Changes: []plugin.Change{{Action: "upload"}}}, "planned"},
+		{DestinationReport{Applied: true, Changes: []plugin.Change{{Action: "upload"}}}, "applied"},
+		{DestinationReport{Error: "upload failed", Changes: []plugin.Change{{Action: "upload"}}}, "failed"},
+	} {
+		data, err := json.Marshal(test.report)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text = string(data)
+		if !strings.Contains(text, `"status":"`+test.status+`"`) || strings.Contains(text, `"changes":null`) || strings.Contains(text, `"applied":`) {
+			t.Fatalf("destination projection: %s", text)
+		}
 	}
 }

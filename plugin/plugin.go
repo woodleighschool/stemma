@@ -113,11 +113,17 @@ type ReconcileResponse struct {
 
 // Change is a semantic destination change; an empty Changes list needs no write.
 type Change struct {
-	Kind   string          `json:"kind"`
-	Field  string          `json:"field"`
-	Action string          `json:"action"`
-	Before json.RawMessage `json:"before,omitempty"`
-	After  json.RawMessage `json:"after,omitempty"`
+	// Review groups compound initial values using the destination's domain.
+	// Scalar creations and ordinary field differences need no extra review.
+	// Before and After retain the complete values for detailed review.
+	Review []string `json:"review,omitempty"`
+	// Filename identifies uploaded content separately from its before/after identity.
+	Filename string          `json:"filename,omitempty"`
+	Kind     string          `json:"kind"`
+	Field    string          `json:"field"`
+	Action   string          `json:"action"`
+	Before   json.RawMessage `json:"before,omitempty"`
+	After    json.RawMessage `json:"after,omitempty"`
 }
 
 // FactsVersion identifies the model used for observed artifact evidence.
