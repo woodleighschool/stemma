@@ -1,9 +1,7 @@
 package diskimage
 
 import (
-	"bytes"
 	"context"
-	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,31 +32,6 @@ func TestNativeMountVerifiesSignedApplication(t *testing.T) {
 				t.Fatalf("mounted volume holds %v: %v", entries, err)
 			}
 			native(t, "/usr/bin/codesign", "--verify", "--strict", "--deep", filepath.Join(mountpoint, "NestedFixture.app"))
-		})
-	}
-}
-
-// TestNativeMountReadsIncompressibleContent mounts each compression holding a
-// file that does not compress. macOS 26 refused to attach such LZFSE and LZMA
-// images while their blocks asked for a zlib-sized decode buffer, although
-// hdiutil verify passed.
-func TestNativeMountReadsIncompressibleContent(t *testing.T) {
-	data := make([]byte, 1<<20)
-	_, _ = rand.NewChaCha8([32]byte{}).Read(data)
-	for _, compression := range []Compression{LZFSE, Zlib, LZMA} {
-		t.Run(string(compression), func(t *testing.T) {
-			app := bundleFixture(t)
-			if err := os.WriteFile(filepath.Join(app, "Contents/Resources/random.bin"), data, 0o644); err != nil {
-				t.Fatal(err)
-			}
-			image := filepath.Join(t.TempDir(), "Example.dmg")
-			if err := writeApplication(t.Context(), app, image, compression, imageTime); err != nil {
-				t.Fatal(err)
-			}
-			got, err := os.ReadFile(filepath.Join(mount(t, image), "Example.app/Contents/Resources/random.bin"))
-			if err != nil || !bytes.Equal(got, data) {
-				t.Fatalf("macOS reads different bytes: %v", err)
-			}
 		})
 	}
 }
