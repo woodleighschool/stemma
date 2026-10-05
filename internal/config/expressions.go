@@ -89,7 +89,7 @@ func checkExpressions(document map[string]any) error {
 	if err := expression.Check(document, "env", "facts", "evidence", "inputs"); err != nil {
 		return err
 	}
-	for _, key := range []string{"apiVersion", "kind", "metadata", "suspend"} {
+	for _, key := range []string{"apiVersion", "kind", "metadata", "profiles", "suspend"} {
 		if expression.Has(document[key]) {
 			return fmt.Errorf("%s must be literal", key)
 		}

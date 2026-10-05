@@ -38,14 +38,14 @@ command.
    The working tree is never touched; the reviewed commit and every proposal
    are checked out into temporary directories.
 2. **Apply.** When the reviewed commit differs from the last one applied in full,
-   run frozen `apply` for the whole catalog and record the result as the
+   run frozen `apply` without selectors and record the result as the
    `stemma/apply` commit status. Each resource reuses verified cached inputs or
    acquires them from their locked observations before its destinations are
    written. Missing or stale lock entries, unavailable content, or content that
    differs from the reviewed identity fail that resource and block consumers of its outputs; independent resources still
    publish. The applied marker moves only when the whole apply succeeded; a
    partial apply is retried next run.
-3. **Update.** Resolve every declared input of the reviewed commit once and keep
+3. **Update.** Resolve the inputs of the same resources once and keep
    one `stemma/Kind/name` branch per resource whose inputs differ from the lock.
    The branch is regenerated from the reviewed commit with only that resource's
    lock entries changed. The resource and every resource consuming its outputs
@@ -74,6 +74,9 @@ Further behaviour of the update phase:
   validated rather than prepared.
 - A [suspended](catalogs.md#suspend-a-resource) resource keeps its reviewed lock
   entries and is neither applied nor proposed; run it locally with a selector.
+- A resource in a [profile](catalogs.md#group-opt-in-work-in-profiles) is treated
+  the same way unless a resource outside every profile consumes its outputs; run
+  it with its profile where that work happens.
 - A proposal a person closed without merging stays declined until its content
   changes.
 - Branches whose resource no longer differs from the reviewed lock, including

@@ -217,6 +217,7 @@ func (c *cli) runCommand(method string) *cobra.Command {
 	var icons engine.IconOptions
 	var input engine.InputSelection
 	var presentation, changedSince string
+	var profiles []string
 	cmd := &cobra.Command{Use: method + " [Kind/name...]", Short: runShort[method]}
 	jsonFlag(cmd)
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
@@ -230,7 +231,7 @@ func (c *cli) runCommand(method string) *cobra.Command {
 			}
 		}
 		c.display.selectors = slices.Clone(args)
-		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: method, Resources: args, ChangedSince: changedSince, Icons: icons, Input: input, ResourceDone: func(resource engine.ResourceReport) error {
+		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: method, Resources: args, Profiles: profiles, ChangedSince: changedSince, Icons: icons, Input: input, ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone(method, resource)
 		}, Lock: lockfile.Options{Offline: offline}})
 		if err := c.display.report(c.out, method, report, runErr); err != nil {
@@ -246,8 +247,9 @@ func (c *cli) runCommand(method string) *cobra.Command {
 		cmd.Flags().Bool("details", false, "Show complete initial object fields")
 	}
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
+	cmd.Flags().StringArrayVar(&profiles, "profile", nil, "Run the resources that declare the profile `NAME` instead of those that declare none; repeat for more")
 	if method == "prepare" {
-		cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the whole lockfile, then prepare only resources whose preparation changed since the Git revision `REV`")
+		cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the lockfile, then prepare only resources whose preparation changed since the Git revision `REV`")
 	}
 	if method == "icon" {
 		cmd.Flags().StringVar(&input.Name, "input", "", "Extract from one resource's locked input without building its output")

@@ -83,7 +83,8 @@ func resourceSchema(version, kind string, spec map[string]any) (map[string]any, 
 	return map[string]any{"type": "object", "additionalProperties": false, "required": []string{"apiVersion", "kind", "metadata", "spec"}, "properties": map[string]any{
 		"apiVersion": map[string]any{"const": version}, "kind": map[string]any{"const": kind},
 		"metadata": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"name"}, "properties": map[string]any{"name": map[string]any{"type": "string", "pattern": namePattern.String()}}},
-		"suspend":  map[string]any{"type": "boolean", "description": "Keep the resource out of every run that does not select it. It still validates and keeps its reviewed lock entries; selecting it, or a suspended resource consuming its outputs, runs it."},
+		"profiles": map[string]any{"type": "array", "uniqueItems": true, "items": map[string]any{"type": "string", "pattern": namePattern.String()}, "description": "Name the opt-in workloads the resource belongs to. Runs take it only when they select one of these profiles, name it, or select a resource consuming its outputs. It still validates and keeps its reviewed lock entries."},
+		"suspend":  map[string]any{"type": "boolean", "description": "Keep the resource out of every run that does not name it, whatever profiles the run selects. It still validates and keeps its reviewed lock entries; naming it, or a suspended resource consuming its outputs, runs it."},
 		"spec":     specSchema,
 	}}, nil
 }

@@ -21,12 +21,12 @@ type change struct {
 }
 
 // diff finds resources whose resolved inputs differ from the reviewed lock and
-// locked resources the catalog no longer declares. A suspended resource keeps
-// whatever the lock holds for it.
+// locked resources the catalog no longer declares. A resource the resolution
+// skipped keeps whatever the lock holds for it.
 func diff(candidate engine.Candidate) map[string]change {
 	changes := map[string]change{}
 	for key, resource := range candidate.Resources {
-		if resource.Suspended || resource.Error != "" || equalEntries(candidate.Lock.Inputs[key], resource.Inputs) {
+		if resource.Skipped || resource.Error != "" || equalEntries(candidate.Lock.Inputs[key], resource.Inputs) {
 			continue
 		}
 		changes[key] = change{kind: resource.Kind, name: resource.Name, entries: resource.Inputs, refresh: sameArtifacts(candidate.Lock.Inputs[key], resource.Inputs)}

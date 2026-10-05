@@ -31,19 +31,20 @@ type CandidateResource struct {
 	Kind      string                  `json:"kind"`
 	Inputs    map[string]source.Entry `json:"inputs,omitempty"`
 	Producers []string                `json:"producers,omitempty"`
-	// Suspended marks a resource left unresolved on purpose. Its lock entries
-	// stay as they are and nothing implicit runs it.
-	Suspended bool     `json:"suspended,omitempty"`
+	// Skipped marks a resource the resolution left out: a suspended one, or a
+	// profiled one that nothing it resolved consumes. Its lock entries stay as
+	// they are.
+	Skipped   bool     `json:"skipped,omitempty"`
 	Error     string   `json:"error,omitempty"`
 	BlockedBy []string `json:"blocked_by,omitempty"`
 }
 
 // Dependents returns every resource that transitively consumes key's outputs.
-// Suspended consumers are left out: nothing implicit ever runs them.
+// Skipped consumers are left out: nothing implicit ever runs them.
 func (c Candidate) Dependents(key string) []string {
 	consumers := map[string][]string{}
 	for name, resource := range c.Resources {
-		if resource.Suspended {
+		if resource.Skipped {
 			continue
 		}
 		for _, producer := range resource.Producers {
@@ -124,14 +125,12 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 			}
 		}
 	}
-	// A suspended resource is reported from its declaration alone; nothing
-	// implicit runs it, so the run never evaluates its operation contract.
-	for _, key := range suspended(s.project.Resources) {
-		if _, selected := candidate.Resources[key]; selected {
-			continue
-		}
+	// A resource outside the run is reported from its declaration alone;
+	// nothing implicit runs it, so the run never evaluates its operation
+	// contract.
+	for _, key := range unselected(s.project.Resources, e.selected) {
 		resource := s.project.Resources[key]
-		candidate.Resources[key] = CandidateResource{Name: resource.Metadata.Name, Kind: resource.Kind, Suspended: true}
+		candidate.Resources[key] = CandidateResource{Name: resource.Metadata.Name, Kind: resource.Kind, Skipped: true}
 	}
 	return candidate, nil
 }

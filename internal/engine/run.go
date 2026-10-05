@@ -24,9 +24,12 @@ type Options struct {
 	ConfigPath, CacheDir string
 	Method               string
 	Resources            []string
-	// ChangedSince selects, for prepare, the resources whose preparation
-	// differs from the catalog at this Git revision, after checking the whole
-	// lockfile.
+	// Profiles selects the resources declaring any of these profiles, in place
+	// of the resources that declare none. A run names profiles or Resources.
+	Profiles []string
+	// ChangedSince narrows prepare to the resources whose preparation differs
+	// from the catalog at this Git revision, after checking the lockfile's
+	// shape.
 	ChangedSince string
 	Lock         lockfile.Options
 	Icons        IconOptions
@@ -153,7 +156,7 @@ func (e *execution) begin(ctx context.Context) (err error) {
 	s := e.session
 	done := plugin.Stage(ctx, "Validating operation contracts")
 	defer func() { done(err) }()
-	e.roots, err = selectResources(s.project.Resources, e.opts.Resources)
+	e.roots, err = selectResources(s.project.Resources, e.opts.Resources, e.opts.Profiles)
 	if err != nil {
 		return err
 	}
@@ -161,7 +164,7 @@ func (e *execution) begin(ctx context.Context) (err error) {
 		return err
 	}
 	if e.opts.ChangedSince != "" {
-		if e.roots, err = changedSince(ctx, s, e.opts.ChangedSince); err != nil {
+		if e.roots, err = changedSince(ctx, s, e.opts.ChangedSince, e.roots, e.opts.Profiles); err != nil {
 			return err
 		}
 	}
@@ -222,9 +225,9 @@ func (e *execution) begin(ctx context.Context) (err error) {
 	done(nil)
 	inputs := declarations(e.plans, e.selected)
 	opts := e.opts.Lock
-	opts.PreserveUnselected = len(e.opts.Resources) > 0 || e.opts.ChangedSince != ""
-	opts.Retain = suspended(s.project.Resources)
-	plugin.Logger(ctx).DebugContext(ctx, "Resources selected", "count", len(e.selected), "suspended", len(opts.Retain))
+	opts.PreserveUnselected = len(e.opts.Resources) > 0 || len(e.opts.Profiles) > 0 || e.opts.ChangedSince != ""
+	opts.Retain = unselected(s.project.Resources, e.selected)
+	plugin.Logger(ctx).DebugContext(ctx, "Resources selected", "count", len(e.selected), "unselected", len(opts.Retain))
 	e.locked, err = lockfile.Begin(ctx, s.root, inputs, s.ops.plugins, s.manager, opts)
 	return err
 }

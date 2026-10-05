@@ -71,6 +71,7 @@ apiVersion: stemma/v1alpha1
 kind: BuildMacPkg
 metadata:
   name: branding
+profiles: [mac]
 spec:
   inputs:
     image:
@@ -113,6 +114,19 @@ spec:
     repo:
       pkginfo:
         catalogs: [testing]
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: captured
+profiles: [mac]
+spec:
+  source:
+    path: captured.pkg
+  destinations:
+    repo:
+      pkginfo:
+        catalogs: [testing]
 `
 	testproject.Write(t, filename, manifest)
 	reported := map[string]ResourceReport{}
@@ -127,7 +141,7 @@ spec:
 	if _, err := os.Stat(lockfile.Filename(root)); !os.IsNotExist(err) {
 		t.Fatal("candidate resolution wrote the lockfile")
 	}
-	if candidate.Lock.Version != 0 || len(candidate.Resources) != 5 {
+	if candidate.Lock.Version != 0 || len(candidate.Resources) != 6 {
 		t.Fatalf("unexpected candidate: %+v", candidate)
 	}
 	const alpha, broken, build, consumer = "stemma/v1alpha1/MacSoftware/alpha", "stemma/v1alpha1/MacSoftware/broken", "stemma/v1alpha1/BuildMacPkg/branding", "stemma/v1alpha1/MacSoftware/branding"
@@ -137,15 +151,18 @@ spec:
 	if resource := candidate.Resources[broken]; resource.Inputs != nil || !strings.Contains(resource.Error, "HTTP 404") {
 		t.Fatalf("unreachable source did not fail independently: %+v", resource)
 	}
-	if resource := candidate.Resources[build]; len(resource.Inputs) != 1 || len(resource.Producers) != 0 {
+	// The build is profiled, and resolved because the consumer needs it.
+	if resource := candidate.Resources[build]; len(resource.Inputs) != 1 || len(resource.Producers) != 0 || resource.Skipped {
 		t.Fatalf("local inputs were not observed: %+v", resource)
 	}
 	if resource := candidate.Resources[consumer]; len(resource.Inputs) != 0 || len(resource.Producers) != 1 || resource.Producers[0] != build {
 		t.Fatalf("output reference was not recorded as a producer: %+v", resource)
 	}
-	const private = "stemma/v1alpha1/MacSoftware/private"
-	if resource := candidate.Resources[private]; !resource.Suspended || resource.Inputs != nil || resource.Error != "" || len(resource.Producers) != 0 {
-		t.Fatalf("suspended resource was evaluated or resolved: %+v", resource)
+	// The captured package is absent, so resolving it would fail.
+	for _, key := range []string{"stemma/v1alpha1/MacSoftware/private", "stemma/v1alpha1/MacSoftware/captured"} {
+		if resource := candidate.Resources[key]; !resource.Skipped || resource.Inputs != nil || resource.Error != "" || len(resource.Producers) != 0 {
+			t.Fatalf("suspended or profiled resource was evaluated or resolved: %+v", resource)
+		}
 	}
 	// Each resource reports its lock changes as the lookup finishes it.
 	if len(reported) != 4 || len(reported[alpha].Inputs) != 1 || len(reported[build].Inputs) != 1 || len(reported[consumer].Inputs) != 0 || !strings.Contains(reported[broken].Error, "HTTP 404") {

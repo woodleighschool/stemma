@@ -64,7 +64,7 @@ func Load(filename string) (Project, error) {
 				if err != nil {
 					return p, fmt.Errorf("import %s document %d: %w", name, i+1, err)
 				}
-				if err := validateHeader(resource.APIVersion, resource.Kind, "", resource.Metadata); err != nil {
+				if err := resource.validate(); err != nil {
 					return p, fmt.Errorf("import %s document %d: %w", name, i+1, err)
 				}
 				if resource.Kind == "Project" {
@@ -141,6 +141,7 @@ func FindRoot(startDir string) (string, error) {
 					APIVersion string         `yaml:"apiVersion"`
 					Kind       string         `yaml:"kind"`
 					Metadata   Metadata       `yaml:"metadata"`
+					Profiles   []string       `yaml:"profiles"`
 					Suspend    bool           `yaml:"suspend"`
 					Spec       map[string]any `yaml:"spec"`
 				}

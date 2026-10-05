@@ -37,9 +37,12 @@ CA file does not extend the native trust store. See
 
 For example, `stemma plan MacSoftware/chrome` selects one document. Required build
 references are prepared first. Use `apiVersion/Kind/name` when needed to resolve an
-ambiguous identity. Omitting selectors processes every resource that is not
-[suspended](catalogs.md#suspend-a-resource); a selector runs a suspended resource
-and the builds it references.
+ambiguous identity. Omitting selectors processes every resource that declares no
+[profile](catalogs.md#group-opt-in-work-in-profiles) and is not
+[suspended](catalogs.md#suspend-a-resource). `--profile NAME` processes the
+resources in that profile instead; repeat it to add profiles. A selector runs
+the resource it names, profiled or suspended, and the builds it references.
+`--profile` and selectors cannot be combined.
 
 A selector scopes evaluation as well as execution. Only the selected resources
 and the resources they consume are checked against their operation contracts, so
@@ -62,9 +65,13 @@ resources. Local paths containing environment expressions or outside the Git
 root are selected only by declaration and lock changes. Plugin resolvers with
 local inputs are selected for any changed project file because they do not
 declare which files they read. New resources count as changed, and a changed build selects
-the resources that consume it. Suspended resources stay out. The lockfile must
-hold entries for exactly the declared inputs; entry and environment values are
-read only for the resources the command prepares. Each catalog is interpreted by
+the resources that consume it. The command compares the resources a run without
+selectors takes: suspended resources stay out, and profiled resources are
+compared only with `--profile`, which compares that profile in place of the
+rest. The lockfile must hold entries for exactly the declared inputs of the
+compared resources and the builds they reference, and none for resources the
+catalog no longer declares; entry and environment values are read only for the
+resources the command prepares. Each catalog is interpreted by
 the plugins its declarations and lock select, so comparison can execute both base
 and current plugin code. Destination operation identities do not select resources
 for preparation. A base catalog or required operation that cannot be loaded or

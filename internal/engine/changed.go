@@ -91,12 +91,12 @@ func (s *session) catalogAt(ctx context.Context, opts Options) (_ catalog, err e
 	return result, err
 }
 
-// changedSince returns the resources whose preparation differs from the
-// catalog at the session's base revision, and the resources that consume
+// changedSince narrows roots to the resources whose preparation differs from
+// the catalog at the session's base revision, and the resources that consume
 // them. It reads both catalogs as written, so only the resources it returns
-// need environment values, and checks the lockfile's shape against the whole
-// catalog.
-func changedSince(ctx context.Context, s *session, rev string) (roots []string, err error) {
+// need environment values, and checks the lockfile's shape against the roots
+// and everything they consume.
+func changedSince(ctx context.Context, s *session, rev string, roots, profiles []string) (_ []string, err error) {
 	done := plugin.Stage(ctx, "Comparing with catalog", plugin.Detail(rev))
 	defer func() { done(err) }()
 	locked, err := lockfile.Load(lockfile.Filename(s.root))
@@ -108,30 +108,46 @@ func changedSince(ctx context.Context, s *session, rev string) (roots []string, 
 	current := map[string]preparation{}
 	inputs := map[string]map[string]plugin.Input{}
 	consumers := map[string][]string{}
-	for _, key := range sortedKeys(s.project.Resources) {
-		if s.project.Resources[key].Suspend {
-			continue
+	var read func(string) error
+	read = func(key string) error {
+		if _, seen := current[key]; seen {
+			return nil
 		}
 		prepared, err := preparationOf(ctx, s.ops, kinds, s.project.Resources[key], locked)
 		if err != nil {
-			return nil, fmt.Errorf("resource %s: %w", key, err)
+			return fmt.Errorf("resource %s: %w", key, err)
 		}
 		current[key], inputs[key] = prepared, map[string]plugin.Input{}
-		for name, input := range prepared.Inputs {
+		for _, name := range sortedKeys(prepared.Inputs) {
+			input := prepared.Inputs[name]
 			if input.Resource == nil {
 				inputs[key][name] = input
-			} else {
-				consumers[input.Resource.Key()] = append(consumers[input.Resource.Key()], key)
+				continue
+			}
+			producer := input.Resource.Key()
+			consumers[producer] = append(consumers[producer], key)
+			// The run's own evaluation rejects an undeclared or suspended producer.
+			if resource, declared := s.project.Resources[producer]; declared && !resource.Suspend {
+				if err := read(producer); err != nil {
+					return err
+				}
 			}
 		}
+		return nil
 	}
-	if err := lockfile.Check(s.root, inputs, suspended(s.project.Resources)); err != nil {
+	for _, key := range roots {
+		if err := read(key); err != nil {
+			return nil, err
+		}
+	}
+	if err := lockfile.Check(s.root, inputs, unselected(s.project.Resources, sortedKeys(current))); err != nil {
 		return nil, err
 	}
 	affected := map[string]bool{}
 	for key, prepared := range current {
 		previous, declared := s.base.project.Resources[key]
-		if !declared || previous.Suspend {
+		// A resource the same run would not have taken at the base counts as new.
+		if !declared || previous.Suspend || isRoot(s.project.Resources[key], profiles) && !isRoot(previous, profiles) {
 			affected[key] = true
 			continue
 		}

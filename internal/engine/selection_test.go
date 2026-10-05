@@ -74,12 +74,73 @@ func closureFixture(t *testing.T, specs map[string]closureSpec) (config.Project,
 // method does before it acquires anything.
 func closure(t *testing.T, project config.Project, ops *operations, selectors ...string) ([]string, error) {
 	t.Helper()
-	roots, err := selectResources(project.Resources, selectors)
+	roots, err := selectResources(project.Resources, selectors, nil)
 	if err != nil {
 		return nil, err
 	}
 	_, selected, err := discoverClosure(t.Context(), project, ops, roots, true, true)
 	return selected, err
+}
+
+func TestProfilesSelectNamedRoots(t *testing.T) {
+	// App consumes a profiled build and pages an unprofiled one; paused is
+	// suspended inside a profile.
+	project, ops, _ := closureFixture(t, map[string]closureSpec{
+		"app": {Needs: []string{"build"}}, "build": {}, "pages": {Needs: []string{"shared"}}, "shared": {},
+		"numbers": {}, "fonts": {}, "paused": {},
+	})
+	declare := func(name string, suspend bool, profiles ...string) {
+		resource := project.Resources[closureKey(name)]
+		resource.Suspend, resource.Profiles = suspend, profiles
+		project.Resources[closureKey(name)] = resource
+	}
+	declare("build", false, "builds")
+	declare("pages", false, "apple-apps")
+	declare("numbers", false, "apple-apps", "licensed")
+	declare("fonts", false, "licensed")
+	declare("paused", true, "apple-apps")
+	for _, test := range []struct {
+		name                string
+		selectors, profiles []string
+		want                []string
+		err                 string
+	}{
+		{name: "no profile takes unprofiled roots and what they consume", want: []string{"build", "app", "shared"}},
+		{name: "profile takes only its roots and what they consume", profiles: []string{"apple-apps"}, want: []string{"numbers", "shared", "pages"}},
+		{name: "profiles form a union", profiles: []string{"licensed", "apple-apps"}, want: []string{"fonts", "numbers", "shared", "pages"}},
+		{name: "selector names a profiled resource", selectors: []string{"Fixture/pages"}, want: []string{"shared", "pages"}},
+		{name: "selector names a suspended resource", selectors: []string{"Fixture/paused"}, want: []string{"paused"}},
+		{name: "unknown profile", profiles: []string{"apple-apps", "apple"}, err: `unknown profile "apple"; resources declare apple-apps, builds, licensed`},
+		{name: "profile with selector", selectors: []string{"Fixture/pages"}, profiles: []string{"apple-apps"}, err: "select resources by profile or by name, not both"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			roots, err := selectResources(project.Resources, test.selectors, test.profiles)
+			if test.err != "" {
+				if err == nil || err.Error() != test.err {
+					t.Fatalf("selection error: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, selected, err := discoverClosure(t.Context(), project, ops, roots, true, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := make([]string, len(test.want))
+			for i, name := range test.want {
+				want[i] = closureKey(name)
+			}
+			if !slices.Equal(selected, want) {
+				t.Fatalf("selected %v, want %v", selected, want)
+			}
+		})
+	}
+	plain, _, _ := closureFixture(t, map[string]closureSpec{"app": {}})
+	if _, err := selectResources(plain.Resources, nil, []string{"apple-apps"}); err == nil || err.Error() != `unknown profile "apple-apps"; no resource declares a profile` {
+		t.Fatalf("profile in a catalog without profiles: %v", err)
+	}
 }
 
 func TestScopedRunEvaluatesOnlyItsDependencyClosure(t *testing.T) {

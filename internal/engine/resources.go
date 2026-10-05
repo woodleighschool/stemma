@@ -27,20 +27,39 @@ type resourcePlan struct {
 	Environment map[string]string
 }
 
-// selectResources resolves selectors against declared identity alone, so the
-// selector is an execution boundary rather than a filter applied after the
-// whole catalog has been evaluated. An empty selection takes every unsuspended
-// resource; a suspended resource becomes a root only through a selector naming
-// it or a selected resource consuming its outputs.
-func selectResources(resources map[string]config.Resource, selectors []string) ([]string, error) {
+// selectResources resolves a run's roots against declared identity alone, so
+// selection is an execution boundary rather than a filter applied after the
+// whole catalog has been evaluated. Without selectors the roots are the
+// unsuspended resources that declare no profile, or those declaring any of the
+// named profiles. A selector names its resource whatever it declares, which is
+// the only way a suspended resource becomes a root.
+func selectResources(resources map[string]config.Resource, selectors, profiles []string) ([]string, error) {
 	if len(selectors) == 0 {
+		declared := map[string]bool{}
+		for _, resource := range resources {
+			for _, profile := range resource.Profiles {
+				declared[profile] = true
+			}
+		}
+		for _, profile := range profiles {
+			if declared[profile] {
+				continue
+			}
+			if len(declared) == 0 {
+				return nil, fmt.Errorf("unknown profile %q; no resource declares a profile", profile)
+			}
+			return nil, fmt.Errorf("unknown profile %q; resources declare %s", profile, strings.Join(sortedKeys(declared), ", "))
+		}
 		var roots []string
 		for _, key := range sortedKeys(resources) {
-			if !resources[key].Suspend {
+			if isRoot(resources[key], profiles) {
 				roots = append(roots, key)
 			}
 		}
 		return roots, nil
+	}
+	if len(profiles) > 0 {
+		return nil, errors.New("select resources by profile or by name, not both")
 	}
 	var roots []string
 	for _, selection := range selectors {
@@ -61,6 +80,19 @@ func selectResources(resources map[string]config.Resource, selectors []string) (
 		roots = append(roots, matches[0])
 	}
 	return roots, nil
+}
+
+// isRoot reports whether a run without selectors takes the resource as a
+// root: it declares one of the run's profiles, or none when the run names
+// none. A suspended resource never is.
+func isRoot(resource config.Resource, profiles []string) bool {
+	if resource.Suspend {
+		return false
+	}
+	if len(profiles) == 0 {
+		return len(resource.Profiles) == 0
+	}
+	return slices.ContainsFunc(resource.Profiles, func(profile string) bool { return slices.Contains(profiles, profile) })
 }
 
 // discoverClosure evaluates the requested resources and everything they

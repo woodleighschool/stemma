@@ -22,6 +22,15 @@
           ],
           "type": "object"
         },
+        "profiles": {
+          "description": "Name the opt-in workloads the resource belongs to. Runs take it only when they select one of these profiles, name it, or select a resource consuming its outputs. It still validates and keeps its reviewed lock entries.",
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
         "spec": {
           "anyOf": [
             {
@@ -934,7 +943,7 @@
           ]
         },
         "suspend": {
-          "description": "Keep the resource out of every run that does not select it. It still validates and keeps its reviewed lock entries; selecting it, or a suspended resource consuming its outputs, runs it.",
+          "description": "Keep the resource out of every run that does not name it, whatever profiles the run selects. It still validates and keeps its reviewed lock entries; naming it, or a suspended resource consuming its outputs, runs it.",
           "type": "boolean"
         }
       },
@@ -1763,6 +1772,15 @@
             "name"
           ],
           "type": "object"
+        },
+        "profiles": {
+          "description": "Name the opt-in workloads the resource belongs to. Runs take it only when they select one of these profiles, name it, or select a resource consuming its outputs. It still validates and keeps its reviewed lock entries.",
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
         },
         "spec": {
           "anyOf": [
@@ -2601,7 +2619,7 @@
           ]
         },
         "suspend": {
-          "description": "Keep the resource out of every run that does not select it. It still validates and keeps its reviewed lock entries; selecting it, or a suspended resource consuming its outputs, runs it.",
+          "description": "Keep the resource out of every run that does not name it, whatever profiles the run selects. It still validates and keeps its reviewed lock entries; naming it, or a suspended resource consuming its outputs, runs it.",
           "type": "boolean"
         }
       },
@@ -8930,6 +8948,15 @@
           ],
           "type": "object"
         },
+        "profiles": {
+          "description": "Name the opt-in workloads the resource belongs to. Runs take it only when they select one of these profiles, name it, or select a resource consuming its outputs. It still validates and keeps its reviewed lock entries.",
+          "items": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$",
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
         "spec": {
           "anyOf": [
             {
@@ -9631,7 +9658,7 @@
           ]
         },
         "suspend": {
-          "description": "Keep the resource out of every run that does not select it. It still validates and keeps its reviewed lock entries; selecting it, or a suspended resource consuming its outputs, runs it.",
+          "description": "Keep the resource out of every run that does not name it, whatever profiles the run selects. It still validates and keeps its reviewed lock entries; naming it, or a suspended resource consuming its outputs, runs it.",
           "type": "boolean"
         }
       },

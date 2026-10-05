@@ -57,6 +57,12 @@ func TestResourceEditorSchema(t *testing.T) {
 			t.Fatalf("suspend=%s valid=%v: %v", value, err == nil, err)
 		}
 	}
+	for value, valid := range map[string]bool{`["apple-apps","licensed"]`: true, `[]`: true, `"apple-apps"`: false, `["apple apps"]`: false, `["licensed","licensed"]`: false} {
+		document := []byte(`{"apiVersion":"stemma/v1alpha1","kind":"MacSoftware","metadata":{"name":"fixture"},"profiles":` + value + `,"spec":{"destinations":{"external":{"title":"Policy"}}}}`)
+		if err := plugin.ValidateSchema(schema, document); (err == nil) != valid {
+			t.Fatalf("profiles=%s valid=%v: %v", value, err == nil, err)
+		}
+	}
 }
 
 func TestProjectEnvelopeSchema(t *testing.T) {

@@ -133,6 +133,45 @@ name used for both `publisher: &publisher Vendor` and `developer: *publisher`.
 Inspect the result with `stemma validate --resolved`. Treat resolved output as
 configuration: it may contain values supplied through your environment.
 
+## Group opt-in work in profiles
+
+Some resources run on one prepared machine or on their own schedule, such as
+applications captured from a Mac that has them installed. Name the workload they
+belong to with `profiles` beside `metadata`:
+
+```yaml
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: pages
+profiles:
+  - apple-apps
+spec:
+  source:
+    path: /Applications/Pages.app
+```
+
+Runs without selectors process the resources that declare no profile.
+`--profile` processes the resources in that profile instead, and repeating it
+adds profiles:
+
+```sh
+stemma update
+stemma apply
+
+stemma update --profile apple-apps
+stemma apply --profile apple-apps
+
+stemma apply MacSoftware/pages
+```
+
+A selector runs a profiled resource by name. Any run also prepares the builds its
+resources reference, whatever profiles those builds declare, so only the
+resources you start from need the profile. A profiled resource keeps its reviewed
+lock entries between its runs and is still checked by `stemma validate`;
+[reconciliation](reconcile.md) skips it. `--profile` takes a name some resource
+declares and cannot be combined with selectors.
+
 ## Suspend a resource
 
 Some resources need files the repository does not carry, such as licensed fonts
@@ -158,8 +197,8 @@ spec:
 ```
 
 A suspended resource keeps its reviewed lock entries and is still checked by
-`stemma validate`, but runs without selectors and [reconciliation](reconcile.md)
-skip it. On a machine
+`stemma validate`, but runs without selectors, runs of its profiles and
+[reconciliation](reconcile.md) skip it. On a machine
 holding the files, `stemma apply MacSoftware/fonts` runs it together with the
 builds it references. A resource that is not suspended cannot consume a suspended
 resource's outputs: suspend both and select the consumer.

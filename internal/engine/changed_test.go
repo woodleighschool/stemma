@@ -393,3 +393,44 @@ func TestChangedSinceSelectsForPrepareAlone(t *testing.T) {
 		}
 	}
 }
+
+func TestChangedSinceComparesTheSelectedProfile(t *testing.T) {
+	root, _, prepare := changedCatalog(t)
+	cache := t.TempDir()
+	run := func(method, changedSince string, profiles ...string) (Report, error) {
+		return Run(t.Context(), Options{ConfigPath: filepath.Join(root, "stemma.yaml"), CacheDir: cache, Method: method, ChangedSince: changedSince, Profiles: profiles})
+	}
+	document := filepath.Join(root, "software", "captured.yaml")
+	captured := strings.Replace(strings.ReplaceAll(changedResources["other.yaml"], "other", "captured"), "spec:", "profiles: [capture]\nspec:", 1)
+	writeFileText(t, document, captured)
+	// A profiled resource needs lock entries only where its profile runs.
+	if report, err := prepare(); err != nil || len(report.Resources) != 0 {
+		t.Fatalf("a run without the profile compared a profiled resource: %v, prepared %v", err, preparedKeys(report))
+	}
+	if _, err := run("prepare", "HEAD", "capture"); err == nil || !strings.Contains(err.Error(), "lockfile: stemma/v1alpha1/MacSoftware/captured input source is missing; run stemma update") {
+		t.Fatalf("the profile's run accepted an unlocked resource: %v", err)
+	}
+	writeFile(t, filepath.Join(root, "software", "captured.pkg"), testPackage(t, "com.example.captured"))
+	if _, err := run("update", "", "capture"); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := run("prepare", "HEAD", "capture"); err != nil || !slices.Equal(preparedKeys(report), []string{"MacSoftware/captured"}) {
+		t.Fatalf("the profile's run prepared %v: %v", preparedKeys(report), err)
+	}
+	commit(t, root)
+	// A change outside the profile belongs to the run that takes it.
+	writeFileText(t, filepath.Join(root, "stemma.yaml"), strings.Replace(changedProject, "com.example.build", "com.example.renamed", 1))
+	if report, err := run("prepare", "HEAD", "capture"); err != nil || len(report.Resources) != 0 {
+		t.Fatalf("the profile's run prepared %v: %v", preparedKeys(report), err)
+	}
+	if report, err := prepare(); err != nil || !slices.Equal(preparedKeys(report), []string{"BuildMacPkg/build", "MacSoftware/consumer"}) {
+		t.Fatalf("a run without the profile prepared %v: %v", preparedKeys(report), err)
+	}
+	commit(t, root)
+	// Leaving the profile brings an unchanged resource into runs that never
+	// prepared it.
+	writeFileText(t, document, strings.Replace(captured, "profiles: [capture]\n", "", 1))
+	if report, err := prepare(); err != nil || !slices.Equal(preparedKeys(report), []string{"MacSoftware/captured"}) {
+		t.Fatalf("a resource that left its profile prepared %v: %v", preparedKeys(report), err)
+	}
+}

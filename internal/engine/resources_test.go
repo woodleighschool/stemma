@@ -348,3 +348,130 @@ func TestActiveResourceCannotConsumeSuspendedOutputs(t *testing.T) {
 		t.Fatalf("explicit selection ran an active consumer of a suspended build: %v", err)
 	}
 }
+
+// profiledProject keeps software captured on one prepared machine out of runs
+// that select no profile. Paused is suspended inside the same profile.
+const profiledProject = `apiVersion: stemma/v1alpha1
+kind: Project
+metadata:
+  name: profiles
+spec:
+  imports:
+    - '*.software.yaml'
+  destinations:
+    repo:
+      operation: munki
+      config:
+        path: repo
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: vendor
+spec:
+  source:
+    path: vendor.pkg
+  destinations:
+    repo:
+      pkginfo:
+        catalogs: [testing]
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: captured
+profiles: [capture]
+spec:
+  source:
+    path: captured.pkg
+  destinations:
+    repo:
+      pkginfo:
+        catalogs: [testing]
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: paused
+profiles: [capture]
+suspend: true
+spec:
+  source:
+    path: paused.pkg
+  destinations:
+    repo:
+      pkginfo:
+        catalogs: [testing]
+`
+
+func TestProfiledResourcesRunOnlyWhenSelected(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	installer, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "vendor.pkg"), installer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testproject.Write(t, filename, profiledProject)
+	const vendor, captured = "stemma/v1alpha1/MacSoftware/vendor", "stemma/v1alpha1/MacSoftware/captured"
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	keys := func(report Report) []string {
+		var keys []string
+		for _, resource := range report.Resources {
+			keys = append(keys, resource.Key)
+		}
+		return keys
+	}
+	locked := func() map[string]map[string]source.Entry {
+		t.Helper()
+		file, err := lockfile.Load(lockfile.Filename(root))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return file.Inputs
+	}
+	// The captured package exists only on the machine that runs the profile.
+	report, err := Run(t.Context(), options)
+	if err != nil || !slices.Equal(keys(report), []string{vendor}) || len(locked()) != 1 {
+		t.Fatalf("update without a profile touched profiled resources: %v %v %+v", keys(report), err, locked())
+	}
+	capture := filepath.Join(root, "captured.pkg")
+	if err := os.WriteFile(capture, testPackage(t, "com.example.captured"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	options.Profiles = []string{"capture"}
+	if report, err = Run(t.Context(), options); err != nil || !slices.Equal(keys(report), []string{captured}) {
+		t.Fatalf("profile update did not run exactly its unsuspended resources: %v %v", keys(report), err)
+	}
+	entries := locked()
+	if len(entries) != 2 || entries[captured]["source"].Content.Filename != "captured.pkg" || len(entries[vendor]) != 1 {
+		t.Fatalf("profile update did not lock its resources beside the others: %+v", entries)
+	}
+	options.Method = "apply"
+	report, err = Run(t.Context(), options)
+	if err != nil || !slices.Equal(keys(report), []string{captured}) || len(report.Resources[0].Destinations) != 1 {
+		t.Fatalf("profile apply did not publish exactly its resources: %v %+v", err, report)
+	}
+	options.Profiles, options.Resources = nil, []string{"MacSoftware/captured"}
+	if report, err = Run(t.Context(), options); err != nil || !slices.Equal(keys(report), []string{captured}) {
+		t.Fatalf("naming a profiled resource did not run it: %v %v", keys(report), err)
+	}
+	options.Profiles = []string{"capture"}
+	if _, err = Run(t.Context(), options); err == nil || err.Error() != "select resources by profile or by name, not both" {
+		t.Fatalf("a run took a profile and a selector: %v", err)
+	}
+	if err := os.Remove(capture); err != nil {
+		t.Fatal(err)
+	}
+	options.Profiles, options.Resources = nil, nil
+	report, err = Run(t.Context(), options)
+	if err != nil || !slices.Equal(keys(report), []string{vendor}) || len(report.Resources[0].Destinations) != 1 {
+		t.Fatalf("apply without a profile did not skip profiled resources: %v %+v", err, report)
+	}
+	options.Method = "update"
+	if report, err = Run(t.Context(), options); err != nil || !slices.Equal(keys(report), []string{vendor}) || !locked()[captured]["source"].Equal(entries[captured]["source"]) {
+		t.Fatalf("update without a profile lost the profiled resource's lock: %v %v %+v", keys(report), err, locked())
+	}
+}

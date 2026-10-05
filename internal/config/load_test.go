@@ -248,3 +248,37 @@ func TestSuspendIsAResourceEnvelopeField(t *testing.T) {
 		t.Fatal("a Project accepted suspend")
 	}
 }
+
+func TestProfilesAreLiteralResourceEnvelopeNames(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	writeConfig(t, root, "stemma.yaml", projectFixture)
+	declare := func(profiles string) {
+		t.Helper()
+		writeConfig(t, root, "app.software.yaml", strings.Replace(resourceFixture, "spec:", "profiles: "+profiles+"\nspec:", 1))
+	}
+	declare("[apple-apps, licensed]")
+	p, err := Load(filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Resources["stemma/v1alpha1/MacSoftware/app"].Profiles; len(got) != 2 || got[0] != "apple-apps" || got[1] != "licensed" {
+		t.Fatalf("profiles were not read from the resource envelope: %v", got)
+	}
+	for profiles, want := range map[string]string{
+		`["apple apps"]`:          `invalid profile name "apple apps"`,
+		`[apple-apps, "", other]`: `invalid profile name ""`,
+		`[licensed, licensed]`:    `duplicate profile "licensed"`,
+		`["{{ env.PROFILE }}"]`:   "profiles must be literal",
+	} {
+		declare(profiles)
+		if _, err := Load(filename); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("profiles: %s: %v", profiles, err)
+		}
+	}
+	declare("[apple-apps]")
+	writeConfig(t, root, "stemma.yaml", strings.Replace(projectFixture, "spec:", "profiles: [apple-apps]\nspec:", 1))
+	if _, err := Load(filename); err == nil {
+		t.Fatal("a Project accepted profiles")
+	}
+}

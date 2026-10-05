@@ -73,8 +73,11 @@ type Resource struct {
 	APIVersion string   `yaml:"apiVersion" json:"apiVersion"`
 	Kind       string   `yaml:"kind" json:"kind"`
 	Metadata   Metadata `yaml:"metadata" json:"metadata"`
+	// Profiles names the opt-in workloads the resource belongs to. Runs take
+	// it as a root only when they select one of them or name the resource.
+	Profiles []string `yaml:"profiles,omitempty" json:"profiles,omitempty"`
 	// Suspend keeps the resource declared and validated but out of every run
-	// that does not select it.
+	// that does not name it.
 	Suspend bool           `yaml:"suspend,omitempty" json:"suspend,omitempty"`
 	Spec    map[string]any `yaml:"spec" json:"spec"`
 	Base    string         `yaml:"-" json:"-"`
@@ -82,6 +85,21 @@ type Resource struct {
 
 func (r Resource) Reference() plugin.ResourceReference {
 	return plugin.ResourceReference{APIVersion: r.APIVersion, Kind: r.Kind, Name: r.Metadata.Name}
+}
+
+func (r Resource) validate() error {
+	if err := validateHeader(r.APIVersion, r.Kind, "", r.Metadata); err != nil {
+		return err
+	}
+	for i, profile := range r.Profiles {
+		if !namePattern.MatchString(profile) {
+			return fmt.Errorf("invalid profile name %q", profile)
+		}
+		if slices.Contains(r.Profiles[:i], profile) {
+			return fmt.Errorf("duplicate profile %q", profile)
+		}
+	}
+	return nil
 }
 
 // Destination keeps connection settings separate from native software metadata.
@@ -239,7 +257,7 @@ func (p Project) Validate() error {
 		return errors.New("resources must not be empty")
 	}
 	for _, r := range p.Resources {
-		if err := validateHeader(r.APIVersion, r.Kind, "", r.Metadata); err != nil {
+		if err := r.validate(); err != nil {
 			return err
 		}
 	}

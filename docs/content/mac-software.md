@@ -286,7 +286,7 @@ stemma icon
 application that [selection](#select-an-application-once) identifies. Disk images,
 archives and vendor packages all work; a package holding several applications needs
 `application.bundle_id` or `application.path` first. Without selectors it creates
-every declared icon that has no file yet and existing files stay unchanged, so a run
+the declared icons that have no file yet and existing files stay unchanged, so a run
 across the catalog is safe. `--force` replaces them.
 
 Both presentations select the file named by `CFBundleIconFile`, adding `.icns`

@@ -619,3 +619,62 @@ func TestIntunewinJSONIdentifiesTheGeneratedFile(t *testing.T) {
 		t.Fatalf("machine activity: %s", stderr.String())
 	}
 }
+
+func TestProfileFlagSelectsTheResourcesOfARun(t *testing.T) {
+	project := t.TempDir()
+	testproject.Write(t, filepath.Join(project, "stemma.yaml"), `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: profiles}
+spec: {imports: ['*.software.yaml']}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: plain}
+spec:
+  source: {path: plain.pkg}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: captured}
+profiles: [capture]
+spec:
+  source: {path: captured.pkg}
+`)
+	for _, name := range []string{"plain.pkg", "captured.pkg"} {
+		if err := os.WriteFile(filepath.Join(project, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cache := t.TempDir()
+	update := func(args ...string) ([]string, error) {
+		t.Helper()
+		var out, logs bytes.Buffer
+		cmd, finish := command(&out, &logs)
+		cmd.SetArgs(append([]string{"update", "--json", "--root", project, "--cache-dir", cache}, args...))
+		err := cmd.ExecuteContext(t.Context())
+		finish(err)
+		var report engine.Report
+		if out.Len() > 0 {
+			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var names []string
+		for _, resource := range report.Resources {
+			names = append(names, resource.Name)
+		}
+		return names, err
+	}
+	if names, err := update(); err != nil || !slices.Equal(names, []string{"plain"}) {
+		t.Fatalf("update reported %v: %v", names, err)
+	}
+	if names, err := update("--profile", "capture"); err != nil || !slices.Equal(names, []string{"captured"}) {
+		t.Fatalf("update --profile capture reported %v: %v", names, err)
+	}
+	if _, err := update("--profile", "capture", "MacSoftware/plain"); err == nil || !strings.Contains(err.Error(), "by profile or by name, not both") {
+		t.Fatalf("a profile and a selector ran together: %v", err)
+	}
+	if _, err := update("--profile", "captures"); err == nil || !strings.Contains(err.Error(), `unknown profile "captures"; resources declare capture`) {
+		t.Fatalf("an unknown profile selected a run: %v", err)
+	}
+}

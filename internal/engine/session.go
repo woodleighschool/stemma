@@ -98,12 +98,13 @@ func declarations(plans map[string]resourcePlan, selected []string) map[string]m
 	return result
 }
 
-// suspended lists the resources implicit runs skip. Their reviewed
-// lock entries outlive every run that does not select them.
-func suspended(resources map[string]config.Resource) []string {
+// unselected lists the declared resources outside a run: the suspended, the
+// profiled and whatever a selector or profile left out. Their reviewed lock
+// entries outlive it.
+func unselected(resources map[string]config.Resource, selected []string) []string {
 	var keys []string
 	for _, key := range sortedKeys(resources) {
-		if resources[key].Suspend {
+		if !slices.Contains(selected, key) {
 			keys = append(keys, key)
 		}
 	}

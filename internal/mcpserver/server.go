@@ -78,7 +78,8 @@ func newServer(opts Options) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "check",
 		Description: "Check the catalog as pull requests do: prepare affected resources " +
-			"from the lockfile since a Git revision, then validate every document.",
+			"from the lockfile since a Git revision, then validate every document. " +
+			"Suspended resources are only validated, and so are profiled resources unless an affected resource consumes their outputs.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld},
 	}, tools.check)
 	return server
