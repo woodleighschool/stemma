@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.10.0](https://github.com/woodleighschool/stemma/compare/v0.9.1...v0.10.0) (2026-10-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** plugins list reads declarations; plugins inspect loads capabilities. JSON reports include unchanged outcomes independently of --all.
+
+### Features
+
+* **cli:** refine publication review output ([18d4ba9](https://github.com/woodleighschool/stemma/commit/18d4ba9cc1545454ea048b9a9c2ed83e41ce7b13))
+* **cli:** separate activity from command results ([5a80ac8](https://github.com/woodleighschool/stemma/commit/5a80ac8366ab342937926d54329f9b81d220a7af))
+* **plugins:** reuse cached installations ([51feb86](https://github.com/woodleighschool/stemma/commit/51feb86063471e71d82524c34f080173e6cea041))
+
+
+### Bug Fixes
+
+* **go:** update module github.com/deploymenttheory/go-apfs-v2 (v0.17.0 → v0.17.1) ([#94](https://github.com/woodleighschool/stemma/issues/94)) ([747a33f](https://github.com/woodleighschool/stemma/commit/747a33f2cdafbd2424a5f302351e968df3b48203))
+* **go:** update module github.com/deploymenttheory/go-apfs-v2 (v0.17.1 → v0.17.2) ([#120](https://github.com/woodleighschool/stemma/issues/120)) ([2ca396d](https://github.com/woodleighschool/stemma/commit/2ca396d5478741d689aede7073613bfb75a76516))
+* **go:** update module github.com/deploymenttheory/go-macos-pkg (v0.7.2 → v0.7.3) ([#108](https://github.com/woodleighschool/stemma/issues/108)) ([447ca6d](https://github.com/woodleighschool/stemma/commit/447ca6df36784526132c0ee14c1ec7a01e8d08fe))
+* **go:** update module github.com/go-git/go-git/v6 (v6.0.0-alpha.5 → v6.0.0-beta.1) ([#115](https://github.com/woodleighschool/stemma/issues/115)) ([92bff47](https://github.com/woodleighschool/stemma/commit/92bff477a40a0635b59663ebf495677a57eb74d2))
+* **go:** update module github.com/google/go-github/v92 (4a73e54 → 52908e2) ([#107](https://github.com/woodleighschool/stemma/issues/107)) ([48d2e2d](https://github.com/woodleighschool/stemma/commit/48d2e2d95a123d49bd1855bff64be4feb2f3b25c))
+* **go:** update module github.com/google/go-github/v92 (52908e2 → 9962577) ([#118](https://github.com/woodleighschool/stemma/issues/118)) ([902d0d3](https://github.com/woodleighschool/stemma/commit/902d0d3b32c0982fa2eec71cf6ebfcce3536d62b))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (25a53e3 → b7d283d) ([#114](https://github.com/woodleighschool/stemma/issues/114)) ([efd239f](https://github.com/woodleighschool/stemma/commit/efd239fce818736ad05e9f0121050cea8db2eaf4))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (b7d283d → c1ed348) ([#116](https://github.com/woodleighschool/stemma/issues/116)) ([a088f3c](https://github.com/woodleighschool/stemma/commit/a088f3cd311d4f8ae5a53899f05b35a0e457c63a))
+* **npm:** update dependency docusaurus-plugin-llms (0.6.0 → 0.6.1) ([#113](https://github.com/woodleighschool/stemma/issues/113)) ([b5d3204](https://github.com/woodleighschool/stemma/commit/b5d3204f8910ed1c0e6b1bbd624b3f7a99c5fdff))
+* **source:** identify endpoints in HTTP failures ([98184d0](https://github.com/woodleighschool/stemma/commit/98184d07a9d79327eb8279896d10c384b82afa58))
+
 ## [0.9.1](https://github.com/woodleighschool/stemma/compare/v0.9.0...v0.9.1) (2026-10-03)
 
 
