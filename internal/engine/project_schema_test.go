@@ -104,7 +104,7 @@ func TestDiscoveryValidatesResolverConfigBeforeAcquisition(t *testing.T) {
 		input := maps.Clone(test.settings)
 		input["resolver"] = test.resolver
 		project := config.Project{Resources: map[string]config.Resource{"app": {APIVersion: "stemma/v1alpha1", Kind: "MacSoftware", Metadata: config.Metadata{Name: "app"}, Spec: map[string]any{"source": input}}}}
-		_, _, err := discoverClosure(t.Context(), project, ops, sortedKeys(project.Resources), false, true)
+		_, _, err := discoverClosure(t.Context(), project, ops, sortedKeys(project.Resources), false, true, "")
 		if test.message == "" && err != nil || test.message != "" && (err == nil || !strings.Contains(err.Error(), test.message)) {
 			t.Fatalf("%s %v: %v", test.resolver, test.settings, err)
 		}
@@ -124,7 +124,7 @@ func TestBuilderSignatureNamesADeclaredInput(t *testing.T) {
 			"signatures": []any{map[string]any{"input": input, "signer": "apple:developer-id:SMLKBTR495"}},
 		}
 		project := config.Project{Resources: map[string]config.Resource{"wrapper": {APIVersion: "stemma/v1alpha1", Kind: "BuildMacPkg", Metadata: config.Metadata{Name: "wrapper"}, Spec: spec}}}
-		_, _, err := discoverClosure(t.Context(), project, ops, sortedKeys(project.Resources), false, true)
+		_, _, err := discoverClosure(t.Context(), project, ops, sortedKeys(project.Resources), false, true, "")
 		if message == "" && err != nil || message != "" && (err == nil || !strings.Contains(err.Error(), message)) {
 			t.Fatalf("signature.input %q: %v", input, err)
 		}

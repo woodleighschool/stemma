@@ -460,3 +460,42 @@ func TestPublicationVersionsFollowSelectedOutputs(t *testing.T) {
 		})
 	}
 }
+
+func TestResourceNoticesSurviveResultFiltering(t *testing.T) {
+	resource := engine.ResourceReport{Kind: "MacSoftware", Name: "foo", Cached: true, Destinations: []engine.DestinationReport{{Name: "repo"}}, Notices: []plugin.Notice{{Level: "warning", Code: "signature-expectation-missing", Message: "Source has no signature expectation", Hint: "Run `stemma signature MacSoftware/foo` to derive one."}}}
+	for _, asJSON := range []bool{false, true} {
+		t.Run(fmt.Sprintf("json=%t", asJSON), func(t *testing.T) {
+			var out, diagnostic bytes.Buffer
+			output := newCommandOutput(&out, &diagnostic)
+			output.asJSON = asJSON
+			// Activity stays disabled, as with --no-progress.
+			if err := output.resourceDone("plan", resource); err != nil {
+				t.Fatal(err)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("unchanged resource streamed: %s", &out)
+			}
+			// A later reconcile phase must not repeat the same recommendation.
+			if err := output.resourceDone("plan", resource); err != nil {
+				t.Fatal(err)
+			}
+			report := engine.Report{Resources: []engine.ResourceReport{resource}}
+			report.Summarize("plan")
+			if err := output.report(&out, "plan", report, nil); err != nil {
+				t.Fatal(err)
+			}
+			output.finish(nil)
+			if asJSON {
+				var decoded engine.Report
+				if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+					t.Fatal(err)
+				}
+				if diagnostic.Len() != 0 || len(decoded.Resources[0].Notices) != 1 {
+					t.Fatalf("report=%s stderr=%s", &out, &diagnostic)
+				}
+			} else if want := "! MacSoftware/foo · Source has no signature expectation\n  Run `stemma signature MacSoftware/foo` to derive one.\n"; diagnostic.String() != want {
+				t.Fatalf("stderr=%q want=%q", diagnostic.String(), want)
+			}
+		})
+	}
+}

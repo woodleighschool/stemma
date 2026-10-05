@@ -258,6 +258,12 @@ have the same content in terminals and pipes. Results remain on stdout even when
 it is redirected. JSON, generated documents, CI and dumb terminals suppress the
 live display; `--no-progress` disables it explicitly. `NO_COLOR` controls colour.
 Warnings go to stderr as they happen; in JSON mode they are part of the document.
+Resource recommendations appear once per command, including for cached or unchanged
+resources, and remain visible with `--no-progress`. JSON keeps them in each resource's
+`notices` with a level, rule code, message and optional hint. Missing signature
+expectations on directly sourced MacSoftware produce a recommendation to run
+`stemma signature`; declared signers, explicit unsigned expectations and resource-built
+outputs do not.
 Failed commands retain available results and end with a concise stderr diagnostic.
 Interrupting with Ctrl-C clears activity, preserves completed results and exits 130.
 Press Ctrl-C again to exit immediately if cleanup or a native operation is

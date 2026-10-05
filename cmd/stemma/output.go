@@ -37,6 +37,8 @@ type commandOutput struct {
 	ctx        context.Context
 	// JSON reports carry the warnings raised while they ran.
 	warnings []string
+	// Reconcile can visit the same resource in several phases.
+	notices map[string][]plugin.Notice
 }
 
 // finalWriter clears live progress before a command writes its final output.
@@ -138,6 +140,18 @@ func (o *commandOutput) finish(err error) {
 
 func (o *commandOutput) warning(text string) string {
 	return o.errStyle.paint("Warning:", color.FgHiYellow) + " " + changes.Text(text) + "\n"
+}
+
+func (o *commandOutput) resourceNotice(resource string, notice plugin.Notice) string {
+	marker := o.errStyle.paint("!", color.FgHiYellow)
+	if notice.Level == "info" {
+		marker = o.errStyle.paint("i", color.FgHiBlack)
+	}
+	text := marker + " " + changes.Text(resource) + " · " + changes.Text(notice.Message) + "\n"
+	if notice.Hint != "" {
+		text += "  " + changes.Text(notice.Hint) + "\n"
+	}
+	return text
 }
 
 // commandError is the part of a failure the report did not show. Each failed
@@ -254,6 +268,21 @@ func (o *commandOutput) resourceDone(method string, resource engine.ResourceRepo
 	defer o.mu.Unlock()
 	if o.progress != nil {
 		o.progress.complete(resourceName(resource))
+	}
+	if !o.asJSON {
+		if o.notices == nil {
+			o.notices = map[string][]plugin.Notice{}
+		}
+		key := resource.Key
+		if key == "" {
+			key = resourceName(resource)
+		}
+		for _, notice := range resource.Notices {
+			if !slices.Contains(o.notices[key], notice) {
+				o.notice(o.resourceNotice(resourceName(resource), notice))
+				o.notices[key] = append(o.notices[key], notice)
+			}
+		}
 	}
 	switch {
 	case o.asJSON || o.resultOnly:

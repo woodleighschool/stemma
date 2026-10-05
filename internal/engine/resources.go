@@ -103,7 +103,7 @@ func isRoot(resource config.Resource, profiles []string) bool {
 // that acquires it. Destinations checks the destinations the closure publishes
 // to and evaluates their publication peers, for runs that use destinations;
 // peers only lend metadata, so their declarations always stay as written.
-func discoverClosure(ctx context.Context, p config.Project, ops *operations, roots []string, environment, destinations bool) (map[string]resourcePlan, []string, error) {
+func discoverClosure(ctx context.Context, p config.Project, ops *operations, roots []string, environment, destinations bool, derive string) (map[string]resourcePlan, []string, error) {
 	kinds := resourceKinds(ops)
 	plans := map[string]resourcePlan{}
 	// Callers reach evaluate with declared keys: selection resolves roots
@@ -113,7 +113,7 @@ func discoverClosure(ctx context.Context, p config.Project, ops *operations, roo
 		if _, evaluated := plans[key]; evaluated {
 			return nil
 		}
-		plan, err := discoverResource(ctx, p, ops, kinds, key, p.Resources[key], environment, destinations)
+		plan, err := discoverResource(ctx, p, ops, kinds, key, p.Resources[key], environment, destinations, derive)
 		if err != nil {
 			return err
 		}
@@ -197,7 +197,7 @@ func resourceKinds(ops *operations) map[plugin.ResourceKind]plugin.Operation {
 // publishes to, when the run uses them. Without the environment, the kind
 // discovers the declaration as written and values that hold expressions are
 // checked by schema alone.
-func discoverResource(ctx context.Context, p config.Project, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, key string, r config.Resource, environment, destinations bool) (resourcePlan, error) {
+func discoverResource(ctx context.Context, p config.Project, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, key string, r config.Resource, environment, destinations bool, derive string) (resourcePlan, error) {
 	kind := plugin.ResourceKind{APIVersion: r.APIVersion, Kind: r.Kind}
 	op, ok := kinds[kind]
 	if !ok {
@@ -230,7 +230,7 @@ func discoverResource(ctx context.Context, p config.Project, ops *operations, ki
 			return resourcePlan{}, fmt.Errorf("resource %s config: %w", key, err)
 		}
 	}
-	if err := ops.call(ctx, op.Name, "discover", plugin.ResourceRequest[json.RawMessage]{Config: encoded, Identity: r.Reference()}, &result); err != nil {
+	if err := ops.call(ctx, op.Name, "discover", plugin.ResourceRequest[json.RawMessage]{Config: encoded, Identity: r.Reference(), Derive: derive}, &result); err != nil {
 		return resourcePlan{}, fmt.Errorf("resource %s: %w", key, err)
 	}
 	if len(result.Config) == 0 {

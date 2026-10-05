@@ -160,9 +160,20 @@ type ResourceRequest[C any] struct {
 	Environment map[string]string `json:"environment,omitempty"`
 }
 
+// Notice is actionable resource advice, independent of progress and success.
+// Level is "warning" or "info"; Code identifies the rule for machine consumers.
+type Notice struct {
+	Level   string `json:"level"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Hint    string `json:"hint,omitempty"`
+}
+
 // ResourceResult separates preparation configuration from destination metadata,
 // so changing native publication fields cannot invalidate build outputs.
 type ResourceResult struct {
+	// Notices from discovery describe the current declaration, even on cache hits.
+	Notices      []Notice                  `json:"notices,omitempty"`
 	Inputs       map[string]Input          `json:"inputs,omitempty"`
 	Config       json.RawMessage           `json:"config,omitempty"`
 	Destinations map[string]map[string]any `json:"destinations,omitempty"`

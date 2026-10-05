@@ -29,6 +29,7 @@ type Report struct {
 
 // ResourceReport separates immutable outputs from destination reconciliation.
 type ResourceReport struct {
+	Notices        []plugin.Notice `json:"notices,omitempty"`
 	Name           string          `json:"name"`
 	Kind           string          `json:"kind"`
 	Key            string          `json:"key"`

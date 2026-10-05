@@ -388,6 +388,12 @@ its steps until that operation finishes. Wrap transfers in
 by the host, so report operational failures through the protocol. Do not log
 credentials, query strings or request bodies.
 
+Resource discovery can return `ResourceResult.Notices` for actionable declaration
+advice. Each notice has a `level` (`warning` or `info`), stable `code`, `message` and
+optional `hint`. Notices do not fail the resource and stay outside preparation
+identity, so they remain current on cache hits. A discovery request's `derive`
+field identifies a policy being derived; omit advice to derive that same policy.
+
 `Platforms` contains supported runner `GOOS/GOARCH` pairs; omission means portable.
 `Requirements` describes commands, purpose and actionable setup instructions.
 Declare dependencies on interpreters, signing tools or packaging helpers. Scripts

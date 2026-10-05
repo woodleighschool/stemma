@@ -171,7 +171,11 @@ func (e *execution) begin(ctx context.Context) (err error) {
 	// Updates, artifacts and icons never reach a destination, so only the
 	// other runs check the destinations they publish to.
 	usesDestinations := e.opts.Method != "update" && e.opts.Method != "artifact" && e.opts.Method != "icon" && e.opts.Method != "inspect"
-	e.plans, e.selected, err = discoverClosure(ctx, s.project, s.ops, e.roots, true, usesDestinations)
+	derive := ""
+	if e.opts.Method == "signature" {
+		derive = "signature"
+	}
+	e.plans, e.selected, err = discoverClosure(ctx, s.project, s.ops, e.roots, true, usesDestinations, derive)
 	if err != nil {
 		return err
 	}
@@ -493,6 +497,7 @@ func (e *execution) complete(ctx context.Context, item *ResourceReport) error {
 	if e.opts.Method == "icon" && item.Error == "" && (item.Icon == "unchanged" || strings.HasPrefix(item.Icon, "created ")) {
 		item.IconPath = icon.Relative(e.plans[item.Key].Icon)
 	}
+	item.Notices = e.plans[item.Key].Notices
 	if e.opts.ResourceDone != nil {
 		if err := e.opts.ResourceDone(*item); err != nil {
 			return err

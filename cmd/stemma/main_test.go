@@ -556,8 +556,14 @@ spec:
 					}
 				}
 			}
-			// The diagnostic names command failure without repeating item errors.
-			if logs.String() != "Error: MacSoftware/broken: input source: download "+server.URL+"/broken.pkg: HTTP 404 Not Found\n" {
+			// Recommendations are separate from the single command failure diagnostic.
+			var notices string
+			if !asJSON {
+				for _, name := range []string{"broken", "healthy"} {
+					notices += fmt.Sprintf("! MacSoftware/%s · Source has no signature expectation\n  Run `stemma signature MacSoftware/%s` to derive one.\n", name, name)
+				}
+			}
+			if logs.String() != notices+"Error: MacSoftware/broken: input source: download "+server.URL+"/broken.pkg: HTTP 404 Not Found\n" {
 				t.Fatalf("stderr repeated the report: %s", logs.String())
 			}
 		})

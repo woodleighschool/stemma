@@ -104,3 +104,16 @@ var macOSVersion = regexp.MustCompile(`^[0-9]+(\.[0-9]+){0,2}$`)
 func relativePath(name string) bool {
 	return fs.ValidPath(name) && !strings.ContainsAny(name, "\\\x00\r\n\t")
 }
+
+// Notices recommends a signing assertion for externally supplied software.
+// Resource outputs own their input policies; built packages need no publisher assertion.
+func (s Spec) Notices(identity plugin.ResourceReference, derive string) []plugin.Notice {
+	if s.Source == nil || s.Source.Resource != nil || len(s.Signatures) > 0 || derive == "signature" {
+		return nil
+	}
+	return []plugin.Notice{{
+		Level: "warning", Code: "signature-expectation-missing",
+		Message: "Source has no signature expectation",
+		Hint:    fmt.Sprintf("Run `stemma signature %s/%s` to derive one.", identity.Kind, identity.Name),
+	}}
+}

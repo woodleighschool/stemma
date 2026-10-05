@@ -78,7 +78,7 @@ func closure(t *testing.T, project config.Project, ops *operations, selectors ..
 	if err != nil {
 		return nil, err
 	}
-	_, selected, err := discoverClosure(t.Context(), project, ops, roots, true, true)
+	_, selected, err := discoverClosure(t.Context(), project, ops, roots, true, true, "")
 	return selected, err
 }
 
@@ -124,7 +124,7 @@ func TestProfilesSelectNamedRoots(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, selected, err := discoverClosure(t.Context(), project, ops, roots, true, true)
+			_, selected, err := discoverClosure(t.Context(), project, ops, roots, true, true, "")
 			if err != nil {
 				t.Fatal(err)
 			}
