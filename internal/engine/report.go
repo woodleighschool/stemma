@@ -54,13 +54,10 @@ type ResourceReport struct {
 // signatureNotices returns the advisories that the signing evidence of a
 // resource's outputs raises. The evidence is stored with each output, so they
 // are the same when preparation is cached.
-func signatureNotices(artifacts map[string]Prepared) []plugin.Notice {
+func signatureNotices(resource plugin.ResourceReference, artifacts map[string]Prepared) []plugin.Notice {
 	var notices []plugin.Notice
 	for _, name := range slices.Sorted(maps.Keys(artifacts)) {
-		var observations []signature.Observation
-		if json.Unmarshal(artifacts[name].Evidence["signatures"], &observations) == nil {
-			notices = append(notices, signature.Notices(observations)...)
-		}
+		notices = append(notices, signature.Notices(resource, artifacts[name].Evidence)...)
 	}
 	return notices
 }

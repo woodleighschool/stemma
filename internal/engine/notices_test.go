@@ -127,3 +127,61 @@ spec:
 		t.Fatal("signature derivation recommended itself")
 	}
 }
+
+// A builder that consumes an application without an expectation is where the
+// recommendation belongs, not the software publishing the package it built.
+func TestUnverifiedBuildInputIsRecommendedAnExpectation(t *testing.T) {
+	root := t.TempDir()
+	testproject.Write(t, filepath.Join(root, "stemma.yaml"), `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: notices}
+spec: {imports: ['*.software.yaml']}
+---
+apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata: {name: wrapper}
+spec:
+  inputs:
+    vendor: {path: vendor}
+  payload:
+    /Applications/Example.app: {$input: vendor, path: Example.app}
+  package: {identifier: org.example.wrapper, version: "1.0"}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: published}
+spec:
+  source: {resource: {kind: BuildMacPkg, name: wrapper}}
+`)
+	if err := os.CopyFS(filepath.Join(root, "vendor", "Example.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{ConfigPath: filepath.Join(root, "stemma.yaml"), CacheDir: t.TempDir(), Method: "update"}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	run := func(method string) map[string]ResourceReport {
+		t.Helper()
+		options.Method = method
+		report, err := Run(t.Context(), options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resources := map[string]ResourceReport{}
+		for _, resource := range report.Resources {
+			resources[resource.Kind+"/"+resource.Name] = resource
+		}
+		return resources
+	}
+	want := []plugin.Notice{{Level: "warning", Code: "signature-expectation-missing", Message: `Input "vendor" has no signature expectation`, Hint: "Run `stemma signature BuildMacPkg/wrapper` to derive one."}}
+	for attempt := range 2 {
+		resources := run("prepare")
+		builder := resources["BuildMacPkg/wrapper"]
+		if !reflect.DeepEqual(builder.Notices, want) || builder.Cached != (attempt == 1) || len(resources["MacSoftware/published"].Notices) != 0 {
+			t.Fatalf("attempt %d: %+v", attempt, resources)
+		}
+	}
+	if notices := run("signature")["BuildMacPkg/wrapper"].Notices; len(notices) != 0 {
+		t.Fatalf("signature derivation recommended itself: %+v", notices)
+	}
+}

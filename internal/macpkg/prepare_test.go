@@ -442,6 +442,47 @@ func TestBuiltPackageInputNeedsNoSigningExpectation(t *testing.T) {
 	}
 }
 
+// A build that declares no expectations lists the applications and packages it
+// consumes, so that one can be recommended. It verifies none of them, and an
+// input it cannot inventory does not fail it.
+func TestBuildWithoutExpectationsListsUnverifiedSubjects(t *testing.T) {
+	vendor, _ := prepareApplication(t, "Vendor Installer.app")
+	notes := filepath.Join(t.TempDir(), "notes.pkg")
+	if err := os.WriteFile(notes, []byte("not a package"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	inner, err := Prepare(t.Context(), prepareRequest(t, map[string]any{
+		"package": map[string]any{"identifier": "org.example.inner", "version": "1.0"},
+		"payload": map[string]any{"/Library/Example/inner.txt": map[string]any{"content": "inner"}},
+	}, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	inputs := map[string]plugin.Artifact{"vendor": {Path: vendor, Filename: "vendor", Tree: true}, "notes": {Path: notes, Filename: "notes.pkg"}, "inner": inner}
+	config := map[string]any{
+		"package": map[string]any{"identifier": "org.example.wrapper", "version": "1.0"},
+		"payload": map[string]any{"/Applications": map[string]any{"$input": "vendor", "path": "."}, "/Library/Notes/notes.pkg": map[string]any{"$input": "notes"}},
+		"scripts": map[string]any{"inner.pkg": map[string]any{"$input": "inner"}, "postinstall": "#!/bin/sh\nexit 0\n"},
+	}
+	artifact, err := Prepare(t.Context(), prepareRequest(t, config, inputs))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unverified []signature.Unverified
+	want := signature.Unverified{Input: "vendor", Subject: plugin.SubjectSelector{Path: "Vendor Installer.app"}}
+	if err := json.Unmarshal(artifact.Evidence[signature.UnverifiedEvidence], &unverified); err != nil || len(unverified) != 1 || unverified[0] != want {
+		t.Fatalf("unverified subjects: %+v, %v", unverified, err)
+	}
+	// Data beside the application is no signing subject.
+	config["payload"].(map[string]any)["/Applications"] = map[string]any{"$input": "vendor", "path": "tenant.json"}
+	if artifact, err = Prepare(t.Context(), prepareRequest(t, config, inputs)); err != nil {
+		t.Fatal(err)
+	}
+	if evidence, listed := artifact.Evidence[signature.UnverifiedEvidence]; listed {
+		t.Fatalf("a build of data listed unverified subjects: %s", evidence)
+	}
+}
+
 func TestBuilderSignatureScopeFollowsConsumedSelections(t *testing.T) {
 	root := t.TempDir()
 	if err := os.CopyFS(filepath.Join(root, "Selected.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {

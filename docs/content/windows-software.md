@@ -123,7 +123,8 @@ Auxiliary executables are outside this scope.
 `stemma signature WindowsSoftware/<name>` derives a complete fragment without
 requiring an existing declaration. It reports unsigned installers normally, as
 `unsigned: true` instead of `signer`. The two assertions are mutually exclusive.
-Omitting `signatures` makes no assertion. Preparation fails when the observed state
+Omitting `signatures` makes no assertion, and an MSI, EXE or DLL entry point then
+produces a recommendation to derive one. Preparation fails when the observed state
 or publisher differs; invalid and unsupported signatures also fail derivation.
 
 The signer identifies the certificate subject together with the issuing

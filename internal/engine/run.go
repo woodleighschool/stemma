@@ -495,10 +495,11 @@ func (e *execution) complete(ctx context.Context, item *ResourceReport) error {
 	if item.Error == "" {
 		item.Inputs = e.locked.Changes(item.Key)
 	}
+	plan := e.plans[item.Key]
 	if e.opts.Method == "icon" && item.Error == "" && (item.Icon == "unchanged" || strings.HasPrefix(item.Icon, "created ")) {
-		item.IconPath = icon.Relative(e.plans[item.Key].Icon)
+		item.IconPath = icon.Relative(plan.Icon)
 	}
-	item.Notices = slices.Concat(e.plans[item.Key].Notices, signatureNotices(item.Artifacts))
+	item.Notices = slices.Concat(plan.Notices, signatureNotices(plan.Resource.Reference(), item.Artifacts))
 	if e.opts.ResourceDone != nil {
 		if err := e.opts.ResourceDone(*item); err != nil {
 			return err

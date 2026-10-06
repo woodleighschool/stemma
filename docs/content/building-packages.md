@@ -254,7 +254,9 @@ app excludes its unused siblings; copying a whole directory, archive or DMG
 includes its top-level apps and packages. A PKG is verified by its outer signature, never a component
 receipt. When `signatures` is present, every consumed signing subject needs an
 expectation, except a package another `BuildMacPkg` resource built. Literal text
-and ordinary data files are outside this scope.
+and ordinary data files are outside this scope. Without `signatures` nothing is
+verified, and an input that supplies an application or package produces a
+recommendation to derive its expectation.
 
 The [MacSoftware signing rules](mac-software.md#signature) also apply here,
 including `unsigned: true`. Run `stemma signature BuildMacPkg/<name>` with no

@@ -149,8 +149,16 @@ func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, 
 		artifact.Version = ""
 	}
 	result, err := describe(ctx, artifact, setup, spec.VersionFile)
-	if err == nil && (len(spec.Signatures) > 0 || deriveSignature) {
-		err = verifySignature(ctx, spec, &result, deriveSignature)
+	if err == nil {
+		switch {
+		case len(spec.Signatures) > 0 || deriveSignature:
+			err = verifySignature(ctx, spec, &result, deriveSignature)
+		case authenticode.Supports(setupFile(result)):
+			// An entry point that can carry a signature has none expected of
+			// it, so one can be recommended. A wrapper script has none to derive.
+			unverified := []signature.Unverified{{Subject: plugin.SubjectSelector{Path: result.Facts.Subjects[0].Path}}}
+			err = record(&result, signature.UnverifiedEvidence, unverified)
+		}
 	}
 	if err != nil {
 		cleanup()
@@ -159,16 +167,33 @@ func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, 
 	return map[string]plugin.Artifact{"installer": result}, nil
 }
 
+// setupFile returns where the setup entry point lies on disk.
+func setupFile(artifact plugin.Artifact) string {
+	if artifact.Tree {
+		return filepath.Join(artifact.Path, filepath.FromSlash(artifact.EntryPoint))
+	}
+	return artifact.Path
+}
+
+func record(artifact *plugin.Artifact, name string, value any) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if artifact.Evidence == nil {
+		artifact.Evidence = map[string]json.RawMessage{}
+	}
+	artifact.Evidence[name] = data
+	return nil
+}
+
 func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact, derive bool) error {
 	for _, expected := range spec.Signatures {
 		if err := expected.Validate(signature.Authenticode); err != nil {
 			return err
 		}
 	}
-	setup := artifact.Path
-	if artifact.Tree {
-		setup = filepath.Join(artifact.Path, filepath.FromSlash(artifact.EntryPoint))
-	}
+	setup := setupFile(*artifact)
 	// describe inspects only the selected entry point, not auxiliary executables.
 	subject := artifact.Facts.Subjects[0]
 	observations, err := signature.Verify(ctx, spec.Signatures, []plugin.Subject{subject}, derive, func(plugin.Subject) (signature.Result, error) {
@@ -178,11 +203,7 @@ func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact, 
 	if err != nil {
 		return err
 	}
-	if artifact.Evidence == nil {
-		artifact.Evidence = map[string]json.RawMessage{}
-	}
-	artifact.Evidence["signatures"], err = json.Marshal(observations)
-	return err
+	return record(artifact, "signatures", observations)
 }
 
 // assemble writes the setup tree at root. An archive source is extracted in
@@ -259,6 +280,7 @@ func describe(ctx context.Context, artifact plugin.Artifact, setup, versionFile 
 	artifact.Evidence = maps.Clone(artifact.Evidence)
 	delete(artifact.Evidence, "windows.installer")
 	delete(artifact.Evidence, "signatures")
+	delete(artifact.Evidence, signature.UnverifiedEvidence)
 	for _, subject := range facts.Subjects {
 		if subject.Parent != "" || subject.MSI == nil {
 			continue

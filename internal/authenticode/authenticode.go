@@ -35,6 +35,16 @@ type publisher struct {
 	authority string
 }
 
+// Supports reports whether Verify reads a file of this name: an MSI, or a
+// portable executable named as a program or library.
+func Supports(filePath string) bool {
+	switch strings.ToLower(filepath.Ext(filePath)) {
+	case ".msi", ".exe", ".dll":
+		return true
+	}
+	return false
+}
+
 // Verify checks that every Authenticode signature covers the file's signed
 // content and that all of them belong to one publisher, then reports it. A
 // zero want derives the signer; otherwise it must match.
@@ -49,7 +59,7 @@ func Verify(ctx context.Context, filePath string, want signature.Signer) (signat
 		return signature.Result{}, err
 	}
 	kind := strings.ToLower(filepath.Ext(filePath))
-	if kind != ".msi" && kind != ".exe" && kind != ".dll" {
+	if !Supports(filePath) {
 		return signature.Result{}, fmt.Errorf("%w: %s files", ErrUnsupported, filepath.Ext(filePath))
 	}
 	f, err := os.Open(filePath)

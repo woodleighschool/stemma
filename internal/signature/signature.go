@@ -47,6 +47,17 @@ func BuiltUnsigned(artifact plugin.Artifact) bool {
 	return json.Unmarshal(artifact.Evidence[BuildEvidence], &state) == nil && state == "unsigned"
 }
 
+// UnverifiedEvidence is the artifact evidence in which an operation lists the
+// signing subjects it took in without an expectation.
+const UnverifiedEvidence = "signature.unverified"
+
+// Unverified names one such subject. Input is empty when the subject belongs
+// to the published artifact.
+type Unverified struct {
+	Input   string                 `json:"input,omitempty"`
+	Subject plugin.SubjectSelector `json:"subject"`
+}
+
 // Expectation asserts the signing state of one physical subject.
 type Expectation struct {
 	Subject  plugin.SubjectSelector `json:"subject,omitzero" yaml:"subject,omitempty" jsonschema_description:"One physical signing subject. Omit it where there is only one, such as the PKG itself or the only application in an image. Component receipts do not carry the outer PKG signature."`
@@ -267,15 +278,46 @@ func selectSubject(subjects []plugin.Subject, selector plugin.SubjectSelector) (
 	return subjects[0], nil
 }
 
-// Notices returns the advisories that observations raise. They describe
-// evidence a valid signature lacks and never fail a resource.
-func Notices(observations []Observation) []plugin.Notice {
+// Recommend returns the advisory for something a resource takes in without a
+// signature expectation. source names it: "Source", or an input by its name.
+func Recommend(resource plugin.ResourceReference, source string) plugin.Notice {
+	return plugin.Notice{
+		Level: "warning", Code: "signature-expectation-missing",
+		Message: source + " has no signature expectation",
+		Hint:    fmt.Sprintf("Run `stemma signature %s/%s` to derive one.", resource.Kind, resource.Name),
+	}
+}
+
+// Notices returns the advisories that an output's signing evidence raises for
+// the resource that prepared it. They describe what a build left unverified or
+// a valid signature lacks, and never fail a resource.
+func Notices(resource plugin.ResourceReference, evidence map[string]json.RawMessage) []plugin.Notice {
+	var notices []plugin.Notice
+	var unverified []Unverified
+	if json.Unmarshal(evidence[UnverifiedEvidence], &unverified) == nil {
+		// One expectation is derived for everything a source supplies.
+		recommended := map[string]bool{}
+		for _, subject := range unverified {
+			if recommended[subject.Input] {
+				continue
+			}
+			recommended[subject.Input] = true
+			source := "Source"
+			if subject.Input != "" {
+				source = fmt.Sprintf("Input %q", subject.Input)
+			}
+			notices = append(notices, Recommend(resource, source))
+		}
+	}
+	var observations []Observation
+	if json.Unmarshal(evidence["signatures"], &observations) != nil {
+		return notices
+	}
 	// The published artifact is one signing scope and each build input another.
 	scope := map[string]int{}
 	for _, observed := range observations {
 		scope[observed.Input]++
 	}
-	var notices []plugin.Notice
 	for _, observed := range observations {
 		// macOS accepts Developer ID code that no timestamp dates, without
 		// holding it to its certificate's validity period, and so does the

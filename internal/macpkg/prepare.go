@@ -12,6 +12,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/apple"
 	"github.com/woodleighschool/stemma/internal/artifactname"
+	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/expression"
 	"github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/signature"
@@ -101,11 +102,14 @@ func Prepare(ctx context.Context, request plugin.ResourceRequest[json.RawMessage
 		return plugin.Artifact{}, err
 	}
 	var observed []signature.Observation
+	var unverified []signature.Unverified
 	if len(spec.Signatures) > 0 || request.Derive == "signature" {
 		observed, err = verifyInputs(ctx, sources, spec, request.Derive == "signature")
 		if err != nil {
 			return plugin.Artifact{}, err
 		}
+	} else {
+		unverified = unverifiedSubjects(ctx, sources, spec)
 	}
 	artifact, err := build(ctx, spec, sources, request.Workspace)
 	if err != nil {
@@ -118,21 +122,56 @@ func Prepare(ctx context.Context, request plugin.ResourceRequest[json.RawMessage
 			return plugin.Artifact{}, err
 		}
 	}
+	if len(unverified) > 0 {
+		if artifact.Evidence[signature.UnverifiedEvidence], err = json.Marshal(unverified); err != nil {
+			return plugin.Artifact{}, err
+		}
+	}
 	return artifact, nil
 }
 
-func verifyInputs(ctx context.Context, sources *sources, spec Spec, derive bool) ([]signature.Observation, error) {
+// selections lists the paths the layout consumes from each input.
+func (s Spec) selections() map[string][]string {
 	selections := map[string][]string{}
-	for _, entry := range spec.Payload {
+	for _, entry := range s.Payload {
 		if entry.Input != "" {
 			selections[entry.Input] = append(selections[entry.Input], entry.Path)
 		}
 	}
-	for _, entry := range spec.Scripts {
+	for _, entry := range s.Scripts {
 		if entry.Input != "" {
 			selections[entry.Input] = append(selections[entry.Input], entry.Path)
 		}
 	}
+	return selections
+}
+
+// unverifiedSubjects lists the signing subjects a layout without expectations
+// consumes, so that one can be recommended. A package another build left
+// unsigned has no publisher to expect. An input that cannot be inventoried
+// lists none: advice does not fail a build, and an expectation declared for
+// that input reports why.
+func unverifiedSubjects(ctx context.Context, sources *sources, spec Spec) []signature.Unverified {
+	var unverified []signature.Unverified
+	selections := spec.selections()
+	for _, name := range slices.Sorted(maps.Keys(selections)) {
+		source, err := sources.get(ctx, name)
+		if err != nil || signature.BuiltUnsigned(source.Artifact()) {
+			continue
+		}
+		subjects, err := signingSubjects(ctx, source, selections[name])
+		if err != nil {
+			continue
+		}
+		for _, subject := range subjects {
+			unverified = append(unverified, signature.Unverified{Input: name, Subject: plugin.SubjectSelector{Path: subject.Path}})
+		}
+	}
+	return unverified
+}
+
+func verifyInputs(ctx context.Context, sources *sources, spec Spec, derive bool) ([]signature.Observation, error) {
+	selections := spec.selections()
 	policies := map[string][]signature.Expectation{}
 	if !derive {
 		for _, policy := range spec.Signatures {
@@ -153,35 +192,9 @@ func verifyInputs(ctx context.Context, sources *sources, spec Spec, derive bool)
 		if signature.BuiltUnsigned(source.Artifact()) && len(policies[name]) == 0 {
 			continue
 		}
-		targets := map[string]plugin.Subject{}
-		paths := selections[name]
-		slices.Sort(paths)
-		for _, selection := range slices.Compact(paths) {
-			facts, err := inspect.Selection(ctx, source, selection)
-			if err != nil {
-				return nil, fmt.Errorf("input %q path %q: %w", name, selection, err)
-			}
-			// A scalar PKG has one outer signing subject, never its component
-			// receipts or installed payload apps. A selected app is likewise whole.
-			root := facts.Subjects[0]
-			filename := selection
-			if filename == "" || filename == "." {
-				filename = source.Artifact().Filename
-			}
-			packageRoot := root.Kind == "container" && (strings.EqualFold(path.Ext(filename), ".pkg") || slices.ContainsFunc(facts.Subjects, func(subject plugin.Subject) bool { return subject.Parent == root.ID && subject.Package != nil }))
-			if root.App != nil || packageRoot {
-				targets[root.Path] = root
-				continue
-			}
-			for _, subject := range facts.Subjects[1:] {
-				if subject.Parent == root.ID && (subject.App != nil || subject.Kind == "container" && strings.EqualFold(path.Ext(subject.Path), ".pkg")) {
-					targets[subject.Path] = subject
-				}
-			}
-		}
-		subjects := make([]plugin.Subject, 0, len(targets))
-		for _, name := range slices.Sorted(maps.Keys(targets)) {
-			subjects = append(subjects, targets[name])
+		subjects, err := signingSubjects(ctx, source, selections[name])
+		if err != nil {
+			return nil, fmt.Errorf("input %q %w", name, err)
 		}
 		observed, err := signature.Verify(ctx, policies[name], subjects, derive, func(subject plugin.Subject) (signature.Result, error) {
 			return apple.VerifySubject(ctx, source, subject, sources.workspace)
@@ -195,6 +208,41 @@ func verifyInputs(ctx context.Context, sources *sources, spec Spec, derive bool)
 		observations = append(observations, observed...)
 	}
 	return observations, nil
+}
+
+// signingSubjects returns the applications and packages among the paths a
+// layout consumes from an input, ordered by path.
+func signingSubjects(ctx context.Context, source *contents.Source, selections []string) ([]plugin.Subject, error) {
+	targets := map[string]plugin.Subject{}
+	slices.Sort(selections)
+	for _, selection := range slices.Compact(selections) {
+		facts, err := inspect.Selection(ctx, source, selection)
+		if err != nil {
+			return nil, fmt.Errorf("path %q: %w", selection, err)
+		}
+		// A scalar PKG has one outer signing subject, never its component
+		// receipts or installed payload apps. A selected app is likewise whole.
+		root := facts.Subjects[0]
+		filename := selection
+		if filename == "" || filename == "." {
+			filename = source.Artifact().Filename
+		}
+		packageRoot := root.Kind == "container" && (strings.EqualFold(path.Ext(filename), ".pkg") || slices.ContainsFunc(facts.Subjects, func(subject plugin.Subject) bool { return subject.Parent == root.ID && subject.Package != nil }))
+		if root.App != nil || packageRoot {
+			targets[root.Path] = root
+			continue
+		}
+		for _, subject := range facts.Subjects[1:] {
+			if subject.Parent == root.ID && (subject.App != nil || subject.Kind == "container" && strings.EqualFold(path.Ext(subject.Path), ".pkg")) {
+				targets[subject.Path] = subject
+			}
+		}
+	}
+	subjects := make([]plugin.Subject, 0, len(targets))
+	for _, name := range slices.Sorted(maps.Keys(targets)) {
+		subjects = append(subjects, targets[name])
+	}
+	return subjects, nil
 }
 
 // inputFacts inventories an input and keys its subjects by ID, as destination

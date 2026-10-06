@@ -260,11 +260,13 @@ live display; `--no-progress` disables it explicitly. `NO_COLOR` controls colour
 Warnings go to stderr as they happen; in JSON mode they are part of the document.
 Resource notices appear once per command, including for cached or unchanged
 resources, and remain visible with `--no-progress`. JSON keeps them in each resource's
-`notices` with a level, rule code, message and optional hint. Missing signature
-expectations on directly sourced MacSoftware produce a recommendation to run
-`stemma signature`; declared signers, explicit unsigned expectations and resource-built
-outputs do not. A verified Developer ID application signature without a secure
-timestamp produces a warning and stays valid.
+`notices` with a level, rule code, message and optional hint. A missing signature
+expectation produces a recommendation to run `stemma signature`: on directly sourced
+MacSoftware, on WindowsSoftware whose setup entry point is an MSI, EXE or DLL, and on
+a BuildMacPkg input that supplies an application or package. Declared signers,
+explicit unsigned expectations and resource-built outputs do not.
+A verified Developer ID application signature without a secure timestamp produces a
+warning and stays valid.
 Failed commands retain available results and end with a concise stderr diagnostic.
 Interrupting with Ctrl-C clears activity, preserves completed results and exits 130.
 Press Ctrl-C again to exit immediately if cleanup or a native operation is

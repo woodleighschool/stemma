@@ -3,6 +3,7 @@ package signature
 import (
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -113,7 +114,11 @@ func TestDeveloperIDCodeWithoutATimestampRaisesANotice(t *testing.T) {
 		"unsigned":              {[]Observation{{Subject: plugin.SubjectSelector{Path: "Example.app"}, State: "unsigned", Verifier: Verifier}}, nil},
 		"another verifier":      {[]Observation{elsewhere}, nil},
 	} {
-		notices := Notices(test.observations)
+		evidence, err := json.Marshal(test.observations)
+		if err != nil {
+			t.Fatal(err)
+		}
+		notices := Notices(plugin.ResourceReference{}, map[string]json.RawMessage{"signatures": evidence})
 		if len(notices) != len(test.hints) {
 			t.Errorf("%s: %+v", name, notices)
 			continue
@@ -124,6 +129,26 @@ func TestDeveloperIDCodeWithoutATimestampRaisesANotice(t *testing.T) {
 			if notice != want {
 				t.Errorf("%s: %+v, want %+v", name, notice, want)
 			}
+		}
+	}
+}
+
+func TestUnverifiedSubjectsRaiseOneRecommendationPerSource(t *testing.T) {
+	recommend := func(kind, source string) plugin.Notice {
+		return plugin.Notice{Level: "warning", Code: "signature-expectation-missing", Message: source + " has no signature expectation", Hint: "Run `stemma signature " + kind + "/example` to derive one."}
+	}
+	for name, test := range map[string]struct {
+		kind     string
+		evidence string
+		want     []plugin.Notice
+	}{
+		"published installer":     {"WindowsSoftware", `[{"subject":{"path":"."}}]`, []plugin.Notice{recommend("WindowsSoftware", "Source")}},
+		"build inputs":            {"BuildMacPkg", `[{"input":"vendor","subject":{"path":"A.app"}},{"input":"vendor","subject":{"path":"B.app"}},{"input":"tools","subject":{"path":"."}}]`, []plugin.Notice{recommend("BuildMacPkg", `Input "vendor"`), recommend("BuildMacPkg", `Input "tools"`)}},
+		"nothing left unverified": {"BuildMacPkg", `[]`, nil},
+	} {
+		notices := Notices(plugin.ResourceReference{Kind: test.kind, Name: "example"}, map[string]json.RawMessage{UnverifiedEvidence: json.RawMessage(test.evidence), BuildEvidence: json.RawMessage(`"unsigned"`)})
+		if !slices.Equal(notices, test.want) {
+			t.Errorf("%s: %+v, want %+v", name, notices, test.want)
 		}
 	}
 }

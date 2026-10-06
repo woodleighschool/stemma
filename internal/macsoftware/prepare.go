@@ -82,6 +82,7 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	installer.Evidence = maps.Clone(input.Evidence)
 	delete(installer.Evidence, "signatures")
 	delete(installer.Evidence, signature.BuildEvidence)
+	delete(installer.Evidence, signature.UnverifiedEvidence)
 	if installer.Evidence == nil {
 		installer.Evidence = map[string]json.RawMessage{}
 	}

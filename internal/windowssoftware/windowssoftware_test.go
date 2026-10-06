@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -371,6 +372,49 @@ func TestUnsignedSetupExpectationsUsePreparedPaths(t *testing.T) {
 			}
 			if _, err := Prepare(t.Context(), spec, inputs, t.TempDir(), true); err != nil {
 				t.Fatalf("derive unsigned: %v", err)
+			}
+		})
+	}
+}
+
+// A setup entry point that can carry a signature and has no expectation is
+// listed, so that one can be recommended. A wrapper script has none to derive.
+func TestSetupWithoutAnExpectationIsListedUnverified(t *testing.T) {
+	installer, err := os.ReadFile("../msi/testdata/test.msi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	single := plugin.Artifact{Path: writeFixture(t, t.TempDir(), "setup.msi", installer, 0o644), Filename: "setup.msi"}
+	root := t.TempDir()
+	writeFixture(t, root, "bin/setup.msi", installer, 0o644)
+	writeFixture(t, root, "install.cmd", []byte("@echo off\r\n"), 0o644)
+	// What a source's own evidence lists describes that source's inputs.
+	tree := plugin.Artifact{Path: root, Filename: "setup", Tree: true, Evidence: map[string]json.RawMessage{signature.UnverifiedEvidence: json.RawMessage(`[{"input":"vendor","subject":{"path":"Other.exe"}}]`)}}
+	for name, test := range map[string]struct {
+		source plugin.Artifact
+		spec   Spec
+		derive bool
+		want   []signature.Unverified
+	}{
+		"single installer":   {source: single, want: []signature.Unverified{{Subject: plugin.SubjectSelector{Path: "."}}}},
+		"selected installer": {source: tree, spec: Spec{SetupFile: "bin/setup.msi"}, want: []signature.Unverified{{Subject: plugin.SubjectSelector{Path: "bin/setup.msi"}}}},
+		"wrapper script":     {source: tree, spec: Spec{SetupFile: "install.cmd"}},
+		"expectation":        {source: single, spec: Spec{Signatures: []signature.Expectation{{Unsigned: true}}}},
+		"derivation":         {source: single, derive: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			outputs, err := Prepare(t.Context(), test.spec, map[string]plugin.Artifact{"source": test.source}, t.TempDir(), test.derive)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var unverified []signature.Unverified
+			if data, listed := outputs["installer"].Evidence[signature.UnverifiedEvidence]; listed {
+				if err := json.Unmarshal(data, &unverified); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if !slices.Equal(unverified, test.want) {
+				t.Fatalf("unverified subjects: %+v, want %+v", unverified, test.want)
 			}
 		})
 	}
