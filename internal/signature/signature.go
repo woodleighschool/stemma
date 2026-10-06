@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -16,11 +17,12 @@ import (
 )
 
 // Verifier identifies the implementation whose supported subset produced a Result.
-const Verifier = "stemma.signature/3"
+const Verifier = "stemma.signature/4"
 
 // Schemes name the platform implementation that interprets a signer value.
 const (
 	AppleDeveloperID = "apple:developer-id"
+	AppleAppStore    = "apple:app-store"
 	Authenticode     = "authenticode"
 )
 
@@ -48,7 +50,7 @@ func BuiltUnsigned(artifact plugin.Artifact) bool {
 // Expectation asserts the signing state of one physical subject.
 type Expectation struct {
 	Subject  plugin.SubjectSelector `json:"subject,omitzero" yaml:"subject,omitempty" jsonschema_description:"One physical signing subject. Omit it where there is only one, such as the PKG itself or the only application in an image. Component receipts do not carry the outer PKG signature."`
-	Signer   string                 `json:"signer,omitempty" yaml:"signer,omitempty" jsonschema:"minLength=1" jsonschema_description:"Expected apple:developer-id:<TEAMID> or authenticode:<SHA256> publisher. Mutually exclusive with unsigned."`
+	Signer   string                 `json:"signer,omitempty" yaml:"signer,omitempty" jsonschema:"minLength=1" jsonschema_description:"Expected publisher: apple:developer-id:<TEAMID>, apple:app-store:<TEAMID> or authenticode:<SHA256>. Mutually exclusive with unsigned."`
 	Unsigned bool                   `json:"unsigned,omitempty" yaml:"unsigned,omitempty" jsonschema_description:"Assert that the subject has no signature. A signed, invalid or unsupported signature fails this assertion."`
 }
 
@@ -62,8 +64,9 @@ func (Expectation) JSONSchemaExtend(s *jsonschema.Schema) {
 	subject.MinProperties = new(uint64(1))
 }
 
-// Validate checks a declaration.
-func (e Expectation) Validate(scheme string) error {
+// Validate checks a declaration. A signer uses one of the schemes the kind
+// verifies.
+func (e Expectation) Validate(schemes ...string) error {
 	if p := e.Subject.Path; p != "" && (!fs.ValidPath(p) || strings.ContainsAny(p, "\\\x00\r\n\t")) {
 		return errors.New("subject.path must be an exact confined path")
 	}
@@ -77,8 +80,8 @@ func (e Expectation) Validate(scheme string) error {
 	if err != nil {
 		return err
 	}
-	if signer.Scheme != scheme {
-		return fmt.Errorf("signer must use %s", scheme)
+	if !slices.Contains(schemes, signer.Scheme) {
+		return fmt.Errorf("signer must use %s", strings.Join(schemes, " or "))
 	}
 	return nil
 }
@@ -91,8 +94,10 @@ type InputExpectation struct {
 }
 
 // Signer is a canonical publisher identity that survives certificate renewal.
-// Apple software uses the Developer ID team; Windows software uses a digest of
-// the publisher and its issuing authority.
+// Apple software uses the publisher's team, under the scheme of the certificate
+// that signed it: the publisher's own Developer ID, or Apple's for the App
+// Store. Windows software uses a digest of the publisher and its issuing
+// authority.
 type Signer struct {
 	Scheme string
 	Value  string
@@ -111,7 +116,7 @@ func Parse(text string) (Signer, error) {
 		return Signer{}, fmt.Errorf("signer %q requires a scheme and value", text)
 	}
 	switch scheme {
-	case AppleDeveloperID:
+	case AppleDeveloperID, AppleAppStore:
 		if len(value) != 10 || strings.Trim(value, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") != "" {
 			return Signer{}, fmt.Errorf("signer %q requires a ten-character Apple Team ID", text)
 		}
@@ -140,11 +145,15 @@ func (s Signer) String() string {
 // Result records one complete, valid signature. Name is display information
 // from the signing certificate and never participates in verification.
 type Result struct {
-	Signer    string `json:"signer,omitempty" jsonschema_description:"Expected publisher identity: apple:developer-id:<TEAMID> or authenticode:<SHA256>. Use stemma signature to inspect the input and derive it."`
+	Signer    string `json:"signer,omitempty" jsonschema_description:"Expected publisher identity: apple:developer-id:<TEAMID>, apple:app-store:<TEAMID> or authenticode:<SHA256>. Use stemma signature to inspect the input and derive it."`
 	Name      string `json:"name,omitempty"`
 	Authority string `json:"authority,omitempty"`
 	Target    string `json:"target,omitempty"`
 	Verifier  string `json:"verifier"`
+	// Timestamped reports that a timestamp authority under the verifier's
+	// trust anchors dated the signature, so its certificates were judged at
+	// that time. Only the Apple verifiers trust one.
+	Timestamped bool `json:"timestamped,omitempty"`
 	// Replaced lists nested code the signature accepts through the
 	// requirement it recorded, not the exact code it sealed.
 	Replaced []Replacement `json:"replaced,omitempty"`

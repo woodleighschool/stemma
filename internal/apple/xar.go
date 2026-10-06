@@ -108,12 +108,12 @@ func VerifyPackage(ctx context.Context, filePath string, want signature.Signer) 
 	if verified.TeamID == "" {
 		return signature.Result{}, fmt.Errorf("%w: package signer has no team", ErrUnsupported)
 	}
-	identity := codeIdentity{teamID: verified.TeamID}
+	signer := signature.Signer{Scheme: signature.AppleDeveloperID, Value: verified.TeamID}
+	result := signature.Result{Signer: signer.String(), Authority: "Developer ID Installer", Target: filepath.Base(filePath), Verifier: signature.Verifier, Timestamped: verified.TimestampVerified}
 	if len(verified.Signer.Subject.Organization) > 0 {
-		identity.name = verified.Signer.Subject.Organization[0]
+		result.Name = verified.Signer.Subject.Organization[0]
 	}
-	result := signature.Result{Signer: identity.signer().String(), Name: identity.name, Authority: "Developer ID Installer", Target: filepath.Base(filePath), Verifier: signature.Verifier}
-	if err := signature.Check(identity.signer(), want); err != nil {
+	if err := signature.Check(signer, want); err != nil {
 		return result, err
 	}
 	return result, ctx.Err()

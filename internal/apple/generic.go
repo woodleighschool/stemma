@@ -113,5 +113,5 @@ func (v *bundleVerifier) verifyGeneric(location string, r io.ReaderAt, size int6
 			sig.directories = append(sig.directories, sig.blobs[slot])
 		}
 	}
-	return verifySignature(contextReaderAt{v.ctx, r}, sig, nil)
+	return verifySignature(contextReaderAt{v.ctx, r}, sig, nil, v.roots)
 }

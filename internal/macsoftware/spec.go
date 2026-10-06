@@ -89,7 +89,7 @@ func (s Spec) Validate() error {
 		}
 	}
 	for i, expected := range s.Signatures {
-		if err := expected.Validate(signature.AppleDeveloperID); err != nil {
+		if err := expected.Validate(signature.AppleDeveloperID, signature.AppleAppStore); err != nil {
 			return fmt.Errorf("signatures[%d]: %w", i, err)
 		}
 	}

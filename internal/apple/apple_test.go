@@ -36,11 +36,11 @@ func TestAppFixtureInspection(t *testing.T) {
 
 func TestSignedFixtures(t *testing.T) {
 	app, err := VerifyApp(t.Context(), "testdata/SignedFixture.app", signature.Signer{})
-	if err != nil || app.Signer != fixtureSigner || app.Name != "Woodleigh School" || app.Authority != "Developer ID Application" || app.Verifier != signature.Verifier {
+	if err != nil || app.Signer != fixtureSigner || app.Name != "Woodleigh School" || app.Authority != "Developer ID Application" || app.Verifier != signature.Verifier || !app.Timestamped {
 		t.Fatalf("signed app: %+v: %v", app, err)
 	}
 	pkg, err := VerifyPackage(t.Context(), "testdata/fixture.pkg", signature.Signer{Scheme: signature.AppleDeveloperID, Value: "SMLKBTR495"})
-	if err != nil || pkg.Signer != fixtureSigner || pkg.Name != "Woodleigh School" || pkg.Authority != "Developer ID Installer" || pkg.Target != "fixture.pkg" {
+	if err != nil || pkg.Signer != fixtureSigner || pkg.Name != "Woodleigh School" || pkg.Authority != "Developer ID Installer" || pkg.Target != "fixture.pkg" || !pkg.Timestamped {
 		t.Fatalf("company installer signature: %+v: %v", pkg, err)
 	}
 	if pkg, err := VerifyPackage(t.Context(), "testdata/fixture.pkg", signature.Signer{Scheme: signature.AppleDeveloperID, Value: "AAAAAAAAAA"}); !errors.Is(err, signature.ErrMismatch) || pkg.Signer != fixtureSigner {

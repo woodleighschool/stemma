@@ -185,7 +185,7 @@ func lobRequest(metadata object, selected *plugin.Subject, subjects ...plugin.Su
 	if req.Artifact.Evidence == nil {
 		req.Artifact.Evidence = map[string]json.RawMessage{}
 	}
-	req.Artifact.Evidence["signatures"] = json.RawMessage(`[{"subject":{"path":"."},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/3"}]`)
+	req.Artifact.Evidence["signatures"] = json.RawMessage(`[{"subject":{"path":"."},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/4"}]`)
 	return req
 }
 
@@ -399,10 +399,10 @@ func TestIntuneConfigurationSchemaAndProviderAgree(t *testing.T) {
 
 func TestLOBRequiresThePublishedRootInstallerObservation(t *testing.T) {
 	for _, evidence := range []string{
-		`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/3"}]`,
-		`[{"input":"vendor","subject":{"path":"."},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/3"}]`,
-		`[{"subject":{"path":"Companion.app"},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Application","verifier":"stemma.signature/3"}]`,
-		`[{"subject":{"path":"PackageInfo"},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/3"}]`,
+		`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/4"}]`,
+		`[{"input":"vendor","subject":{"path":"."},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/4"}]`,
+		`[{"subject":{"path":"Companion.app"},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Application","verifier":"stemma.signature/4"}]`,
+		`[{"subject":{"path":"PackageInfo"},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/4"}]`,
 	} {
 		artifact := plugin.Artifact{Path: "/leased/upload.pkg", Filename: "upload.pkg", Evidence: map[string]json.RawMessage{"signatures": json.RawMessage(evidence)}}
 		if err := validateLOB(artifact, nil, false); err == nil || !strings.Contains(err.Error(), "published PKG root") {
@@ -410,7 +410,7 @@ func TestLOBRequiresThePublishedRootInstallerObservation(t *testing.T) {
 		}
 	}
 	req := lobRequest(object{"type": "pkg"}, nil, plugin.Subject{ID: "receipt", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.autopkg", Version: "1.0"}})
-	req.Artifact.Evidence = map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/3"}]`)}
+	req.Artifact.Evidence = map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/4"}]`)}
 	if _, _, err := Derive(req); err != nil {
 		t.Fatalf("ordinary PKG rejected unsigned root: %v", err)
 	}

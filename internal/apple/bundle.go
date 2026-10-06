@@ -3,6 +3,7 @@ package apple
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -25,8 +26,10 @@ const maxCodeResources = 64 << 20
 // every nested code item its exact cdhash or recorded requirement, and nothing
 // else is present. Locations are paths relative to the verified bundle.
 type bundleVerifier struct {
-	ctx      context.Context
-	buffer   []byte
+	ctx    context.Context
+	buffer []byte
+	// roots anchors every signing certificate and timestamp in the bundle.
+	roots    []*x509.Certificate
 	entries  int
 	depth    int
 	progress time.Time
@@ -189,7 +192,7 @@ func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, location, executable, in
 		if openErr != nil {
 			return codeIdentity{}, openErr
 		}
-		_, verifyErr := verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info})
+		_, verifyErr := verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info}, v.roots)
 		_ = f.Close()
 		if errors.Is(verifyErr, signature.ErrUnsigned) {
 			return codeIdentity{}, signature.ErrUnsigned
@@ -218,7 +221,7 @@ func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, location, executable, in
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	identity, err := verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info, 3: resources})
+	identity, err := verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info, 3: resources}, v.roots)
 	_ = f.Close()
 	if errors.Is(err, signature.ErrUnsigned) {
 		return codeIdentity{}, fmt.Errorf("%s: resource envelope exists but executable is unsigned", executable)
@@ -389,10 +392,11 @@ func parseSeal(value any) (*resourceSeal, error) {
 }
 
 // unsealedByDefault lists the files codesign leaves out of every envelope:
-// PkgInfo, Finder metadata, localization version stamps and its own
-// compatibility copy of the envelope at the resource root.
+// PkgInfo, Finder metadata, localization version stamps, its own compatibility
+// copy of the envelope at the resource root, and the receipt the App Store
+// adds after Apple signs.
 func unsealedByDefault(name string) bool {
-	return name == "PkgInfo" || name == "CodeResources" || path.Base(name) == ".DS_Store" || strings.HasSuffix(name, ".lproj/locversion.plist")
+	return name == "PkgInfo" || name == "CodeResources" || path.Base(name) == ".DS_Store" || strings.HasSuffix(name, ".lproj/locversion.plist") || strings.HasPrefix(name, "_MASReceipt/")
 }
 
 func (v *bundleVerifier) verifySealedFile(root fs.ReadLinkFS, name string, expected []byte) error {
@@ -462,7 +466,7 @@ func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, location, name str
 		if !machO {
 			return v.verifyGeneric(location, f, size)
 		}
-		return verifyMachO(v.ctx, f, size, nil)
+		return verifyMachO(v.ctx, f, size, nil, v.roots)
 	}
 	nested, err := subtree(root, name)
 	if err != nil {

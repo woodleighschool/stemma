@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/deploymenttheory/go-macos-pkg/pkg/pkgsign"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"howett.net/plist"
 )
@@ -54,9 +55,9 @@ func InspectAppFS(ctx context.Context, fsys fs.ReadLinkFS, appPath string) (AppF
 	return ParseAppInfo(data)
 }
 
-// VerifyApp verifies a Contents-style bundle on disk: its complete Developer ID
-// signature, reporting the signer. A zero want derives the signer; otherwise it
-// must match.
+// VerifyApp verifies the complete signature of a Contents-style bundle on disk
+// and reports the publisher it was signed for, under Developer ID or the App
+// Store. A zero want derives the signer; otherwise it must match.
 func VerifyApp(ctx context.Context, appPath string, want signature.Signer) (signature.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return signature.Result{}, err
@@ -67,7 +68,7 @@ func VerifyApp(ctx context.Context, appPath string, want signature.Signer) (sign
 	}
 	defer func() { _ = root.Close() }()
 	bundle := rootFS(root)
-	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10)}
+	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10), roots: pkgsign.AppleRootCertificates()}
 	return v.verifyApp(bundle, filepath.Base(appPath), want)
 }
 
@@ -81,7 +82,7 @@ func VerifyAppFS(ctx context.Context, fsys fs.ReadLinkFS, appPath string, want s
 	if err != nil {
 		return signature.Result{}, err
 	}
-	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10), base: appPath}
+	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10), roots: pkgsign.AppleRootCertificates(), base: appPath}
 	v.attributes, _ = fsys.(xattrFS)
 	return v.verifyApp(bundle, path.Base(appPath), want)
 }
@@ -91,11 +92,12 @@ func (v *bundleVerifier) verifyApp(bundle fs.ReadLinkFS, name string, want signa
 	if err != nil {
 		return signature.Result{}, err
 	}
-	if !identity.application {
-		return signature.Result{}, fmt.Errorf("%w: application is not signed with a Developer ID Application certificate", ErrUnsupported)
+	signer, authority := identity.publisher()
+	if signer.IsZero() {
+		return signature.Result{}, fmt.Errorf("%w: application is signed with neither a Developer ID Application nor an App Store certificate", ErrUnsupported)
 	}
-	result := signature.Result{Signer: identity.signer().String(), Name: identity.name, Authority: "Developer ID Application", Target: name, Verifier: signature.Verifier, Replaced: v.replaced}
-	if err := signature.Check(identity.signer(), want); err != nil {
+	result := signature.Result{Signer: signer.String(), Name: identity.name, Authority: authority, Target: name, Verifier: signature.Verifier, Timestamped: identity.timestamped, Replaced: v.replaced}
+	if err := signature.Check(signer, want); err != nil {
 		return result, err
 	}
 	return result, v.ctx.Err()

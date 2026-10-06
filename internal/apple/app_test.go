@@ -16,6 +16,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/deploymenttheory/go-macos-pkg/pkg/pkgsign"
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
@@ -527,7 +528,7 @@ func TestUnsignedMachORequiresEveryArchitectureToBeUnsigned(t *testing.T) {
 			copy(fat[64:], unsigned(0x01000007))
 			copy(fat[128:], test.second)
 			external := map[uint32][]byte{1: readTestFile(t, "testdata/SignedFixture.app/Contents/Info.plist"), 3: readTestFile(t, "testdata/SignedFixture.app/Contents/_CodeSignature/CodeResources")}
-			_, err := verifyMachO(t.Context(), bytes.NewReader(fat), int64(len(fat)), external)
+			_, err := verifyMachO(t.Context(), bytes.NewReader(fat), int64(len(fat)), external, pkgsign.AppleRootCertificates())
 			if err == nil || errors.Is(err, signature.ErrUnsigned) != test.wantUnsigned {
 				t.Fatalf("unsigned=%v: %v", test.wantUnsigned, err)
 			}

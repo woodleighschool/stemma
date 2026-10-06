@@ -58,7 +58,7 @@ func buildMacPkg(ctx context.Context, request plugin.ResourceRequest[json.RawMes
 				if _, declared := declarations[policy.Input]; !declared {
 					return plugin.ResourceResult{}, fmt.Errorf("signatures.input %q is not a declared input", policy.Input)
 				}
-				if err := policy.Validate(signature.AppleDeveloperID); err != nil {
+				if err := policy.Validate(signature.AppleDeveloperID, signature.AppleAppStore); err != nil {
 					return plugin.ResourceResult{}, fmt.Errorf("signatures: %w", err)
 				}
 			}

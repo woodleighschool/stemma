@@ -119,7 +119,7 @@ func (s Spec) Validate() error {
 		if err := s.validateRef(expected.Input, ""); err != nil {
 			return fmt.Errorf("signatures[%d]: %w", i, err)
 		}
-		if err := expected.Validate(signature.AppleDeveloperID); err != nil {
+		if err := expected.Validate(signature.AppleDeveloperID, signature.AppleAppStore); err != nil {
 			return fmt.Errorf("signatures[%d]: %w", i, err)
 		}
 	}

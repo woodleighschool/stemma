@@ -109,15 +109,14 @@ func TestParseRequirement(t *testing.T) {
 
 func TestRequirementNeedsEveryDeveloperIDProperty(t *testing.T) {
 	r := requirement{identifier: "org.example.helper", team: "ABCDE12345"}
-	valid := codeIdentity{identifier: "org.example.helper", teamID: "ABCDE12345", application: true, developerIDCA: true}
+	valid := codeIdentity{identifier: "org.example.helper", team: "ABCDE12345", class: classDeveloperID}
 	if !r.satisfiedBy(valid) {
 		t.Fatal("Developer ID code failed its requirement")
 	}
 	for name, change := range map[string]func(*codeIdentity){
-		"identifier":   func(c *codeIdentity) { c.identifier = "org.example.other" },
-		"team":         func(c *codeIdentity) { c.teamID = "FGHIJ67890" },
-		"intermediate": func(c *codeIdentity) { c.developerIDCA = false },
-		"application":  func(c *codeIdentity) { c.application = false },
+		"identifier": func(c *codeIdentity) { c.identifier = "org.example.other" },
+		"team":       func(c *codeIdentity) { c.team = "FGHIJ67890" },
+		"class":      func(c *codeIdentity) { c.class = classAppStore },
 	} {
 		identity := valid
 		change(&identity)

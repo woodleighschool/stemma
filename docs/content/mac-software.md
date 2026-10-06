@@ -243,6 +243,20 @@ complete fragment, independently of existing expectations. It needs no placehold
 declaration. Different apps may name different publishers. The comment is display
 information only.
 
+A signer names the publisher's Apple team under the scheme of the certificate
+that signed the software. `apple:developer-id:<TEAMID>` is a PKG or application
+the publisher signed with its own Developer ID. An application from the Mac App
+Store is signed by Apple instead, and its signer is `apple:app-store:<TEAMID>`:
+
+```yaml
+signatures:
+  - signer: apple:app-store:ABCDE12345
+```
+
+Apple's certificate names no publisher, so the team is the one the signed
+application names. The schemes are separate expectations: an application that
+moves between Developer ID and the App Store changes signer.
+
 Unsigned software can be asserted explicitly:
 
 ```yaml
@@ -261,8 +275,14 @@ never signs, so the package has no publisher to verify and `stemma signature`
 reports nothing for it. `unsigned: true` is still checked when declared.
 
 Apple verification covers every architecture's code, Info.plist, the resource
-envelope, symlinks and nested code, chained to Apple's roots at the signature's
-trusted timestamp. Nested code matches its exact recorded cdhash, or replaces the
+envelope, symlinks and nested code, chained to Apple's roots. A trusted timestamp
+fixes the time at which every certificate of a signature must have been valid.
+Without one, a PKG's certificates are judged when it is verified, and an
+application's are held to no validity period, as on macOS: App Store signatures
+carry no timestamp, and Apple's certificate for them expires while the
+applications stay installed. Code signed to expire with its certificate needs a
+trusted timestamp. Nested code
+matches its exact recorded cdhash, or replaces the
 sealed code under the Developer ID requirement the app recorded for it: the same
 identifier, signed by the same team with a Developer ID Application certificate.
 `stemma signature` lists replaced nested code. Nested scripts and data files that

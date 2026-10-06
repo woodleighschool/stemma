@@ -315,7 +315,12 @@ func signatureDetails(resource engine.ResourceReport) string {
 			if observed.State == "unsigned" {
 				text.WriteString("  Signing state: unsigned\n")
 			} else {
-				fmt.Fprintf(&text, "  Signer: %s (%s)\n", changes.Text(observed.Name), changes.Text(observed.Authority))
+				// An App Store signature names its publisher by team alone.
+				if observed.Name == "" {
+					fmt.Fprintf(&text, "  Signer: %s\n", changes.Text(observed.Authority))
+				} else {
+					fmt.Fprintf(&text, "  Signer: %s (%s)\n", changes.Text(observed.Name), changes.Text(observed.Authority))
+				}
 				for _, replaced := range observed.Replaced {
 					fmt.Fprintf(&text, "  Replaced nested code: %s\n", changes.Text(replaced.Path))
 				}

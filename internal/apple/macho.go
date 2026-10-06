@@ -6,6 +6,7 @@ import (
 	"crypto/sha1" //nolint:gosec // CodeDirectory hash type 1 is SHA-1.
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/x509"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -33,9 +34,8 @@ type codeSignature struct {
 
 // verifyMachO authenticates every architecture of a signed Mach-O: each
 // CodeDirectory seals its code pages and special slots, its CMS signature
-// chains to Apple at the signature's trusted time, and all architectures
-// share one signer and identifier.
-func verifyMachO(ctx context.Context, r io.ReaderAt, size int64, external map[uint32][]byte) (codeIdentity, error) {
+// chains to the roots, and all architectures share one signer and identifier.
+func verifyMachO(ctx context.Context, r io.ReaderAt, size int64, external map[uint32][]byte, roots []*x509.Certificate) (codeIdentity, error) {
 	slices, err := machoSlices(contextReaderAt{ctx, r}, size)
 	if err != nil {
 		return codeIdentity{}, err
@@ -46,7 +46,7 @@ func verifyMachO(ctx context.Context, r io.ReaderAt, size int64, external map[ui
 		if err := ctx.Err(); err != nil {
 			return codeIdentity{}, err
 		}
-		current, err := slice.verify(external)
+		current, err := slice.verify(external, roots)
 		if errors.Is(err, signature.ErrUnsigned) {
 			unsigned++
 			continue
@@ -62,6 +62,7 @@ func verifyMachO(ctx context.Context, r io.ReaderAt, size int64, external map[ui
 			return codeIdentity{}, fmt.Errorf("Mach-O architectures are signed by different identities")
 		}
 		identity.cdhashes = append(identity.cdhashes, current.cdhashes...)
+		identity.timestamped = identity.timestamped && current.timestamped
 	}
 	if unsigned == len(slices) {
 		return codeIdentity{}, signature.ErrUnsigned
@@ -72,7 +73,7 @@ func verifyMachO(ctx context.Context, r io.ReaderAt, size int64, external map[ui
 	return identity, ctx.Err()
 }
 
-func (m machoSlice) verify(external map[uint32][]byte) (codeIdentity, error) {
+func (m machoSlice) verify(external map[uint32][]byte, roots []*x509.Certificate) (codeIdentity, error) {
 	sig, err := m.signature()
 	if err != nil {
 		return codeIdentity{}, err
@@ -90,13 +91,15 @@ func (m machoSlice) verify(external map[uint32][]byte) (codeIdentity, error) {
 			external[1] = embedded
 		}
 	}
-	return verifySignature(m.r, sig, external)
+	return verifySignature(m.r, sig, external, roots)
 }
 
-// verifySignature authenticates a signature over code: every CodeDirectory
-// seals the code and its special slots, and the CMS signature over them chains
-// to Apple at the signature's trusted time.
-func verifySignature(code io.ReaderAt, sig *codeSignature, external map[uint32][]byte) (codeIdentity, error) {
+// verifySignature authenticates a signature over code in four steps: every
+// CodeDirectory seals the code and its special slots, and the CMS signature
+// covers them; a timestamp, where it has one, fixes when its certificates must
+// have been valid; they chain to the roots as one class of signing certificate;
+// and that class says which team the signature speaks for.
+func verifySignature(code io.ReaderAt, sig *codeSignature, external map[uint32][]byte, roots []*x509.Certificate) (codeIdentity, error) {
 	for _, cd := range sig.directories {
 		if err := verifyCodeDirectory(code, cd, sig, external); err != nil {
 			return codeIdentity{}, err
@@ -106,17 +109,23 @@ func verifySignature(code io.ReaderAt, sig *codeSignature, external map[uint32][
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	at, err := trustedTime(cms.timestampToken, cms.signatureValue)
+	claimed, err := codeClaims(sig.directories)
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	identity, err := identify(cms.certificate, cms.certificates, at)
+	at, timestamped, err := certificateTime(cms, claimed.expires, roots)
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	if identity.identifier, err = codeString(sig.directories[0], binary.BigEndian.Uint32(sig.directories[0][20:24])); err != nil {
+	chains, err := appleChains(cms.certificate, cms.certificates, roots, at, timestamped)
+	if err != nil {
 		return codeIdentity{}, err
 	}
+	identity, err := identify(chains, claimed.team)
+	if err != nil {
+		return codeIdentity{}, err
+	}
+	identity.identifier, identity.timestamped = claimed.identifier, timestamped
 	for _, cd := range sig.directories {
 		h, _, err := codeHash(cd[37])
 		if err != nil {
@@ -429,6 +438,42 @@ func codeString(cd []byte, offset uint32) (string, error) {
 		return "", fmt.Errorf("unterminated CodeDirectory string")
 	}
 	return string(value), nil
+}
+
+// claims is what a signature's CodeDirectories say of the code they seal.
+type claims struct {
+	identifier string
+	team       string
+	// expires asks that the code stop verifying when its certificate expires.
+	expires bool
+}
+
+// codeClaims reads the claims of validated CodeDirectories. macOS reads them
+// from the CodeDirectory it prefers, so all of them must agree.
+func codeClaims(directories [][]byte) (claims, error) {
+	var claimed claims
+	for i, cd := range directories {
+		identifier, err := codeString(cd, binary.BigEndian.Uint32(cd[20:24]))
+		if err != nil {
+			return claims{}, err
+		}
+		team := ""
+		// Version 0x20200 added the team.
+		if binary.BigEndian.Uint32(cd[8:12]) >= 0x20200 {
+			if offset := binary.BigEndian.Uint32(cd[48:52]); offset != 0 {
+				if team, err = codeString(cd, offset); err != nil {
+					return claims{}, err
+				}
+			}
+		}
+		if i > 0 && (identifier != claimed.identifier || team != claimed.team) {
+			return claims{}, fmt.Errorf("CodeDirectories disagree on the code's identifier or team")
+		}
+		claimed.identifier, claimed.team = identifier, team
+		// kSecCodeSignatureForceExpiration
+		claimed.expires = claimed.expires || binary.BigEndian.Uint32(cd[12:16])&0x400 != 0
+	}
+	return claimed, nil
 }
 
 func verifyCodeDirectory(r io.ReaderAt, cd []byte, sig *codeSignature, external map[uint32][]byte) error {

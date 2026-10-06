@@ -17,6 +17,7 @@ func TestParseAcceptsCanonicalSigners(t *testing.T) {
 	}{
 		{"apple:developer-id:UBF8T346G9", Signer{Scheme: AppleDeveloperID, Value: "UBF8T346G9"}},
 		{"\tapple:developer-id:SMLKBTR495\n", Signer{Scheme: AppleDeveloperID, Value: "SMLKBTR495"}},
+		{"apple:app-store:L82V4Y2P3C", Signer{Scheme: AppleAppStore, Value: "L82V4Y2P3C"}},
 		{"authenticode:" + strings.Repeat("0a", 32), Signer{Scheme: Authenticode, Value: strings.Repeat("0a", 32)}},
 	} {
 		signer, err := Parse(test.text)
@@ -24,7 +25,7 @@ func TestParseAcceptsCanonicalSigners(t *testing.T) {
 			t.Fatalf("Parse(%q) = %+v, %v; want %+v", test.text, signer, err, test.want)
 		}
 	}
-	for _, text := range []string{"", "UBF8T346G9", "apple:UBF8T346G9", "apple:developer-id:", "apple:developer-id:ubf8t346g9", "apple:developer-id:UBF8T346G9X", "authenticode:", "authenticode:" + strings.Repeat("0A", 32), "authenticode:" + strings.Repeat("0a", 31), "codesign:UBF8T346G9"} {
+	for _, text := range []string{"", "UBF8T346G9", "apple:UBF8T346G9", "apple:developer-id:", "apple:developer-id:ubf8t346g9", "apple:developer-id:UBF8T346G9X", "apple:app-store:", "apple:app-store:l82v4y2p3c", "apple:store:L82V4Y2P3C", "authenticode:", "authenticode:" + strings.Repeat("0A", 32), "authenticode:" + strings.Repeat("0a", 31), "codesign:UBF8T346G9"} {
 		if signer, err := Parse(text); err == nil {
 			t.Fatalf("Parse(%q) accepted %+v", text, signer)
 		}
@@ -127,6 +128,20 @@ func TestExpectationsAndSchemaRequireOneState(t *testing.T) {
 	}
 	if err := plugin.ValidateSchema(schema, []byte(`{"subject":{"path":"."},"unsigned":true}`)); err == nil {
 		t.Fatal("builder input was optional")
+	}
+}
+
+func TestExpectationSignerUsesASchemeOfItsKind(t *testing.T) {
+	store := Expectation{Subject: plugin.SubjectSelector{Path: "."}, Signer: "apple:app-store:ABCDE12345"}
+	if err := store.Validate(AppleDeveloperID, AppleAppStore); err != nil {
+		t.Fatalf("an Apple kind rejected an App Store signer: %v", err)
+	}
+	if err := store.Validate(Authenticode); err == nil || !strings.Contains(err.Error(), "signer must use authenticode") {
+		t.Fatalf("a Windows kind accepted an App Store signer: %v", err)
+	}
+	windows := Expectation{Subject: plugin.SubjectSelector{Path: "."}, Signer: "authenticode:" + strings.Repeat("0a", 32)}
+	if err := windows.Validate(AppleDeveloperID, AppleAppStore); err == nil || !strings.Contains(err.Error(), "signer must use apple:developer-id or apple:app-store") {
+		t.Fatalf("an Apple kind accepted an Authenticode signer: %v", err)
 	}
 }
 

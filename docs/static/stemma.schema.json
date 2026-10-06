@@ -362,7 +362,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                                "description": "Expected publisher: apple:developer-id:\u003cTEAMID\u003e, apple:app-store:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e. Mutually exclusive with unsigned."
                               },
                               "subject": {
                                 "anyOf": [
@@ -814,7 +814,7 @@
                                         "type": "string"
                                       }
                                     ],
-                                    "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                                    "description": "Expected publisher: apple:developer-id:\u003cTEAMID\u003e, apple:app-store:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e. Mutually exclusive with unsigned."
                                   },
                                   "subject": {
                                     "anyOf": [
@@ -1987,7 +1987,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                                "description": "Expected publisher: apple:developer-id:\u003cTEAMID\u003e, apple:app-store:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e. Mutually exclusive with unsigned."
                               },
                               "subject": {
                                 "anyOf": [
@@ -2399,7 +2399,7 @@
                                         "type": "string"
                                       }
                                     ],
-                                    "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                                    "description": "Expected publisher: apple:developer-id:\u003cTEAMID\u003e, apple:app-store:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e. Mutually exclusive with unsigned."
                                   },
                                   "subject": {
                                     "anyOf": [
@@ -9077,7 +9077,7 @@
                                     "type": "string"
                                   }
                                 ],
-                                "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                                "description": "Expected publisher: apple:developer-id:\u003cTEAMID\u003e, apple:app-store:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e. Mutually exclusive with unsigned."
                               },
                               "subject": {
                                 "anyOf": [
@@ -9423,7 +9423,7 @@
                                         "type": "string"
                                       }
                                     ],
-                                    "description": "Expected apple:developer-id:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e publisher. Mutually exclusive with unsigned."
+                                    "description": "Expected publisher: apple:developer-id:\u003cTEAMID\u003e, apple:app-store:\u003cTEAMID\u003e or authenticode:\u003cSHA256\u003e. Mutually exclusive with unsigned."
                                   },
                                   "subject": {
                                     "anyOf": [

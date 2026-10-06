@@ -50,16 +50,18 @@ signatures. Existing vendor PKGs and DMGs retain their original bytes.
 ## Signatures
 
 Each signed subject is verified independently against its expected publisher: Developer ID signatures over PKGs and application
-bundles, and Authenticode signatures over MSI and EXE files. Apple verification
+bundles, App Store signatures over application bundles, and Authenticode signatures over MSI and EXE files. Apple verification
 covers the shapes `codesign` writes today: `files2` envelopes, versioned and
 shallow frameworks, nested bundles and executables, and nested generic code, such
 as scripts and data files, whose signature `codesign` keeps in extended
 attributes. Generic code verifies inside vendor DMGs and archives carrying AppleDouble or
-PAX attributes. Local trees without those attributes cannot verify generic code. Of Apple's requirement
+PAX attributes. Local trees without those attributes cannot verify generic code. The receipt the App Store
+adds to an application lies outside its signature, as it does for `codesign`. Of Apple's requirement
 language, only the Developer ID requirement `codesign` records by default is
 evaluated, and only for nested code that replaced the code its app sealed; other
 requirements accept only the sealed code. Legacy envelopes and detached signature
-files are rejected rather than emulated, identically on every host. Signature absence is a
+files are rejected rather than emulated, identically on every host. Code signed with
+`codesign --options expires` is rejected unless a trusted timestamp dates its signature. Signature absence is a
 normal observation for supported formats; partial and ad-hoc signatures are not
 unsigned.
 Windows verification anchors at the issuing authority recorded in the signer

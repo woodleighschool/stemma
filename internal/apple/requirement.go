@@ -22,11 +22,12 @@ var (
 	developerIDApplicationField = "field." + pkgsign.OIDDeveloperIDApplication.String()
 )
 
-// satisfiedBy reports whether authenticated code meets the requirement.
-// identify has already chained its certificate to an Apple root, which is what
-// anchor apple generic asks of it.
+// satisfiedBy reports whether authenticated code meets the requirement. Its
+// certificate already chains to an Apple root, which is what anchor apple
+// generic asks of it, and the Developer ID class is the intermediate and
+// application clauses.
 func (r requirement) satisfiedBy(identity codeIdentity) bool {
-	return identity.identifier == r.identifier && identity.developerIDCA && identity.application && identity.teamID == r.team
+	return identity.identifier == r.identifier && identity.class == classDeveloperID && identity.team == r.team
 }
 
 // parseRequirement reads requirement text as codesign writes it: clauses

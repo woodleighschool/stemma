@@ -320,7 +320,7 @@ func write(t *testing.T, name, text string) {
 }
 
 func TestArtifactDescriptionKeepsUnsignedObservations(t *testing.T) {
-	artifact := describeArtifact("installer", engine.Prepared{Filename: "unsigned.pkg", Evidence: map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/3"}]`)}})
+	artifact := describeArtifact("installer", engine.Prepared{Filename: "unsigned.pkg", Evidence: map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/4"}]`)}})
 	if artifact.Signatures != "signatures:\n  - unsigned: true\n" {
 		t.Fatalf("unsigned fragment: %s", artifact.Signatures)
 	}

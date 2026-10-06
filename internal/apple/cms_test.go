@@ -125,9 +125,14 @@ func TestDeveloperIDIntermediateComesFromTheVerifiedChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := identify(cms.certificate, cms.certificates, time.Time{})
-	if err != nil || !identity.developerIDCA || !identity.application {
-		t.Fatalf("Developer ID chain: %+v, %v", identity, err)
+	roots := pkgsign.AppleRootCertificates()
+	at, timestamped, err := certificateTime(cms, false, roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	chains, err := appleChains(cms.certificate, cms.certificates, roots, at, timestamped)
+	if err != nil || classify(chains) != classDeveloperID {
+		t.Fatalf("Developer ID chain: %v", err)
 	}
 	for _, certificate := range cms.certificates {
 		certificate.Extensions = slices.DeleteFunc(certificate.Extensions, func(extension pkix.Extension) bool { return extension.Id.Equal(pkgsign.OIDDeveloperIDCA) })
@@ -146,9 +151,9 @@ func TestDeveloperIDIntermediateComesFromTheVerifiedChain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err = identify(cms.certificate, append(cms.certificates, decoy), time.Time{})
-	if err != nil || identity.developerIDCA {
-		t.Fatalf("a marker outside the verified chain counted: %+v, %v", identity, err)
+	chains, err = appleChains(cms.certificate, append(cms.certificates, decoy), roots, at, timestamped)
+	if err != nil || classify(chains) != classOther {
+		t.Fatalf("a marker outside the verified chain counted: %v", err)
 	}
 }
 
@@ -158,7 +163,12 @@ func TestCMSChainMustAnchorAtApple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := identify(cms.certificate, cms.certificates, time.Time{}); err != nil {
+	roots := pkgsign.AppleRootCertificates()
+	at, timestamped, err := certificateTime(cms, false, roots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := appleChains(cms.certificate, cms.certificates, roots, at, timestamped); err != nil {
 		t.Fatalf("Developer ID chain rejected: %v", err)
 	}
 	// A signature by a certificate outside Apple's hierarchy authenticates the
@@ -168,11 +178,8 @@ func TestCMSChainMustAnchorAtApple(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := identify(cms.certificate, cms.certificates, time.Time{}); err == nil || !strings.Contains(err.Error(), "not trusted") {
+	if _, err := appleChains(cms.certificate, cms.certificates, roots, time.Time{}, false); err == nil || !strings.Contains(err.Error(), "not trusted") {
 		t.Fatalf("self-signed CMS certificate established a signer: %v", err)
-	}
-	if _, err := trustedTime(nil, cms.signatureValue); err != nil {
-		t.Fatalf("absent timestamp: %v", err)
 	}
 }
 
@@ -271,6 +278,11 @@ func signedCMS(t *testing.T, content []byte, digest asn1.ObjectIdentifier, attri
 	if err != nil {
 		t.Fatal(err)
 	}
+	return cmsBlob(data)
+}
+
+// cmsBlob wraps a CMS signature as an embedded signature holds it.
+func cmsBlob(data []byte) []byte {
 	blob := make([]byte, 8, len(data)+8)
 	binary.BigEndian.PutUint32(blob, 0xfade0b01)
 	binary.BigEndian.PutUint32(blob[4:], uint32(len(data)+8))

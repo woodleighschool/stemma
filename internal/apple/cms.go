@@ -166,6 +166,7 @@ func verifyCMS(signature *codeSignature) (*cmsSignature, error) {
 	signed.Content = cd
 	// Verify authenticates the detached bytes with the embedded signer certificate.
 	// No trust store is supplied; certificate chains and timestamps are not trusted.
+	// A signing time the signer states must fall within that certificate's validity.
 	if err := signed.Verify(); err != nil {
 		return nil, fmt.Errorf("CMS signature: %w", err)
 	}
