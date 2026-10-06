@@ -218,7 +218,7 @@
 
 * **intune:** report minimum OS as a single version ([a49e9c3](https://github.com/woodleighschool/stemma/commit/a49e9c3b0184ecc097a4b76e2abf38708ee5c105))
 
-## [0.7.0](https://github.com/woodleighschool/stemma/compare/0.6.0...v0.7.0) (2026-09-28)
+## [0.7.0](https://github.com/woodleighschool/stemma/compare/v0.6.0...v0.7.0) (2026-09-28)
 
 
 ### ⚠ BREAKING CHANGES
@@ -241,7 +241,7 @@
 * prefix release tags for Go module consumers ([6f986a8](https://github.com/woodleighschool/stemma/commit/6f986a89e0ec97f298d7cbe416bb8e4feceb066c))
 * skip checks for generated release commits ([e4466b0](https://github.com/woodleighschool/stemma/commit/e4466b041c0fa04ad863694495cb5ed1222eed6e))
 
-## [0.6.0](https://github.com/woodleighschool/stemma/compare/0.5.0...0.6.0) (2026-09-28)
+## [0.6.0](https://github.com/woodleighschool/stemma/compare/v0.5.0...v0.6.0) (2026-09-28)
 
 
 ### ⚠ BREAKING CHANGES
@@ -280,7 +280,7 @@
 * remove release version bootstrap overrides ([927385a](https://github.com/woodleighschool/stemma/commit/927385a5e4b09d6673e7dba023fd5d3965d19922))
 * tidy modules directly in GoReleaser ([77e4ce7](https://github.com/woodleighschool/stemma/commit/77e4ce745672c5aa42e66c69d3b3a07f6433ad88))
 
-## [0.5.0](https://github.com/woodleighschool/stemma/compare/0.4.0...0.5.0) (2026-09-27)
+## [0.5.0](https://github.com/woodleighschool/stemma/compare/v0.4.0...v0.5.0) (2026-09-27)
 
 
 ### ⚠ BREAKING CHANGES
@@ -296,7 +296,7 @@
 
 * **deps:** use upstream macOS platform bindings ([0e2798f](https://github.com/woodleighschool/stemma/commit/0e2798fab42562a3014c536bb9854bef61f83266))
 
-## [0.4.0](https://github.com/woodleighschool/stemma/compare/0.3.0...0.4.0) (2026-09-27)
+## [0.4.0](https://github.com/woodleighschool/stemma/compare/v0.3.0...v0.4.0) (2026-09-27)
 
 
 ### ⚠ BREAKING CHANGES
@@ -330,7 +330,7 @@
 
 * **deps:** drop the lzfse fork replace ([dc41e5c](https://github.com/woodleighschool/stemma/commit/dc41e5cbe49dcbebe5e123c8677b7d76bd8ecbf8))
 
-## [0.3.0](https://github.com/woodleighschool/stemma/compare/0.2.1...0.3.0) (2026-09-26)
+## [0.3.0](https://github.com/woodleighschool/stemma/compare/v0.2.1...v0.3.0) (2026-09-26)
 
 
 ### ⚠ BREAKING CHANGES
@@ -465,7 +465,7 @@
 * **npm:** update dependency pnpm (12.4.1 → 12.5.1) ([#22](https://github.com/woodleighschool/stemma/issues/22)) ([52ed43b](https://github.com/woodleighschool/stemma/commit/52ed43bd93961205bc8dea3d7b68b8a878ac1978))
 * **npm:** update dependency pnpm (12.5.1 → 12.6.0) ([#39](https://github.com/woodleighschool/stemma/issues/39)) ([b5dfc76](https://github.com/woodleighschool/stemma/commit/b5dfc76650613e157aa9300254960be454bbf8e4))
 
-## [0.2.1](https://github.com/woodleighschool/stemma/compare/0.2.0...0.2.1) (2026-09-13)
+## [0.2.1](https://github.com/woodleighschool/stemma/compare/v0.2.0...v0.2.1) (2026-09-13)
 
 
 ### Bug Fixes
@@ -479,7 +479,7 @@
 * add ignore for node_modules in go.mod ([8233f49](https://github.com/woodleighschool/stemma/commit/8233f49a0dfec8071c67cf39c4fc5df072647c68))
 * readme tweaks ([a266a82](https://github.com/woodleighschool/stemma/commit/a266a8209842d989e24b1b2530a20cea6888f741))
 
-## [0.2.0](https://github.com/woodleighschool/stemma/compare/0.1.0...0.2.0) (2026-09-13)
+## [0.2.0](https://github.com/woodleighschool/stemma/compare/v0.1.0...v0.2.0) (2026-09-13)
 
 
 ### ⚠ BREAKING CHANGES
