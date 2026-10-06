@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.10.1](https://github.com/woodleighschool/stemma/compare/v0.10.0...v0.10.1) (2026-10-06)
+
+
+### Features
+
+* **cli:** recommend missing signature expectations ([67cbbde](https://github.com/woodleighschool/stemma/commit/67cbbdecd88af755e2bec6e320e03ada9446c2f6))
+* select resources by profile ([edc641d](https://github.com/woodleighschool/stemma/commit/edc641d770f0c7e32bdce5aba07be9f7a607fd32))
+* **signature:** cover the only signing subject and skip built packages ([ae9767e](https://github.com/woodleighschool/stemma/commit/ae9767ee845ae14bee6da40e24a05f4da01160bd))
+* **signature:** recommend expectations for unverified inputs and setups ([6b8a8f8](https://github.com/woodleighschool/stemma/commit/6b8a8f861996456b632d9bf05dd971caaad23c2f))
+* **signature:** verify Mac App Store signatures ([00a1433](https://github.com/woodleighschool/stemma/commit/00a14330b1bc6ed15017718d2abb48367d6e38ba))
+* **signature:** warn when a Developer ID signature has no timestamp ([3350df2](https://github.com/woodleighschool/stemma/commit/3350df27924a9ca016d6410d28fb033ab2822e37))
+
+
+### Bug Fixes
+
+* **apple:** accept backslashes in sealed resource names ([d02b1d8](https://github.com/woodleighschool/stemma/commit/d02b1d8b158e30e5e7f91e275f54dc9668dd0c16))
+* **engine:** retain invalid dependencies in changed runs ([baa17f5](https://github.com/woodleighschool/stemma/commit/baa17f58e67fafc497f465b599b64b029b9a4c94))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (c1ed348 → 0f18bc7) ([#121](https://github.com/woodleighschool/stemma/issues/121)) ([1b78ac5](https://github.com/woodleighschool/stemma/commit/1b78ac5078befd6d2907803b828489e8f20203de))
+
 ## [0.10.0](https://github.com/woodleighschool/stemma/compare/v0.9.1...v0.10.0) (2026-10-05)
 
 
