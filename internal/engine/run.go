@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -497,7 +498,7 @@ func (e *execution) complete(ctx context.Context, item *ResourceReport) error {
 	if e.opts.Method == "icon" && item.Error == "" && (item.Icon == "unchanged" || strings.HasPrefix(item.Icon, "created ")) {
 		item.IconPath = icon.Relative(e.plans[item.Key].Icon)
 	}
-	item.Notices = e.plans[item.Key].Notices
+	item.Notices = slices.Concat(e.plans[item.Key].Notices, signatureNotices(item.Artifacts))
 	if e.opts.ResourceDone != nil {
 		if err := e.opts.ResourceDone(*item); err != nil {
 			return err

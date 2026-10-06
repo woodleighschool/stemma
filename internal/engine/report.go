@@ -3,9 +3,12 @@ package engine
 import (
 	"encoding/json"
 	"errors"
+	"maps"
+	"slices"
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -46,6 +49,20 @@ type ResourceReport struct {
 	Error    string `json:"error,omitempty"`
 	// BlockedBy names the resources whose unavailable outputs prevented execution.
 	BlockedBy []string `json:"blocked_by,omitempty"`
+}
+
+// signatureNotices returns the advisories that the signing evidence of a
+// resource's outputs raises. The evidence is stored with each output, so they
+// are the same when preparation is cached.
+func signatureNotices(artifacts map[string]Prepared) []plugin.Notice {
+	var notices []plugin.Notice
+	for _, name := range slices.Sorted(maps.Keys(artifacts)) {
+		var observations []signature.Observation
+		if json.Unmarshal(artifacts[name].Evidence["signatures"], &observations) == nil {
+			notices = append(notices, signature.Notices(observations)...)
+		}
+	}
+	return notices
 }
 
 // DestinationReport describes semantic drift independently of cache hits.

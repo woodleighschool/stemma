@@ -88,6 +88,46 @@ func TestFragmentNamesSubjectsOnlyWhereAScopeHasSeveral(t *testing.T) {
 	}
 }
 
+func TestDeveloperIDCodeWithoutATimestampRaisesANotice(t *testing.T) {
+	observed := func(input, subject string, result Result) Observation {
+		result.Verifier = Verifier
+		return Observation{Input: input, Subject: plugin.SubjectSelector{Path: subject}, State: "signed", Result: result}
+	}
+	code := Result{Signer: "apple:developer-id:UBF8T346G9", Authority: "Developer ID Application"}
+	timestamped := code
+	timestamped.Timestamped = true
+	elsewhere := observed("", "Example.app", code)
+	elsewhere.Verifier = "another.verifier/1"
+	for name, test := range map[string]struct {
+		observations []Observation
+		hints        []string
+	}{
+		"untimestamped application": {[]Observation{observed("", "Example.app", code)}, []string{""}},
+		"timestamped application":   {[]Observation{observed("", "Example.app", timestamped)}, nil},
+		"one of two applications":   {[]Observation{observed("", "A.app", timestamped), observed("", "B.app", code)}, []string{"Subject: B.app"}},
+		"build input":               {[]Observation{observed("vendor", "Install.app", code)}, []string{"Input: vendor"}},
+		"one of two in an input":    {[]Observation{observed("vendor", "A.app", code), observed("vendor", "B.app", timestamped)}, []string{"Input: vendor, Subject: A.app"}},
+		// A package is held to its certificate's validity when verified.
+		"untimestamped package": {[]Observation{observed("", ".", Result{Signer: "apple:developer-id:UBF8T346G9", Authority: "Developer ID Installer"})}, nil},
+		"App Store application": {[]Observation{observed("", "Example.app", Result{Signer: "apple:app-store:UBF8T346G9", Authority: "Mac App Store"})}, nil},
+		"unsigned":              {[]Observation{{Subject: plugin.SubjectSelector{Path: "Example.app"}, State: "unsigned", Verifier: Verifier}}, nil},
+		"another verifier":      {[]Observation{elsewhere}, nil},
+	} {
+		notices := Notices(test.observations)
+		if len(notices) != len(test.hints) {
+			t.Errorf("%s: %+v", name, notices)
+			continue
+		}
+		for i, notice := range notices {
+			want := plugin.Notice{Level: "warning", Code: "signature-timestamp-missing", Hint: test.hints[i],
+				Message: "Developer ID signature has no secure timestamp; certificate validity at signing time cannot be established"}
+			if notice != want {
+				t.Errorf("%s: %+v, want %+v", name, notice, want)
+			}
+		}
+	}
+}
+
 func TestExpectationsAndSchemaRequireOneState(t *testing.T) {
 	schema, err := json.Marshal(plugin.SchemaFor[Expectation]())
 	if err != nil {

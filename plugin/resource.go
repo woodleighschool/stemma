@@ -160,8 +160,9 @@ type ResourceRequest[C any] struct {
 	Environment map[string]string `json:"environment,omitempty"`
 }
 
-// Notice is actionable resource advice, independent of progress and success.
+// Notice is advice about a resource, independent of progress and success.
 // Level is "warning" or "info"; Code identifies the rule for machine consumers.
+// Hint adds a next step, or what in the resource the notice concerns.
 type Notice struct {
 	Level   string `json:"level"`
 	Code    string `json:"code"`

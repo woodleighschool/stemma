@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -133,16 +134,25 @@ func waitForResponse(ctx context.Context, url string) error {
 }
 
 type buildConfig struct {
-	Source plugin.Input `json:"source" jsonschema_description:"Vendor installer input."`
+	Source   plugin.Input               `json:"source" jsonschema_description:"Vendor installer input."`
+	Evidence map[string]json.RawMessage `json:"evidence,omitempty" jsonschema_description:"Evidence the installer carries."`
 }
 
 func build(_ context.Context, request plugin.ResourceRequest[buildConfig]) (plugin.ResourceResult, error) {
 	if request.Method == "discover" {
-		return plugin.ResourceResult{Inputs: map[string]plugin.Input{"vendor": request.Config.Source}, Config: json.RawMessage(`{}`)}, nil
+		config := json.RawMessage(`{}`)
+		if len(request.Config.Evidence) > 0 {
+			var err error
+			if config, err = json.Marshal(map[string]any{"evidence": request.Config.Evidence}); err != nil {
+				return plugin.ResourceResult{}, err
+			}
+		}
+		return plugin.ResourceResult{Inputs: map[string]plugin.Input{"vendor": request.Config.Source}, Config: config}, nil
 	}
 	artifact := request.Inputs["vendor"]
 	artifact.Format = "pkg"
 	artifact.Evidence = map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"revision":7,"enabled":false}`)}
+	maps.Copy(artifact.Evidence, request.Config.Evidence)
 	return plugin.ResourceResult{Artifacts: map[string]plugin.Artifact{"installer": artifact}}, nil
 }
 

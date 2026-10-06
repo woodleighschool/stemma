@@ -294,6 +294,9 @@ func builtins(handlers map[string]reconcileHandler) (*operations, error) {
 		}
 		ops.registry = registry
 	}
+	// A built-in operation is whatever this executable does, so the executable's
+	// digest is part of its identity: an output and its evidence are reused only
+	// by the executable that prepared them.
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, err

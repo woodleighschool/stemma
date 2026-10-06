@@ -463,7 +463,10 @@ func TestPublicationVersionsFollowSelectedOutputs(t *testing.T) {
 }
 
 func TestResourceNoticesSurviveResultFiltering(t *testing.T) {
-	resource := engine.ResourceReport{Kind: "MacSoftware", Name: "foo", Cached: true, Destinations: []engine.DestinationReport{{Name: "repo"}}, Notices: []plugin.Notice{{Level: "warning", Code: "signature-expectation-missing", Message: "Source has no signature expectation", Hint: "Run `stemma signature MacSoftware/foo` to derive one."}}}
+	resource := engine.ResourceReport{Kind: "MacSoftware", Name: "foo", Cached: true, Destinations: []engine.DestinationReport{{Name: "repo"}}, Notices: []plugin.Notice{
+		{Level: "warning", Code: "signature-expectation-missing", Message: "Source has no signature expectation", Hint: "Run `stemma signature MacSoftware/foo` to derive one."},
+		{Level: "warning", Code: "signature-timestamp-missing", Message: "Developer ID signature has no secure timestamp; certificate validity at signing time cannot be established"},
+	}}
 	for _, asJSON := range []bool{false, true} {
 		t.Run(fmt.Sprintf("json=%t", asJSON), func(t *testing.T) {
 			var out, diagnostic bytes.Buffer
@@ -491,10 +494,11 @@ func TestResourceNoticesSurviveResultFiltering(t *testing.T) {
 				if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
 					t.Fatal(err)
 				}
-				if diagnostic.Len() != 0 || len(decoded.Resources[0].Notices) != 1 {
+				if diagnostic.Len() != 0 || len(decoded.Resources[0].Notices) != 2 {
 					t.Fatalf("report=%s stderr=%s", &out, &diagnostic)
 				}
-			} else if want := "! MacSoftware/foo · Source has no signature expectation\n  Run `stemma signature MacSoftware/foo` to derive one.\n"; diagnostic.String() != want {
+			} else if want := "! MacSoftware/foo · Source has no signature expectation\n  Run `stemma signature MacSoftware/foo` to derive one.\n" +
+				"! MacSoftware/foo · Developer ID signature has no secure timestamp; certificate validity at signing time cannot be established\n"; diagnostic.String() != want {
 				t.Fatalf("stderr=%q want=%q", diagnostic.String(), want)
 			}
 		})

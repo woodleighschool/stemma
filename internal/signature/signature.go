@@ -267,6 +267,40 @@ func selectSubject(subjects []plugin.Subject, selector plugin.SubjectSelector) (
 	return subjects[0], nil
 }
 
+// Notices returns the advisories that observations raise. They describe
+// evidence a valid signature lacks and never fail a resource.
+func Notices(observations []Observation) []plugin.Notice {
+	// The published artifact is one signing scope and each build input another.
+	scope := map[string]int{}
+	for _, observed := range observations {
+		scope[observed.Input]++
+	}
+	var notices []plugin.Notice
+	for _, observed := range observations {
+		// macOS accepts Developer ID code that no timestamp dates, without
+		// holding it to its certificate's validity period, and so does the
+		// verifier. A package is instead held to it when verified. Evidence
+		// from another verifier does not say whether a timestamp exists.
+		if observed.State != "signed" || observed.Verifier != Verifier || observed.Timestamped ||
+			observed.Authority != "Developer ID Application" || !strings.HasPrefix(observed.Signer, AppleDeveloperID+":") {
+			continue
+		}
+		var where []string
+		if observed.Input != "" {
+			where = append(where, "Input: "+observed.Input)
+		}
+		if scope[observed.Input] > 1 {
+			where = append(where, "Subject: "+observed.Subject.Path)
+		}
+		notices = append(notices, plugin.Notice{
+			Level: "warning", Code: "signature-timestamp-missing",
+			Message: "Developer ID signature has no secure timestamp; certificate validity at signing time cannot be established",
+			Hint:    strings.Join(where, ", "),
+		})
+	}
+	return notices
+}
+
 // Fragment renders all observations as a complete declaration for review.
 func Fragment(observations []Observation) string {
 	if len(observations) == 0 {

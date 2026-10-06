@@ -280,8 +280,10 @@ fixes the time at which every certificate of a signature must have been valid.
 Without one, a PKG's certificates are judged when it is verified, and an
 application's are held to no validity period, as on macOS: App Store signatures
 carry no timestamp, and Apple's certificate for them expires while the
-applications stay installed. Code signed to expire with its certificate needs a
-trusted timestamp. Nested code
+applications stay installed. A Developer ID application without a trusted
+timestamp verifies with a warning: nothing shows that its certificate was valid
+when it signed. Code signed to expire with its certificate needs a trusted
+timestamp. Nested code
 matches its exact recorded cdhash, or replaces the
 sealed code under the Developer ID requirement the app recorded for it: the same
 identifier, signed by the same team with a Developer ID Application certificate.
