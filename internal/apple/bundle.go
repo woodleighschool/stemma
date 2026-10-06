@@ -250,7 +250,9 @@ func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, location string, da
 	}
 	seals := make(map[string]*resourceSeal, len(manifest.Files))
 	for name, value := range manifest.Files {
-		if !fs.ValidPath(name) || strings.ContainsAny(name, "\\\x00") {
+		// Seal paths are only compared with the names the bundle holds, which
+		// may be any POSIX name.
+		if !fs.ValidPath(name) || strings.ContainsRune(name, 0) {
 			return fmt.Errorf("unsafe resource seal path %q", name)
 		}
 		seal, err := parseSeal(value)

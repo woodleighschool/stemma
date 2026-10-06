@@ -2,6 +2,7 @@ package apple
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"io/fs"
@@ -13,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/signature"
@@ -278,6 +280,39 @@ func TestResourceEnvelopeRequiresFiles2(t *testing.T) {
 		if err := v.verifyResources(contents, "Contents", data, "MacOS/fixture", "Info.plist"); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("%s envelope was not rejected as unsupported: %v", name, err)
 		}
+	}
+}
+
+// A bundle holds any POSIX name. GarageBand seals presets named like this one,
+// which a disk image carries to hosts whose own filesystems cannot.
+func TestSealedResourceNamesMayHoldBackslashes(t *testing.T) {
+	const name = `Resources/1\2 Single.pst`
+	contents := fstest.MapFS{name: {Data: []byte("preset")}}
+	fixture := os.DirFS(filepath.Join("testdata", "SignedFixture.app", "Contents"))
+	err := fs.WalkDir(fixture, ".", func(name string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		data, err := fs.ReadFile(fixture, name)
+		contents[name] = &fstest.MapFile{Data: data}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]any
+	if _, err := plist.Unmarshal(contents["_CodeSignature/CodeResources"].Data, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256([]byte("preset"))
+	manifest["files2"].(map[string]any)[name] = map[string]any{"hash2": digest[:]}
+	data, err := plist.Marshal(manifest, plist.XMLFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := &bundleVerifier{ctx: t.Context(), buffer: make([]byte, 4096)}
+	if err := v.verifyResources(contents, "Contents", data, "MacOS/fixture", "Info.plist"); err != nil {
+		t.Fatal(err)
 	}
 }
 
