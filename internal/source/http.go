@@ -21,6 +21,9 @@ func (m *Manager) download(ctx context.Context, s Download, previous *record) (r
 	if err := validateDownload(s.Download); err != nil {
 		return record{}, false, fmt.Errorf("observation URL: %w", err)
 	}
+	if s.AllowHTTPRedirect && (s.SHA256 == "" || s.Do != nil) {
+		return record{}, false, errors.New("HTTP redirects require a pinned sha256 and host transport")
+	}
 	u, _ := url.Parse(address)
 	name := s.Filename
 	if name == "" {
@@ -38,7 +41,7 @@ func (m *Manager) download(ctx context.Context, s Download, previous *record) (r
 	if err != nil {
 		return record{}, false, err
 	}
-	validators := previous != nil && (previous.ETag != "" || previous.LastModified != "")
+	validators := previous != nil && (s.SHA256 == "" || previous.Content.SHA256 == s.SHA256) && (previous.ETag != "" || previous.LastModified != "")
 	if validators {
 		if previous.ETag != "" {
 			req.Header.Set("If-None-Match", previous.ETag)
@@ -49,7 +52,15 @@ func (m *Manager) download(ctx context.Context, s Download, previous *record) (r
 	}
 	do := s.Do
 	if do == nil {
-		do = m.Client.Do
+		client := m.Client
+		if s.AllowHTTPRedirect {
+			public := *client
+			public.CheckRedirect = checkRedirect(true)
+			// A cookie jar can add credentials after CheckRedirect runs.
+			public.Jar = nil
+			client = &public
+		}
+		do = client.Do
 	}
 	res, err := do(req)
 	if err != nil {
@@ -173,4 +184,32 @@ func diagnosticURL(address *url.URL) string {
 	public.Fragment = ""
 	public.RawFragment = ""
 	return public.String()
+}
+
+func checkRedirect(allowHTTP bool) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("too many redirects")
+		}
+		if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" && (!allowHTTP || req.URL.Scheme != "http") {
+			return fmt.Errorf("HTTPS downgrade blocked: %s → %s", diagnosticURL(via[len(via)-1].URL), diagnosticURL(req.URL))
+		}
+		if req.URL.User != nil {
+			return errors.New("redirect URL must not contain user information")
+		}
+		if allowHTTP && req.URL.Scheme == "http" {
+			if err := validateHTTPURL(req.URL.String()); err != nil {
+				return fmt.Errorf("HTTP redirect: %w", err)
+			}
+		}
+		// Go copies headers from the initial request on each hop, including
+		// when a chain returns to its original origin.
+		for _, previous := range via {
+			if !sameOrigin(req.URL, previous.URL) {
+				stripPrivateHeaders(req.Header)
+				break
+			}
+		}
+		return nil
+	}
 }

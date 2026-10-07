@@ -25,6 +25,9 @@ type Download struct {
 	plugin.Download
 
 	Do func(*http.Request) (*http.Response, error)
+
+	// AllowHTTPRedirect permits public mirrors only with an independently pinned SHA-256.
+	AllowHTTPRedirect bool
 }
 
 type fileRequest struct {

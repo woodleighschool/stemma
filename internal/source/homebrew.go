@@ -455,7 +455,7 @@ func (m *Manager) acquireHomebrew(_ context.Context, config homebrewConfig, obse
 	if err := observed.validate(config); err != nil {
 		return Acquisition{}, err
 	}
-	request := &Download{URL: observed.URL, Headers: observed.Headers, Filename: observed.Filename, SHA256: observed.SHA256}
+	request := &Download{URL: observed.URL, Headers: observed.Headers, Filename: observed.Filename, SHA256: observed.SHA256, AllowHTTPRedirect: !observed.Bottle && observed.SHA256 != ""}
 	if observed.Bottle {
 		client := &auth.Client{Client: m.Client, Cache: auth.NewCache()}
 		request.Do = client.Do

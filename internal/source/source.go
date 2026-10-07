@@ -68,18 +68,7 @@ type Manager struct {
 
 // New creates a manager with bounded HTTP lifetimes and credential-safe redirects.
 func New(store *cas.Store, root string, offline bool) *Manager {
-	manager := &Manager{metadata: &metadataCache{}, Store: store, Root: root, Offline: offline, Client: &http.Client{Timeout: 15 * time.Minute, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return errors.New("too many redirects")
-		}
-		if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
-			return fmt.Errorf("HTTPS downgrade blocked: %s → %s", diagnosticURL(via[len(via)-1].URL), diagnosticURL(req.URL))
-		}
-		if !sameOrigin(req.URL, via[0].URL) || !sameOrigin(req.URL, via[len(via)-1].URL) {
-			stripPrivateHeaders(req.Header)
-		}
-		return nil
-	}}}
+	manager := &Manager{metadata: &metadataCache{}, Store: store, Root: root, Offline: offline, Client: &http.Client{Timeout: 15 * time.Minute, CheckRedirect: checkRedirect(false)}}
 	manager.resolvers = builtins(manager)
 	return manager
 }
