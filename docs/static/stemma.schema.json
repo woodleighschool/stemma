@@ -1857,7 +1857,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image."
+                  "description": "Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image. Packages default to installer metadata and receipts; selecting a package application requires path or bundle_id."
                 },
                 "destinations": {
                   "additionalProperties": {
@@ -2269,7 +2269,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image."
+                      "description": "Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image. Packages default to installer metadata and receipts; selecting a package application requires path or bundle_id."
                     },
                     "destinations": {
                       "additionalProperties": {

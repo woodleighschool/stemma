@@ -22,6 +22,28 @@ func TestApplicationOptionsRequireAnApplication(t *testing.T) {
 	}
 }
 
+func TestPackageApplicationRequiresExplicitSelection(t *testing.T) {
+	for _, installed := range []string{"/Applications/Example.app", "/private/tmp/Example.app", ""} {
+		t.Run(installed, func(t *testing.T) {
+			subject := plugin.Subject{ID: "Payload/Example.app", Path: "Payload/Example.app", InstalledPath: installed, App: &plugin.AppFacts{BundleID: "org.example.app"}}
+			facts := plugin.Facts{Subjects: []plugin.Subject{subject}}
+			if app, err := selectApp(facts, nil); err != nil || app != nil {
+				t.Fatalf("inferred package application: %+v, %v", app, err)
+			}
+			for _, options := range []*Application{{}, {VersionKey: "CFBundleVersion"}, {InstalledPath: "/Applications/Example.app"}} {
+				if _, err := selectApp(facts, options); err == nil {
+					t.Fatalf("accepted package application options without a selector: %+v", options)
+				}
+			}
+			for _, options := range []*Application{{Path: subject.Path}, {BundleID: subject.App.BundleID}} {
+				if app, err := selectApp(facts, options); err != nil || app == nil || app.ID != subject.ID {
+					t.Fatalf("explicit selection = %+v, %v", app, err)
+				}
+			}
+		})
+	}
+}
+
 func TestCommandPayloadRequiresAnExplicitPackageLayout(t *testing.T) {
 	facts := plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: ".", Kind: "file", Path: "."}}}
 	for _, traversable := range []bool{false, true} {

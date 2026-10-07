@@ -78,8 +78,10 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 		return nil, err
 	}
 	installer.Version = installerVersion(installer.Facts)
-	// An input's signing evidence describes the input, not what is published.
+	// Application selection and signing evidence belong to the prepared output.
 	installer.Evidence = maps.Clone(input.Evidence)
+	delete(installer.Evidence, "macos.application")
+	delete(installer.Evidence, "macos.version_key")
 	delete(installer.Evidence, "signatures")
 	delete(installer.Evidence, signature.BuildEvidence)
 	delete(installer.Evidence, signature.UnverifiedEvidence)

@@ -67,37 +67,25 @@ func choose(spec Spec, traversable bool, inventory plugin.Facts) (string, *plugi
 	return found[0].Path, nil, nil
 }
 
-// selectApp finds the application a selector names in a package inventory, or
-// infers its only application outside another application. Without application
-// options, packages with no unique application use installer evidence alone.
+// selectApp selects package application evidence only when explicitly requested.
 func selectApp(facts plugin.Facts, options *Application) (*plugin.Subject, error) {
+	if options == nil {
+		return nil, nil
+	}
+	if options.Path == "" && options.BundleID == "" {
+		return nil, errors.New("package application options require application.path or application.bundle_id")
+	}
 	var apps []plugin.Subject
 	for _, subject := range facts.Subjects {
 		if subject.App != nil {
 			apps = append(apps, subject)
 		}
 	}
-	if options != nil && (options.Path != "" || options.BundleID != "") {
-		matches := matchApps(apps, options)
-		if len(matches) != 1 {
-			return nil, fmt.Errorf("application selector matched %d applications; require exactly one%s", len(matches), candidates(apps))
-		}
-		return &matches[0], nil
+	matches := matchApps(apps, options)
+	if len(matches) != 1 {
+		return nil, fmt.Errorf("application selector matched %d applications; require exactly one%s", len(matches), candidates(apps))
 	}
-	top := topLevel(facts)
-	switch len(top) {
-	case 0:
-		if options != nil {
-			return nil, errors.New("application options require an application")
-		}
-		return nil, nil
-	case 1:
-		return &top[0], nil
-	}
-	if options == nil {
-		return nil, nil
-	}
-	return nil, fmt.Errorf("multiple applications observed; select application.path or application.bundle_id%s", candidates(top))
+	return &matches[0], nil
 }
 
 // topLevel lists the applications that are not inside another application.

@@ -60,6 +60,7 @@ metadata:
 spec:
   icon: fixture
   source: {url: %s/fixture.pkg}
+  application: {path: Payload/SignedFixture.app}
   destinations:
     repository:
       pkginfo: {catalogs: [testing]}

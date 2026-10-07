@@ -15,13 +15,13 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-const Version = "stemma.macsoftware/14"
+const Version = "stemma.macsoftware/15"
 
 // Spec declares a macOS installer, how preparation selects from it and how
 // destinations publish it.
 type Spec struct {
 	Source      *plugin.Input `json:"source,omitempty" yaml:"source,omitempty" jsonschema_description:"Installer input from a built-in or loaded resolver, or a named resource output. Omit for source-free destination policies."`
-	Application *Application  `json:"application,omitempty" yaml:"application,omitempty" jsonschema_description:"Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image."`
+	Application *Application  `json:"application,omitempty" yaml:"application,omitempty" jsonschema_description:"Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image. Packages default to installer metadata and receipts; selecting a package application requires path or bundle_id."`
 	// PackagePath selects one installer by archive-relative path or glob.
 	PackagePath string                  `json:"package_path,omitempty" yaml:"package_path,omitempty" jsonschema_description:"Archive-relative path or glob selecting one installer package. Selection must be unambiguous."`
 	DiskImage   *DiskImage              `json:"disk_image,omitempty" yaml:"disk_image,omitempty" jsonschema_description:"How preparation encodes the disk image it creates for an application from an archive or tree."`

@@ -104,9 +104,11 @@ their original bytes, so declaring `disk_image` for one causes preparation to fa
 
 ## Select an application once
 
-Inspection lists every application and package in the installer. If it finds one
-application, it can be selected automatically. If it finds several, select by
-`application.path` or `application.bundle_id`:
+Inspection lists every application and package in the installer. Disk images and
+archives containing one application select it automatically. Packages default to
+installer metadata and receipt detection. To use an application inside a package,
+or select among several applications, set `application.path` or
+`application.bundle_id`:
 
 ```yaml
 application:
@@ -318,7 +320,7 @@ stemma icon
 
 `stemma icon` prepares the locked source like any other run and takes the
 application that [selection](#select-an-application-once) identifies. Disk images,
-archives and vendor packages all work; a package holding several applications needs
+archives and vendor packages all work; a package needs
 `application.bundle_id` or `application.path` first. Without selectors it creates
 the declared icons that have no file yet and existing files stay unchanged, so a run
 across the catalog is safe. `--force` replaces them.

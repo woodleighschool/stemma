@@ -95,7 +95,7 @@ func TestIconExtractsOnlyDeclaredArtwork(t *testing.T) {
 	}
 	for _, input := range bundleInputs(t, root) {
 		t.Run(input.Filename, func(t *testing.T) {
-			outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
+			outputs, err := Prepare(t.Context(), Spec{Application: &Application{BundleID: "org.example.app"}}, Request{Input: input, Workspace: t.TempDir()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -200,7 +200,7 @@ func TestIconWithOnlyAssetCatalog(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, input := range bundleInputs(t, root) {
-			outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
+			outputs, err := Prepare(t.Context(), Spec{Application: &Application{BundleID: "org.example.app"}}, Request{Input: input, Workspace: t.TempDir()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -242,7 +242,7 @@ func TestIconResolvesUndeclaredExecutable(t *testing.T) {
 	}
 	for _, input := range bundleInputs(t, root) {
 		t.Run(input.Filename, func(t *testing.T) {
-			outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
+			outputs, err := Prepare(t.Context(), Spec{Application: &Application{BundleID: "org.example.app"}}, Request{Input: input, Workspace: t.TempDir()})
 			if err != nil {
 				t.Fatal(err)
 			}

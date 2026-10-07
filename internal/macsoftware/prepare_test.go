@@ -17,6 +17,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/apple"
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/inspect"
+	"github.com/woodleighschool/stemma/internal/munki"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
@@ -251,6 +252,46 @@ func TestPrepareRecognizesOpaqueDiskImage(t *testing.T) {
 	sum := sha256.Sum256(data)
 	if artifact.Format != "dmg" || artifact.SHA256 != hex.EncodeToString(sum[:]) || artifact.Version != "1.2" {
 		t.Fatalf("disk image = %+v", artifact)
+	}
+}
+
+func TestPackageApplicationDetectionIsExplicit(t *testing.T) {
+	root := applicationFixture(t)
+	filename := filepath.Join(t.TempDir(), "Installer.pkg")
+	if err := pkgbuild.Build(t.Context(), root, filename, pkgbuild.Options{Identifier: "org.example.installer", Version: "2.0", InstallLocation: "/Applications", Payload: ".", Compression: pkgbuild.Gzip}); err != nil {
+		t.Fatal(err)
+	}
+	input := plugin.Artifact{Path: filename, Filename: "Installer.pkg", Format: "pkg", Evidence: map[string]json.RawMessage{
+		"macos.application": json.RawMessage(`{"id":"old","app":{"bundle_id":"org.example.stale"}}`),
+		"macos.version_key": json.RawMessage(`"CFBundleVersion"`),
+	}}
+	outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := outputs["installer"]
+	if installer.Version != "2.0" || installer.Evidence["macos.application"] != nil || installer.Evidence["macos.version_key"] != nil || len(topLevel(installer.Facts)) != 1 {
+		t.Fatalf("installer evidence = %+v", installer)
+	}
+	derived, err := munki.Derive(plugin.ReconcileRequest[json.RawMessage]{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "Installer"}}, Artifact: installer})
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipts, ok := derived.Values["receipts"].([]munki.Receipt)
+	if !ok || len(receipts) != 1 || receipts[0].PackageID != "org.example.installer" || receipts[0].Version != "2.0" || derived.Values["installs"] != nil {
+		t.Fatalf("package detection = %+v", derived.Values)
+	}
+	outputs, err = Prepare(t.Context(), Spec{Application: &Application{BundleID: "org.example.app"}}, Request{Input: plugin.Artifact{Path: filename, Filename: "Installer.pkg", Format: "pkg"}, Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, err = munki.Derive(plugin.ReconcileRequest[json.RawMessage]{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "Installer"}}, Artifact: outputs["installer"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installs, ok := derived.Values["installs"].([]munki.InstallItem)
+	if !ok || len(installs) != 1 || installs[0].Path != "/Applications/Example.app" || derived.Values["version"] != "1.2" {
+		t.Fatalf("explicit application detection = %+v", derived.Values)
 	}
 }
 
