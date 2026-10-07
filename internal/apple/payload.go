@@ -435,6 +435,8 @@ type cpioEntry struct {
 	mode  uint64
 	links uint64
 	size  int64
+	// duplicate marks a path the stream already named with the same type.
+	duplicate bool
 }
 
 func (e cpioEntry) kind() uint64 { return e.mode & 0170000 }
@@ -506,8 +508,12 @@ func (c *cpioReader) next() (cpioEntry, error) {
 	if path.IsAbs(name) || strings.ContainsAny(name, "\\\x00") || path.Clean(name) != name || name == ".." || strings.HasPrefix(name, "../") {
 		return cpioEntry{}, fmt.Errorf("unsafe CPIO path %q", name)
 	}
-	if _, exists := c.seen[name]; exists {
-		return cpioEntry{}, fmt.Errorf("duplicate CPIO path %q", name)
+	if kind, exists := c.seen[name]; exists {
+		if kind != entry.kind() {
+			return cpioEntry{}, fmt.Errorf("CPIO path %q changes type", name)
+		}
+		// Consumers reject repeated entries they use; untouched payload files may repeat.
+		entry.duplicate = true
 	}
 	if name == "." && entry.kind() != cpioDirectory {
 		return cpioEntry{}, fmt.Errorf("CPIO root is not a directory")
@@ -546,6 +552,9 @@ func readCPIO(r io.Reader, budget *payloadBudget, applicationRoot bool) ([]Packa
 				return nil, err
 			}
 			continue
+		}
+		if entry.duplicate {
+			return nil, fmt.Errorf("duplicate application metadata %q", name)
 		}
 		if entry.kind() != cpioRegular || entry.links > 1 {
 			return nil, fmt.Errorf("%w: application Info.plist must be a regular, unlinked file", ErrUnsupported)

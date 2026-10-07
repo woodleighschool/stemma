@@ -141,3 +141,28 @@ func TestExtractApplicationFromBundleRootPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDuplicateUnselectedPayloadFilesDoNotBlockInspectionOrIcons(t *testing.T) {
+	const app = "./Applications/Example.app"
+	library := fileEntry(app+"/Contents/Libraries/library.dylib", 0o644, "library")
+	name := applicationPackage(t, "/", []payloadEntry{
+		plistEntry(t, app+"/Contents/Info.plist", "Example"),
+		fileEntry(app+"/Contents/Resources/AppIcon.icns", 0o644, "icns"), library, library,
+	})
+	facts, err := InspectPackageContents(t.Context(), name)
+	if err != nil || len(facts.Applications) != 1 {
+		t.Fatalf("inspection: %+v, %v", facts, err)
+	}
+	selected := facts.Applications[0]
+	bundle, err := ExtractApplication(t.Context(), name, selected.Path, selected.InstalledPath, t.TempDir(), archive.Leaves{"Contents/Info.plist", "Contents/Resources/AppIcon.icns"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	icon, err := os.ReadFile(filepath.Join(bundle, "Contents/Resources/AppIcon.icns"))
+	if err != nil || string(icon) != "icns" {
+		t.Fatalf("icon: %q, %v", icon, err)
+	}
+	if _, err := ExtractApplication(t.Context(), name, selected.Path, selected.InstalledPath, t.TempDir(), nil); err == nil {
+		t.Fatal("accepted duplicate selected file")
+	}
+}

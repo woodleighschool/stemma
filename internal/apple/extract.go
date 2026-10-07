@@ -135,6 +135,9 @@ func extractBundle(r io.Reader, budget *payloadBudget, prefix string, bundle *os
 			}
 			continue
 		}
+		if entry.duplicate {
+			return fmt.Errorf("duplicate selected CPIO path %q", entry.name)
+		}
 		switch kind {
 		case cpioDirectory:
 			if err := bundle.MkdirAll(relative, 0o700); err != nil {

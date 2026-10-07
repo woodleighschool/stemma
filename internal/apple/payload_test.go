@@ -636,3 +636,14 @@ func TestPayloadRejectsIncompleteHeadersAndTrailingContent(t *testing.T) {
 		})
 	}
 }
+
+func TestRepeatedPayloadPathCannotChangeType(t *testing.T) {
+	payload := cpioPayload(t, []payloadEntry{
+		fileEntry("./Example.app", 0o644, "file"),
+		directoryEntry("./Example.app"),
+		plistEntry(t, "./Example.app/Contents/Info.plist", "Example"),
+	})
+	if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), newPayloadBudget(), false); err == nil {
+		t.Fatal("accepted a path changing type")
+	}
+}
