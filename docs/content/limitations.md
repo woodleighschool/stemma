@@ -31,7 +31,8 @@ macOS is supported by the portable reader.
 DMG inspection reads the filesystem through compressed chunks, without creating a
 raw filesystem image. Applications are verified inside the image, and
 icon rendering copies out only the files the renderer reads. Published vendor
-installers retain their original bytes. Leave enough working disk space for
+installers retain their original bytes unless `MacSoftware.package` packages a
+selected application from a DMG. Leave enough working disk space for
 extracted content and destination preparation.
 
 The pipeline consumes catalog-selected vendor artifacts. Inspection does not run
@@ -45,7 +46,8 @@ extended attributes, including resource forks. Archive metadata must identify an
 exact existing entry; conflicting attributes and symlink parents are rejected.
 New PKG payloads omit extended attributes, ACLs and resource forks and reject code
 signatures stored in those attributes. Local tree imports also reject these
-signatures. Existing vendor PKGs and DMGs retain their original bytes.
+signatures. Vendor PKGs and DMGs published without repackaging retain their
+original bytes.
 
 ## Signatures
 

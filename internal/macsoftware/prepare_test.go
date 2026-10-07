@@ -181,10 +181,15 @@ func TestPackagePublishesTheSelectedApplication(t *testing.T) {
 	testarchive.Zip(t, archive, root)
 	image := filepath.Join(t.TempDir(), "Example.dmg")
 	testdiskimage.Write(t, image, root)
+	nested := filepath.Join(t.TempDir(), "Installer.zip")
+	testarchive.Zip(t, nested, filepath.Dir(image))
 	inputs := []plugin.Artifact{
 		{Path: archive, Filename: "Example.zip", Format: "zip"},
 		{Path: image, Filename: "Example.dmg", Format: "dmg"},
 		{Path: filepath.Join(root, "Example.app"), Filename: "Example.app", Tree: true},
+		{Path: archive, Filename: "Example.zip", Format: "zip", ContentRoot: "Example.app"},
+		{Path: image, Filename: "Example.dmg", Format: "dmg", ContentRoot: "Example.app"},
+		{Path: nested, Filename: "Installer.zip", Format: "zip"},
 	}
 	digests := map[string]bool{}
 	for _, input := range inputs {
@@ -223,7 +228,7 @@ func TestPackagePublishesTheSelectedApplication(t *testing.T) {
 	}
 
 	spec := Spec{
-		Application: &Application{BundleID: "org.example.app", InstalledPath: "/Applications/Utilities/Renamed.app", VersionKey: "CFBundleVersion"},
+		Application: &Application{BundleID: "org.example.app", InstalledPath: "/Library/Application Support/Renamed.app", VersionKey: "CFBundleVersion"},
 		Package:     &Package{Identifier: "org.example.pkg.Example", Compression: pkgbuild.XZ},
 	}
 	outputs, err := Prepare(t.Context(), spec, Request{Input: inputs[0], Workspace: t.TempDir()})
@@ -241,7 +246,7 @@ func TestPackagePublishesTheSelectedApplication(t *testing.T) {
 			installed = append(installed, subject.InstalledPath)
 		}
 	}
-	if receipt == nil || receipt.Identifier != "org.example.pkg.Example" || receipt.Version != "123" || installer.Version != "123" || !reflect.DeepEqual(installed, []string{"/Applications/Utilities/Renamed.app"}) || digests[installer.SHA256] {
+	if receipt == nil || receipt.Identifier != "org.example.pkg.Example" || receipt.Version != "123" || installer.Version != "123" || !reflect.DeepEqual(installed, []string{spec.Application.InstalledPath}) || digests[installer.SHA256] {
 		t.Fatalf("installer=%+v receipt=%+v installed=%v", installer, receipt, installed)
 	}
 }
@@ -280,6 +285,33 @@ func TestPackageSignatureVerifiesTheApplication(t *testing.T) {
 	named := Spec{Package: &Package{}, Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: app.Path}, Signer: signer}}}
 	if _, err := Prepare(t.Context(), named, Request{Input: input, Workspace: t.TempDir()}); err != nil {
 		t.Fatal(err)
+	}
+	image := filepath.Join(t.TempDir(), "WoodSweep.dmg")
+	testdiskimage.Write(t, image, release)
+	nested := filepath.Join(t.TempDir(), "Installer.zip")
+	testarchive.Zip(t, nested, filepath.Dir(image))
+	named.Application = &Application{InstalledPath: "/Library/Application Support/Renamed.app"}
+	named.Signatures[0].Subject.Path = "Payload/Library/Application Support/Renamed.app"
+	for name, selected := range map[string]plugin.Artifact{
+		"archive":      input,
+		"app root":     {Path: filepath.Join(release, "WoodSweep.app"), Filename: "WoodSweep.app", Tree: true},
+		"archive root": {Path: filename, Filename: input.Filename, Format: "zip", ContentRoot: "WoodSweep.app"},
+		"disk image":   {Path: image, Filename: "WoodSweep.dmg", Format: "dmg"},
+		"image root":   {Path: image, Filename: "WoodSweep.dmg", Format: "dmg", ContentRoot: "WoodSweep.app"},
+		"nested image": {Path: nested, Filename: "Installer.zip", Format: "zip"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			outputs, err := Prepare(t.Context(), named, Request{Input: selected, Workspace: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(outputs["installer"].Evidence["macos.application"], &app); err != nil {
+				t.Fatal(err)
+			}
+			if app.Path != named.Signatures[0].Subject.Path || app.InstalledPath != named.Application.InstalledPath {
+				t.Fatalf("signature subject does not name the installed application: %+v", app)
+			}
+		})
 	}
 	workspace := t.TempDir()
 	if _, err := Prepare(t.Context(), Spec{Package: &Package{}, Signatures: []signature.Expectation{{Signer: "apple:developer-id:AAAAAAAAAA"}}}, Request{Input: input, Workspace: workspace}); !errors.Is(err, signature.ErrMismatch) {

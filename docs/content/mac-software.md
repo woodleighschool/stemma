@@ -38,9 +38,9 @@ named `munki`. Substitute your application's actual path.
 
 ## Publish an application from an archive
 
-A vendor's PKG or DMG keeps its original bytes. An application that arrives on its
-own, in a ZIP or TAR archive or as a committed `.app` tree, is placed at the root
-of a new DMG. One document covers a GitHub release:
+By default, a vendor's PKG or DMG keeps its original bytes. An application that
+arrives on its own, in a ZIP or TAR archive or as a committed `.app` tree, is
+placed at the root of a new DMG. One document covers a GitHub release:
 
 ```yaml
 apiVersion: stemma/v1alpha1
@@ -140,8 +140,8 @@ leaves a receipt on each Mac.
 [Signature](#signature) verifies the application. The package is a container and
 carries no signature of its own, so it can't publish as an Intune
 line-of-business app. A package payload holds no extended attributes: an
-application that keeps code signatures in them fails to package, and publishes in
-a disk image.
+application that keeps code signatures in them fails to package. Omit `package`
+to publish it in a disk image.
 
 The package has no scripts and no other payload;
 [BuildMacPkg](building-packages.md) builds those. A vendor PKG keeps its original
@@ -346,8 +346,8 @@ identifier, signed by the same team with a Developer ID Application certificate.
 `stemma signature` lists replaced nested code. Nested scripts and data files that
 `codesign` signs in extended attributes verify inside vendor DMGs and archives
 that carry those attributes. Generated images preserve them; vendor DMGs are
-published unchanged. Notarisation and Gatekeeper policy
-are not assessed. See [signature limits](limitations.md#signatures).
+published unchanged unless `package` selects PKG preparation. Notarisation and
+Gatekeeper policy are not assessed. See [signature limits](limitations.md#signatures).
 
 ## Icons
 

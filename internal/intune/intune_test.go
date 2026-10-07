@@ -1007,10 +1007,12 @@ func TestPKGInstallScripts(t *testing.T) {
 	}
 	const secret = "bootstrap-password"
 	post := "#!/bin/sh\nbootstrap --password " + secret + "\n"
+	pre := "#!/bin/sh\ncheck --token preinstall-token\n"
+	scripts := []string{pre, post}
 	metadata := object{
 		"display_name": "App", "description": "Scripted", "publisher": "Example",
 		"included_apps":       []any{object{"id": "org.example.app", "version": "1.0"}},
-		"pre_install_script":  "#!/bin/sh\nexit 0\n",
+		"pre_install_script":  pre,
 		"post_install_script": post,
 	}
 	run := func(method string) plugin.ReconcileResponse {
@@ -1028,10 +1030,10 @@ func TestPKGInstallScripts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, change := range response.Changes {
-			for _, value := range []string{string(change.Before), string(change.After)} {
-				if strings.Contains(value, secret) || strings.Contains(value, base64.StdEncoding.EncodeToString([]byte(post))) {
-					t.Fatalf("%s %s reported script text: %s", change.Action, change.Field, value)
+		for _, script := range scripts {
+			for _, value := range []string{string(raw(script)), base64.StdEncoding.EncodeToString([]byte(script)), secret, "preinstall-token"} {
+				if strings.Contains(string(raw(response)), value) {
+					t.Fatalf("%s response reported script text", method)
 				}
 			}
 		}
@@ -1046,6 +1048,7 @@ func TestPKGInstallScripts(t *testing.T) {
 		}
 		return changes
 	}
+	run("plan")
 	run("apply")
 	stored := func(key string) string {
 		fake.mu.Lock()
@@ -1061,7 +1064,11 @@ func TestPKGInstallScripts(t *testing.T) {
 		t.Fatalf("settled plan: %+v", response.Changes)
 	}
 	post = "#!/bin/sh\nbootstrap --server example.test --password " + secret + "\n"
+	scripts = append(scripts, post)
 	metadata["post_install_script"], metadata["pre_install_script"] = post, nil
+	if changes := scriptChanges(run("plan")); !slices.Equal(changes, []string{"set post_install_script", "clear pre_install_script"}) {
+		t.Fatalf("planned script changes: %v", changes)
+	}
 	if changes := scriptChanges(run("apply")); !slices.Equal(changes, []string{"set post_install_script", "clear pre_install_script"}) {
 		t.Fatalf("script changes: %v", changes)
 	}
@@ -1071,6 +1078,12 @@ func TestPKGInstallScripts(t *testing.T) {
 	if !cleared || stored("postInstallScript") != post {
 		t.Fatalf("updated scripts: %+v", fake.app)
 	}
+	if response := run("plan"); len(response.Changes) != 0 {
+		t.Fatalf("settled script update: %+v", response.Changes)
+	}
+	if fake.versions != 1 || fake.blobLists != 1 {
+		t.Fatal("script update uploaded unchanged content")
+	}
 	// Omission leaves a script another administrator set.
 	delete(metadata, "post_install_script")
 	if response := run("plan"); len(response.Changes) != 0 || stored("postInstallScript") != post {
@@ -1078,6 +1091,14 @@ func TestPKGInstallScripts(t *testing.T) {
 	}
 
 	metadata["post_install_script"] = post
+	metadata["app_id"] = "app-1"
+	fake.mu.Lock()
+	fake.app["notes"] = ""
+	fake.app["postInstallScript"] = object{"scriptContent": base64.StdEncoding.EncodeToString([]byte(scripts[1]))}
+	fake.mu.Unlock()
+	if changes := scriptChanges(run("plan")); !slices.Equal(changes, []string{"set post_install_script"}) {
+		t.Fatalf("adopted script changes: %v", changes)
+	}
 	// A disk image app names the way to a PKG; a line-of-business app has none.
 	for format, hint := range map[string]string{"dmg": "_script requires a PKG app; set package", "lob": "_script requires a PKG app"} {
 		req.Artifact.Format, req.Artifact.Filename = "dmg", "app.dmg"

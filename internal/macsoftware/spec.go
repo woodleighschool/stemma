@@ -22,7 +22,7 @@ const Version = "stemma.macsoftware/17"
 // destinations publish it.
 type Spec struct {
 	Source      *plugin.Input `json:"source,omitempty" yaml:"source,omitempty" jsonschema_description:"Installer input from a built-in or loaded resolver, or a named resource output. Omit for source-free destination policies."`
-	Application *Application  `json:"application,omitempty" yaml:"application,omitempty" jsonschema_description:"Select the application that supplies version, detection and icon metadata, and that an archive publishes in a new disk image or, with package, any source publishes in a new PKG. Packages default to installer metadata and receipts; selecting a package application requires path or bundle_id."`
+	Application *Application  `json:"application,omitempty" yaml:"application,omitempty" jsonschema_description:"Select the application that supplies version, detection and icon metadata. An archive publishes it in a new disk image; package publishes it from an archive, tree or disk image in a new PKG. Vendor packages default to installer metadata and receipts; selecting a package application requires path or bundle_id."`
 	// PackagePath selects one installer package, or a disk image to open, by
 	// path or glob.
 	PackagePath string     `json:"package_path,omitempty" yaml:"package_path,omitempty" jsonschema_description:"Path or glob selecting one installer package, relative to the archive or disk image holding it. It may instead name a disk image to open. Selection must be unambiguous."`

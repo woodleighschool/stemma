@@ -169,6 +169,31 @@ func TestCompositionPreservesConfinedSymlinks(t *testing.T) {
 	}
 }
 
+func TestCompositionPreservesSymlinksUnderLiteralBackslashes(t *testing.T) {
+	if filepath.Separator == '\\' {
+		t.Skip("Windows cannot represent a literal backslash in a filename")
+	}
+	spec, inputs := fixture(t)
+	directory := filepath.Join(inputs["fonts"].Path, `literal\name`)
+	if err := os.Mkdir(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../Example.otf", filepath.Join(directory, "current")); err != nil {
+		t.Fatal(err)
+	}
+	spec.Scripts["fonts"] = Script{Input: "fonts"}
+	result, err := buildPackage(t.Context(), spec, inputs, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for area, name := range map[string]string{"Payload": `Library/Fonts/literal\name/current`, "Scripts": `fonts/literal\name/current`} {
+		files, modes := packageArchive(t, result.Path, area)
+		if files[name] != "../Example.otf" || modes[name]&cpio.ModeSymlink == 0 {
+			t.Fatalf("%s lost literal path or symlink: %q %#o", area, files[name], modes[name])
+		}
+	}
+}
+
 func TestCompositionRejectsSymlinkDestinationParents(t *testing.T) {
 	spec, inputs := fixture(t)
 	root := inputs["fonts"].Path
