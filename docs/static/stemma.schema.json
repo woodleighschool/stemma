@@ -5061,6 +5061,48 @@
               ],
               "description": "Owner label."
             },
+            "post_install_script": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "maxLength": 15359,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Script that runs after a PKG app installs. Intune reports the app as installed whatever the script's exit status. PKG apps only; a disk image app has no scripts. Null removes the script. Plans report a change without the script text. Never executed by Stemma."
+            },
+            "pre_install_script": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "maxLength": 15359,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                {
+                  "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                  "type": "string"
+                }
+              ],
+              "description": "Script that runs before a PKG app installs. A nonzero exit stops the installation, which Intune tries again at the next check-in. PKG apps only; a disk image app has no scripts. Null removes the script. Plans report a change without the script text. Never executed by Stemma."
+            },
             "privacy_url": {
               "anyOf": [
                 {

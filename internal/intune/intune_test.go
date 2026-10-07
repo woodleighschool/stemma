@@ -994,6 +994,103 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 	}
 }
 
+func TestPKGInstallScripts(t *testing.T) {
+	fake, c := newGraphFixture(t)
+	source := bytes.Repeat([]byte{0x91, 0x3, 0x72}, 2000)
+	digest := sha256.Sum256(source)
+	req := fixtureRequest(t)
+	req.Identity.Resource.Kind = "MacSoftware"
+	req.MinimumOS = &plugin.MinimumOS{Version: "14.0", Origin: "software.minimum_os"}
+	req.Artifact = plugin.Artifact{Path: filepath.Join(t.TempDir(), "app-1.0.pkg"), Filename: "app-1.0.pkg", Format: "pkg", Size: int64(len(source)), SHA256: hex.EncodeToString(digest[:])}
+	if err := os.WriteFile(req.Artifact.Path, source, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const secret = "bootstrap-password"
+	post := "#!/bin/sh\nbootstrap --password " + secret + "\n"
+	metadata := object{
+		"display_name": "App", "description": "Scripted", "publisher": "Example",
+		"included_apps":       []any{object{"id": "org.example.app", "version": "1.0"}},
+		"pre_install_script":  "#!/bin/sh\nexit 0\n",
+		"post_install_script": post,
+	}
+	run := func(method string) plugin.ReconcileResponse {
+		t.Helper()
+		req.Method, req.Metadata = method, raw(metadata)
+		derived, _, err := Derive(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		desired, err := decodeObject(derived.Metadata)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response, err := c.handle(t.Context(), derived, desired)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, change := range response.Changes {
+			for _, value := range []string{string(change.Before), string(change.After)} {
+				if strings.Contains(value, secret) || strings.Contains(value, base64.StdEncoding.EncodeToString([]byte(post))) {
+					t.Fatalf("%s %s reported script text: %s", change.Action, change.Field, value)
+				}
+			}
+		}
+		return response
+	}
+	scriptChanges := func(response plugin.ReconcileResponse) []string {
+		var changes []string
+		for _, change := range response.Changes {
+			if strings.HasSuffix(change.Field, "_script") {
+				changes = append(changes, change.Action+" "+change.Field)
+			}
+		}
+		return changes
+	}
+	run("apply")
+	stored := func(key string) string {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		script, _ := fake.app[key].(object)
+		content, _ := base64.StdEncoding.DecodeString(text(script["scriptContent"]))
+		return string(content)
+	}
+	if stored("preInstallScript") != metadata["pre_install_script"] || stored("postInstallScript") != post {
+		t.Fatalf("published scripts: %+v", fake.app)
+	}
+	if response := run("plan"); len(response.Changes) != 0 {
+		t.Fatalf("settled plan: %+v", response.Changes)
+	}
+	post = "#!/bin/sh\nbootstrap --server example.test --password " + secret + "\n"
+	metadata["post_install_script"], metadata["pre_install_script"] = post, nil
+	if changes := scriptChanges(run("apply")); !slices.Equal(changes, []string{"set post_install_script", "clear pre_install_script"}) {
+		t.Fatalf("script changes: %v", changes)
+	}
+	fake.mu.Lock()
+	cleared := fake.app["preInstallScript"] == nil
+	fake.mu.Unlock()
+	if !cleared || stored("postInstallScript") != post {
+		t.Fatalf("updated scripts: %+v", fake.app)
+	}
+	// Omission leaves a script another administrator set.
+	delete(metadata, "post_install_script")
+	if response := run("plan"); len(response.Changes) != 0 || stored("postInstallScript") != post {
+		t.Fatalf("omitted script: %+v", response.Changes)
+	}
+
+	metadata["post_install_script"] = post
+	for _, format := range []string{"dmg", "lob"} {
+		req.Artifact.Format, req.Artifact.Filename = "dmg", "app.dmg"
+		delete(metadata, "type")
+		if format == "lob" {
+			req.Artifact.Format, req.Artifact.Filename, metadata["type"] = "pkg", "app-1.0.pkg", "lob"
+		}
+		req.Metadata = raw(metadata)
+		if _, err := compile(req); err == nil || !strings.Contains(err.Error(), "_script requires a PKG app") {
+			t.Fatalf("%s app accepted a script: %v", format, err)
+		}
+	}
+}
+
 func TestMacValidationAndAdoption(t *testing.T) {
 	mac := plugin.ReconcileRequest[Config]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "example"}}}
 	for _, metadata := range []object{

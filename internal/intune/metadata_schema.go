@@ -72,6 +72,15 @@ func MetadataSchema() *jsonschema.Schema {
 		"id":      {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application bundle identifier, or package receipt identifier for a PKG app."},
 		"version": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleShortVersionString or package receipt version."},
 	}, "id", "version")}
+	for key, description := range map[string]string{
+		"pre_install_script":  "Script that runs before a PKG app installs. A nonzero exit stops the installation, which Intune tries again at the next check-in.",
+		"post_install_script": "Script that runs after a PKG app installs. Intune reports the app as installed whatever the script's exit status.",
+	} {
+		mac[key] = &jsonschema.Schema{
+			AnyOf:       []*jsonschema.Schema{{Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(maxInstallScript))}, {Type: "null"}},
+			Description: description + " PKG apps only; a disk image app has no scripts. Null removes the script. Plans report a change without the script text. Never executed by Stemma.",
+		}
+	}
 	lob := common()
 	lob["type"] = &jsonschema.Schema{Const: "lob", Description: "Publish the signed PKG as a line-of-business app. The PKG must install an application under /Applications."}
 	lob["ignore_version_detection"], lob["included_apps"] = mac["ignore_version_detection"], mac["included_apps"]

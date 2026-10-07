@@ -211,8 +211,29 @@ one application under `/Applications`.
 The minimum OS is the setting for the release of the software's effective
 [minimum macOS](mac-software.md#minimum-macos): its major version, or major and
 minor for 10.x, so 14.2 selects macOS 14 and the plan shows that mapping. A
-release Intune has no setting for fails publication. macOS scripts are
-unsupported.
+release Intune has no setting for fails publication.
+
+A PKG app can run a script before and after it installs:
+
+```yaml
+pre_install_script: |-
+  #!/bin/zsh --no-rcs
+
+  # Wait for someone to log in.
+  case $(/usr/bin/stat -f %Su /dev/console) in
+      root | loginwindow | _mbsetupuser | "") exit 1 ;;
+  esac
+post_install_script: |-
+  #!/bin/zsh --no-rcs
+
+  /Applications/Example.app/Contents/MacOS/Example enroll --token '{{ env.EXAMPLE_TOKEN }}'
+```
+
+A pre-install script that exits nonzero stops the installation, and Intune tries
+again at the next check-in. Intune reports the app as installed whatever the
+post-install script's exit status. Each script holds at most 15359 characters,
+and `null` removes one. A script can carry environment values, so plans say that
+a script changes without showing it. DMG and line-of-business apps have no scripts.
 
 ### Intune relationships
 

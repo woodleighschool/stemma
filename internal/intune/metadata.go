@@ -1,6 +1,7 @@
 package intune
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"math"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -35,6 +37,13 @@ var commonFields = map[string]field{
 var macFields = map[string]field{
 	"included_apps":            {"includedApps", includedApps},
 	"ignore_version_detection": {"ignoreVersionDetection", boolean},
+}
+
+// pkgFields apply only to a Mac PKG app. Scripts can embed environment
+// values, so reports name these fields without their values.
+var pkgFields = map[string]field{
+	"pre_install_script":  {"preInstallScript", installScript},
+	"post_install_script": {"postInstallScript", installScript},
 }
 
 // lobFields apply only to a Mac line-of-business app.
@@ -134,6 +143,12 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 		if !ok && appType == lobType {
 			spec, ok = lobFields[key]
 		}
+		if script, scripted := pkgFields[key]; scripted {
+			if appType != pkgType {
+				return nil, fmt.Errorf("%s requires a PKG app", key)
+			}
+			spec, ok = script, true
+		}
 		if !ok {
 			return nil, fmt.Errorf("unsupported Intune %s field %q", strings.TrimPrefix(appType, "#microsoft.graph."), key)
 		}
@@ -195,7 +210,8 @@ func resolveType(req plugin.ReconcileRequest[Config], m object) (string, error) 
 		case format == "pkg" || format == "dmg":
 			return appTypes[format], nil
 		case req.Artifact.Path == "":
-			// Without an artifact the fields of a PKG and a DMG app are the same.
+			// Without an artifact the format is unknown; a PKG app takes every
+			// field a DMG app does.
 			return pkgType, nil
 		}
 		return "", fmt.Errorf("intune has no app type for a %q installer", format)
@@ -234,6 +250,22 @@ func int32Value(value any) (any, error) {
 		return nil, errors.New("must be a nonnegative Int32")
 	}
 	return value, nil
+}
+
+// maxInstallScript is Intune's limit on a PKG app script, in characters.
+const maxInstallScript = 15359
+
+// installScript translates script text into the encoded script Graph stores;
+// null removes the script.
+func installScript(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	script, ok := value.(string)
+	if !ok || script == "" || utf8.RuneCountInString(script) > maxInstallScript {
+		return nil, fmt.Errorf("must be script text of at most %d characters, or null", maxInstallScript)
+	}
+	return object{"scriptContent": base64.StdEncoding.EncodeToString([]byte(script))}, nil
 }
 
 // windowsArchitectures lists Graph's architecture flags in the order Graph
@@ -454,7 +486,7 @@ func reportName(property string) string {
 	if derived, ok := derivedNames[property]; ok {
 		return derived
 	}
-	for _, table := range []map[string]field{commonFields, macFields, lobFields, win32Fields} {
+	for _, table := range []map[string]field{commonFields, macFields, pkgFields, lobFields, win32Fields} {
 		for declared, spec := range table {
 			if spec.graph == head {
 				name = declared

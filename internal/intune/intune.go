@@ -4,6 +4,7 @@ package intune
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"maps"
@@ -162,7 +163,7 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		if err := validateCreation(desired); err != nil {
 			return response, err
 		}
-		response.Changes = append(response.Changes, plugin.Change{Kind: "destination", Action: "create", Field: "app", After: raw(desired)})
+		response.Changes = append(response.Changes, plugin.Change{Kind: "destination", Action: "create", Field: "app", After: raw(reported(desired))})
 	}
 	if contentChanged {
 		response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "payload_sha256", Action: "upload", Filename: uploadFilename(req.Identity.Resource.Name, req.Artifact, artifact), Before: raw(published.active(current)), After: raw(artifact.identity)})
@@ -409,6 +410,14 @@ func metadataPatch(current, desired object, published publication) (object, []pl
 			value = mergeItems(key, previous, value.([]any))
 		}
 		patch[key] = value
+		if slices.Contains(installScripts, key) {
+			action := "set"
+			if value == nil {
+				action = "clear"
+			}
+			changes = append(changes, plugin.Change{Kind: "metadata", Field: reportName(key), Action: action})
+			continue
+		}
 		before, after := current[key], value
 		if key == "minimumSupportedOperatingSystem" {
 			before, after = minimumOSChangeValue(before), minimumOSChangeValue(desired[key])
@@ -421,6 +430,28 @@ func metadataPatch(current, desired object, published publication) (object, []pl
 		changes = append(changes, plugin.Change{Kind: "metadata", Field: "notes", Action: "set", Before: raw(current["notes"]), After: raw(notes)})
 	}
 	return patch, changes
+}
+
+// installScripts are the Graph properties that hold a PKG app's scripts.
+var installScripts = []string{"preInstallScript", "postInstallScript"}
+
+// reported returns the app as a creation reports it. Scripts can embed
+// environment values, so the report gives their length instead.
+func reported(app object) object {
+	app = maps.Clone(app)
+	for _, key := range installScripts {
+		script, declared := app[key].(object)
+		if !declared {
+			continue
+		}
+		content, _ := base64.StdEncoding.DecodeString(text(script["scriptContent"]))
+		lines := strings.Count(strings.TrimSuffix(string(content), "\n"), "\n") + 1
+		app[key] = fmt.Sprintf("%d lines", lines)
+		if lines == 1 {
+			app[key] = "1 line"
+		}
+	}
+	return app
 }
 
 func minimumOSChangeValue(value any) any {
