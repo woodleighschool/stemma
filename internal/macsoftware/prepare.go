@@ -223,6 +223,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 // publishPackage retains a PKG source, or extracts the selected nested package.
 func publishPackage(ctx context.Context, spec Spec, request Request, source *contents.Source, inventory plugin.Facts, pkg string) (plugin.Artifact, *plugin.Subject, []signature.Observation, error) {
 	local, facts := request.Input.Path, inventory
+	extracted := false
 	if pkg != "." {
 		node, err := source.At(ctx, pkg)
 		if err != nil {
@@ -236,6 +237,7 @@ func publishPackage(ctx context.Context, spec Spec, request Request, source *con
 			if err != nil {
 				return plugin.Artifact{}, nil, nil, err
 			}
+			extracted = true
 		}
 		done := plugin.Stage(ctx, "Inspecting package", plugin.Detail(path.Base(pkg)))
 		facts, err = inspect.Read(ctx, local)
@@ -264,7 +266,13 @@ func publishPackage(ctx context.Context, spec Spec, request Request, source *con
 			return plugin.Artifact{}, nil, nil, err
 		}
 	}
-	installer, err := retain(ctx, local, filepath.Base(local), request.Workspace)
+	var installer plugin.Artifact
+	if extracted {
+		// Extraction belongs to the workspace; archive locals belong to the source.
+		installer, err = describeArtifact(ctx, local, "pkg")
+	} else {
+		installer, err = retain(ctx, local, filepath.Base(local), request.Workspace)
+	}
 	if err != nil {
 		return plugin.Artifact{}, nil, nil, err
 	}

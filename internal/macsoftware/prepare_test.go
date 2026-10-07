@@ -394,38 +394,72 @@ func TestDMGFactsListEveryApplication(t *testing.T) {
 	}
 }
 
-func TestDMGPackageIsPublishedAsALocalFile(t *testing.T) {
+func TestPackageIsPublishedAsALocalFile(t *testing.T) {
 	data, err := os.ReadFile("../apple/testdata/fixture.pkg")
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := t.TempDir()
-	if err := os.WriteFile(filepath.Join(source, "Example.pkg"), data, 0o644); err != nil {
+	if err := os.Mkdir(filepath.Join(source, "Packages"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	filename := filepath.Join(t.TempDir(), "Example.dmg")
-	testdiskimage.Write(t, filename, source)
-	input := plugin.Artifact{Path: filename, Filename: "Example.dmg", Format: "dmg"}
-	outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
-	if err != nil {
+	filename := filepath.Join(source, "Packages", "Example.pkg")
+	if err := os.WriteFile(filename, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	installer := outputs["installer"]
-	hash := sha256.Sum256(data)
-	if installer.Format != "pkg" || installer.Filename != "Example.pkg" || installer.SHA256 != hex.EncodeToString(hash[:]) || installer.Facts.Subjects[0].SHA256 != installer.SHA256 {
-		t.Fatalf("installer = %+v", installer)
-	}
-	if published, err := os.ReadFile(installer.Path); err != nil || !bytes.Equal(published, data) {
-		t.Fatalf("published package differs from the image's: %v", err)
-	}
-	// The image holds no application, so the selector names one in the package.
-	outputs, err = Prepare(t.Context(), Spec{Application: &Application{Path: "Payload/SignedFixture.app"}}, Request{Input: input, Workspace: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var app plugin.Subject
-	if err := json.Unmarshal(outputs["installer"].Evidence["macos.application"], &app); err != nil || outputs["installer"].Format != "pkg" || app.InstalledPath != "/Applications/SignedFixture.app" {
-		t.Fatalf("application in package: %+v, %v", app, err)
+	for _, format := range []string{"pkg", "tree", "zip", "dmg"} {
+		t.Run(format, func(t *testing.T) {
+			input := plugin.Artifact{Path: filename, Filename: "Example.pkg", Format: format}
+			switch format {
+			case "tree":
+				input.Path, input.Tree = source, true
+			case "zip", "dmg":
+				input.Filename = "Example." + format
+				input.Path = filepath.Join(t.TempDir(), input.Filename)
+				if format == "zip" {
+					testarchive.Zip(t, input.Path, source)
+				} else {
+					testdiskimage.Write(t, input.Path, source)
+				}
+			}
+			workspace := t.TempDir()
+			outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: workspace})
+			if err != nil {
+				t.Fatal(err)
+			}
+			installer := outputs["installer"]
+			hash := sha256.Sum256(data)
+			if installer.Format != "pkg" || installer.Filename != "Example.pkg" || installer.Size != int64(len(data)) || installer.SHA256 != hex.EncodeToString(hash[:]) || installer.Facts.Subjects[0].SHA256 != installer.SHA256 {
+				t.Fatalf("installer = %+v", installer)
+			}
+			if published, err := os.ReadFile(installer.Path); err != nil || !bytes.Equal(published, data) {
+				t.Fatalf("published package differs from the source's: %v", err)
+			}
+			if original, err := os.ReadFile(filename); err != nil || !bytes.Equal(original, data) {
+				t.Fatalf("source package changed: %v", err)
+			}
+			var files []string
+			if err := filepath.WalkDir(workspace, func(name string, entry fs.DirEntry, err error) error {
+				if err == nil && !entry.IsDir() {
+					files = append(files, name)
+				}
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if len(files) != 1 || files[0] != installer.Path {
+				t.Fatalf("workspace must hold only the published package: %v", files)
+			}
+			// The source holds no application, so the selector names one in the package.
+			outputs, err = Prepare(t.Context(), Spec{Application: &Application{Path: "Payload/SignedFixture.app"}}, Request{Input: input, Workspace: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var app plugin.Subject
+			if err := json.Unmarshal(outputs["installer"].Evidence["macos.application"], &app); err != nil || outputs["installer"].Format != "pkg" || app.InstalledPath != "/Applications/SignedFixture.app" {
+				t.Fatalf("application in package: %+v, %v", app, err)
+			}
+		})
 	}
 }
 
