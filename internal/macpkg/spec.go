@@ -87,7 +87,7 @@ func (s Spec) Validate() error {
 			return fmt.Errorf("payload %q duplicates another normalized destination", endpoint)
 		}
 		seen[name] = true
-		if entry.Symlink != "" && !validSymlink(name, entry.Symlink) {
+		if entry.Symlink != "" && !pkgbuild.ValidSymlink(name, entry.Symlink) {
 			return fmt.Errorf("payload %q: symlink must be relative and confined to the package root", endpoint)
 		}
 		if err := entry.validate(); err != nil {

@@ -2,7 +2,8 @@
 
 Use `BuildMacPkg` for files you need to install at particular locations: fonts,
 branding assets, configuration files or a package containing installer scripts.
-An ordinary vendor application usually belongs in [MacSoftware](mac-software.md).
+An ordinary vendor application usually belongs in [MacSoftware](mac-software.md),
+which can also [publish it in a package](mac-software.md#publish-an-application-in-a-package).
 
 ## Package a directory
 

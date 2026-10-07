@@ -144,10 +144,14 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 			spec, ok = lobFields[key]
 		}
 		if script, scripted := pkgFields[key]; scripted {
-			if appType != pkgType {
+			switch {
+			case appType == pkgType:
+				spec, ok = script, true
+			case appType == dmgType && req.Identity.Resource.Kind == "MacSoftware":
+				return nil, fmt.Errorf("%s requires a PKG app; set package to publish the application in a PKG", key)
+			default:
 				return nil, fmt.Errorf("%s requires a PKG app", key)
 			}
-			spec, ok = script, true
 		}
 		if !ok {
 			return nil, fmt.Errorf("unsupported Intune %s field %q", strings.TrimPrefix(appType, "#microsoft.graph."), key)

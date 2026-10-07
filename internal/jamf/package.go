@@ -81,7 +81,10 @@ func inspectPayload(ctx context.Context, identity plugin.Identity, artifact plug
 	}
 	// Jamf installs a DMG as a filesystem layout copied onto the startup disk,
 	// which an application DMG is not.
-	if strings.ToLower(filepath.Ext(artifact.Filename)) != ".pkg" {
+	switch extension := strings.ToLower(filepath.Ext(artifact.Filename)); {
+	case extension == ".dmg" && identity.Resource.Kind == "MacSoftware":
+		return payload{}, fmt.Errorf("jamf publishes PKG artifacts, not %s; set package to publish the application in a PKG", artifact.Filename)
+	case extension != ".pkg":
 		return payload{}, fmt.Errorf("jamf publishes PKG artifacts, not %s", artifact.Filename)
 	}
 	f, err := os.Open(artifact.Path)

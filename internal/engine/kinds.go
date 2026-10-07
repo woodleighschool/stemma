@@ -74,8 +74,8 @@ func macSoftware(ctx context.Context, request plugin.ResourceRequest[macsoftware
 	spec := request.Config
 	input := request
 	if request.Method == "discover" {
-		if spec.Source == nil && (spec.Application != nil || spec.PackagePath != "" || spec.DiskImage != nil || len(spec.Signatures) > 0) {
-			return plugin.ResourceResult{}, errors.New("application selection, package selection, disk image compression and signature verification require a source")
+		if spec.Source == nil && (spec.Application != nil || spec.PackagePath != "" || spec.DiskImage != nil || spec.Package != nil || len(spec.Signatures) > 0) {
+			return plugin.ResourceResult{}, errors.New("application selection, package selection, disk_image, package and signature verification require a source")
 		}
 
 		declarations := map[string]plugin.Input{}

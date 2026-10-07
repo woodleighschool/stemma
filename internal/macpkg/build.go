@@ -52,8 +52,8 @@ func build(ctx context.Context, spec Spec, sources *sources, workspace string) (
 		if len(names) == 0 {
 			continue
 		}
-		stage := layout{root: filepath.Join(root, area), metadata: map[string]pkgbuild.EntryMetadata{}, claimed: map[string]bool{}}
-		if err := stage.parents("."); err != nil {
+		stage, err := pkgbuild.NewLayout(filepath.Join(root, area))
+		if err != nil {
 			return plugin.Artifact{}, err
 		}
 		slices.Sort(names)
@@ -61,18 +61,18 @@ func build(ctx context.Context, spec Spec, sources *sources, workspace string) (
 			var err error
 			if area == "Payload" {
 				destination, _ := payloadPath(name)
-				err = stage.entry(ctx, destination, spec.Payload[name], sources)
+				err = stageEntry(ctx, stage, destination, spec.Payload[name], sources)
 			} else {
-				err = stage.script(ctx, name, spec.Scripts[name], sources)
+				err = stageScript(ctx, stage, name, spec.Scripts[name], sources)
 			}
 			if err != nil {
 				return plugin.Artifact{}, fmt.Errorf("%s %q: %w", strings.ToLower(area), name, err)
 			}
 		}
 		if area == "Payload" {
-			opts.Payload, opts.Compression, opts.Metadata = area, spec.Package.compression(), stage.metadata
+			opts.Payload, opts.Compression, opts.Metadata = area, spec.Package.compression(), stage.Metadata()
 		} else {
-			opts.Scripts, opts.ScriptMetadata = area, stage.metadata
+			opts.Scripts, opts.ScriptMetadata = area, stage.Metadata()
 		}
 	}
 	output := filepath.Join(workspace, spec.Filename())
@@ -101,29 +101,29 @@ func describe(ctx context.Context, output string, spec Spec) (plugin.Artifact, e
 	return plugin.Artifact{Path: output, SHA256: hex.EncodeToString(hash.Sum(nil)), Size: size, Filename: spec.Filename(), Version: spec.Package.Version, Format: "pkg", Facts: plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: "package", Kind: "package", Package: &plugin.PackageFacts{Identifier: spec.Package.Identifier, Version: spec.Package.Version, InstallLocation: "/", HasPayload: len(spec.Payload) > 0}}}}}, nil
 }
 
-func (stage *layout) entry(ctx context.Context, name string, entry Entry, sources *sources) error {
+func stageEntry(ctx context.Context, stage *pkgbuild.Layout, name string, entry Entry, sources *sources) error {
 	mode, _ := entry.mode()
 	attrs := pkgbuild.EntryMetadata{Mode: mode, UID: entry.UID, GID: entry.GID}
 	if entry.Content != nil {
-		return stage.content(ctx, name, strings.NewReader(*entry.Content), int64(len(*entry.Content)), attrs, 0o644)
+		return stage.File(ctx, name, strings.NewReader(*entry.Content), int64(len(*entry.Content)), attrs, 0o644)
 	}
 	if entry.Symlink != "" {
-		return stage.symlink(name, entry.Symlink, attrs)
+		return stage.Symlink(name, entry.Symlink, attrs)
 	}
 	if entry.Input == "" {
-		return stage.directory(name, attrs)
+		return stage.Directory(name, attrs)
 	}
-	return stage.input(ctx, name, entry.Input, entry.Path, sources, attrs)
+	return stageInput(ctx, stage, name, entry.Input, entry.Path, sources, attrs)
 }
 
-func (stage *layout) script(ctx context.Context, name string, script Script, sources *sources) error {
+func stageScript(ctx context.Context, stage *pkgbuild.Layout, name string, script Script, sources *sources) error {
 	if script.Content != nil {
-		return stage.content(ctx, name, strings.NewReader(*script.Content), int64(len(*script.Content)), pkgbuild.EntryMetadata{}, 0o644)
+		return stage.File(ctx, name, strings.NewReader(*script.Content), int64(len(*script.Content)), pkgbuild.EntryMetadata{}, 0o644)
 	}
-	return stage.input(ctx, name, script.Input, script.Path, sources, pkgbuild.EntryMetadata{})
+	return stageInput(ctx, stage, name, script.Input, script.Path, sources, pkgbuild.EntryMetadata{})
 }
 
-func (stage *layout) input(ctx context.Context, name, inputName, selection string, sources *sources, attrs pkgbuild.EntryMetadata) error {
+func stageInput(ctx context.Context, stage *pkgbuild.Layout, name, inputName, selection string, sources *sources, attrs pkgbuild.EntryMetadata) error {
 	source, err := sources.get(ctx, inputName)
 	if err != nil {
 		return err
@@ -132,7 +132,7 @@ func (stage *layout) input(ctx context.Context, name, inputName, selection strin
 	if err != nil {
 		return fmt.Errorf("input %q path %q: %w", inputName, selection, err)
 	}
-	if err := stage.copy(ctx, node, name, attrs); err != nil {
+	if err := stage.Copy(ctx, node, name, attrs); err != nil {
 		return fmt.Errorf("input %q path %q: %w", inputName, selection, err)
 	}
 	return nil

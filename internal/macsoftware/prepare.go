@@ -1,6 +1,7 @@
 package macsoftware
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -21,6 +22,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/inspect"
+	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -38,8 +40,9 @@ type Request struct {
 // one; the bound keeps a crafted image from being opened without end.
 const maxImageDepth = 8
 
-// Prepare retains vendor installer bytes and places a selected archive
-// application in a disk image. It never executes applications or hooks.
+// Prepare retains vendor installer bytes, places a selected archive
+// application in a disk image, or places the selected application in a
+// declared component package. It never executes applications or hooks.
 func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin.Artifact, error) {
 	if err := spec.Validate(); err != nil {
 		return nil, err
@@ -85,6 +88,9 @@ func prepare(ctx context.Context, spec Spec, request Request, depth int) (map[st
 	if spec.DiskImage != nil && (app == nil || source.IsImage() && input.ContentRoot == "") {
 		return nil, errors.New("disk_image requires an application from an archive or tree")
 	}
+	if spec.Package != nil && app == nil {
+		return nil, errors.New("package requires an application from an archive, tree or disk image; a vendor package is published as it is")
+	}
 	var installer plugin.Artifact
 	var verified []signature.Observation
 	if app != nil {
@@ -105,6 +111,11 @@ func prepare(ctx context.Context, spec Spec, request Request, depth int) (map[st
 	delete(installer.Evidence, signature.UnverifiedEvidence)
 	if installer.Evidence == nil {
 		installer.Evidence = map[string]json.RawMessage{}
+	}
+	if spec.Package != nil {
+		// Preparation never signs, so the package's signing state is its own to
+		// state, apart from the application's publisher.
+		installer.Evidence[signature.BuildEvidence] = json.RawMessage(`"unsigned"`)
 	}
 	if app != nil {
 		installer.Version = appVersion(*app, spec.Application)
@@ -151,11 +162,12 @@ func prepareImage(ctx context.Context, spec Spec, request Request, source *conte
 	return prepare(ctx, spec, request, depth+1)
 }
 
-// publishApplication publishes a vendor disk image as it is, or places an
-// archive or tree application alone in a new one.
+// publishApplication publishes a vendor disk image as it is, places an archive
+// or tree application alone in a new one, or places the selected application
+// in a declared component package.
 func publishApplication(ctx context.Context, spec Spec, request Request, source *contents.Source, inventory plugin.Facts, app plugin.Subject) (plugin.Artifact, *plugin.Subject, []signature.Observation, error) {
 	input := request.Input
-	retainImage := source.IsImage() && input.ContentRoot == ""
+	retainImage := spec.Package == nil && source.IsImage() && input.ContentRoot == ""
 	selection := app.Path
 	if app.ID == "." {
 		selection = ""
@@ -171,6 +183,12 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 	if app.InstalledPath == "" {
 		app.InstalledPath = path.Join("/Applications", name)
 	}
+	// published is the application's path in what preparation creates: alone at
+	// an image's root, or at its installed path in a package's payload.
+	published := name
+	if spec.Package != nil {
+		published = path.Join("Payload", app.InstalledPath)
+	}
 	var verified []signature.Observation
 	if len(spec.Signatures) > 0 || request.DeriveSignature {
 		var err error
@@ -178,8 +196,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 		if retainImage {
 			targets = topLevel(inventory)
 		} else {
-			// The selected archive app is published alone at the image root.
-			targets[0].ID, targets[0].Path, targets[0].Parent = name, name, "."
+			targets[0].ID, targets[0].Path, targets[0].Parent = published, published, "."
 		}
 		verified, err = signature.Verify(ctx, spec.Signatures, targets, request.DeriveSignature, func(subject plugin.Subject) (signature.Result, error) {
 			var result signature.Result
@@ -196,7 +213,8 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 		}
 	}
 	var installer plugin.Artifact
-	if retainImage {
+	switch {
+	case retainImage:
 		if installer, err = retain(ctx, input.Path, input.Filename, request.Workspace); err != nil {
 			return plugin.Artifact{}, nil, nil, err
 		}
@@ -209,14 +227,34 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 				installer.Facts.Subjects[i] = app
 			}
 		}
-	} else {
+		installer.Format = "dmg"
+	case spec.Package != nil:
+		if installer, err = writePackage(ctx, node, app, appVersion(app, spec.Application), spec.Package, request.Workspace); err != nil {
+			return plugin.Artifact{}, nil, nil, err
+		}
+		// The package is read back as a vendor package is, so destinations
+		// derive from what it holds.
+		done := plugin.Stage(ctx, "Inspecting package", plugin.Detail(installer.Filename))
+		installer.Facts, err = inspect.Read(ctx, installer.Path)
+		done(err)
+		if err != nil {
+			return plugin.Artifact{}, nil, nil, err
+		}
+		installed := slices.IndexFunc(installer.Facts.Subjects, func(subject plugin.Subject) bool {
+			return subject.App != nil && subject.Path == published && subject.InstalledPath == app.InstalledPath
+		})
+		if installed < 0 {
+			return plugin.Artifact{}, nil, nil, fmt.Errorf("the built package does not install %s", app.InstalledPath)
+		}
+		app = installer.Facts.Subjects[installed]
+	default:
 		if installer, err = writeImage(ctx, node, request.Workspace, spec.DiskImage.compression()); err != nil {
 			return plugin.Artifact{}, nil, nil, err
 		}
-		app.ID, app.Path, app.Parent = name, name, "."
+		app.ID, app.Path, app.Parent = published, published, "."
 		installer.Facts = plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: ".", Path: ".", Kind: "container", SHA256: installer.SHA256}, app}}
+		installer.Format = "dmg"
 	}
-	installer.Format = "dmg"
 	return installer, &app, verified, nil
 }
 
@@ -290,6 +328,39 @@ func writeImage(ctx context.Context, node contents.Node, workspace string, compr
 		return plugin.Artifact{}, err
 	}
 	return describeArtifact(ctx, output, "dmg")
+}
+
+// writePackage places the selected application at its installed path in a new
+// component package. The declared identifier, or else the application's bundle
+// identifier, names its receipt. Like a disk image preparation creates, the
+// package is our container and carries no signature of its own, and a fixed
+// date keeps it a function of the application and the declaration alone.
+func writePackage(ctx context.Context, node contents.Node, app plugin.Subject, version string, options *Package, workspace string) (plugin.Artifact, error) {
+	identifier := cmp.Or(options.Identifier, app.App.BundleID)
+	switch {
+	case identifier == "":
+		return plugin.Artifact{}, errors.New("the selected application has no bundle identifier; set package.identifier")
+	case version == "":
+		return plugin.Artifact{}, errors.New("the selected application has no version for the package receipt")
+	}
+	root, err := os.MkdirTemp(workspace, ".package-*")
+	if err != nil {
+		return plugin.Artifact{}, err
+	}
+	defer func() { _ = os.RemoveAll(root) }()
+	stage, err := pkgbuild.NewLayout(filepath.Join(root, "Payload"))
+	if err != nil {
+		return plugin.Artifact{}, err
+	}
+	if err := stage.Copy(ctx, node, strings.TrimPrefix(app.InstalledPath, "/"), pkgbuild.EntryMetadata{}); err != nil {
+		return plugin.Artifact{}, err
+	}
+	output := filepath.Join(workspace, strings.TrimSuffix(path.Base(node.Path), path.Ext(node.Path))+".pkg")
+	opts := pkgbuild.Options{Identifier: identifier, Version: version, Payload: "Payload", Compression: options.compression(), Metadata: stage.Metadata(), Timestamp: time.Unix(0, 0).UTC()}
+	if err := pkgbuild.Build(ctx, root, output, opts); err != nil {
+		return plugin.Artifact{}, err
+	}
+	return describeArtifact(ctx, output, "pkg")
 }
 
 func retain(ctx context.Context, source, filename, workspace string) (plugin.Artifact, error) {

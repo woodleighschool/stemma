@@ -173,6 +173,142 @@ func TestDiskImageRequiresAnApplicationFromAnArchive(t *testing.T) {
 	}
 }
 
+// TestPackagePublishesTheSelectedApplication prepares one application from
+// each container an application ships in.
+func TestPackagePublishesTheSelectedApplication(t *testing.T) {
+	root := applicationFixture(t)
+	archive := filepath.Join(t.TempDir(), "Example.zip")
+	testarchive.Zip(t, archive, root)
+	image := filepath.Join(t.TempDir(), "Example.dmg")
+	testdiskimage.Write(t, image, root)
+	inputs := []plugin.Artifact{
+		{Path: archive, Filename: "Example.zip", Format: "zip"},
+		{Path: image, Filename: "Example.dmg", Format: "dmg"},
+		{Path: filepath.Join(root, "Example.app"), Filename: "Example.app", Tree: true},
+	}
+	digests := map[string]bool{}
+	for _, input := range inputs {
+		outputs, err := Prepare(t.Context(), Spec{Package: &Package{}}, Request{Input: input, Workspace: t.TempDir()})
+		if err != nil {
+			t.Fatalf("%s: %v", input.Filename, err)
+		}
+		installer := outputs["installer"]
+		digests[installer.SHA256] = true
+		var app plugin.Subject
+		if err := json.Unmarshal(installer.Evidence["macos.application"], &app); err != nil {
+			t.Fatal(err)
+		}
+		if installer.Format != "pkg" || installer.Filename != "Example.pkg" || installer.Version != "1.2" || app.InstalledPath != "/Applications/Example.app" || !signature.BuiltUnsigned(installer) {
+			t.Fatalf("%s: installer=%+v app=%+v", input.Filename, installer, app)
+		}
+		reopened, err := inspect.Read(t.Context(), installer.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(reopened, installer.Facts) {
+			t.Fatalf("%s: package holds %+v, facts describe %+v", input.Filename, reopened.Subjects, installer.Facts.Subjects)
+		}
+		derived, err := munki.Derive(plugin.ReconcileRequest[json.RawMessage]{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "example"}}, Artifact: installer})
+		if err != nil {
+			t.Fatal(err)
+		}
+		receipts, _ := derived.Values["receipts"].([]munki.Receipt)
+		installs, _ := derived.Values["installs"].([]munki.InstallItem)
+		if len(receipts) != 1 || receipts[0].PackageID != "org.example.app" || receipts[0].Version != "1.2" || len(installs) != 1 || installs[0].Path != "/Applications/Example.app" {
+			t.Fatalf("%s: detection = %+v", input.Filename, derived.Values)
+		}
+	}
+	if len(digests) != 1 {
+		t.Fatalf("one application built %d different packages", len(digests))
+	}
+
+	spec := Spec{
+		Application: &Application{BundleID: "org.example.app", InstalledPath: "/Applications/Utilities/Renamed.app", VersionKey: "CFBundleVersion"},
+		Package:     &Package{Identifier: "org.example.pkg.Example", Compression: pkgbuild.XZ},
+	}
+	outputs, err := Prepare(t.Context(), spec, Request{Input: inputs[0], Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := outputs["installer"]
+	var receipt *plugin.PackageFacts
+	var installed []string
+	for _, subject := range installer.Facts.Subjects {
+		if subject.Package != nil {
+			receipt = subject.Package
+		}
+		if subject.App != nil {
+			installed = append(installed, subject.InstalledPath)
+		}
+	}
+	if receipt == nil || receipt.Identifier != "org.example.pkg.Example" || receipt.Version != "123" || installer.Version != "123" || !reflect.DeepEqual(installed, []string{"/Applications/Utilities/Renamed.app"}) || digests[installer.SHA256] {
+		t.Fatalf("installer=%+v receipt=%+v installed=%v", installer, receipt, installed)
+	}
+}
+
+// TestPackageSignatureVerifiesTheApplication checks that the application
+// answers for its publisher while the package states that it is unsigned.
+func TestPackageSignatureVerifiesTheApplication(t *testing.T) {
+	const signer = "apple:developer-id:SMLKBTR495"
+	release := t.TempDir()
+	if err := os.CopyFS(filepath.Join(release, "WoodSweep.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
+		t.Fatal(err)
+	}
+	filename := filepath.Join(t.TempDir(), "WoodSweep-1.2.3.zip")
+	testarchive.Zip(t, filename, release)
+	input := plugin.Artifact{Path: filename, Filename: "WoodSweep-1.2.3.zip", Format: "zip"}
+	outputs, err := Prepare(t.Context(), Spec{Package: &Package{}, Signatures: []signature.Expectation{{Signer: signer}}}, Request{Input: input, Workspace: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer := outputs["installer"]
+	var evidence []signature.Observation
+	if err := json.Unmarshal(installer.Evidence["signatures"], &evidence); err != nil {
+		t.Fatal(err)
+	}
+	var app plugin.Subject
+	if err := json.Unmarshal(installer.Evidence["macos.application"], &app); err != nil {
+		t.Fatal(err)
+	}
+	if len(evidence) != 1 || evidence[0].Signer != signer || evidence[0].Subject.Path != app.Path || !signature.BuiltUnsigned(installer) {
+		t.Fatalf("app=%+v evidence=%+v", app, evidence)
+	}
+	if _, err := apple.VerifyPackage(t.Context(), installer.Path, signature.Signer{}); !errors.Is(err, signature.ErrUnsigned) {
+		t.Fatalf("the package is not unsigned: %v", err)
+	}
+	// The same expectation names the application by its path in the package.
+	named := Spec{Package: &Package{}, Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: app.Path}, Signer: signer}}}
+	if _, err := Prepare(t.Context(), named, Request{Input: input, Workspace: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	workspace := t.TempDir()
+	if _, err := Prepare(t.Context(), Spec{Package: &Package{}, Signatures: []signature.Expectation{{Signer: "apple:developer-id:AAAAAAAAAA"}}}, Request{Input: input, Workspace: workspace}); !errors.Is(err, signature.ErrMismatch) {
+		t.Fatalf("unexpected signer accepted: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "WoodSweep.pkg")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("package built for a rejected application: %v", err)
+	}
+}
+
+func TestPackageRequiresAnApplicationToPublish(t *testing.T) {
+	for _, input := range bundleInputs(t, applicationFixture(t)) {
+		_, err := Prepare(t.Context(), Spec{Package: &Package{}, Application: &Application{BundleID: "org.example.app"}}, Request{Input: input, Workspace: t.TempDir()})
+		if vendor := input.Format == "pkg"; (err != nil) != vendor {
+			t.Fatalf("%s: %v", input.Filename, err)
+		}
+	}
+	for name, spec := range map[string]Spec{
+		"disk_image":   {Package: &Package{}, DiskImage: &DiskImage{}},
+		"package_path": {Package: &Package{}, PackagePath: "Installer.pkg"},
+		"identifier":   {Package: &Package{Identifier: "not an identifier"}},
+		"compression":  {Package: &Package{Compression: "bzip2"}},
+	} {
+		if err := spec.Validate(); err == nil {
+			t.Fatalf("%s accepted", name)
+		}
+	}
+}
+
 // TestZIPSignatureVerifiesTheApplication prepares the shape of a GitHub release:
 // a versioned ZIP holding one Developer ID signed bundle.
 func TestZIPSignatureVerifiesTheApplication(t *testing.T) {

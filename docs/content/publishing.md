@@ -233,7 +233,9 @@ A pre-install script that exits nonzero stops the installation, and Intune tries
 again at the next check-in. Intune reports the app as installed whatever the
 post-install script's exit status. Each script holds at most 15359 characters,
 and `null` removes one. A script can carry environment values, so plans say that
-a script changes without showing it. DMG and line-of-business apps have no scripts.
+a script changes without showing it. A DMG app has no scripts; publish its
+application [in a package](mac-software.md#publish-an-application-in-a-package)
+to use them. A line-of-business app has none either.
 
 ### Intune relationships
 
@@ -293,7 +295,8 @@ spec:
         client_secret: "{{ env.JAMF_CLIENT_SECRET }}"
 ```
 
-Jamf publishes PKG artifacts: a vendor package, one selected with `package_path`
+Jamf publishes PKG artifacts: a vendor package, one selected with `package_path`,
+an application published [in a package](mac-software.md#publish-an-application-in-a-package)
 or a [BuildMacPkg](building-packages.md) output. Jamf installs a DMG by copying its
 contents onto the startup disk, so an application DMG is not a Jamf package.
 

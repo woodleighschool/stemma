@@ -201,6 +201,11 @@ func Build(ctx context.Context, root, output string, opts Options) (err error) {
 	return os.Link(temporary, output)
 }
 
+// ValidIdentifier reports whether identifier can name a package receipt.
+func ValidIdentifier(identifier string) bool {
+	return packageIdentifier.MatchString(identifier) && len(identifier) <= 255
+}
+
 // Validate checks the package declaration without reading its input files.
 func Validate(opts Options) error {
 	if !opts.Timestamp.IsZero() {
@@ -208,7 +213,7 @@ func Validate(opts Options) error {
 			return err
 		}
 	}
-	if !packageIdentifier.MatchString(opts.Identifier) || len(opts.Identifier) > 255 {
+	if !ValidIdentifier(opts.Identifier) {
 		return errors.New("package identifier must be a nonempty reverse-domain identifier")
 	}
 	if opts.Version == "" || len(opts.Version) > 128 || !utf8.ValidString(opts.Version) || strings.ContainsAny(opts.Version, "\x00\r\n\t") {

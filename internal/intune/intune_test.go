@@ -1078,14 +1078,15 @@ func TestPKGInstallScripts(t *testing.T) {
 	}
 
 	metadata["post_install_script"] = post
-	for _, format := range []string{"dmg", "lob"} {
+	// A disk image app names the way to a PKG; a line-of-business app has none.
+	for format, hint := range map[string]string{"dmg": "_script requires a PKG app; set package", "lob": "_script requires a PKG app"} {
 		req.Artifact.Format, req.Artifact.Filename = "dmg", "app.dmg"
 		delete(metadata, "type")
 		if format == "lob" {
 			req.Artifact.Format, req.Artifact.Filename, metadata["type"] = "pkg", "app-1.0.pkg", "lob"
 		}
 		req.Metadata = raw(metadata)
-		if _, err := compile(req); err == nil || !strings.Contains(err.Error(), "_script requires a PKG app") {
+		if _, err := compile(req); err == nil || !strings.Contains(err.Error(), hint) || format == "lob" && strings.Contains(err.Error(), "set package") {
 			t.Fatalf("%s app accepted a script: %v", format, err)
 		}
 	}

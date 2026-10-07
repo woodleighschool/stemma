@@ -12,6 +12,7 @@ Use [BuildMacPkg](building-packages.md) when you need to construct a custom payl
 | DMG containing an application              | The original DMG, with the selected application described for the destination |
 | DMG or archive containing an installer PKG | The selected nested package, preserving its bytes                             |
 | Archive or tree containing an application  | A new DMG holding the selected application                                    |
+| Any of those applications, with `package`  | A new PKG that installs the selected application                              |
 | Archive, tree or DMG containing a DMG      | What the inner DMG prepares as a download of its own                          |
 
 For an application in a DMG:
@@ -102,6 +103,50 @@ building.
 
 `disk_image` applies only when Stemma creates the image. Vendor DMGs and PKGs keep
 their original bytes, so declaring `disk_image` for one causes preparation to fail.
+
+## Publish an application in a package
+
+`package` publishes the selected application in a new component PKG. It applies
+wherever the application comes from: an archive, a tree or a vendor DMG.
+
+```yaml
+spec:
+  source:
+    resolver: github
+    repository: company/application
+    asset: Example-*.zip
+  package: {}
+  signatures:
+    - signer: apple:developer-id:ABCDE12345
+```
+
+The package installs the application at `application.installed_path`,
+`/Applications/<name>.app` by default, owned by root. Its receipt takes the
+application's version, so `application.version_key` selects the receipt version
+too. Dates are normalized, and the same application prepares the same package
+from any source on any runner.
+
+| Field         | Default                             | Purpose                                                          |
+| ------------- | ----------------------------------- | ---------------------------------------------------------------- |
+| `identifier`  | The application's bundle identifier | Identifies the installation receipt                              |
+| `compression` | `gzip`                              | [Payload compression](building-packages.md#compress-the-payload) |
+
+Choose a package when a destination needs one. [Jamf](publishing.md#jamf)
+publishes only PKGs, and [Intune](publishing.md#intune) runs install scripts only
+for PKG apps. Munki installs it as a package and detects both its receipt and the
+application. A disk image holds the application and nothing else; a package also
+leaves a receipt on each Mac.
+
+[Signature](#signature) verifies the application. The package is a container and
+carries no signature of its own, so it can't publish as an Intune
+line-of-business app. A package payload holds no extended attributes: an
+application that keeps code signatures in them fails to package, and publishes in
+a disk image.
+
+The package has no scripts and no other payload;
+[BuildMacPkg](building-packages.md) builds those. A vendor PKG keeps its original
+bytes, so `package` fails for one, and it doesn't combine with `package_path` or
+`disk_image`.
 
 ## Select an application once
 
@@ -244,7 +289,8 @@ signatures:
 Every shipped top-level app requires an entry when `signatures` is present,
 including companion apps. Nested code is covered by its enclosing app's
 signature. An app selected from an archive is published alone at the new image's
-root, so its entry needs no `subject`.
+root, so its entry needs no `subject`. Neither does the application `package`
+publishes, which is that package's only signing subject.
 
 `stemma signature MacSoftware/<name>` inspects every signing subject and prints a
 complete fragment, independently of existing expectations. It needs no placeholder
@@ -280,7 +326,9 @@ both preparation and derivation.
 
 A package from [BuildMacPkg](building-packages.md) needs no entry. The builder
 never signs, so the package has no publisher to verify and `stemma signature`
-reports nothing for it. `unsigned: true` is still checked when declared.
+reports nothing for it. `unsigned: true` is still checked when declared. A
+package that `package` builds is unsigned in the same way, and its entry is the
+application's.
 
 Apple verification covers every architecture's code, Info.plist, the resource
 envelope, symlinks and nested code, chained to Apple's roots. A trusted timestamp

@@ -1,4 +1,4 @@
-package macpkg
+package pkgbuild
 
 import (
 	"context"
@@ -16,17 +16,30 @@ import (
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/fileio"
-	"github.com/woodleighschool/stemma/internal/pkgbuild"
 )
 
-type layout struct {
+// Layout stages one payload or scripts tree for Build. Staged entries keep
+// their bytes on disk and their ownership and permissions in Metadata, so a
+// tree stages alike on every host.
+type Layout struct {
 	root     string
-	metadata map[string]pkgbuild.EntryMetadata
+	metadata map[string]EntryMetadata
 	claimed  map[string]bool
 	bytes    int64
 }
 
-func (stage *layout) directory(name string, attrs pkgbuild.EntryMetadata) error {
+// NewLayout creates root, which must not exist, as the staged tree.
+func NewLayout(root string) (*Layout, error) {
+	stage := &Layout{root: root, metadata: map[string]EntryMetadata{}, claimed: map[string]bool{}}
+	return stage, stage.parents(".")
+}
+
+// Metadata returns the archive metadata of every staged entry, keyed as
+// Options.Metadata is.
+func (stage *Layout) Metadata() map[string]EntryMetadata { return stage.metadata }
+
+// Directory declares a directory, mode 0755 unless attrs says otherwise.
+func (stage *Layout) Directory(name string, attrs EntryMetadata) error {
 	if stage.claimed[name] {
 		return fmt.Errorf("overlapping payload destination %q", name)
 	}
@@ -41,7 +54,7 @@ func (stage *layout) directory(name string, attrs pkgbuild.EntryMetadata) error 
 	return nil
 }
 
-func (stage *layout) parents(name string) error {
+func (stage *Layout) parents(name string) error {
 	if name != "." {
 		if err := stage.parents(path.Dir(name)); err != nil {
 			return err
@@ -57,22 +70,24 @@ func (stage *layout) parents(name string) error {
 		}
 		return nil
 	}
-	if len(stage.metadata) >= pkgbuild.MaxEntries {
+	if len(stage.metadata) >= MaxEntries {
 		return errors.New("package exceeds payload entry limit")
 	}
 	if err := os.Mkdir(filepath.Join(stage.root, filepath.FromSlash(name)), 0o755); err != nil {
 		return err
 	}
 	mode := uint32(0o755)
-	stage.metadata[name] = pkgbuild.EntryMetadata{Mode: &mode}
+	stage.metadata[name] = EntryMetadata{Mode: &mode}
 	return nil
 }
 
-func (stage *layout) content(ctx context.Context, name string, source io.Reader, size int64, attrs pkgbuild.EntryMetadata, mode os.FileMode) error {
+// File stages size bytes of source as a regular file. Its permissions are
+// those of attrs, or of mode.
+func (stage *Layout) File(ctx context.Context, name string, source io.Reader, size int64, attrs EntryMetadata, mode os.FileMode) error {
 	if stage.claimed[name] {
 		return fmt.Errorf("overlapping payload destination %q", name)
 	}
-	if size < 0 || size > pkgbuild.MaxPayloadSize-stage.bytes {
+	if size < 0 || size > MaxPayloadSize-stage.bytes {
 		return errors.New("package exceeds payload size limit")
 	}
 	if _, exists := stage.metadata[name]; exists {
@@ -81,7 +96,7 @@ func (stage *layout) content(ctx context.Context, name string, source io.Reader,
 	if err := stage.parents(path.Dir(name)); err != nil {
 		return err
 	}
-	if len(stage.metadata) >= pkgbuild.MaxEntries {
+	if len(stage.metadata) >= MaxEntries {
 		return errors.New("package exceeds payload entry limit")
 	}
 	file, err := os.OpenFile(filepath.Join(stage.root, filepath.FromSlash(name)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
@@ -128,7 +143,10 @@ func checkSignatureAttributes(ctx context.Context, node contents.Node, file fs.F
 	return nil
 }
 
-func (stage *layout) copy(ctx context.Context, node contents.Node, destination string, attrs pkgbuild.EntryMetadata) error {
+// Copy stages a file or tree at destination, keeping its permissions and the
+// relative symlinks that stay inside it. attrs owns the subtree and its mode
+// applies to the root.
+func (stage *Layout) Copy(ctx context.Context, node contents.Node, destination string, attrs EntryMetadata) error {
 	info, err := node.Stat()
 	if err != nil {
 		return err
@@ -140,7 +158,7 @@ func (stage *layout) copy(ctx context.Context, node contents.Node, destination s
 	return stage.copyNode(ctx, node, destination, attrs, boundary)
 }
 
-func (stage *layout) copyNode(ctx context.Context, node contents.Node, destination string, attrs pkgbuild.EntryMetadata, boundary string) error {
+func (stage *Layout) copyNode(ctx context.Context, node contents.Node, destination string, attrs EntryMetadata, boundary string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -167,7 +185,7 @@ func (stage *layout) copyNode(ctx context.Context, node contents.Node, destinati
 			mode := uint32(info.Mode().Perm())
 			attrs.Mode = &mode
 		}
-		return stage.symlink(destination, link, attrs)
+		return stage.Symlink(destination, link, attrs)
 	}
 	if !info.IsDir() && !info.Mode().IsRegular() {
 		return errors.New("input contains an unsupported file type")
@@ -181,24 +199,24 @@ func (stage *layout) copyNode(ctx context.Context, node contents.Node, destinati
 		if err := checkSignatureAttributes(ctx, node, file); err != nil {
 			return err
 		}
-		return stage.content(ctx, destination, file, info.Size(), attrs, info.Mode())
+		return stage.File(ctx, destination, file, info.Size(), attrs, info.Mode())
 	}
 	if attrs.Mode == nil {
 		mode := uint32(info.Mode().Perm())
 		attrs.Mode = &mode
 	}
-	if err := stage.directory(destination, attrs); err != nil {
+	if err := stage.Directory(destination, attrs); err != nil {
 		return err
 	}
 	dir, ok := file.(fs.ReadDirFile)
 	if !ok {
 		return errors.New("input directory cannot be read")
 	}
-	children, err := dir.ReadDir(pkgbuild.MaxEntries + 1)
+	children, err := dir.ReadDir(MaxEntries + 1)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return err
 	}
-	if len(children) > pkgbuild.MaxEntries-len(stage.metadata) {
+	if len(children) > MaxEntries-len(stage.metadata) {
 		return errors.New("package exceeds entry limit")
 	}
 	slices.SortFunc(children, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
@@ -212,12 +230,15 @@ func (stage *layout) copyNode(ctx context.Context, node contents.Node, destinati
 	return nil
 }
 
-func validSymlink(name, target string) bool {
+// ValidSymlink reports whether a link at name can point at target: a relative
+// path that stays inside the tree.
+func ValidSymlink(name, target string) bool {
 	return !path.IsAbs(target) && len(target) <= 4096 && !strings.ContainsAny(target, "\\\x00\r\n\t") && validPath(path.Join(path.Dir(name), target))
 }
 
-func (stage *layout) symlink(name, target string, attrs pkgbuild.EntryMetadata) error {
-	if !validSymlink(name, target) {
+// Symlink stages a relative link.
+func (stage *Layout) Symlink(name, target string, attrs EntryMetadata) error {
+	if !ValidSymlink(name, target) {
 		return errors.New("symlink must be relative and confined to the package root")
 	}
 	if stage.claimed[name] {
@@ -229,7 +250,7 @@ func (stage *layout) symlink(name, target string, attrs pkgbuild.EntryMetadata) 
 	if err := stage.parents(path.Dir(name)); err != nil {
 		return err
 	}
-	if len(stage.metadata) >= pkgbuild.MaxEntries {
+	if len(stage.metadata) >= MaxEntries {
 		return errors.New("package exceeds entry limit")
 	}
 	if err := os.Symlink(filepath.FromSlash(target), filepath.Join(stage.root, filepath.FromSlash(name))); err != nil {
