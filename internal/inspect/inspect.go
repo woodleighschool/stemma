@@ -167,9 +167,10 @@ func Source(ctx context.Context, source *contents.Source) (plugin.Facts, error) 
 	return plugin.Facts{Version: plugin.FactsVersion, Subjects: append([]plugin.Subject{root}, subjects...)}, nil
 }
 
-// Contents inventories the applications and flat packages in a tree, archive
-// or disk image. It does not follow symlinks or descend into bundles, and reads
-// a package's receipts and payload only when that package is inspected itself.
+// Contents inventories applications, flat packages and disk images in a tree,
+// archive or disk image. It does not follow symlinks or descend into bundles,
+// and reads a package's receipts and payload, or a nested image's contents,
+// only when that package or image is inspected itself.
 // Subject IDs are paths below the root, which is each subject's parent.
 func Contents(ctx context.Context, fsys fs.ReadLinkFS) ([]plugin.Subject, error) {
 	var subjects []plugin.Subject
@@ -204,7 +205,7 @@ func Contents(ctx context.Context, fsys fs.ReadLinkFS) ([]plugin.Subject, error)
 			}
 			subjects = append(subjects, plugin.Subject{ID: name, Parent: ".", Kind: "app", Path: name, App: appFacts(app)})
 			return fs.SkipDir
-		case ext == ".pkg" && entry.Type().IsRegular():
+		case (ext == ".pkg" || ext == ".dmg") && entry.Type().IsRegular():
 			subjects = append(subjects, plugin.Subject{ID: name, Parent: ".", Kind: "container", Path: name})
 		}
 		return nil

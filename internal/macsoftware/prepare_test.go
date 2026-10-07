@@ -537,3 +537,104 @@ func TestDMGSignatureVerifiesEveryApplication(t *testing.T) {
 		t.Fatalf("derived observations: %+v, %v", evidence, err)
 	}
 }
+
+// installerImage writes Vendor.dmg holding Installer.pkg, whose payload is the
+// fixture application, beside an uninstaller application, as the DaVinci Resolve
+// download does. It returns the directory holding the image.
+func installerImage(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := pkgbuild.Build(t.Context(), applicationFixture(t), filepath.Join(root, "Installer.pkg"), pkgbuild.Options{Identifier: "org.example.installer", Version: "2.0", InstallLocation: "/Applications", Payload: ".", Compression: pkgbuild.Gzip}); err != nil {
+		t.Fatal(err)
+	}
+	contents := filepath.Join(root, "Uninstall.app", "Contents")
+	if err := os.MkdirAll(contents, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plist := `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.uninstall</string><key>CFBundleName</key><string>Uninstall</string><key>CFBundleShortVersionString</key><string>3.0</string></dict></plist>`
+	if err := os.WriteFile(filepath.Join(contents, "Info.plist"), []byte(plist), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := t.TempDir()
+	testdiskimage.Write(t, filepath.Join(wrapper, "Vendor.dmg"), root)
+	return wrapper
+}
+
+// TestNestedDiskImagePreparesAsTheImageAlone covers a vendor that ships its
+// disk image inside an archive, a tree or another image: every selector reaches
+// what it would in the image alone.
+func TestNestedDiskImagePreparesAsTheImageAlone(t *testing.T) {
+	wrapper := installerImage(t)
+	archive := filepath.Join(t.TempDir(), "Vendor.zip")
+	testarchive.Zip(t, archive, wrapper)
+	outer := filepath.Join(t.TempDir(), "Outer.dmg")
+	testdiskimage.Write(t, outer, wrapper)
+	prepare := func(t *testing.T, spec Spec, input plugin.Artifact) plugin.Artifact {
+		t.Helper()
+		input.Evidence = map[string]json.RawMessage{"vendor": json.RawMessage(`{"release":"stable"}`)}
+		outputs, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()})
+		if err != nil {
+			t.Fatalf("%s: %v", input.Filename, err)
+		}
+		installer := outputs["installer"]
+		installer.Path = ""
+		return installer
+	}
+	for _, test := range []struct {
+		name, format string
+		spec         Spec
+	}{
+		{"package path", "pkg", Spec{PackagePath: "Installer.pkg"}},
+		{"package application", "pkg", Spec{Application: &Application{BundleID: "org.example.app"}}},
+		{"application", "dmg", Spec{Application: &Application{BundleID: "org.example.uninstall"}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			alone := prepare(t, test.spec, plugin.Artifact{Path: filepath.Join(wrapper, "Vendor.dmg"), Filename: "Vendor.dmg"})
+			if alone.Format != test.format || alone.Evidence["vendor"] == nil {
+				t.Fatalf("image alone = %+v", alone)
+			}
+			for _, input := range []plugin.Artifact{
+				{Path: archive, Filename: "Vendor.zip"},
+				{Path: outer, Filename: "Outer.dmg"},
+				{Path: wrapper, Filename: "Vendor", Tree: true},
+			} {
+				if nested := prepare(t, test.spec, input); !reflect.DeepEqual(nested, alone) {
+					t.Fatalf("%s prepared %+v, the image alone %+v", input.Filename, nested, alone)
+				}
+			}
+		})
+	}
+}
+
+func TestPackagePathOpensOneOfSeveralDiskImages(t *testing.T) {
+	root := installerImage(t)
+	testdiskimage.Write(t, filepath.Join(root, "Application.dmg"), applicationFixture(t))
+	filename := filepath.Join(t.TempDir(), "Vendor.zip")
+	testarchive.Zip(t, filename, root)
+	prepare := func(spec Spec) (plugin.Artifact, error) {
+		outputs, err := Prepare(t.Context(), spec, Request{Input: plugin.Artifact{Path: filename, Filename: "Vendor.zip"}, Workspace: t.TempDir()})
+		return outputs["installer"], err
+	}
+	if _, err := prepare(Spec{}); err == nil || !strings.Contains(err.Error(), "Application.dmg, Vendor.dmg") {
+		t.Fatalf("ambiguous images: %v", err)
+	}
+	image, err := os.ReadFile(filepath.Join(root, "Application.dmg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	installer, err := prepare(Spec{PackagePath: "Application.dmg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if published, err := os.ReadFile(installer.Path); err != nil || !bytes.Equal(published, image) || installer.Version != "1.2" {
+		t.Fatalf("selected image = %+v, %v", installer, err)
+	}
+	// The path is spent on the image; the application selector applies inside it.
+	installer, err = prepare(Spec{PackagePath: "Vendor.dmg", Application: &Application{BundleID: "org.example.app"}})
+	if err != nil || installer.Format != "pkg" || installer.Evidence["macos.application"] == nil {
+		t.Fatalf("package in the selected image = %+v, %v", installer, err)
+	}
+	if _, err := prepare(Spec{PackagePath: "Vendor.dmg"}); err == nil || !strings.Contains(err.Error(), "Vendor.dmg: found 2") {
+		t.Fatalf("ambiguity inside the selected image does not name it: %v", err)
+	}
+}

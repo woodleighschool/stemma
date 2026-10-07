@@ -30,9 +30,10 @@ import (
 const maxBytes int64 = 16 << 30
 const maxEntries = 100000
 
-// Extract writes the app or flat PKG at an exact path in the image under a new
-// destination directory, returning its path. keep names the files of a selected app to write, relative to it, and nil
-// writes them all; only directories leading to a kept file are listed.
+// Extract writes the app, flat PKG or nested disk image at an exact path in the
+// image under a new destination directory, returning its path. keep names the
+// files of a selected app to write, relative to it, and nil writes them all;
+// only directories leading to a kept file are listed.
 // Partial output is removed on failure. Images are read without mounting them.
 //
 // The result is an inspection copy: file bytes, modes, times and confined symlinks.
@@ -197,8 +198,8 @@ func hostName(name string) (string, error) {
 	return local, nil
 }
 
-// payloadPath requires selection to name an app bundle or flat PKG reached
-// without symlinks.
+// payloadPath requires selection to name an app bundle, flat PKG or disk image
+// reached without symlinks.
 func payloadPath(volume filesystem, selection string) error {
 	if err := safeName(selection); err != nil {
 		return err
@@ -224,12 +225,12 @@ func payloadPath(volume filesystem, selection string) error {
 		if info.IsDir() {
 			return nil
 		}
-	case ".pkg":
+	case ".pkg", ".dmg":
 		if info.Mode().IsRegular() {
 			return nil
 		}
 	}
-	return errors.New("disk image selection must name an app bundle or flat PKG")
+	return errors.New("disk image selection must name an app bundle, flat PKG or disk image")
 }
 
 type entry struct {

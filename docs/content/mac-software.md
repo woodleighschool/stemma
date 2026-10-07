@@ -12,6 +12,7 @@ Use [BuildMacPkg](building-packages.md) when you need to construct a custom payl
 | DMG containing an application              | The original DMG, with the selected application described for the destination |
 | DMG or archive containing an installer PKG | The selected nested package, preserving its bytes                             |
 | Archive or tree containing an application  | A new DMG holding the selected application                                    |
+| Archive, tree or DMG containing a DMG      | What the inner DMG prepares as a download of its own                          |
 
 For an application in a DMG:
 
@@ -160,6 +161,11 @@ must identify exactly one package. This selects and extracts the vendor installe
 it does not reconstruct its payload or run its scripts. `application` then selects
 within the extracted package, as it does when an image holds a single package and
 no application matches.
+
+A download that wraps one disk image, such as a ZIP holding a DMG, needs no extra
+selection: `package_path` and `application` apply inside that image. When a
+download holds several images, `package_path` names the one to open and
+`application` selects inside it.
 
 Some packages install a staging helper which later downloads the real application.
 Their contents cannot prove the eventual installed application. Leave

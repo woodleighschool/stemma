@@ -1954,7 +1954,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Archive-relative path or glob selecting one installer package. Selection must be unambiguous."
+                  "description": "Path or glob selecting one installer package, relative to the archive or disk image holding it. It may instead name a disk image to open. Selection must be unambiguous."
                 },
                 "signatures": {
                   "anyOf": [
@@ -2370,7 +2370,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Archive-relative path or glob selecting one installer package. Selection must be unambiguous."
+                      "description": "Path or glob selecting one installer package, relative to the archive or disk image holding it. It may instead name a disk image to open. Selection must be unambiguous."
                     },
                     "signatures": {
                       "anyOf": [

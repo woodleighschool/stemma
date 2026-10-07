@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"os"
@@ -33,19 +34,29 @@ type Request struct {
 	DeriveSignature bool
 }
 
+// maxImageDepth bounds the disk images opened inside one another. Vendors nest
+// one; the bound keeps a crafted image from being opened without end.
+const maxImageDepth = 8
+
 // Prepare retains vendor installer bytes and places a selected archive
 // application in a disk image. It never executes applications or hooks.
 func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin.Artifact, error) {
 	if err := spec.Validate(); err != nil {
 		return nil, err
 	}
-	input, workspace := request.Input, request.Workspace
-	if input.Path == "" {
+	if request.Input.Path == "" {
 		return map[string]plugin.Artifact{}, nil
 	}
-	if !filepath.IsAbs(workspace) || !filepath.IsAbs(input.Path) {
+	if !filepath.IsAbs(request.Workspace) || !filepath.IsAbs(request.Input.Path) {
 		return nil, errors.New("preparation requires absolute workspace and leased input paths")
 	}
+	return prepare(ctx, spec, request, 0)
+}
+
+// prepare publishes from one source: the leased input, or a disk image depth
+// levels inside it.
+func prepare(ctx context.Context, spec Spec, request Request, depth int) (map[string]plugin.Artifact, error) {
+	input, workspace := request.Input, request.Workspace
 	source, err := contents.Open(ctx, input, workspace)
 	if err != nil {
 		return nil, err
@@ -63,6 +74,13 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 	pkg, app, err := choose(spec, source.Traversable(), inventory)
 	if err != nil {
 		return nil, err
+	}
+	if diskImage(pkg) {
+		outputs, err := prepareImage(ctx, spec, request, source, pkg, depth)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", pkg, err)
+		}
+		return outputs, nil
 	}
 	if spec.DiskImage != nil && (app == nil || source.IsImage() && input.ContentRoot == "") {
 		return nil, errors.New("disk_image requires an application from an archive or tree")
@@ -100,6 +118,37 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 		return nil, err
 	}
 	return map[string]plugin.Artifact{"installer": installer}, nil
+}
+
+// prepareImage prepares a disk image found inside the source as the image
+// alone would be prepared, keeping the input's evidence.
+func prepareImage(ctx context.Context, spec Spec, request Request, source *contents.Source, name string, depth int) (map[string]plugin.Artifact, error) {
+	if depth == maxImageDepth {
+		return nil, errors.New("disk images are nested too deeply")
+	}
+	node, err := source.At(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	local := node.Local
+	if local == "" {
+		done := plugin.Stage(ctx, "Extracting disk image", plugin.Detail(path.Base(name)))
+		local, err = node.Materialize(ctx, filepath.Join(request.Workspace, "image"))
+		done(err)
+		if err != nil {
+			return nil, err
+		}
+	}
+	// A path that named the image is spent; every other selector applies inside it.
+	if matchPath(spec.PackagePath, name) {
+		spec.PackagePath = ""
+	}
+	request.Input = plugin.Artifact{Path: local, Filename: path.Base(name), Format: "dmg", Evidence: request.Input.Evidence}
+	request.Workspace = filepath.Join(request.Workspace, "nested")
+	if err := os.Mkdir(request.Workspace, 0o700); err != nil {
+		return nil, err
+	}
+	return prepare(ctx, spec, request, depth+1)
 }
 
 // publishApplication publishes a vendor disk image as it is, or places an
