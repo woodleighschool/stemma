@@ -1191,7 +1191,7 @@ func TestAppSubtypeCannotBeChanged(t *testing.T) {
 	}
 	req.Artifact.Filename = "vendor.dmg"
 	desired = object{"@odata.type": dmgType}
-	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), "different native subtype") {
+	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), "app-1 is a win32LobApp and the installer publishes as a macOSDmgApp") {
 		t.Fatalf("identity moved to another subtype: %v", err)
 	}
 	if fake.creates != 1 {

@@ -141,8 +141,10 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 	}
 	published := publication{identity: identity}
 	if current != nil {
-		if current["@odata.type"] != c.appType {
-			return response, errors.New("intune app has a different native subtype")
+		if existing := text(current["@odata.type"]); existing != c.appType {
+			// Graph cannot change an app's type.
+			name := func(appType string) string { return strings.TrimPrefix(appType, "#microsoft.graph.") }
+			return response, fmt.Errorf("intune app %s is a %s and the installer publishes as a %s; delete the app to publish it as one", text(current["id"]), name(existing), name(c.appType))
 		}
 		if published, err = recoverMarker(current, identity); err != nil {
 			return response, err
