@@ -107,7 +107,7 @@ func difference(field string, before, after any) []string {
 		return []string{field + ": changed (" + lineRange(a, b) + ")"}
 	}
 	if aText || bText {
-		return []string{field + ": " + summary(before) + " -> " + summary(after)}
+		return []string{field + ": " + summary(before) + " → " + summary(after)}
 	}
 	if _, ok := before.(missing); ok && rok {
 		return initial(field+" (added)", right)
@@ -122,14 +122,14 @@ func difference(field string, before, after any) []string {
 		if len(lines) > 0 && lines[0] == field+":" {
 			lines = lines[1:]
 		}
-		return append([]string{field + ": " + value(before) + " ->"}, lines...)
+		return append([]string{field + ": " + value(before) + " →"}, lines...)
 	}
 	if items, ok := before.([]any); ok && len(items) > 0 && emptyValue(after) {
 		lines := difference(field, before, []any{})
 		if len(lines) > 0 && lines[0] == field+":" {
 			lines = lines[1:]
 		}
-		return append([]string{field + ": -> " + value(after)}, lines...)
+		return append([]string{field + ": → " + value(after)}, lines...)
 	}
 	if a, ok := before.([]any); ok {
 		if b, ok := after.([]any); ok {
@@ -201,7 +201,7 @@ func initial(field string, v any) []string {
 		for _, item := range v {
 			fields, object := item.(map[string]any)
 			if !object || len(fields) == 0 {
-				rows = append(rows, "* "+summary(item))
+				rows = append(rows, "– "+summary(item))
 				continue
 			}
 			var member []string
@@ -211,7 +211,7 @@ func initial(field string, v any) []string {
 			for i, line := range member {
 				prefix := "  "
 				if i == 0 {
-					prefix = "* "
+					prefix = "– "
 				}
 				rows = append(rows, prefix+line)
 			}
@@ -294,7 +294,7 @@ func lineRange(before, after string) string {
 	if a == b {
 		return plural(b, "line")
 	}
-	return strconv.Itoa(a) + " -> " + plural(b, "line")
+	return strconv.Itoa(a) + " → " + plural(b, "line")
 }
 
 func plural(count int, noun string) string {
@@ -322,13 +322,13 @@ func transition(before, after any) string {
 			a, b = Text(string(left)), Text(string(right))
 		}
 	}
-	return a + " -> " + b
+	return a + " → " + b
 }
 
 func value(v any) string {
 	if s, ok := v.(string); ok && len(s) == 64 {
 		if _, err := hex.DecodeString(s); err == nil {
-			return s[:12] + "..."
+			return s[:12] + "…"
 		}
 	}
 	return fullValue(v)

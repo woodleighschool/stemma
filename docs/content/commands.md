@@ -234,16 +234,19 @@ accounting details.
 
 ## Reports and diagnostics
 
-Outcome commands write each resource's report to stdout as it finishes, then the
-run's totals. Plan shows proposed changes, including initial values for new
+Outcome commands name their work, write each resource's report to stdout as it
+finishes, then the run's totals. Plan shows proposed changes, including initial values for new
 objects. Apply reports confirmed publication actions. Update shows input changes,
-prepare shows newly prepared resources, icon names the artwork file it writes,
+prepare keeps a completion line for every resource, icon names the artwork file it writes,
 and signature shows derived signers. Multi-line values such as scripts show line
 counts instead of their text. Explicitly selected resources are shown even when
 unchanged. `--all` includes unchanged resources in human
-reports; totals always describe the whole run. JSON includes all resources in the
+reports. Preparation shows filenames for newly prepared artifacts; cached resources
+use one line unless explicitly selected or expanded with `--all`. Totals always
+describe the whole run. JSON includes all resources in the
 selected scope, regardless of `--all`. Reconcile prints the reviewed commit's
-publication followed by proposal outcomes.
+publication followed by proposal outcomes, under separate applying and update-checking
+sections.
 
 ```sh
 stemma plan
@@ -251,12 +254,27 @@ stemma plan --json --all > plan.json
 stemma prepare --all
 ```
 
-When stderr is a suitable terminal, delayed activity shows the current operation
-for each resource in a small live region. Known-size transfers show a bar and
-counts. Fast work stays quiet, completed activity disappears, and durable results
-have the same content in terminals and pipes. Results remain on stdout even when
-it is redirected. JSON, generated documents, CI and dumb terminals suppress the
-live display; `--no-progress` disables it explicitly. `NO_COLOR` controls colour.
+Human reports use `➤` for headings, `✓` for successful or unchanged outcomes,
+`✗` for failures and `–` for skipped or blocked work. Notices use `!` for warnings
+and `i` for information. `→` marks proposed actions, before/after changes,
+redirects and publication destinations. Versions follow names in parentheses;
+statuses and field values follow a colon. Details indent by two spaces per level,
+with one space between parts of a line. Blank lines separate sections; compact
+outcomes stay adjacent. Colour
+reinforces these markers; the same text remains readable without it. Diff lines
+retain `+` and `-`, and literal payloads, YAML fragments and machine output retain
+their own syntax.
+
+When stderr is a suitable terminal, a live region shows the resource being worked
+on: its heading, the step that is running, and above it the finished steps that
+took a second or longer. Known-size transfers show a bar and counts. A step
+that runs again continues its earlier line. Work that belongs to the command
+rather than a resource shows on its own line below. A block taller than the
+terminal scrolls into history instead of being cut. The resource's result
+replaces its live block, and durable results have the same content in terminals
+and pipes. Results remain on stdout even when it is redirected. JSON, generated
+documents, CI and dumb terminals suppress the live display; `--no-progress`
+disables it explicitly. `NO_COLOR` controls colour.
 Warnings go to stderr as they happen; in JSON mode they are part of the document.
 Resource notices appear once per command, including for cached or unchanged
 resources, and remain visible with `--no-progress`. JSON keeps them in each resource's

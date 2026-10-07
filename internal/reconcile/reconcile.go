@@ -35,6 +35,8 @@ const (
 type Options struct {
 	ConfigPath         string
 	CacheDir, StateDir string
+	// PhaseStarted announces apply or update before its work begins.
+	PhaseStarted func(method string) error
 	// ResourceDone streams each engine run's results with the run's method;
 	// the catalog lookup reports as update.
 	ResourceDone func(method string, resource engine.ResourceReport) error
@@ -142,6 +144,11 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		err = fmt.Errorf("%s@%s: %w", r.base, short(head), err)
 		return report, errors.Join(err, r.reject(ctx, head))
 	}
+	if opts.PhaseStarted != nil {
+		if err := opts.PhaseStarted("apply"); err != nil {
+			return report, err
+		}
+	}
 	apply := r.apply(ctx, head, reviewed)
 	report.Apply = &apply
 	if err := ctx.Err(); err != nil {
@@ -149,6 +156,11 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	if opts.ApplyDone != nil {
 		if err := opts.ApplyDone(report); err != nil {
+			return report, err
+		}
+	}
+	if opts.PhaseStarted != nil {
+		if err := opts.PhaseStarted("update"); err != nil {
 			return report, err
 		}
 	}

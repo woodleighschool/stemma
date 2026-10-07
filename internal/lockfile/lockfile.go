@@ -159,7 +159,7 @@ type Update struct {
 	root     string
 	opts     Options
 	inputs   map[string]map[string]plugin.Input
-	acquire  func(ctx context.Context, input plugin.Input, entry source.Entry) (source.Entry, bool, error)
+	acquire  func(ctx context.Context, resource string, input plugin.Input, entry source.Entry) (source.Entry, bool, error)
 }
 
 // Begin loads reviewed inputs without acquiring resource content.
@@ -213,7 +213,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		}
 		return current, cached, err
 	}
-	acquire := func(ctx context.Context, input plugin.Input, entry source.Entry) (source.Entry, bool, error) {
+	acquire := func(ctx context.Context, resource string, input plugin.Input, entry source.Entry) (source.Entry, bool, error) {
 		version, declaration, err := m.Declaration(input)
 		if err != nil {
 			return source.Entry{}, false, err
@@ -221,7 +221,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		matches := entry.Version == 1 && entry.Resolver == input.Resolver && entry.ResolverVersion == version && entry.Declaration == declaration
 		if m.IsLocal(input.Resolver) {
 			if !matches && frozen {
-				return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
+				return source.Entry{}, false, updateRequired(resource, "input is missing or stale in the lockfile")
 			}
 			cached := matches && m.Store.VerifyDigest(ctx, entry.Content.SHA256) == nil
 			current, _, err := resolve(ctx, input, entry)
@@ -230,7 +230,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 			}
 			unchanged := matches && current.Equal(entry)
 			if !unchanged && frozen {
-				return source.Entry{}, false, errors.New("local input content changed; run stemma update")
+				return source.Entry{}, false, updateRequired(resource, "local input content changed")
 			}
 			return current, unchanged && cached, nil
 		}
@@ -239,7 +239,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 			return entry, hit, err
 		}
 		if frozen {
-			return source.Entry{}, false, errors.New("input is missing or stale in the lockfile; run stemma update")
+			return source.Entry{}, false, updateRequired(resource, "input is missing or stale in the lockfile")
 		}
 		current, cached, err := resolve(ctx, input, entry)
 		if err != nil || opts.Refresh {
@@ -307,6 +307,12 @@ func requiresLock(inputs map[string]map[string]plugin.Input) bool {
 	return false
 }
 
+func updateRequired(resource, reason string) error {
+	parts := strings.Split(resource, "/")
+	selector := strings.Join(parts[max(0, len(parts)-2):], "/")
+	return fmt.Errorf("%s; run stemma update %s", reason, selector)
+}
+
 // Acquire obtains one resource's inputs. Repeated calls reuse the same observation.
 // Callers scope the logger to the resource.
 func (u *Update) Acquire(ctx context.Context, resource string) (map[string]source.Entry, map[string]bool, error) {
@@ -321,7 +327,7 @@ func (u *Update) Acquire(ctx context.Context, resource string) (map[string]sourc
 		return nil, nil, fmt.Errorf("unknown input resource %q", resource)
 	}
 	if u.opts.frozen() && len(u.old.Inputs[resource]) != len(inputs) {
-		return nil, nil, errors.New("inputs are missing or stale in the lockfile; run stemma update")
+		return nil, nil, updateRequired(resource, "inputs are missing or stale in the lockfile")
 	}
 	entries := map[string]source.Entry{}
 	hits := map[string]bool{}
@@ -355,14 +361,14 @@ func (u *Update) ReadInput(ctx context.Context, resource, name string) (source.E
 		return source.Entry{}, false, fmt.Errorf("unknown input %s/%s", resource, name)
 	}
 	if u.opts.frozen() && len(u.old.Inputs[resource]) != len(u.inputs[resource]) {
-		return source.Entry{}, false, errors.New("inputs are missing or stale in the lockfile; run stemma update")
+		return source.Entry{}, false, updateRequired(resource, "inputs are missing or stale in the lockfile")
 	}
 	if entry, ok := u.result.File.Inputs[resource][name]; ok {
 		return entry, u.result.CacheHits[resource][name], nil
 	}
 	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("input", name))
 	done := plugin.Stage(ctx, "Acquiring input")
-	entry, hit, err := u.acquire(ctx, input, u.old.Inputs[resource][name])
+	entry, hit, err := u.acquire(ctx, resource, input, u.old.Inputs[resource][name])
 	detail := entry.Content.Filename
 	if hit {
 		detail = strings.TrimSpace(detail + " (cached)")

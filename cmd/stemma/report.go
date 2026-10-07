@@ -37,14 +37,12 @@ func keyName(key string) string {
 }
 
 // selected reports whether a resource belongs in a report without --all:
-// failures, and whatever the method changed or derived.
+// failures, completed preparation, and whatever the method changed or derived.
 func selected(method string, resource engine.ResourceReport) bool {
 	include := resource.Error != "" || len(resource.BlockedBy) > 0 || len(resource.Inputs) > 0
 	switch method {
-	case "signature":
+	case "signature", "prepare":
 		include = true
-	case "prepare":
-		include = include || !resource.Cached
 	case "icon":
 		include = include || resource.Icon != "" && resource.Icon != "unchanged" && resource.Icon != "no icon declared"
 	}
@@ -111,14 +109,14 @@ func destinationStatus(destination engine.DestinationReport) string {
 
 // resourceHeading names a resource and its outcome.
 func resourceHeading(style textStyle, method string, resource engine.ResourceReport) string {
-	heading := "➤ " + changes.Text(resourceName(resource))
+	heading := changes.Text(resourceName(resource))
 	if version := resourceVersion(resource); version != "" {
-		heading += " · " + changes.Text(version)
+		heading += " (" + changes.Text(version) + ")"
 	}
 	if len(resource.Destinations) == 0 {
-		heading += " · " + resourceStatus(method, resource)
+		return style.outcomeLine(heading, resourceStatus(method, resource)) + "\n"
 	}
-	return style.paint(heading, color.Bold, color.FgHiMagenta) + "\n"
+	return style.heading(heading) + "\n"
 }
 
 // A shared heading version must describe every selected publication.
@@ -138,6 +136,9 @@ func resourceVersion(resource engine.ResourceReport) string {
 func renderResourceDetail(style textStyle, method string, resource engine.ResourceReport, detailed bool) string {
 	var text strings.Builder
 	text.WriteString(resourceHeading(style, method, resource))
+	if method == "prepare" && resource.Cached && resource.Error == "" && len(resource.BlockedBy) == 0 && len(resource.Destinations) == 0 && !detailed {
+		return text.String()
+	}
 	for _, input := range resource.Inputs {
 		for index, line := range changes.InputLines(input) {
 			if index == 0 {
@@ -158,14 +159,17 @@ func renderResourceDetail(style textStyle, method string, resource engine.Resour
 	}
 	for _, destination := range resource.Destinations {
 		label := changes.Text(destination.Name)
-		if destination.Artifact != "" {
-			label = changes.Text(destination.Artifact) + " → " + label
-		}
+		version := ""
 		if destination.Version != "" && destination.Version != resourceVersion(resource) {
-			label += " · " + changes.Text(destination.Version)
+			version = " (" + changes.Text(destination.Version) + ")"
+		}
+		if destination.Artifact != "" {
+			label = changes.Text(destination.Artifact) + version + " → " + label
+		} else {
+			label += version
 		}
 		if destination.Error != "" {
-			label += " · " + destinationStatus(destination)
+			label += ": " + destinationStatus(destination)
 		}
 		fmt.Fprintf(&text, "  %s\n", style.paint(label, color.Bold))
 		if len(destination.Changes) == 0 && destination.Error == "" {
@@ -217,14 +221,16 @@ func renderResourceDetail(style textStyle, method string, resource engine.Resour
 			for _, name := range slices.Sorted(maps.Keys(resource.Artifacts)) {
 				artifact := resource.Artifacts[name]
 				fmt.Fprintf(&text, "  %s: %s", changes.Text(name), changes.Text(artifact.Filename))
-				if artifact.Version != "" {
+				if artifact.Version != "" && artifact.Version != resourceVersion(resource) {
 					fmt.Fprintf(&text, " (%s)", changes.Text(artifact.Version))
 				}
 				text.WriteByte('\n')
 			}
 		}
 	}
-	text.WriteByte('\n')
+	if method != "prepare" {
+		text.WriteByte('\n')
+	}
 	return text.String()
 }
 
@@ -341,6 +347,9 @@ func signatureDetails(resource engine.ResourceReport) string {
 func printReportEnd(out io.Writer, method string, report engine.Report, runErr error) error {
 	style := newTextStyle(out)
 	var text strings.Builder
+	if method == "prepare" && len(report.Resources) > 0 {
+		text.WriteByte('\n')
+	}
 	text.WriteString(renderPluginChanges(style, report.Plugins))
 	text.WriteString(renderRemovedInputs(style, report.RemovedInputs))
 	text.WriteString(renderSummary(style, method, report, runErr))
@@ -356,7 +365,7 @@ func renderRemovedInputs(style textStyle, inputs []lockfile.InputChange) string 
 			if last != "" {
 				text.WriteByte('\n')
 			}
-			fmt.Fprintf(&text, "%s: %s\n", style.paint(changes.Text(keyName(input.Resource)), color.Bold), style.outcome("no longer declared"))
+			text.WriteString(style.outcomeLine(changes.Text(keyName(input.Resource)), "no longer declared") + "\n")
 			last = input.Resource
 		}
 		for index, line := range changes.InputLines(input) {
@@ -436,9 +445,9 @@ func quantity(count int, noun string) string {
 
 func lockfileStatus(style textStyle, changed bool) string {
 	if changed {
-		return style.paint("Lockfile updated.", color.FgHiGreen)
+		return style.paint("✓ Lockfile updated.", color.FgHiGreen)
 	}
-	return style.paint("Lockfile unchanged.", color.Faint)
+	return style.paint("✓ Lockfile unchanged.", color.Faint)
 }
 
 // renderReviewed describes the reviewed commit's publication, whose resources
@@ -463,7 +472,7 @@ func renderReviewed(style textStyle, report reconcile.Report) string {
 		outcome = "failed"
 	}
 	var text strings.Builder
-	fmt.Fprintf(&text, "%s %s %s", style.paint("Reviewed:", color.Bold), changes.Text(head), style.outcome(outcome))
+	text.WriteString(style.outcomeLine("Reviewed "+changes.Text(head), outcome))
 	if apply.Summary != "" {
 		fmt.Fprintf(&text, " (%s)", changes.Text(apply.Summary))
 	}
@@ -478,9 +487,9 @@ func renderReviewed(style textStyle, report reconcile.Report) string {
 // renderProposal describes one proposal branch's outcome.
 func renderProposal(style textStyle, proposal reconcile.Proposal) string {
 	var text strings.Builder
-	fmt.Fprintf(&text, "%s: %s", style.paint(changes.Text(keyName(proposal.Resource)), color.Bold), style.outcome(proposal.Action))
+	text.WriteString(style.outcomeLine(changes.Text(keyName(proposal.Resource)), proposal.Action))
 	if proposal.PullRequest != "" {
-		fmt.Fprintf(&text, " %s", changes.Text(proposal.PullRequest))
+		fmt.Fprintf(&text, "\n  Pull request: %s", changes.Text(proposal.PullRequest))
 	}
 	text.WriteByte('\n')
 	if proposal.Error != "" {
@@ -592,19 +601,19 @@ func printPluginUpdate(out io.Writer, update engine.PluginUpdate) error {
 		case report.Before != report.Digest:
 			outcome = "updated"
 		}
-		fmt.Fprintf(&text, "%s: %s\n", style.paint(changes.Text(report.Name), color.Bold), style.outcome(outcome))
+		text.WriteString(style.outcomeLine(changes.Text(report.Name), outcome) + "\n")
 		switch outcome {
 		case "locked":
 			fmt.Fprintf(&text, "  %s\n", shortDigest(report.Digest))
 		case "updated":
-			fmt.Fprintf(&text, "  %s -> %s\n", shortDigest(report.Before), shortDigest(report.Digest))
+			fmt.Fprintf(&text, "  %s → %s\n", shortDigest(report.Before), shortDigest(report.Digest))
 		}
 		for _, problem := range pluginProblems(report) {
 			writeError(&text, style, "  ", problem)
 		}
 	}
 	for _, name := range update.Removed {
-		fmt.Fprintf(&text, "%s: %s\n", style.paint(changes.Text(name), color.Bold), style.outcome("no longer declared"))
+		text.WriteString(style.outcomeLine(changes.Text(name), "no longer declared") + "\n")
 	}
 	text.WriteString(lockfileStatus(style, update.LockChanged) + "\n")
 	_, err := io.WriteString(out, text.String())
@@ -615,14 +624,14 @@ func printPluginUpdate(out io.Writer, update engine.PluginUpdate) error {
 func renderPluginChanges(style textStyle, plugins []lockfile.PluginChange) string {
 	var text strings.Builder
 	for _, change := range plugins {
-		heading := style.paint("plugin "+changes.Text(change.Name), color.Bold) + ": "
+		name := "plugin " + changes.Text(change.Name)
 		switch {
 		case change.After == nil:
-			fmt.Fprintf(&text, "%s%s\n", heading, style.outcome("no longer locked"))
+			text.WriteString(style.outcomeLine(name, "no longer locked") + "\n")
 		case change.Before == nil:
-			fmt.Fprintf(&text, "%s%s\n  %s\n", heading, style.outcome("locked"), shortDigest(change.After.Digest))
+			fmt.Fprintf(&text, "%s\n  %s\n", style.outcomeLine(name, "locked"), shortDigest(change.After.Digest))
 		default:
-			fmt.Fprintf(&text, "%s%s\n  %s -> %s\n", heading, style.outcome("updated"), shortDigest(change.Before.Digest), shortDigest(change.After.Digest))
+			fmt.Fprintf(&text, "%s\n  %s → %s\n", style.outcomeLine(name, "updated"), shortDigest(change.Before.Digest), shortDigest(change.After.Digest))
 		}
 		text.WriteByte('\n')
 	}
@@ -730,22 +739,16 @@ func renderEnvelope(style textStyle, filename string, envelope intunewin.Metadat
 	return text.String()
 }
 
-// writeFields writes a titled block of aligned fields, leaving out empty ones.
+// writeFields writes a titled block of fields, leaving out empty ones.
 // Blocks after the first start with a blank line.
 func writeFields(text *strings.Builder, style textStyle, title string, fields [][2]string) {
 	if text.Len() > 0 {
 		text.WriteByte('\n')
 	}
-	text.WriteString(style.paint(changes.Text(title), color.Bold) + "\n")
-	width := 0
+	text.WriteString(style.heading(changes.Text(title)) + "\n")
 	for _, field := range fields {
 		if field[1] != "" {
-			width = max(width, len(field[0])+1)
-		}
-	}
-	for _, field := range fields {
-		if field[1] != "" {
-			fmt.Fprintf(text, "  %-*s  %s\n", width, field[0]+":", changes.Text(field[1]))
+			fmt.Fprintf(text, "  %s: %s\n", field[0], changes.Text(field[1]))
 		}
 	}
 }

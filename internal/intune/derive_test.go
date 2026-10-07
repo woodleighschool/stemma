@@ -26,10 +26,10 @@ func TestMacMinimumOSMapsToItsRelease(t *testing.T) {
 	for _, test := range []struct{ version, field, origin string }{
 		{"14", "v14_0", "app.minimum_os"},
 		{"14.0.0", "v14_0", "app.minimum_os"},
-		{"14.2", "v14_0", "app.minimum_os 14.2 -> v14_0"},
+		{"14.2", "v14_0", "app.minimum_os 14.2 → v14_0"},
 		{"10.13", "v10_13", "app.minimum_os"},
-		{"10.13.6", "v10_13", "app.minimum_os 10.13.6 -> v10_13"},
-		{"26.1", "v26_0", "app.minimum_os 26.1 -> v26_0"},
+		{"10.13.6", "v10_13", "app.minimum_os 10.13.6 → v10_13"},
+		{"26.1", "v26_0", "app.minimum_os 26.1 → v26_0"},
 	} {
 		req.MinimumOS = &plugin.MinimumOS{Version: test.version, Origin: "app.minimum_os"}
 		derived, origins, err := Derive(req)

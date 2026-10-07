@@ -1,12 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"slices"
 	"strings"
 
 	"github.com/fatih/color"
+	"github.com/woodleighschool/stemma/internal/changes"
 	"golang.org/x/term"
 )
 
@@ -36,16 +38,42 @@ func (s textStyle) paint(text string, attributes ...color.Attribute) string {
 	return style.Sprint(text)
 }
 
+// heading marks a section or a resource's live or detailed block.
+func (s textStyle) heading(text string) string {
+	return s.paint("➤ "+text, color.Bold, color.FgHiMagenta)
+}
+
 // outcome colours a status by what it means for the reader.
 func (s textStyle) outcome(text string) string {
-	attribute := color.FgHiGreen
+	_, attribute := outcomeStyle(text)
+	return s.paint(text, attribute)
+}
+
+func outcomeStyle(text string) (string, color.Attribute) {
 	switch {
 	case strings.HasPrefix(text, "failed"):
-		attribute = color.FgHiRed
+		return "✗", color.FgHiRed
 	case slices.Contains([]string{"blocked", "skipped", "declined"}, text):
-		attribute = color.FgHiYellow
-	case strings.HasPrefix(text, "no application selected"), slices.Contains([]string{"no installer output", "unchanged", "inputs unchanged", "already applied", "cached", "retired", "no artwork", "no icon declared", "pinned"}, text):
-		attribute = color.Faint
+		return "–", color.FgHiYellow
+	case strings.HasPrefix(text, "no application selected"), slices.Contains([]string{"no installer output", "no artwork", "no icon declared", "nothing to declare"}, text):
+		return "–", color.Faint
+	case slices.Contains([]string{"unchanged", "inputs unchanged", "already applied", "cached", "pinned", "retired"}, text):
+		return "✓", color.Faint
 	}
-	return s.paint(text, attribute)
+	return "✓", color.FgHiGreen
+}
+
+// Failed blocks put the cross on the cause beneath their heading.
+func (s textStyle) outcomeLine(label, outcome string) string {
+	if strings.HasPrefix(outcome, "failed") {
+		return s.heading(label) + ": " + s.outcome(outcome)
+	}
+	mark, attribute := outcomeStyle(outcome)
+	return s.paint(mark, attribute) + " " + s.paint(label, color.Bold) + ": " + s.outcome(outcome)
+}
+
+func printSuccess(out io.Writer, message string) error {
+	style := newTextStyle(out)
+	_, err := fmt.Fprintln(out, style.paint("✓", color.FgHiGreen)+" "+changes.Text(message))
+	return err
 }

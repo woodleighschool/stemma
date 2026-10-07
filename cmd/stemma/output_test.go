@@ -33,7 +33,7 @@ func TestFiniteOutputContainsReportsAndWarningsOnly(t *testing.T) {
 	cmd.SetArgs([]string{"probe"})
 	err := cmd.ExecuteContext(t.Context())
 	finish(err)
-	if err != nil || out.String() != "report\n" || logs.String() != "Warning: Verification disabled\n" {
+	if err != nil || out.String() != "report\n" || logs.String() != "! Verification disabled\n" {
 		t.Fatalf("error=%v stdout=%q stderr=%q", err, out.String(), logs.String())
 	}
 }
@@ -84,7 +84,7 @@ spec:
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
 		t.Fatalf("extra stdout: %v", err)
 	}
-	if !strings.HasPrefix(logs.String(), "Error: MacSoftware/missing-installer: input source: open ") || strings.Count(logs.String(), "\n") != 1 {
+	if !strings.HasPrefix(logs.String(), "✗ MacSoftware/missing-installer: input source: open ") || strings.Count(logs.String(), "\n") != 1 {
 		t.Fatalf("stderr=%q", logs.String())
 	}
 }
@@ -124,7 +124,7 @@ func TestPluginUpdateNamesWhatHappenedToEachEntry(t *testing.T) {
 	if err := printPluginUpdate(&out, update); err != nil {
 		t.Fatal(err)
 	}
-	want := "echo: updated\n  sha256:aaaaaaaaaaaa -> sha256:bbbbbbbbbbbb\nkept: unchanged\nnew: locked\n  sha256:dddddddddddd\npinned: pinned\nstale: failed\n  ✗ image tag is not locked; run stemma plugins update\nretired: no longer declared\nLockfile updated.\n"
+	want := "✓ echo: updated\n  sha256:aaaaaaaaaaaa → sha256:bbbbbbbbbbbb\n✓ kept: unchanged\n✓ new: locked\n  sha256:dddddddddddd\n✓ pinned: pinned\n➤ stale: failed\n  ✗ image tag is not locked; run stemma plugins update\n✓ retired: no longer declared\n✓ Lockfile updated.\n"
 	if out.String() != want {
 		t.Fatalf("plugins update:\n%s", out.String())
 	}
@@ -147,17 +147,17 @@ func TestPluginInspectionDescribesCodeAndOfferings(t *testing.T) {
 	if err := printPlugins(&out, reports); err != nil {
 		t.Fatal(err)
 	}
-	want := `downloads
-  Image:      registry.example/downloads:0.3.0@sha256:eeeeeeeeeeee
-  Version:    0.3.0 (58d5d19c08d2)
-  Platforms:  darwin/arm64, linux/amd64
-  Resolvers:  audinate, blender
+	want := `➤ downloads
+  Image: registry.example/downloads:0.3.0@sha256:eeeeeeeeeeee
+  Version: 0.3.0 (58d5d19c08d2)
+  Platforms: darwin/arm64, linux/amd64
+  Resolvers: audinate, blender
 
-tools
-  Path:            plugins/tools
-  Digest:          sha256:ffffffffffff
-  Version:         dev (df2cf21a6fa9+dirty)
-  Resource kinds:  example.org/v1/VendorPackage
+➤ tools
+  Path: plugins/tools
+  Digest: sha256:ffffffffffff
+  Version: dev (df2cf21a6fa9+dirty)
+  Resource kinds: example.org/v1/VendorPackage
   ✗ tools.publish, tools.mirror: implements reconcile interface 2; this Stemma uses 1
 `
 	if out.String() != want {
@@ -182,7 +182,7 @@ func TestHumanReportsStreamSelectedResourcesAndTotalTheRun(t *testing.T) {
 			}
 		}
 		streamed := human.String()
-		for _, want := range []string{"➤ MacSoftware/changed\n  repo\n    → package.version: 1 -> 2\n", "➤ MacSoftware/broken · failed\n  ✗ invalid signature\n"} {
+		for _, want := range []string{"➤ MacSoftware/changed\n  repo\n    → package.version: 1 → 2\n", "➤ MacSoftware/broken: failed\n  ✗ invalid signature\n"} {
 			if !strings.Contains(streamed, want) {
 				t.Fatalf("all=%v: block %q did not stream: %s", all, want, streamed)
 			}
@@ -217,6 +217,82 @@ func TestHumanReportsStreamSelectedResourcesAndTotalTheRun(t *testing.T) {
 	}
 }
 
+func TestPreparationKeepsEveryCompletedOutcome(t *testing.T) {
+	resources := []engine.ResourceReport{
+		{Kind: "MacSoftware", Name: "cached", Cached: true, Artifacts: map[string]engine.Prepared{"installer": {Filename: "cached-1.0.pkg", Version: "1.0"}}},
+		{Kind: "MacSoftware", Name: "built", Artifacts: map[string]engine.Prepared{"installer": {Filename: "built-2.0.pkg", Version: "2.0"}}},
+		{Kind: "MacSoftware", Name: "failed", Error: "source unavailable"},
+		{Kind: "MacSoftware", Name: "blocked", BlockedBy: []string{"MacSoftware/failed"}},
+	}
+	for _, interactive := range []bool{false, true} {
+		t.Run(fmt.Sprintf("interactive=%t", interactive), func(t *testing.T) {
+			var out, diagnostic bytes.Buffer
+			o := newCommandOutput(&out, &diagnostic)
+			o.interactive = interactive
+			if err := o.beginPhase("prepare"); err != nil {
+				t.Fatal(err)
+			}
+			for _, resource := range resources {
+				before := out.String()
+				if err := o.resourceDone("prepare", resource); err != nil {
+					t.Fatal(err)
+				}
+				if !strings.HasPrefix(out.String(), before) || !strings.Contains(strings.TrimPrefix(out.String(), before), resourceName(resource)) {
+					t.Fatalf("completed resource disappeared: %s", &out)
+				}
+			}
+			want := "➤ Preparing software\n\n" +
+				"✓ MacSoftware/cached (1.0): cached\n" +
+				"✓ MacSoftware/built (2.0): prepared\n  installer: built-2.0.pkg\n" +
+				"➤ MacSoftware/failed: failed\n  ✗ source unavailable\n" +
+				"– MacSoftware/blocked: blocked\n  blocked by MacSoftware/failed\n"
+			if out.String() != want || diagnostic.Len() != 0 {
+				t.Fatalf("stdout=%q stderr=%q", &out, &diagnostic)
+			}
+		})
+	}
+	for _, selection := range []string{"all", "MacSoftware/cached"} {
+		var out bytes.Buffer
+		o := newCommandOutput(&out, io.Discard)
+		o.all = selection == "all"
+		o.selectors = []string{selection}
+		if err := o.resourceDone("prepare", resources[0]); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(out.String(), "installer: cached-1.0.pkg\n") {
+			t.Fatalf("%s lost cached artifact details: %s", selection, &out)
+		}
+	}
+}
+
+func TestReconcileSectionsKeepPhaseOutcomesTogether(t *testing.T) {
+	for _, asJSON := range []bool{false, true} {
+		var out, diagnostic bytes.Buffer
+		o := newCommandOutput(&out, &diagnostic)
+		o.asJSON, o.reconciling = asJSON, true
+		if err := o.beginPhase("apply"); err != nil {
+			t.Fatal(err)
+		}
+		if err := o.applyDone(reconcile.Report{Branch: "main", Head: "123456789abc", Apply: &reconcile.Apply{Skipped: true}}); err != nil {
+			t.Fatal(err)
+		}
+		if err := o.beginPhase("update"); err != nil {
+			t.Fatal(err)
+		}
+		if err := o.proposalDone(reconcile.Proposal{Resource: "MacSoftware/example", Action: "created", PullRequest: "https://example.test/pull/1"}); err != nil {
+			t.Fatal(err)
+		}
+		want := "➤ Applying reviewed software\n\n✓ Reviewed main@123456789abc: already applied\n\n" +
+			"➤ Checking for updates\n\n✓ MacSoftware/example: created\n  Pull request: https://example.test/pull/1\n"
+		if asJSON {
+			want = ""
+		}
+		if out.String() != want || diagnostic.Len() != 0 {
+			t.Fatalf("json=%t stdout=%q stderr=%q", asJSON, &out, &diagnostic)
+		}
+	}
+}
+
 func TestApplyReportDoesNotConfirmFailedDestinationChanges(t *testing.T) {
 	report := engine.Report{Error: "upload failed", Resources: []engine.ResourceReport{{Kind: "MacSoftware", Name: "example", Error: "upload failed", Destinations: []engine.DestinationReport{
 		{Name: "first", Applied: true, Changes: []plugin.Change{{Action: "set", Field: "description", Before: json.RawMessage(`"old"`), After: json.RawMessage(`"new"`)}}},
@@ -224,7 +300,7 @@ func TestApplyReportDoesNotConfirmFailedDestinationChanges(t *testing.T) {
 	}}}}
 	report.Summarize("apply")
 	text := renderResourceDetail(textStyle{}, "apply", report.Resources[0], false) + renderSummary(textStyle{}, "apply", report, errors.New("upload failed"))
-	for _, want := range []string{"➤ MacSoftware/example\n", "  first\n    ✓ Updated 1 metadata field\n", "  second · failed (changes not confirmed)\n", "    ✗ upload failed\n", "Apply incomplete: 1 publication applied; 1 resource, 2 destinations", "1 failed"} {
+	for _, want := range []string{"➤ MacSoftware/example\n", "  first\n    ✓ Updated 1 metadata field\n", "  second: failed (changes not confirmed)\n", "    ✗ upload failed\n", "Apply incomplete: 1 publication applied; 1 resource, 2 destinations", "1 failed"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q: %s", want, text)
 		}
@@ -247,7 +323,7 @@ func TestInterruptedRunKeepsStreamedResultsAndSaysSo(t *testing.T) {
 		t.Fatal(err)
 	}
 	o.finish(errInterrupted)
-	if !strings.HasPrefix(out.String(), "➤ MacSoftware/done\n") || !strings.HasSuffix(out.String(), "Apply interrupted: 1 publication applied; 1 resource, 1 destination; 0 unchanged.\n") || logs.String() != "Interrupted.\n" {
+	if !strings.HasPrefix(out.String(), "➤ MacSoftware/done\n") || !strings.HasSuffix(out.String(), "Apply interrupted: 1 publication applied; 1 resource, 1 destination; 0 unchanged.\n") || logs.String() != "– Interrupted.\n" {
 		t.Fatalf("stdout=%q stderr=%q", out.String(), logs.String())
 	}
 }
@@ -258,11 +334,11 @@ func TestFinalErrorShowsOnlyWhatNoReportShowed(t *testing.T) {
 		err  error
 		want string
 	}{
-		{errors.Join(resource, errors.New("lockfile: schema violations:\n\tspec.source: required")), "Error: lockfile: schema violations:\n    spec.source: required\n"},
-		{resource, "Error: MacSoftware/example: upload failed\n"},
-		{reconcile.ErrFailed, "Error: reconcile: a phase failed\n"},
+		{errors.Join(resource, errors.New("lockfile: schema violations:\n\tspec.source: required")), "✗ lockfile: schema violations:\n    spec.source: required\n"},
+		{resource, "✗ MacSoftware/example: upload failed\n"},
+		{reconcile.ErrFailed, "✗ reconcile: a phase failed\n"},
 		// A report that could not be written showed nothing.
-		{errors.Join(reconcile.ErrFailed, errors.New("write stdout: broken pipe")), "Error: reconcile: a phase failed\n  write stdout: broken pipe\n"},
+		{errors.Join(reconcile.ErrFailed, errors.New("write stdout: broken pipe")), "✗ reconcile: a phase failed\n  write stdout: broken pipe\n"},
 	} {
 		var logs bytes.Buffer
 		newCommandOutput(io.Discard, &logs).finish(test.err)
@@ -279,7 +355,7 @@ func TestFinalErrorShowsOnlyWhatNoReportShowed(t *testing.T) {
 	o := newCommandOutput(io.Discard, &logs)
 	o.resultOnly = true
 	o.finish(errors.Join(engine.ResourceError{Resource: "stemma/v1alpha1/MacSoftware/example", Err: errors.New("upload failed")}))
-	if want := "Error: MacSoftware/example: upload failed\n"; logs.String() != want {
+	if want := "✗ MacSoftware/example: upload failed\n"; logs.String() != want {
 		t.Fatalf("path-only failure printed %q, want %q", logs.String(), want)
 	}
 }
@@ -290,7 +366,7 @@ func TestStartupFailureDoesNotFabricateReport(t *testing.T) {
 	cmd.SetArgs([]string{"plan", "--json", "--root", t.TempDir()})
 	err := cmd.ExecuteContext(t.Context())
 	finish(err)
-	if err == nil || out.Len() != 0 || !strings.HasPrefix(logs.String(), "Error: ") {
+	if err == nil || out.Len() != 0 || !strings.HasPrefix(logs.String(), "✗ ") {
 		t.Fatalf("error=%v stdout=%q stderr=%q", err, out.String(), logs.String())
 	}
 }
@@ -379,7 +455,7 @@ func TestCancellationWithoutInterruptIsFailure(t *testing.T) {
 	var logs bytes.Buffer
 	output := newCommandOutput(io.Discard, &logs)
 	output.finish(context.Canceled)
-	if logs.String() != "Error: context canceled\n" {
+	if logs.String() != "✗ context canceled\n" {
 		t.Fatal(logs.String())
 	}
 }
@@ -441,9 +517,9 @@ func TestPublicationVersionsFollowSelectedOutputs(t *testing.T) {
 		destinations []engine.DestinationReport
 		want, absent []string
 	}{
-		{"alternate only", []engine.DestinationReport{{Name: "repo", Artifact: "alternate.pkg", Version: "2.0"}}, []string{"➤ MacSoftware/example · 2.0", "alternate.pkg → repo"}, []string{"· 1.0"}},
-		{"different outputs", []engine.DestinationReport{{Name: "first", Artifact: "default.pkg", Version: "1.0"}, {Name: "second", Artifact: "alternate.pkg", Version: "2.0"}}, []string{"➤ MacSoftware/example\n", "default.pkg → first · 1.0", "alternate.pkg → second · 2.0"}, []string{"➤ MacSoftware/example ·"}},
-		{"unknown version", []engine.DestinationReport{{Name: "repo", Artifact: "alternate.pkg"}}, []string{"➤ MacSoftware/example\n", "alternate.pkg → repo"}, []string{"· 1.0"}},
+		{"alternate only", []engine.DestinationReport{{Name: "repo", Artifact: "alternate.pkg", Version: "2.0"}}, []string{"➤ MacSoftware/example (2.0)", "alternate.pkg → repo"}, []string{"(1.0)"}},
+		{"different outputs", []engine.DestinationReport{{Name: "first", Artifact: "default.pkg", Version: "1.0"}, {Name: "second", Artifact: "alternate.pkg", Version: "2.0"}}, []string{"➤ MacSoftware/example\n", "default.pkg (1.0) → first", "alternate.pkg (2.0) → second"}, []string{"➤ MacSoftware/example ("}},
+		{"unknown version", []engine.DestinationReport{{Name: "repo", Artifact: "alternate.pkg"}}, []string{"➤ MacSoftware/example\n", "alternate.pkg → repo"}, []string{"(1.0)"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			resource := engine.ResourceReport{Kind: "MacSoftware", Name: "example", Artifacts: map[string]engine.Prepared{"installer": {Version: "1.0"}}, Destinations: tt.destinations}
@@ -497,8 +573,8 @@ func TestResourceNoticesSurviveResultFiltering(t *testing.T) {
 				if diagnostic.Len() != 0 || len(decoded.Resources[0].Notices) != 2 {
 					t.Fatalf("report=%s stderr=%s", &out, &diagnostic)
 				}
-			} else if want := "! MacSoftware/foo · Source has no signature expectation\n  Run `stemma signature MacSoftware/foo` to derive one.\n" +
-				"! MacSoftware/foo · Developer ID signature has no secure timestamp; certificate validity at signing time cannot be established\n"; diagnostic.String() != want {
+			} else if want := "! MacSoftware/foo: Source has no signature expectation\n  Run `stemma signature MacSoftware/foo` to derive one.\n" +
+				"! MacSoftware/foo: Developer ID signature has no secure timestamp; certificate validity at signing time cannot be established\n"; diagnostic.String() != want {
 				t.Fatalf("stderr=%q want=%q", diagnostic.String(), want)
 			}
 		})

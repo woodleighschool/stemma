@@ -98,6 +98,29 @@ func (o *commandOutput) emit(text string) error {
 	return err
 }
 
+func (o *commandOutput) beginPhase(method string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.asJSON || o.resultOnly {
+		return nil
+	}
+	title := map[string]string{
+		"update": "Updating inputs", "prepare": "Preparing software",
+		"signature": "Deriving signatures", "icon": "Extracting icons",
+		"plan": "Planning publications", "apply": "Applying publications",
+	}[method]
+	prefix := ""
+	if o.reconciling {
+		switch method {
+		case "apply":
+			title = "Applying reviewed software"
+		case "update":
+			title, prefix = "Checking for updates", "\n"
+		}
+	}
+	return o.emit(prefix + o.outStyle.heading(title) + "\n\n")
+}
+
 // notice writes a diagnostic line to stderr, above the live region while it is
 // on screen. Callers hold o.mu.
 func (o *commandOutput) notice(line string) {
@@ -122,7 +145,7 @@ func (o *commandOutput) finish(err error) {
 	switch {
 	case err == nil:
 	case errors.Is(err, errInterrupted):
-		_, _ = fmt.Fprintln(o.errOut, o.errStyle.paint("Interrupted.", color.FgHiYellow))
+		_, _ = fmt.Fprintln(o.errOut, o.errStyle.paint("– Interrupted.", color.FgHiYellow))
 	default:
 		text := commandError(err)
 		if o.resultOnly {
@@ -133,21 +156,23 @@ func (o *commandOutput) finish(err error) {
 			text = strings.SplitN(failureText(err), "\n", 2)[0]
 		}
 		if text != "" {
-			_, _ = fmt.Fprintln(o.errOut, o.errStyle.paint("Error:", color.Bold, color.FgHiRed)+" "+strings.Join(errorLines(text), "\n"))
+			var message strings.Builder
+			writeError(&message, o.errStyle, "", text)
+			_, _ = io.WriteString(o.errOut, message.String())
 		}
 	}
 }
 
 func (o *commandOutput) warning(text string) string {
-	return o.errStyle.paint("Warning:", color.FgHiYellow) + " " + changes.Text(text) + "\n"
+	return o.errStyle.paint("!", color.FgHiYellow) + " " + changes.Text(text) + "\n"
 }
 
 func (o *commandOutput) resourceNotice(resource string, notice plugin.Notice) string {
 	marker := o.errStyle.paint("!", color.FgHiYellow)
 	if notice.Level == "info" {
-		marker = o.errStyle.paint("i", color.FgHiBlack)
+		marker = o.errStyle.paint("i", color.Faint)
 	}
-	text := marker + " " + changes.Text(resource) + " · " + changes.Text(notice.Message) + "\n"
+	text := marker + " " + changes.Text(resource) + ": " + changes.Text(notice.Message) + "\n"
 	if notice.Hint != "" {
 		text += "  " + changes.Text(notice.Hint) + "\n"
 	}
@@ -227,7 +252,7 @@ func (h *activityHandler) Handle(_ context.Context, record slog.Record) error {
 		return true
 	})
 	if maintenance {
-		o.notice(record.Message + "\n")
+		o.notice(o.errStyle.paint("i", color.Faint) + " " + changes.Text(record.Message) + "\n")
 		return nil
 	}
 	if record.Level >= slog.LevelWarn && !a.status {
@@ -284,14 +309,15 @@ func (o *commandOutput) resourceDone(method string, resource engine.ResourceRepo
 			}
 		}
 	}
+	full := o.all || slices.Contains(o.selectors, resource.Key) || slices.Contains(o.selectors, resourceName(resource)) || slices.Contains(o.selectors, resource.Name)
 	switch {
 	case o.asJSON || o.resultOnly:
 		return nil
 	case o.reconciling && method != "apply":
 		// Proposal outcomes carry the lookup and preparation results.
 		return nil
-	case o.all || slices.Contains(o.selectors, resource.Key) || slices.Contains(o.selectors, resourceName(resource)) || slices.Contains(o.selectors, resource.Name) || selected(method, resource):
-		return o.emit(renderResourceDetail(o.outStyle, method, resource, o.details))
+	case full || selected(method, resource):
+		return o.emit(renderResourceDetail(o.outStyle, method, resource, o.details || method == "prepare" && full))
 	}
 	return nil
 }

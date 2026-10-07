@@ -6,8 +6,10 @@ import (
 	"math"
 
 	"github.com/dustin/go-humanize"
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/woodleighschool/stemma/internal/cas"
+	"github.com/woodleighschool/stemma/internal/changes"
 )
 
 type cacheSettings struct {
@@ -80,7 +82,7 @@ func (c *cli) cacheCommand() *cobra.Command {
 		if c.cachePolicy.MaxSize == 0 {
 			budget = "disabled"
 		}
-		_, err = fmt.Fprintf(c.out, "Cache: %s\nBudget: %s\nRecent-use protection: %g hours\nRetained: %s\n  Objects: %s\n  Materialized copies: %s\n  Metadata: %s\nTemporary work: %s\n", store.Dir, budget, cas.Grace.Hours(), humanize.IBytes(uint64(max(0, usage.Retained))), humanize.IBytes(uint64(max(0, usage.Objects))), humanize.IBytes(uint64(max(0, usage.Materialized))), humanize.IBytes(uint64(max(0, usage.Metadata))), humanize.IBytes(uint64(max(0, usage.Work))))
+		_, err = fmt.Fprintf(c.out, "%s\n  Path: %s\n  Budget: %s\n  Recent-use protection: %g hours\n  Retained: %s\n    Objects: %s\n    Materialized copies: %s\n    Metadata: %s\n  Temporary work: %s\n", newTextStyle(c.out).heading("Cache"), changes.Text(store.Dir), budget, cas.Grace.Hours(), humanize.IBytes(uint64(max(0, usage.Retained))), humanize.IBytes(uint64(max(0, usage.Objects))), humanize.IBytes(uint64(max(0, usage.Materialized))), humanize.IBytes(uint64(max(0, usage.Metadata))), humanize.IBytes(uint64(max(0, usage.Work))))
 		return err
 	}
 	var all, dryRun bool
@@ -101,16 +103,19 @@ func (c *cli) cacheCommand() *cobra.Command {
 			return writeJSON(c.out, result)
 		}
 		verb := "Reclaimed"
+		style := newTextStyle(c.out)
+		marker := style.paint("✓", color.FgHiGreen)
 		if dryRun {
 			verb = "Would reclaim"
+			marker = style.paint("→", color.FgHiYellow)
 		}
 		noun := "entries"
 		if result.Removed == 1 {
 			noun = "entry"
 		}
-		_, err = fmt.Fprintf(c.out, "%s %s (%d %s); %s retained.\n", verb, humanize.IBytes(uint64(max(0, result.Reclaimed))), result.Removed, noun, humanize.IBytes(uint64(max(0, result.After.Retained))))
+		_, err = fmt.Fprintf(c.out, "%s %s %s (%d %s); %s retained.\n", marker, verb, humanize.IBytes(uint64(max(0, result.Reclaimed))), result.Removed, noun, humanize.IBytes(uint64(max(0, result.After.Retained))))
 		if err == nil && c.cachePolicy.MaxSize > 0 && result.After.Retained > c.cachePolicy.MaxSize {
-			_, err = fmt.Fprintf(c.out, "Above %s target; recently used content remains protected.\n", humanize.IBytes(uint64(max(0, c.cachePolicy.MaxSize))))
+			_, err = fmt.Fprintf(c.out, "  Above %s target; recently used content remains protected.\n", humanize.IBytes(uint64(max(0, c.cachePolicy.MaxSize))))
 		}
 		return err
 	}

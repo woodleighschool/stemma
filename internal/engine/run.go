@@ -22,6 +22,8 @@ import (
 
 // Options configures one finite execution of the CLI.
 type Options struct {
+	// Started runs after validation, before acquiring any selected resource.
+	Started              func() error
 	ConfigPath, CacheDir string
 	Method               string
 	Resources            []string
@@ -91,6 +93,11 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	defer e.removeWorkspaces(ctx)
 	if err := e.begin(ctx); err != nil {
 		return report, err
+	}
+	if opts.Started != nil {
+		if err := opts.Started(); err != nil {
+			return report, err
+		}
 	}
 	report.Resources = []ResourceReport{}
 	if opts.Method != "update" {
@@ -499,7 +506,10 @@ func (e *execution) complete(ctx context.Context, item *ResourceReport) error {
 	if e.opts.Method == "icon" && item.Error == "" && (item.Icon == "unchanged" || strings.HasPrefix(item.Icon, "created ")) {
 		item.IconPath = icon.Relative(plan.Icon)
 	}
-	item.Notices = slices.Concat(plan.Notices, signatureNotices(plan.Resource.Reference(), item.Artifacts))
+	item.Notices = signatureNotices(plan.Resource.Reference(), item.Artifacts)
+	if e.prepared[item.Key].ready {
+		item.Notices = slices.Concat(plan.Notices, item.Notices)
+	}
 	if e.opts.ResourceDone != nil {
 		if err := e.opts.ResourceDone(*item); err != nil {
 			return err

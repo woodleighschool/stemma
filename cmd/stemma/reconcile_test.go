@@ -62,9 +62,9 @@ func TestReconcileStreamsOutcomesAndCountsProposals(t *testing.T) {
 		if err := o.reconciled(&out, report, nil); err != nil {
 			t.Fatal(err)
 		}
-		want := "Reviewed: main@0123456789ab applied (2 resources, 3 destination changes)\n"
-		want += "MacSoftware/chrome: created https://github.example/pull/1\n  MacSoftware/chrome 129: 3 planned changes across 1 destination\n" +
-			"MacSoftware/broken: failed\n  ✗ download returned HTTP 404\n"
+		want := "✓ Reviewed main@0123456789ab: applied (2 resources, 3 destination changes)\n"
+		want += "✓ MacSoftware/chrome: created\n  Pull request: https://github.example/pull/1\n  MacSoftware/chrome 129: 3 planned changes across 1 destination\n" +
+			"➤ MacSoftware/broken: failed\n  ✗ download returned HTTP 404\n"
 		want += "Proposals: 1 created, 1 failed, 1 unchanged.\n"
 		if out.String() != want {
 			t.Fatalf("interactive=%v:\n%s\nwant:\n%s", interactive, out.String(), want)
@@ -84,7 +84,7 @@ func TestReconcileShowsEachFailureOnce(t *testing.T) {
 		"project does not load": {
 			report: reconcile.Report{Branch: "main", Head: head, Error: unloadable},
 			err:    errors.New(unloadable),
-			stderr: "Error: " + unloadable + "\n",
+			stderr: "✗ " + unloadable + "\n",
 		},
 		"phases stopped": {
 			report: reconcile.Report{Branch: "main", Head: head,
@@ -92,8 +92,8 @@ func TestReconcileShowsEachFailureOnce(t *testing.T) {
 				Update: &reconcile.Update{Error: "lockfile contains stale plugins; run stemma plugins update"},
 			},
 			err:    reconcile.ErrFailed,
-			stderr: "Error: reconcile: a phase failed\n",
-			stdout: "Reviewed: main@0123456789ab failed\n  ✗ plugin downloads: image is not cached\n" +
+			stderr: "✗ reconcile: a phase failed\n",
+			stdout: "➤ Reviewed main@0123456789ab: failed\n  ✗ plugin downloads: image is not cached\n" +
 				"Proposals: failed\n  ✗ lockfile contains stale plugins; run stemma plugins update\n",
 		},
 		// Resources and proposals show their own failures as they finish.
@@ -103,9 +103,9 @@ func TestReconcileShowsEachFailureOnce(t *testing.T) {
 				Update: &reconcile.Update{Proposals: []reconcile.Proposal{{Resource: "MacSoftware/firefox", Action: "failed", Error: "push rejected"}}},
 			},
 			err:    reconcile.ErrFailed,
-			stderr: "Error: reconcile: a phase failed\n",
-			stdout: "Reviewed: main@0123456789ab failed (1 resource failed: chrome)\n" +
-				"MacSoftware/firefox: failed\n  ✗ push rejected\nProposals: 1 failed.\n",
+			stderr: "✗ reconcile: a phase failed\n",
+			stdout: "➤ Reviewed main@0123456789ab: failed (1 resource failed: chrome)\n" +
+				"➤ MacSoftware/firefox: failed\n  ✗ push rejected\nProposals: 1 failed.\n",
 		},
 		"lookup interrupted": {
 			report: reconcile.Report{Branch: "main", Head: head,
@@ -113,8 +113,8 @@ func TestReconcileShowsEachFailureOnce(t *testing.T) {
 				Update: &reconcile.Update{},
 			},
 			err:    errInterrupted,
-			stdout: "Reviewed: main@0123456789ab applied (2 resources, 3 destination changes)\nProposals interrupted: none.\n",
-			stderr: "Interrupted.\n",
+			stdout: "✓ Reviewed main@0123456789ab: applied (2 resources, 3 destination changes)\nProposals interrupted: none.\n",
+			stderr: "– Interrupted.\n",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

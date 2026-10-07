@@ -90,23 +90,56 @@ func activityCount(value slog.Value) int64 {
 	return 0
 }
 
-const progressDelay = 250 * time.Millisecond
+// keptStep is how long a step runs before it stays listed once finished.
+const keptStep = time.Second
 
 type progressLine struct {
 	activity
 
+	// subject is the detail the step started with, which names what it works
+	// on. With the label and qualifier it identifies the step's line.
+	subject   string
 	started   time.Time
 	announced time.Time
+	finished  bool
+	// enclosing marks a step that another step ran inside.
+	enclosing bool
 }
 
 type progressGroup struct {
 	scope string
 	rows  []progressLine
+	// scrolled marks a block whose heading has scrolled into history.
+	scrolled bool
 }
 
-// terminalProgress owns a bounded transient region. Its clock, activity
-// updates and persistent writes share one lock: no renderer can repaint a
-// stale frame after a report has begun scrolling the terminal.
+// running returns the innermost unfinished step. The steps of one scope run
+// one at a time, so a step that starts while another runs is inside it.
+func (g *progressGroup) running() *progressLine {
+	for i := len(g.rows) - 1; i >= 0; i-- {
+		if !g.rows[i].finished {
+			return &g.rows[i]
+		}
+	}
+	return nil
+}
+
+// scrollLine forgets the block's top line, which history now holds.
+func (g *progressGroup) scrollLine() {
+	if !g.scrolled {
+		g.scrolled = true
+		return
+	}
+	i := slices.IndexFunc(g.rows, func(row progressLine) bool { return row.finished })
+	g.rows = slices.Delete(g.rows, i, i+1)
+}
+
+// terminalProgress owns a transient region: a block per resource with its
+// heading, its finished steps worth keeping and the step running now, then
+// the running project step. A block stays from the resource's first
+// step until its report replaces it or another scope starts work. The clock,
+// activity updates and persistent writes share one lock: no renderer can
+// repaint a stale frame after a report has begun scrolling the terminal.
 type terminalProgress struct {
 	mu           sync.Mutex
 	out          io.Writer
@@ -164,6 +197,18 @@ func (p *terminalProgress) update(a activity) {
 	if p.stopped {
 		return
 	}
+	var history strings.Builder
+	if a.stage {
+		for i := 0; i < len(p.groups); {
+			group := p.groups[i]
+			if group.scope != a.scope && group.running() == nil {
+				history.WriteString(p.remaining(group))
+				p.groups = slices.Delete(p.groups, i, i+1)
+			} else {
+				i++
+			}
+		}
+	}
 	index := slices.IndexFunc(p.groups, func(g *progressGroup) bool { return g.scope == a.scope })
 	if index < 0 {
 		if !a.stage {
@@ -175,40 +220,100 @@ func (p *terminalProgress) update(a activity) {
 	group := p.groups[index]
 	switch {
 	case a.stage:
-		group.rows = append(group.rows, progressLine{activity: a, started: time.Now()})
+		for i := range group.rows {
+			group.rows[i].enclosing = group.rows[i].enclosing || !group.rows[i].finished
+		}
+		row := progressLine{activity: a, subject: a.detail, started: time.Now()}
+		// A step that runs again carries on from its earlier row and time
+		// instead of listing itself twice.
+		earlier := slices.IndexFunc(group.rows, func(other progressLine) bool {
+			return other.finished && other.label == a.label && other.qualifier == a.qualifier && other.subject == a.detail
+		})
+		if earlier >= 0 {
+			row.elapsed = group.rows[earlier].elapsed
+			group.rows = slices.Delete(group.rows, earlier, earlier+1)
+		}
+		group.rows = append(group.rows, row)
 	case a.progress:
-		for i, row := range slices.Backward(group.rows) {
-			if row.qualifier == a.qualifier {
-				group.rows[i].current, group.rows[i].total, group.rows[i].unit = a.current, a.total, a.unit
+		for i := len(group.rows) - 1; i >= 0; i-- {
+			if row := &group.rows[i]; !row.finished && row.qualifier == a.qualifier {
+				row.current, row.total, row.unit = a.current, a.total, a.unit
 				break
 			}
 		}
 	case a.status:
-		for i, row := range slices.Backward(group.rows) {
-			if row.label == a.label && row.qualifier == a.qualifier {
-				group.rows = slices.Delete(group.rows, i, i+1)
-				break
+		for i := len(group.rows) - 1; i >= 0; i-- {
+			row := &group.rows[i]
+			if row.finished || row.label != a.label || row.qualifier != a.qualifier {
+				continue
 			}
+			row.finished, row.elapsed, row.err = true, row.elapsed+a.elapsed, a.err
+			// A result follows the subject unless it names it, so the lines of
+			// two subjects with the same result stay distinct.
+			if a.detail != "" {
+				row.detail = a.detail
+				if !strings.Contains(a.detail, row.subject) {
+					row.detail = row.subject + " (" + a.detail + ")"
+				}
+			}
+			// The steps inside an enclosing step account for its time, a
+			// quick step has nothing to show for itself, and project work
+			// shows only what is running.
+			if group.scope == "" || row.enclosing || row.err == "" && row.elapsed < keptStep {
+				group.rows = slices.Delete(group.rows, i, i+1)
+			}
+			break
 		}
-		if len(group.rows) == 0 {
-			p.groups = slices.Delete(p.groups, index, index+1)
-		}
+	}
+	if history.Len() > 0 {
+		_ = p.paint(time.Now(), history.String())
 	}
 }
 
+// complete ends a resource's block. A block whose top has scrolled into
+// history sends its remaining steps after it, so the list there is whole.
 func (p *terminalProgress) complete(scope string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.groups = slices.DeleteFunc(p.groups, func(g *progressGroup) bool { return g.scope == scope })
+	index := slices.IndexFunc(p.groups, func(g *progressGroup) bool { return g.scope == scope })
+	if index < 0 {
+		return
+	}
+	history := p.remaining(p.groups[index])
+	p.groups = slices.Delete(p.groups, index, index+1)
+	if history != "" {
+		_ = p.paint(time.Now(), history)
+	}
 }
 
-// write suspends the live region while the original stream receives its
-// persistent text. The next clock tick can render only still-active work.
+// remaining keeps the rest of a partially scrolled block beside its heading.
+func (p *terminalProgress) remaining(group *progressGroup) string {
+	if !group.scrolled {
+		return ""
+	}
+	width, _ := p.size()
+	var rest strings.Builder
+	for i := range group.rows {
+		if row := &group.rows[i]; row.finished {
+			rest.WriteString(progressText(p.style, row, stepIndent, width, time.Time{}, "") + "\n")
+		}
+	}
+	return rest.String()
+}
+
+// write prints persistent text on its own stream, above the live region, and
+// repaints the region in the same call instead of at the next tick.
 func (p *terminalProgress) write(out io.Writer, text string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if out == p.out && !p.stopped && !p.plain {
+		return p.paint(time.Now(), text)
+	}
 	p.clear()
 	_, err := io.WriteString(out, text)
+	if !p.stopped && !p.plain {
+		p.draw(time.Now())
+	}
 	return err
 }
 
@@ -219,7 +324,12 @@ func (p *terminalProgress) stop() {
 		return
 	}
 	p.stopped = true
-	p.clear()
+	var history strings.Builder
+	for _, group := range p.groups {
+		history.WriteString(p.remaining(group))
+	}
+	_, _ = io.WriteString(p.out, p.erase()+history.String())
+	p.shown, p.last = 0, ""
 	p.groups = nil
 	if p.quit != nil {
 		close(p.quit)
@@ -239,47 +349,66 @@ func (p *terminalProgress) size() (int, int) {
 	return 100, 28
 }
 
-// view shows one current operation per scope, never its stack of wrappers.
-// Completed steps belong to outcomes, not the live region.
-func (p *terminalProgress) view(now time.Time, width, height int) string {
-	var lines []string
-	budget := min(6, max(0, height-1))
+// regionLine is one line of the live region. A block's heading and finished
+// steps name their group: they never change, so they can scroll into history.
+type regionLine struct {
+	text  string
+	group *progressGroup
+}
+
+// view lays out each resource's heading, kept steps and running step, never
+// the steps that enclose it, then the running project step on a line of its
+// own. Only a region that fits the terminal can be erased, so a taller one
+// sends its top lines to history and carries on below them.
+func (p *terminalProgress) view(now time.Time, width, height int) (history, region string) {
 	frame := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}[(now.UnixMilli()/100)%10]
-	for index, group := range p.groups {
-		if len(group.rows) == 0 {
-			continue
-		}
-		row := group.rows[len(group.rows)-1]
-		if now.Sub(row.started) < progressDelay {
-			continue
-		}
-		needed := 1
-		if group.scope != "" {
-			needed++
-		}
-		if len(lines)+needed > budget || (index < len(p.groups)-1 && len(lines)+needed == budget && budget >= 3) {
-			if len(lines) < budget {
-				more := fmt.Sprintf("… %d more active operations", len(p.groups)-index)
-				lines = append(lines, runewidth.Truncate(more, max(0, width-1), "…"))
+	var lines, project []regionLine
+	for _, group := range p.groups {
+		running := group.running()
+		if group.scope == "" {
+			if running != nil {
+				project = append(project, regionLine{text: progressText(p.style, running, "", width, now, frame)})
 			}
-			break
+			continue
 		}
-		if group.scope != "" {
-			lines = append(lines, p.style.paint(runewidth.Truncate(cleanLine(group.scope), max(0, width-1), "…"), color.Bold, color.FgHiMagenta))
+		if !group.scrolled {
+			lines = append(lines, regionLine{p.style.heading(runewidth.Truncate(cleanLine(group.scope), max(0, width-3), "…")), group})
 		}
-		lines = append(lines, progressText(p.style, &row, width, now, frame))
+		for i := range group.rows {
+			if row := &group.rows[i]; row.finished {
+				lines = append(lines, regionLine{progressText(p.style, row, stepIndent, width, now, frame), group})
+			}
+		}
+		if running != nil {
+			lines = append(lines, regionLine{text: progressText(p.style, running, stepIndent, width, now, frame)})
+		}
 	}
-	return strings.Join(lines, "\n")
+	if len(lines) > 0 && len(project) > 0 {
+		lines = append(lines, regionLine{})
+	}
+	lines = append(lines, project...)
+	budget := max(0, height-1)
+	var scrolled strings.Builder
+	for len(lines) > budget && lines[0].group != nil {
+		scrolled.WriteString(lines[0].text + "\n")
+		lines[0].group.scrollLine()
+		lines = lines[1:]
+	}
+	if len(lines) > budget {
+		lines = lines[len(lines)-budget:]
+	}
+	texts := make([]string, len(lines))
+	for i, line := range lines {
+		texts[i] = line.text
+	}
+	return scrolled.String(), strings.Join(texts, "\n")
 }
 
 func (p *terminalProgress) draw(now time.Time) {
 	if p.plain {
 		for _, group := range p.groups {
-			if len(group.rows) == 0 {
-				continue
-			}
-			row := &group.rows[len(group.rows)-1]
-			if now.Sub(row.started) < 2*time.Second || !row.announced.IsZero() && now.Sub(row.announced) < 30*time.Second {
+			row := group.running()
+			if row == nil || now.Sub(row.started) < 2*time.Second || !row.announced.IsZero() && now.Sub(row.announced) < 30*time.Second {
 				continue
 			}
 			line := cleanLine(row.name())
@@ -287,10 +416,10 @@ func (p *terminalProgress) draw(now time.Time) {
 				line = cleanLine(group.scope) + ": " + line
 			}
 			if row.detail != "" {
-				line += " · " + cleanLine(row.detail)
+				line += ": " + cleanLine(row.detail)
 			}
 			if row.total > 0 && row.unit == "bytes" {
-				line += fmt.Sprintf(" · %s / %s", humanize.IBytes(uint64(max(0, row.current))), humanize.IBytes(uint64(row.total)))
+				line += fmt.Sprintf(" (%s / %s)", humanize.IBytes(uint64(max(0, row.current))), humanize.IBytes(uint64(row.total)))
 			}
 			_, _ = fmt.Fprintf(p.out, "%s (%s)\n", line, now.Sub(row.started).Round(time.Second))
 			row.announced = now
@@ -298,18 +427,23 @@ func (p *terminalProgress) draw(now time.Time) {
 		return
 	}
 
+	_ = p.paint(now, "")
+}
+
+// paint keeps a stderr notice and its redraw in the same terminal write.
+func (p *terminalProgress) paint(now time.Time, prefix string) error {
 	width, height := p.size()
-	text := p.view(now, width, height)
-	if text == p.last {
-		return
+	history, region := p.view(now, width, height)
+	if prefix == "" && history == "" && region == p.last {
+		return nil
 	}
-	// Erase and repaint in one write so frames do not expose a blank region.
-	_, _ = io.WriteString(p.out, p.erase()+text)
-	p.last = text
+	_, err := io.WriteString(p.out, p.erase()+prefix+history+region)
+	p.last = region
 	p.shown = 0
-	if text != "" {
-		p.shown = strings.Count(text, "\n") + 1
+	if region != "" {
+		p.shown = strings.Count(region, "\n") + 1
 	}
+	return err
 }
 
 func (p *terminalProgress) erase() string {
@@ -337,18 +471,22 @@ const barWidth = 20
 // segment is rendered text with the plain text that sets its width.
 type segment struct{ plain, painted string }
 
-func progressText(style textStyle, line *progressLine, width int, now time.Time, frame string) string {
-	mark := frame
-	if line.total > 0 {
-		mark = ""
+// stepIndent sets a resource's steps under its heading.
+const stepIndent = "  "
+
+func progressText(style textStyle, line *progressLine, indent string, width int, now time.Time, frame string) string {
+	mark, attribute, duration := frame, color.FgHiCyan, line.elapsed+max(0, now.Sub(line.started))
+	if line.finished {
+		mark, attribute, duration = "✓", color.FgHiGreen, line.elapsed
+		if line.err != "" {
+			mark, attribute = "✗", color.FgHiRed
+		}
 	}
-	const indent = "  "
-	attribute := color.FgHiCyan
 	faint := func(text string) segment { return segment{text, style.paint(text, color.Faint)} }
 	var bar, counts segment
 	if line.unit != "" {
 		counts = faint(amount(line.current, line.unit))
-		if line.total > 0 {
+		if !line.finished && line.total > 0 {
 			counts = faint(amounts(line.current, line.total, line.unit))
 			filled := int(min(barWidth, max(0, barWidth*line.current/line.total)))
 			done, left := strings.Repeat("━", filled), strings.Repeat("─", barWidth-filled)
@@ -356,16 +494,20 @@ func progressText(style textStyle, line *progressLine, width int, now time.Time,
 		}
 	}
 	var elapsed segment
-	if duration := now.Sub(line.started).Round(time.Second); duration > 0 {
+	if duration = duration.Round(time.Second); duration > 0 {
 		elapsed = faint("(" + duration.String() + ")")
 	}
 	label, detail := cleanLine(line.name()), cleanLine(line.detail)
 	available := max(0, width-runewidth.StringWidth(indent+mark)-2)
 	measure := func(parts ...segment) int {
 		total := 0
-		for _, part := range parts {
+		for i, part := range parts {
 			if part.plain != "" {
-				total += 2 + runewidth.StringWidth(part.plain)
+				separator := 1
+				if i == 0 {
+					separator = 2 // The detail follows ": "; counters use one space.
+				}
+				total += separator + runewidth.StringWidth(part.plain)
 			}
 		}
 		return total
@@ -389,15 +531,19 @@ func progressText(style textStyle, line *progressLine, width int, now time.Time,
 		elapsed = segment{}
 	}
 	parts := []segment{faint(detail), bar, counts, elapsed}
-	tail := "..."
-	if available-measure(parts...) < len(tail) {
+	tail := "…"
+	if available-measure(parts...) < runewidth.StringWidth(tail) {
 		tail = ""
 	}
 	var text strings.Builder
 	text.WriteString(indent + style.paint(mark, attribute) + " " + runewidth.Truncate(label, max(0, available-measure(parts...)), tail))
-	for _, part := range parts {
+	for i, part := range parts {
 		if part.plain != "" {
-			text.WriteString("  " + part.painted)
+			separator := " "
+			if i == 0 {
+				separator = ": "
+			}
+			text.WriteString(separator + part.painted)
 		}
 	}
 	return text.String()

@@ -3,13 +3,19 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/icon"
+	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
@@ -183,5 +189,66 @@ spec:
 	}
 	if notices := run("signature")["BuildMacPkg/wrapper"].Notices; len(notices) != 0 {
 		t.Fatalf("signature derivation recommended itself: %+v", notices)
+	}
+}
+
+func TestSignatureAdviceWaitsForUsableInputs(t *testing.T) {
+	var requests atomic.Int32
+	var allow atomic.Bool
+	installer, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		if !allow.Load() {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		_, _ = w.Write(installer)
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	testproject.Write(t, filepath.Join(root, "stemma.yaml"), fmt.Sprintf(`apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: notices}
+spec: {imports: ['*.software.yaml']}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: vendor}
+spec:
+  source: {url: %s/vendor.pkg}
+`, server.URL))
+	if err := os.WriteFile(lockfile.Filename(root), fmt.Appendf(nil, "version: %d\ninputs: {}\nplugins: {}\n", lockfile.Version), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{ConfigPath: filepath.Join(root, "stemma.yaml"), CacheDir: t.TempDir(), Resources: []string{"MacSoftware/vendor"}, Icons: IconOptions{Presentation: icon.Raw}}
+	for _, test := range []struct{ method, failure string }{
+		{"icon", ""},
+		{"signature", "inputs are missing or stale in the lockfile; run stemma update MacSoftware/vendor"},
+		{"update", "HTTP 403"},
+	} {
+		t.Run(test.method, func(t *testing.T) {
+			options.Method = test.method
+			report, err := Run(t.Context(), options)
+			if test.failure == "" && err != nil || test.failure != "" && (err == nil || !strings.Contains(err.Error(), test.failure)) {
+				t.Fatalf("error=%v", err)
+			}
+			if len(report.Resources) != 1 || len(report.Resources[0].Notices) != 0 {
+				t.Fatalf("premature advice: %+v", report)
+			}
+			if test.method == "icon" && report.Resources[0].Icon != "no icon declared" {
+				t.Fatalf("unexpected icon result: %+v", report)
+			}
+			if (requests.Load() > 0) != (test.method == "update") {
+				t.Fatalf("%s: %d source requests", test.method, requests.Load())
+			}
+		})
+	}
+	allow.Store(true)
+	report, err := Run(t.Context(), options)
+	if err != nil || len(report.Resources) != 1 || len(report.Resources[0].Notices) != 1 || report.Resources[0].Notices[0].Code != "signature-expectation-missing" {
+		t.Fatalf("successful update lost advice: %+v, %v", report, err)
 	}
 }

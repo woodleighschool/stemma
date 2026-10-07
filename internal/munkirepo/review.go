@@ -29,7 +29,7 @@ func reviewCreation(document map[string]any) []string {
 		if text, ok := value.(string); ok {
 			switch {
 			case strings.Contains(text, "\n"):
-				data = []byte(fmt.Sprintf("%d lines", len(strings.Split(strings.TrimSuffix(text, "\n"), "\n"))))
+				data = fmt.Appendf(data[:0], "%d lines", len(strings.Split(strings.TrimSuffix(text, "\n"), "\n")))
 			case key == "installer_item_hash":
 				if len(text) > 16 {
 					text = text[:16] + "…"
@@ -56,7 +56,7 @@ func reviewCreation(document map[string]any) []string {
 						name = "(no " + identity + ")"
 					}
 					if version, ok := item["version"].(string); ok {
-						name += " · " + version
+						name += " (" + version + ")"
 					}
 					names = append(names, name)
 				}
@@ -64,7 +64,7 @@ func reviewCreation(document map[string]any) []string {
 				if len(items) == 1 {
 					noun = "entry"
 				}
-				data = []byte(fmt.Sprintf("%d %s", len(items), noun))
+				data = fmt.Appendf(data[:0], "%d %s", len(items), noun)
 				if len(names) > 0 {
 					data = append(data, []byte(": "+strings.Join(names, ", "))...)
 				}

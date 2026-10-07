@@ -42,9 +42,9 @@ func TestReportRetainsIndependentDestinationResults(t *testing.T) {
 		out.WriteString(renderResourceDetail(textStyle{}, "apply", resource, false))
 	}
 	for _, want := range []string{
-		"➤ missing · failed\n  ✗ source unavailable\n",
+		"➤ missing: failed\n  ✗ source unavailable\n",
 		"➤ MacSoftware/Example\n",
-		"  unavailable · failed\n    ✗ remote unavailable\n",
+		"  unavailable: failed\n    ✗ remote unavailable\n",
 		"  local\n    ✓ No changes\n",
 	} {
 		if !strings.Contains(out.String(), want) {
@@ -68,11 +68,11 @@ func TestIconReportNamesEachOutcome(t *testing.T) {
 	report.Summarize("icon")
 	out.WriteString(renderSummary(textStyle{}, "icon", report, nil))
 	for _, want := range []string{
-		"➤ MacSoftware/word · created glassy\n",
-		"➤ WindowsSoftware/chrome · created raw\n",
-		"➤ MacSoftware/teams · unchanged\n",
-		"➤ MacSoftware/rosetta · no artwork\n",
-		"➤ MacSoftware/zoom · failed\n  ✗ quick look icon rendering: timed out\n",
+		"✓ MacSoftware/word: created glassy\n",
+		"✓ WindowsSoftware/chrome: created raw\n",
+		"✓ MacSoftware/teams: unchanged\n",
+		"– MacSoftware/rosetta: no artwork\n",
+		"➤ MacSoftware/zoom: failed\n  ✗ quick look icon rendering: timed out\n",
 		"Icons: 2 created, 1 unchanged, 1 skipped, 1 failed.",
 	} {
 		if !strings.Contains(out.String(), want) {
@@ -94,7 +94,7 @@ func TestIconRunsShowCreatedIconsAndMissingArtwork(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := out.String(); !strings.Contains(got, "➤ MacSoftware/word · created glassy\n") || !strings.Contains(got, "➤ WindowsSoftware/chrome · no artwork\n") || strings.Contains(got, "teams") || strings.Contains(got, "fonts") {
+	if got := out.String(); !strings.Contains(got, "✓ MacSoftware/word: created glassy\n") || !strings.Contains(got, "– WindowsSoftware/chrome: no artwork\n") || strings.Contains(got, "teams") || strings.Contains(got, "fonts") {
 		t.Fatalf("icon output: %s", got)
 	}
 }
@@ -184,7 +184,7 @@ spec:
 	}
 	filename := filepath.Join(t.TempDir(), "editor", "schema.json")
 	for range 2 {
-		if output := invoke(true, "schema", "--offline", "--output-file", filename); string(output) != "Wrote "+filename+".\n" {
+		if output := invoke(true, "schema", "--offline", "--output-file", filename); string(output) != "✓ Wrote "+filename+".\n" {
 			t.Fatalf("file result: %s", output)
 		}
 		data, err := os.ReadFile(filename)
@@ -233,6 +233,9 @@ spec:
 	prepared := run(true, "prepare")
 	if prepared.LockChanged != nil || len(prepared.Resources) != 1 {
 		t.Fatalf("locked preparation reported a lockfile: %+v", prepared)
+	}
+	if output := string(invoke(true, "prepare", "--no-progress")); !strings.Contains(output, "✓ MacSoftware/fixture ("+prepared.Resources[0].Artifacts["installer"].Version+"): cached\n") || strings.Contains(output, "installer:") {
+		t.Fatalf("cached preparation did not leave a compact result: %s", output)
 	}
 	if downloads.Load() != 1 {
 		t.Fatal("unexpected acquisition count")
@@ -412,26 +415,26 @@ func TestInspectDescribesALocalArtifact(t *testing.T) {
 		}
 		return out.String()
 	}
-	want := fmt.Sprintf(`fixture.pkg
-  Format:   pkg
-  Version:  1.2.3
-  SHA-256:  %x
+	want := fmt.Sprintf(`➤ fixture.pkg
+  Format: pkg
+  Version: 1.2.3
+  SHA-256: %x
 
-Package PackageInfo
-  Identifier:        au.edu.vic.woodleigh.stemma.fixture
-  Version:           1.2.3
-  Install location:  /Applications
-  Installed size:    85 KiB
-  Payload:           yes
+➤ Package PackageInfo
+  Identifier: au.edu.vic.woodleigh.stemma.fixture
+  Version: 1.2.3
+  Install location: /Applications
+  Installed size: 85 KiB
+  Payload: yes
 
-Application Payload/SignedFixture.app
-  Installed path:  /Applications/SignedFixture.app
-  Bundle ID:       au.edu.vic.woodleigh.stemma.fixture
-  Name:            Stemma Fixture
-  Version:         1.2.3
-  Build:           42
-  Executable:      fixture
-  Minimum OS:      13.0
+➤ Application Payload/SignedFixture.app
+  Installed path: /Applications/SignedFixture.app
+  Bundle ID: au.edu.vic.woodleigh.stemma.fixture
+  Name: Stemma Fixture
+  Version: 1.2.3
+  Build: 42
+  Executable: fixture
+  Minimum OS: 13.0
 `, sha256.Sum256(data))
 	if got := inspect(fixture); got != want {
 		t.Fatalf("inspect printed:\n%s\nwant:\n%s", got, want)
@@ -447,13 +450,13 @@ Application Payload/SignedFixture.app
 
 func TestEnvelopeDescribesItsPayload(t *testing.T) {
 	got := renderEnvelope(textStyle{}, "chrome.intunewin", intunewin.Metadata{Name: "Chrome", SetupFile: "setup.exe", PayloadSHA256: "ab12", PlaintextSize: 3 << 20, EncryptedContentSize: 3<<20 + 48})
-	want := `chrome.intunewin
-  Format:           intunewin
-  Name:             Chrome
-  Setup file:       setup.exe
-  Payload size:     3.0 MiB
-  Payload SHA-256:  ab12
-  Encrypted size:   3.0 MiB
+	want := `➤ chrome.intunewin
+  Format: intunewin
+  Name: Chrome
+  Setup file: setup.exe
+  Payload size: 3.0 MiB
+  Payload SHA-256: ab12
+  Encrypted size: 3.0 MiB
 `
 	if got != want {
 		t.Fatalf("envelope printed:\n%s\nwant:\n%s", got, want)
@@ -550,7 +553,7 @@ spec:
 					t.Fatalf("incomplete JSON report: %+v", report)
 				}
 			} else {
-				for _, want := range []string{"➤ MacSoftware/broken · failed\n", "➤ MacSoftware/consumer · blocked\n  blocked by MacSoftware/broken\n", "➤ MacSoftware/healthy · 1 input changed\n  source (content changed): healthy.pkg\n", "Update incomplete: 1 input change, 3 resources checked, 1 failed, 1 blocked.", "Lockfile updated."} {
+				for _, want := range []string{"➤ MacSoftware/broken: failed\n", "– MacSoftware/consumer: blocked\n  blocked by MacSoftware/broken\n", "✓ MacSoftware/healthy: 1 input changed\n  source (content changed): healthy.pkg\n", "Update incomplete: 1 input change, 3 resources checked, 1 failed, 1 blocked.", "Lockfile updated."} {
 					if !strings.Contains(out.String(), want) {
 						t.Fatalf("report missing %q: %s", want, out.String())
 					}
@@ -559,11 +562,9 @@ spec:
 			// Recommendations are separate from the single command failure diagnostic.
 			var notices string
 			if !asJSON {
-				for _, name := range []string{"broken", "healthy"} {
-					notices += fmt.Sprintf("! MacSoftware/%s · Source has no signature expectation\n  Run `stemma signature MacSoftware/%s` to derive one.\n", name, name)
-				}
+				notices = "! MacSoftware/healthy: Source has no signature expectation\n  Run `stemma signature MacSoftware/healthy` to derive one.\n"
 			}
-			if logs.String() != notices+"Error: MacSoftware/broken: input source: download "+server.URL+"/broken.pkg: HTTP 404 Not Found\n" {
+			if logs.String() != notices+"✗ MacSoftware/broken: input source: download "+server.URL+"/broken.pkg: HTTP 404 Not Found\n" {
 				t.Fatalf("stderr repeated the report: %s", logs.String())
 			}
 		})
@@ -591,7 +592,7 @@ spec:
 	cmd.SetArgs([]string{"inspect", "BuildMacPkg/example", "--input", "vendor", "--path", "Missing.app", "--no-input-lock", "--root", root, "--cache-dir", t.TempDir()})
 	err := cmd.ExecuteContext(t.Context())
 	finish(err)
-	if err == nil || out.Len() != 0 || !strings.Contains(logs.String(), "Error: BuildMacPkg/example:") || !strings.Contains(logs.String(), "missing.zip") {
+	if err == nil || out.Len() != 0 || !strings.Contains(logs.String(), "✗ BuildMacPkg/example:") || !strings.Contains(logs.String(), "missing.zip") {
 		t.Fatalf("error=%v stdout=%q stderr=%q", err, out.String(), logs.String())
 	}
 }

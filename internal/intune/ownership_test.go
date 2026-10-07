@@ -42,7 +42,7 @@ func TestMinimumOSChangeReportsSelection(t *testing.T) {
 			if change.Kind != "metadata" || change.Field != "minimum_os" || change.Action != "set" || string(change.Before) != test.before || string(change.After) != `"26.0"` {
 				t.Fatalf("unexpected semantic change: %+v", change)
 			}
-			want := "minimum_os: " + strings.Trim(test.before, `"`) + " -> 26.0"
+			want := "minimum_os: " + strings.Trim(test.before, `"`) + " → 26.0"
 			if got := strings.Join(changes.Lines(change), "\n"); got != want {
 				t.Fatalf("report = %q, want %q", got, want)
 			}

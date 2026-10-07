@@ -160,8 +160,7 @@ func (c *cli) schemaCommand() *cobra.Command {
 		if err := fileio.Write(output, data, 0o644); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(c.out, "Wrote %s.\n", output)
-		return err
+		return printSuccess(c.out, fmt.Sprintf("Wrote %s.", output))
 	}}
 	cmd.Flags().StringVar(&output, "output-file", "", "Required output path; - writes to stdout")
 	_ = cmd.MarkFlagRequired("output-file")
@@ -185,8 +184,7 @@ func (c *cli) validateCommand() *cobra.Command {
 		if resolved {
 			return writeJSON(c.out, p)
 		}
-		_, err = fmt.Fprintln(c.out, "Configuration is valid.")
-		return err
+		return printSuccess(c.out, "Configuration is valid.")
 	}}
 	cmd.Flags().BoolVar(&resolved, "resolved", false, "Evaluate environment values as runs do and print the resolved composition as JSON")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use cached plugins without contacting a registry")
@@ -231,7 +229,9 @@ func (c *cli) runCommand(method string) *cobra.Command {
 			}
 		}
 		c.display.selectors = slices.Clone(args)
-		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: method, Resources: args, Profiles: profiles, ChangedSince: changedSince, Icons: icons, Input: input, ResourceDone: func(resource engine.ResourceReport) error {
+		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: method, Resources: args, Profiles: profiles, ChangedSince: changedSince, Icons: icons, Input: input, Started: func() error {
+			return c.display.beginPhase(method)
+		}, ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone(method, resource)
 		}, Lock: lockfile.Options{Offline: offline}})
 		if err := c.display.report(c.out, method, report, runErr); err != nil {
@@ -243,6 +243,9 @@ func (c *cli) runCommand(method string) *cobra.Command {
 		return runErr
 	}
 	cmd.Flags().Bool("all", false, "Include unchanged resources in the human report")
+	if method == "prepare" {
+		cmd.Flags().Lookup("all").Usage = "Include artifact details for cached resources"
+	}
 	if method == "plan" || method == "apply" {
 		cmd.Flags().Bool("details", false, "Show complete initial object fields")
 	}
@@ -297,7 +300,7 @@ func (c *cli) reconcileCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: c.cacheDir, StateDir: stateDir, ResourceDone: c.display.resourceDone, ApplyDone: c.display.applyDone, ProposalDone: c.display.proposalDone})
+		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: c.cacheDir, StateDir: stateDir, PhaseStarted: c.display.beginPhase, ResourceDone: c.display.resourceDone, ApplyDone: c.display.applyDone, ProposalDone: c.display.proposalDone})
 		if err := c.display.reconciled(c.out, report, runErr); err != nil {
 			return errors.Join(runErr, err)
 		}
@@ -479,8 +482,7 @@ func publishCommand(out io.Writer) *cobra.Command {
 		if *publishJSON {
 			return writeJSON(out, published)
 		}
-		_, err = fmt.Fprintf(out, "Published %s (%s) for %s.\n", published.Image, published.Digest, strings.Join(published.Platforms, ", "))
-		return err
+		return printSuccess(out, fmt.Sprintf("Published %s (%s) for %s.", published.Image, published.Digest, strings.Join(published.Platforms, ", ")))
 	}
 	return cmd
 }
@@ -501,8 +503,7 @@ func packageCommand(out io.Writer) *cobra.Command {
 				Output string `json:"output"`
 			}{Output: args[2], Metadata: result})
 		}
-		_, err = fmt.Fprintf(out, "Packaged %s: setup file %s, %s encrypted.\n", args[2], result.SetupFile, humanize.IBytes(uint64(max(0, result.EncryptedContentSize))))
-		return err
+		return printSuccess(out, fmt.Sprintf("Packaged %s: setup file %s, %s encrypted.", args[2], result.SetupFile, humanize.IBytes(uint64(max(0, result.EncryptedContentSize)))))
 	}
 	cmd.AddCommand(envelope)
 	var options pkgbuild.Options
@@ -517,8 +518,7 @@ func packageCommand(out io.Writer) *cobra.Command {
 		if err := pkgbuild.Build(cmd.Context(), args[0], args[1], options); err != nil {
 			return err
 		}
-		_, err := fmt.Fprintf(out, "Packaged %s.\n", args[1])
-		return err
+		return printSuccess(out, fmt.Sprintf("Packaged %s.", args[1]))
 	}}
 	pkg.Flags().StringVar(&options.Identifier, "identifier", "", "Package receipt identifier")
 	pkg.Flags().StringVar(&options.Version, "version", "", "Package receipt version")

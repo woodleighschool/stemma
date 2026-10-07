@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1106,11 +1107,28 @@ spec:
 		t.Fatal(err)
 	}
 	methods := map[string]int{}
-	opts := Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir(), ResourceDone: func(method string, _ engine.ResourceReport) error { methods[method]++; return nil }}
+	var phases []string
+	opts := Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir(),
+		PhaseStarted: func(method string) error { phases = append(phases, method); return nil },
+		ResourceDone: func(method string, _ engine.ResourceReport) error {
+			phase := "update"
+			if method == "apply" {
+				phase = "apply"
+			}
+			if len(phases) == 0 || phases[len(phases)-1] != phase {
+				t.Fatalf("%s resource reported before its phase: %v", method, phases)
+			}
+			methods[method]++
+			return nil
+		},
+	}
 	payload.Store(buildPackage(t, "2.0"))
 	report, err := Run(t.Context(), opts)
 	if !errors.Is(err, ErrFailed) || !report.Apply.Failed() || report.Update.Failed() {
 		t.Fatalf("mismatch should fail publication but allow proposals: %+v, %v", report, err)
+	}
+	if !slices.Equal(phases, []string{"apply", "update"}) {
+		t.Fatalf("phases: %v", phases)
 	}
 	if m, err := readMarker(opts.StateDir); err != nil || m.Applied != "" {
 		t.Fatalf("partial apply advanced marker: %+v, %v", m, err)

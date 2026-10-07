@@ -59,7 +59,7 @@ func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string
 		}
 		origin := minimum.Origin
 		if lossy {
-			origin = fmt.Sprintf("%s %s -> %s", origin, minimum.Version, field)
+			origin = fmt.Sprintf("%s %s → %s", origin, minimum.Version, field)
 		}
 		m["minimumSupportedOperatingSystem"], origins["minimumSupportedOperatingSystem"] = object{field: true}, origin
 	} else if req.Prepared || req.Artifact.Path != "" {

@@ -13,16 +13,16 @@ func TestSemanticChanges(t *testing.T) {
 		name, field, before, after string
 		want                       []string
 	}{
-		{"scalar", "package.version", `"1.0"`, `"2.0"`, []string{"package.version: 1.0 -> 2.0"}},
-		{"missing and null", "value", "", "null", []string{"value: (absent) -> null"}},
-		{"null and empty", "value", "null", `""`, []string{`value: null -> ""`}},
-		{"changed type", "value", `"1"`, `1`, []string{`value: "1" -> 1`}},
-		{"empty collection", "value", `null`, `[]`, []string{`value: null -> []`}},
-		{"large integer", "size", "9007199254740992", "9007199254740993", []string{"size: 9007199254740992 -> 9007199254740993"}},
+		{"scalar", "package.version", `"1.0"`, `"2.0"`, []string{"package.version: 1.0 → 2.0"}},
+		{"missing and null", "value", "", "null", []string{"value: (absent) → null"}},
+		{"null and empty", "value", "null", `""`, []string{`value: null → ""`}},
+		{"changed type", "value", `"1"`, `1`, []string{`value: "1" → 1`}},
+		{"empty collection", "value", `null`, `[]`, []string{`value: null → []`}},
+		{"large integer", "size", "9007199254740992", "9007199254740993", []string{"size: 9007199254740992 → 9007199254740993"}},
 		{"script", "package.postinstall_script", `"#!/bin/sh\necho old\nexit 0\n"`, `"#!/bin/sh\necho new\nexit 0\n"`, []string{"package.postinstall_script: changed (3 lines)"}},
-		{"added script", "package.postinstall_script", `null`, `"#!/bin/sh\nexit 0\n"`, []string{"package.postinstall_script: null -> 2 lines"}},
-		{"receipt identity", "package.receipts", `[{"packageid":"com.example.pkg","version":"1"}]`, `[{"packageid":"com.example.pkg","version":"2"}]`, []string{"package.receipts[com.example.pkg].version: 1 -> 2"}},
-		{"removed object field", "metadata", `{"a":false,"b":1}`, `{"a":false}`, []string{"metadata.b: 1 -> (absent)"}},
+		{"added script", "package.postinstall_script", `null`, `"#!/bin/sh\nexit 0\n"`, []string{"package.postinstall_script: null → 2 lines"}},
+		{"receipt identity", "package.receipts", `[{"packageid":"com.example.pkg","version":"1"}]`, `[{"packageid":"com.example.pkg","version":"2"}]`, []string{"package.receipts[com.example.pkg].version: 1 → 2"}},
+		{"removed object field", "metadata", `{"a":false,"b":1}`, `{"a":false}`, []string{"metadata.b: 1 → (absent)"}},
 		{"unchanged", "field", `{"a":1}`, `{"a":1}`, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -40,7 +40,7 @@ func TestCreatesAndRetentionDescribeObjects(t *testing.T) {
 		want   string
 	}{
 		{plugin.Change{Action: "create", Field: "package", After: json.RawMessage(`{"version":"2","uninstallable":false}`)}, "create package\n  uninstallable: false\n  version: 2"},
-		{plugin.Change{Action: "create", Field: "package", After: json.RawMessage(`{"blocking_applications":["Example"],"receipts":[]}`)}, "create package\n  blocking_applications:\n    * Example\n  receipts: []"},
+		{plugin.Change{Action: "create", Field: "package", After: json.RawMessage(`{"blocking_applications":["Example"],"receipts":[]}`)}, "create package\n  blocking_applications:\n    – Example\n  receipts: []"},
 		{plugin.Change{Action: "delete", Kind: "retention", Field: "package", Before: json.RawMessage(`"1.0"`)}, "delete package: 1.0 (retention)"},
 	} {
 		if got := strings.Join(Lines(test.change), "\n"); got != test.want {
@@ -50,8 +50,8 @@ func TestCreatesAndRetentionDescribeObjects(t *testing.T) {
 }
 
 func TestTextEscapesTerminalControlsAndKeepsPrintableText(t *testing.T) {
-	text := "echo \"quoted\"\\path\n\x1b[2J café \u202e"
-	want := `echo "quoted"\path\n\x1b[2J café \u202e`
+	text := "echo \"quoted\"\\path\n\x1b[2J café -> next · two  spaces \u202e"
+	want := `echo "quoted"\path\n\x1b[2J café -> next · two  spaces \u202e`
 	if got := Text(text); got != want {
 		t.Fatalf("got %q want %q", got, want)
 	}
@@ -61,7 +61,7 @@ func TestHashesWithSamePrefixRemainDistinguishable(t *testing.T) {
 	before := strings.Repeat("a", 64)
 	after := strings.Repeat("a", 63) + "b"
 	got := compare("sha256", json.RawMessage(`"`+before+`"`), json.RawMessage(`"`+after+`"`))
-	if len(got) != 1 || !strings.Contains(got[0], before+" -> "+after) {
+	if len(got) != 1 || !strings.Contains(got[0], before+" → "+after) {
 		t.Fatalf("hidden difference: %v", got)
 	}
 }
@@ -130,7 +130,7 @@ func compare(field string, before, after json.RawMessage) []string {
 func TestCreationExpandsCollectionObjectsWithoutExposingScripts(t *testing.T) {
 	change := plugin.Change{Action: "create", Field: "pkginfo", After: json.RawMessage(`{"installs":[{"path":"/Applications/Example.app","version":"2","script":"first\nprivate second"}]}`)}
 	text := strings.Join(Lines(change), "\n")
-	for _, want := range []string{"create pkginfo", "* path: /Applications/Example.app", "script: 2 lines", "version: 2"} {
+	for _, want := range []string{"create pkginfo", "– path: /Applications/Example.app", "script: 2 lines", "version: 2"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q: %s", want, text)
 		}
