@@ -74,15 +74,28 @@ func TestAcquisitionRejectsAmbiguousResults(t *testing.T) {
 }
 
 func TestDownloadRejectsHTTPSDowngrade(t *testing.T) {
-	m := manager(t)
-	requests := 0
-	m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		requests++
-		return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": []string{"http://example.test/app.pkg"}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
-	})
-	_, _, err := m.download(t.Context(), Download{URL: "https://example.test/app.pkg"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "downgrade") || requests != 1 {
-		t.Fatalf("downgrade accepted: %v requests=%d", err, requests)
+	for _, intermediate := range []bool{false, true} {
+		t.Run(fmt.Sprintf("intermediate=%t", intermediate), func(t *testing.T) {
+			m := manager(t)
+			requests := 0
+			m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				requests++
+				target := "http://person:password@mirror.example/app.pkg?token=private#secret"
+				if intermediate && requests == 1 {
+					target = "https://redirect.example/release?token=private"
+				}
+				return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": {target}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+			})
+			_, _, err := m.download(t.Context(), Download{URL: "https://vendor.example/app.pkg?token=private"}, nil)
+			from, wantRequests := "https://vendor.example/app.pkg", 1
+			if intermediate {
+				from, wantRequests = "https://redirect.example/release", 2
+			}
+			want := "download failed: HTTPS downgrade blocked: " + from + " → http://mirror.example/app.pkg"
+			if err == nil || err.Error() != want || requests != wantRequests {
+				t.Fatalf("error=%v, want %q; requests=%d, want %d", err, want, requests, wantRequests)
+			}
+		})
 	}
 }
 

@@ -231,7 +231,7 @@ func TestGitHubDiscoveryKeepsTokenAtAPIOrigin(t *testing.T) {
 			err := m.github(t.Context(), githubConfig{Repository: "example/app", Asset: "App.pkg", Token: "synthetic-token"}, &observed)
 			wantRequests, failure := 2, "HTTP 404"
 			if strings.HasPrefix(target, "http:") {
-				wantRequests, failure = 1, "must not downgrade"
+				wantRequests, failure = 1, "HTTPS downgrade blocked"
 			}
 			if requests != wantRequests || err == nil || !strings.Contains(err.Error(), failure) {
 				t.Fatalf("redirect: requests=%d, err=%v", requests, err)

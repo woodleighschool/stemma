@@ -73,7 +73,7 @@ func New(store *cas.Store, root string, offline bool) *Manager {
 			return errors.New("too many redirects")
 		}
 		if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
-			return errors.New("HTTPS download must not downgrade to HTTP")
+			return fmt.Errorf("HTTPS downgrade blocked: %s → %s", diagnosticURL(via[len(via)-1].URL), diagnosticURL(req.URL))
 		}
 		if !sameOrigin(req.URL, via[0].URL) || !sameOrigin(req.URL, via[len(via)-1].URL) {
 			stripPrivateHeaders(req.Header)

@@ -141,8 +141,8 @@ func stripPrivateHeaders(headers http.Header) {
 	}
 }
 
-// Redirect targets may contain temporary credentials. Do not include their URLs
-// in reports or durable state when a request fails.
+// net/url errors include raw redirect URLs, which may carry credentials. Keep
+// the cause; errors that name an endpoint use diagnosticURL.
 func transportError(operation string, err error) error {
 	var requestError *url.Error
 	for errors.As(err, &requestError) {
