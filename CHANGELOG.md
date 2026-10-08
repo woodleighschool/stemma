@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.10.2](https://github.com/woodleighschool/stemma/compare/v0.10.1...v0.10.2) (2026-10-08)
+
+
+### Features
+
+* **intune:** publish PKG install scripts ([9bcfde2](https://github.com/woodleighschool/stemma/commit/9bcfde294e8fee8488cec0ee9cbdb27cd140dfad))
+* **macsoftware:** publish an application in a package ([ed7b29b](https://github.com/woodleighschool/stemma/commit/ed7b29b09562eac5c5c962055cc2cc0fd333b177))
+* **reconcile:** group same-content lock refreshes ([32cd4e3](https://github.com/woodleighschool/stemma/commit/32cd4e3caff96961ee0c19a284209b961fc233ea))
+
+
+### Bug Fixes
+
+* **apple:** recognize unsigned generic bundle executables ([657ab00](https://github.com/woodleighschool/stemma/commit/657ab00316a0f273becb4d1c61571636ac59d8ea))
+* **apple:** tolerate duplicate unselected payload entries ([3d76ad1](https://github.com/woodleighschool/stemma/commit/3d76ad1c05ae24eb79a0d07e11c84a7f927900af))
+* **cli:** make progress and outcomes consistent ([875d723](https://github.com/woodleighschool/stemma/commit/875d7234a64ecc5ef3ed699def09448507a75084))
+* **diskimage:** adopt upstream name and compression semantics ([950e9ea](https://github.com/woodleighschool/stemma/commit/950e9ea6c3609848063dcc89590a7fdeb7f2d199))
+* **go:** update module github.com/azure/azure-sdk-for-go/sdk/azcore (v1.23.2 → v1.23.3) ([#128](https://github.com/woodleighschool/stemma/issues/128)) ([53443d1](https://github.com/woodleighschool/stemma/commit/53443d1a22d739074b79c2a6c30fe1063ecb0398))
+* **go:** update module github.com/deploymenttheory/go-apfs-v2 (v0.17.2 → v0.18.0) ([#137](https://github.com/woodleighschool/stemma/issues/137)) ([684aa72](https://github.com/woodleighschool/stemma/commit/684aa7206feb35b77fee33663d3428bb0309f82a))
+* **go:** update module github.com/google/go-github/v92 (2d16356 → b1a37cf) ([#132](https://github.com/woodleighschool/stemma/issues/132)) ([8ef7f32](https://github.com/woodleighschool/stemma/commit/8ef7f32315c18597dc89d3727d1e3373a85e2827))
+* **go:** update module github.com/google/go-github/v92 (9962577 → 2d16356) ([#127](https://github.com/woodleighschool/stemma/issues/127)) ([5dff816](https://github.com/woodleighschool/stemma/commit/5dff816f98f480302803aed2ad18a7c7f2948f4e))
+* **go:** update module github.com/google/go-github/v92 (b1a37cf → d61c874) ([#135](https://github.com/woodleighschool/stemma/issues/135)) ([65e181f](https://github.com/woodleighschool/stemma/commit/65e181f1e443737b41a378339061838d71ade1c3))
+* **go:** update module github.com/mattn/go-runewidth (v0.0.30 → v0.0.31) ([#138](https://github.com/woodleighschool/stemma/issues/138)) ([cb648d9](https://github.com/woodleighschool/stemma/commit/cb648d9aa3d9a97e5085190a592a3f5dc5157240))
+* **go:** update module github.com/microsoft/kiota-http-go (v1.5.6 → v1.5.7) ([#129](https://github.com/woodleighschool/stemma/issues/129)) ([46fd324](https://github.com/woodleighschool/stemma/commit/46fd3249cd4c22ebedf5d4afbdcf5daeb4416843))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (0f18bc7 → 172aebf) ([#123](https://github.com/woodleighschool/stemma/issues/123)) ([e18b113](https://github.com/woodleighschool/stemma/commit/e18b113131f18964d15496793af6cbedb8da997b))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (172aebf → 6737e73) ([#126](https://github.com/woodleighschool/stemma/issues/126)) ([8d3f74e](https://github.com/woodleighschool/stemma/commit/8d3f74e4a1a6b35371d9977ba3c4b7cdd3243dcd))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (6737e73 → 8dd5d6a) ([#131](https://github.com/woodleighschool/stemma/issues/131)) ([07b207b](https://github.com/woodleighschool/stemma/commit/07b207b194080abca2a3f83a55339f6353d141ae))
+* **intune:** name the app whose type cannot change ([2e034d1](https://github.com/woodleighschool/stemma/commit/2e034d126c9860fc3c0ff29014b94059321b3f92))
+* **macpkg:** include a payload in every package ([096f939](https://github.com/woodleighschool/stemma/commit/096f939853a19f495c5233dc70312c9f87d85e3b))
+* **macsoftware:** avoid copying extracted packages twice ([82db508](https://github.com/woodleighschool/stemma/commit/82db5083ea13f0cb384de6aba7136c560d71bc09))
+* **macsoftware:** default packages to receipt detection ([07e9e58](https://github.com/woodleighschool/stemma/commit/07e9e58dbfc0f0cb73d18336d877357e0c5e34e5))
+* **macsoftware:** prepare nested disk images consistently ([5e7e613](https://github.com/woodleighschool/stemma/commit/5e7e613d4b021940b1ed4a97f2fc2b6df1cff2bd))
+* **source:** allow HTTP mirrors for pinned Homebrew casks ([cd4990e](https://github.com/woodleighschool/stemma/commit/cd4990eec7e76a42a4448b4191dbcfb85f13f925))
+* **source:** identify blocked redirect endpoints ([a45ce5e](https://github.com/woodleighschool/stemma/commit/a45ce5e3ba2566ccbb777d31c23e812990751411))
+
 ## [0.10.1](https://github.com/woodleighschool/stemma/compare/v0.10.0...v0.10.1) (2026-10-06)
 
 
