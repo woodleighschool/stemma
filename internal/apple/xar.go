@@ -88,8 +88,8 @@ func VerifyPackage(ctx context.Context, filePath string, want signature.Signer) 
 		if entry.Type != "file" {
 			continue
 		}
-		if file.Data == nil || !hasPackageChecksums(file.Data.ArchivedChecksum, file.Data.ExtractedChecksum) {
-			return signature.Result{}, fmt.Errorf("XAR entry %q requires archived and extracted checksums", entry.Path)
+		if err := requirePackageChecksums(file.Data); err != nil {
+			return signature.Result{}, fmt.Errorf("XAR entry %q: %w", entry.Path, err)
 		}
 		if err := archive.readEntry(entry.Path, io.Discard, maxEntrySize); err != nil {
 			return signature.Result{}, err
@@ -239,7 +239,7 @@ func (a *xarArchive) readFile(file *xar.File, dst io.Writer, limit int64) error 
 
 func (a *xarArchive) openFile(file *xar.File, limit int64) (io.ReadCloser, error) {
 	if file.Data == nil {
-		return nil, fmt.Errorf("%w: XAR regular file without data descriptor", ErrUnsupported)
+		return io.NopCloser(bytes.NewReader(nil)), nil
 	}
 	if err := validatePackageData(file.Data, limit); err != nil {
 		return nil, err
@@ -254,15 +254,27 @@ func validatePackageData(data *xar.Data, limit int64) error {
 	return nil
 }
 
-func hasPackageChecksums(archived, extracted *xar.Digest) bool {
-	return archived != nil && archived.Value != "" && extracted != nil && extracted.Value != ""
+// Empty contents need no heap digest: their absence is authenticated by the
+// signed TOC. Any supplied checksums still have to be complete and verified.
+func requirePackageChecksums(data *xar.Data) error {
+	if data == nil {
+		return nil
+	}
+	if data.Size == 0 && data.Length == 0 && data.ArchivedChecksum == nil && data.ExtractedChecksum == nil {
+		return nil
+	}
+	if data.ArchivedChecksum == nil || data.ArchivedChecksum.Value == "" || data.ExtractedChecksum == nil || data.ExtractedChecksum.Value == "" {
+		return errors.New("XAR data requires archived and extracted checksums")
+	}
+	return nil
 }
 
 func (a *xarArchive) verifyEA(ea *xar.EA) error {
-	if !hasPackageChecksums(ea.ArchivedChecksum, ea.ExtractedChecksum) {
-		return fmt.Errorf("XAR extended attribute requires archived and extracted checksums")
+	data := &xar.Data{Size: ea.Size, Length: ea.Length, ArchivedChecksum: ea.ArchivedChecksum, ExtractedChecksum: ea.ExtractedChecksum}
+	if err := requirePackageChecksums(data); err != nil {
+		return fmt.Errorf("XAR extended attribute %q: %w", ea.Name, err)
 	}
-	if err := validatePackageData(&xar.Data{Size: ea.Size, Length: ea.Length, ArchivedChecksum: ea.ArchivedChecksum, ExtractedChecksum: ea.ExtractedChecksum}, maxEntrySize); err != nil {
+	if err := validatePackageData(data, maxEntrySize); err != nil {
 		return err
 	}
 	r, err := a.reader.OpenEAVerified(ea)
