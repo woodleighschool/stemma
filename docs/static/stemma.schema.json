@@ -250,7 +250,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Installed absolute paths mapped to files, trees, literal text, relative symlinks or directory declarations."
+                  "description": "Installed absolute paths mapped to files, trees, literal text, relative symlinks or directory declarations. Omit or use {} for an empty payload; every built package leaves a receipt after successful installation."
                 },
                 "scripts": {
                   "anyOf": [
@@ -705,7 +705,7 @@
                           "type": "string"
                         }
                       ],
-                      "description": "Installed absolute paths mapped to files, trees, literal text, relative symlinks or directory declarations."
+                      "description": "Installed absolute paths mapped to files, trees, literal text, relative symlinks or directory declarations. Omit or use {} for an empty payload; every built package leaves a receipt after successful installation."
                     },
                     "scripts": {
                       "anyOf": [

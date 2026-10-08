@@ -178,6 +178,11 @@ The hook runs the app from `installer/` beside `$0`. Use `payload` instead when
 files must remain installed after the hook returns. A vendor-supplied PKG normally
 belongs in `MacSoftware`, preserving its original bytes and installer behaviour.
 
+Every built package includes a payload, so macOS records its identifier and
+version in a receipt after successful installation. Omit `payload` when the
+package only runs scripts; its payload is then empty. The receipt records that
+the package ran successfully, not whether the script's effects still hold.
+
 Input selections preserve file modes and confined relative symlinks. Selected paths
 cannot traverse a symlink; links inside copied trees must remain within that
 selection. Overlapping entries fail. Each output area is limited to 100,000 entries
@@ -234,8 +239,6 @@ Education packaged as payloads.
 with 16 MiB independently compressed blocks. Stemma needs 5–9x the CPU to read
 an xz payload during operations such as `MacSoftware` inspection. The
 Scripts archive remains gzip-compressed, matching `pkgbuild`.
-
-A package without a payload cannot declare `package.compression`.
 
 ## Verify the wrapped input
 

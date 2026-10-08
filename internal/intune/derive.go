@@ -108,8 +108,9 @@ type detectedApp struct {
 }
 
 // detectedApps lists what detects an installation: the selected application,
-// or the receipts of a PKG that selects none. Other applications an installer
-// carries only detect it when included_apps declares them.
+// or the receipts of a PKG that selects none. macOS records a receipt only for
+// a package with a payload. Other applications an installer carries only
+// detect it when included_apps declares them.
 func detectedApps(facts plugin.Facts, selected *plugin.Subject, appType string) ([]detectedApp, string, error) {
 	if selected != nil {
 		app := selected.App
@@ -128,13 +129,25 @@ func detectedApps(facts plugin.Facts, selected *plugin.Subject, appType string) 
 	}
 	var detected []detectedApp
 	seen := map[string]bool{}
+	payloadless := false
 	for _, subject := range facts.Subjects {
-		if receipt := subject.Package; receipt != nil && receipt.Identifier != "" && receipt.Version != "" && !seen[receipt.Identifier] {
+		receipt := subject.Package
+		if receipt == nil {
+			continue
+		}
+		if !receipt.HasPayload {
+			payloadless = true
+			continue
+		}
+		if receipt.Identifier != "" && receipt.Version != "" && !seen[receipt.Identifier] {
 			seen[receipt.Identifier] = true
 			detected = append(detected, detectedApp{id: receipt.Identifier, version: receipt.Version, build: receipt.Version})
 		}
 	}
 	if len(detected) == 0 {
+		if payloadless {
+			return nil, "", errors.New("the package has no payload, so installing it leaves no receipt to detect it; give it a payload or set included_apps")
+		}
 		return nil, "", errors.New("the artifact has no selected application or package receipt to detect it; set included_apps")
 	}
 	return detected, "installer.receipts", nil

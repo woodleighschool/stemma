@@ -16,11 +16,11 @@ import (
 )
 
 // Version changes when the layout or package derivation changes.
-const Version = "stemma.macpkg/11"
+const Version = "stemma.macpkg/12"
 
 type Spec struct {
 	Inputs     map[string]plugin.Input      `json:"inputs,omitempty" yaml:"inputs,omitempty" jsonschema_description:"Named source artifacts leased into the build. Refer to them with $input in payload and scripts."`
-	Payload    map[string]Entry             `json:"payload,omitempty" yaml:"payload,omitempty" jsonschema_description:"Installed absolute paths mapped to files, trees, literal text, relative symlinks or directory declarations."`
+	Payload    map[string]Entry             `json:"payload,omitempty" yaml:"payload,omitempty" jsonschema_description:"Installed absolute paths mapped to files, trees, literal text, relative symlinks or directory declarations. Omit or use {} for an empty payload; every built package leaves a receipt after successful installation."`
 	Package    Package                      `json:"package" yaml:"package" jsonschema_description:"Component package identity and version recorded in macOS receipts, with the published filename and payload compression."`
 	Scripts    map[string]Script            `json:"scripts,omitempty" yaml:"scripts,omitempty" jsonschema_description:"Literal script text or input selections in the temporary installer Scripts area. Root preinstall and postinstall files are hooks; other entries are resources used by those hooks. Never executed by Stemma."`
 	Signatures []signature.InputExpectation `json:"signatures,omitempty" yaml:"signatures,omitempty" jsonschema:"minItems=1" jsonschema_description:"Signing expectations for every physical signing subject consumed by the resolved payload and scripts layout. Unused siblings are excluded, and a package another build produced needs none. The built package itself is unsigned."`
@@ -71,12 +71,7 @@ func (s Spec) Validate() error {
 	default:
 		return errors.New("package.compression must be gzip or xz")
 	}
-	opts := pkgbuild.Options{Identifier: s.Package.Identifier, Version: s.Package.Version}
-	if len(s.Payload) > 0 {
-		opts.Payload, opts.Compression = "Payload", s.Package.compression()
-	} else if s.Package.Compression != "" {
-		return errors.New("package.compression requires a payload")
-	}
+	opts := pkgbuild.Options{Identifier: s.Package.Identifier, Version: s.Package.Version, Payload: "Payload", Compression: s.Package.compression()}
 	seen := map[string]bool{}
 	for endpoint, entry := range s.Payload {
 		name, err := payloadPath(endpoint)

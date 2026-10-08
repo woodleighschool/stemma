@@ -191,8 +191,11 @@ For macOS, detection uses the selected application's bundle identifier and versi
 Intune reports an installation only when every included app is present, so other
 applications an installer carries, such as a bundled updater, are left out. PKG
 apps can detect an application outside `/Applications`, and use package receipt
-identifiers and versions when a package selects no application, as a payloadless
-package does. DMG and line-of-business apps require the application under `/Applications`.
+identifiers and versions when a package selects no application. Only a package
+with a payload leaves a receipt. `BuildMacPkg` includes an empty payload when no
+files are declared. A payloadless vendor package needs explicit `included_apps`
+that detect what its scripts install.
+DMG and line-of-business apps require the application under `/Applications`.
 Set `included_apps` to replace the derived list, for example to require every
 application of a suite, or when static inspection cannot determine the installed
 application or an installer chooses it conditionally. A PKG app accepts receipts

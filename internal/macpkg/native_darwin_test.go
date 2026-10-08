@@ -1,6 +1,7 @@
 package macpkg
 
 import (
+	"bytes"
 	"compress/gzip"
 	"errors"
 	"io"
@@ -12,6 +13,41 @@ import (
 
 	"github.com/deploymenttheory/go-macos-pkg/pkg/cpio"
 )
+
+func TestNativeEmptyPayloadMatchesPkgbuild(t *testing.T) {
+	spec := Spec{Package: Package{Identifier: "org.example.empty", Version: "1.0"}}
+	artifact, err := buildPackage(t.Context(), spec, nil, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oracle := filepath.Join(t.TempDir(), "native.pkg")
+	if output, err := exec.CommandContext(t.Context(), "/usr/bin/pkgbuild", "--root", root, "--identifier", spec.Package.Identifier, "--version", spec.Package.Version, oracle).CombinedOutput(); err != nil {
+		t.Fatalf("pkgbuild: %s %v", output, err)
+	}
+	var expected []byte
+	for _, filename := range []string{oracle, artifact.Path} {
+		expanded := filepath.Join(t.TempDir(), "expanded")
+		if output, err := exec.CommandContext(t.Context(), "/usr/sbin/pkgutil", "--expand-full", filename, expanded).CombinedOutput(); err != nil {
+			t.Fatalf("expand: %s %v", output, err)
+		}
+		entries, err := os.ReadDir(filepath.Join(expanded, "Payload"))
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("payload is not an empty directory: %v %v", entries, err)
+		}
+		bom, err := exec.CommandContext(t.Context(), "/usr/bin/lsbom", filepath.Join(expanded, "Bom")).CombinedOutput()
+		if err != nil {
+			t.Fatalf("lsbom: %s %v", bom, err)
+		}
+		if expected != nil && !bytes.Equal(bom, expected) {
+			t.Fatalf("BOM differs from pkgbuild: got %q, want %q", bom, expected)
+		}
+		expected = bom
+	}
+}
 
 func TestNativeMetadataMatchesPayloadDeclaration(t *testing.T) {
 	spec, inputs := fixture(t)

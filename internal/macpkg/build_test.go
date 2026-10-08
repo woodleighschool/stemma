@@ -100,15 +100,48 @@ func TestBuildCompressesThePayloadAsDeclared(t *testing.T) {
 	}
 }
 
-func TestSpecRejectsCompressionItCannotApply(t *testing.T) {
+func TestBuildIncludesAnEmptyPayload(t *testing.T) {
+	var digest string
+	for _, test := range []struct {
+		name    string
+		payload map[string]Entry
+	}{
+		{"omitted", nil},
+		{"empty", map[string]Entry{}},
+		{"root", map[string]Entry{"/": {}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			spec, inputs := fixture(t)
+			spec.Payload = test.payload
+			artifact, err := buildPackage(t.Context(), spec, inputs, t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			facts, err := apple.InspectPackageContents(t.Context(), artifact.Path)
+			if err != nil || len(facts.Packages) != 1 || !facts.Packages[0].HasPayload || !artifact.Facts.Subjects[0].Package.HasPayload {
+				t.Fatalf("payload=%+v built=%+v: %v", facts.Packages, artifact.Facts.Subjects, err)
+			}
+			files, _ := packageArchive(t, artifact.Path, "Payload")
+			if _, root := files["."]; !root || len(files) != 1 {
+				t.Fatalf("empty payload contains %v", files)
+			}
+			if digest != "" && artifact.SHA256 != digest {
+				t.Fatal("equivalent empty payloads built different packages")
+			}
+			digest = artifact.SHA256
+		})
+	}
+}
+
+func TestSpecValidatesCompression(t *testing.T) {
 	spec, _ := fixture(t)
 	spec.Package.Compression = "zstd"
 	if err := spec.Validate(); err == nil {
 		t.Fatal("unknown compression accepted")
 	}
 	spec.Package.Compression, spec.Payload = pkgbuild.XZ, nil
-	if err := spec.Validate(); err == nil {
-		t.Fatal("compression accepted without a payload")
+	if err := spec.Validate(); err != nil {
+		t.Fatalf("empty payload rejected compression: %v", err)
 	}
 }
 

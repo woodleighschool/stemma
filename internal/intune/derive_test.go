@@ -125,9 +125,10 @@ func TestPackageDetectionUsesTheSelectedApplicationOrReceipts(t *testing.T) {
 	if len(apps) != 1 || apps[0].(object)["bundleId"] != "org.example.helper" || m["primaryBundleVersion"] != "1.4.0" || selectedOS(m["minimumSupportedOperatingSystem"]) != "v11_0" || origins["included_apps"] != "app.bundle_id" || m["displayName"] != "Exporter" {
 		t.Fatalf("application detection: %+v / %+v", m, origins)
 	}
-	// Without a selection, the receipts detect the PKG, not the applications it carries.
+	// Without a selection, the receipts detect the PKG, not the applications it
+	// carries. A package without a payload leaves no receipt.
 	delete(req.Artifact.Evidence, "macos.application")
-	for _, subjects := range [][]plugin.Subject{{root, receipt, receipt}, {root, scripts}, {root, receipt, helper, updater}} {
+	for _, subjects := range [][]plugin.Subject{{root, receipt, receipt}, {root, receipt, scripts}, {root, receipt, helper, updater}} {
 		req.Artifact.Facts.Subjects = subjects
 		derived, origins, err = Derive(req)
 		if err != nil {
@@ -143,6 +144,20 @@ func TestPackageDetectionUsesTheSelectedApplicationOrReceipts(t *testing.T) {
 			t.Fatalf("receipt detection: %+v / %+v", m, origins)
 		}
 	}
+	req.Artifact.Facts.Subjects = []plugin.Subject{root, scripts}
+	if _, _, err := Derive(req); err == nil || !strings.Contains(err.Error(), "no payload") {
+		t.Fatalf("detection used a receipt macOS never records: %v", err)
+	}
+	req.Metadata = raw(object{"included_apps": []any{object{"id": "org.example.vendor", "version": "2.0"}}})
+	derived, origins, err = Derive(req)
+	if err != nil {
+		t.Fatalf("payloadless package rejected explicit detection: %v", err)
+	}
+	m, err = decodeObject(derived.Metadata)
+	if err != nil || m["primaryBundleId"] != "org.example.vendor" || origins["included_apps"] != "" {
+		t.Fatalf("explicit detection: %+v / %+v: %v", m, origins, err)
+	}
+	req.Artifact.Facts.Subjects = []plugin.Subject{root, receipt}
 	req.Metadata = raw(object{"type": "dmg"})
 	if _, _, err := Derive(req); err == nil {
 		t.Fatal("DMG detection accepted package receipts")
@@ -409,7 +424,7 @@ func TestLOBRequiresThePublishedRootInstallerObservation(t *testing.T) {
 			t.Fatalf("accepted wrong signature evidence: %v", err)
 		}
 	}
-	req := lobRequest(object{"type": "pkg"}, nil, plugin.Subject{ID: "receipt", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.autopkg", Version: "1.0"}})
+	req := lobRequest(object{"type": "pkg"}, nil, plugin.Subject{ID: "receipt", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.autopkg", Version: "1.0", HasPayload: true}})
 	req.Artifact.Evidence = map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/4"}]`)}
 	if _, _, err := Derive(req); err != nil {
 		t.Fatalf("ordinary PKG rejected unsigned root: %v", err)

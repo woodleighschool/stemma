@@ -49,7 +49,7 @@ func build(ctx context.Context, spec Spec, sources *sources, workspace string) (
 				names = append(names, name)
 			}
 		}
-		if len(names) == 0 {
+		if area == "Scripts" && len(names) == 0 {
 			continue
 		}
 		stage, err := pkgbuild.NewLayout(filepath.Join(root, area))
@@ -98,7 +98,7 @@ func describe(ctx context.Context, output string, spec Spec) (plugin.Artifact, e
 	if err != nil {
 		return plugin.Artifact{}, err
 	}
-	return plugin.Artifact{Path: output, SHA256: hex.EncodeToString(hash.Sum(nil)), Size: size, Filename: spec.Filename(), Version: spec.Package.Version, Format: "pkg", Facts: plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: "package", Kind: "package", Package: &plugin.PackageFacts{Identifier: spec.Package.Identifier, Version: spec.Package.Version, InstallLocation: "/", HasPayload: len(spec.Payload) > 0}}}}}, nil
+	return plugin.Artifact{Path: output, SHA256: hex.EncodeToString(hash.Sum(nil)), Size: size, Filename: spec.Filename(), Version: spec.Package.Version, Format: "pkg", Facts: plugin.Facts{Version: plugin.FactsVersion, Subjects: []plugin.Subject{{ID: "package", Kind: "package", Package: &plugin.PackageFacts{Identifier: spec.Package.Identifier, Version: spec.Package.Version, InstallLocation: "/", HasPayload: true}}}}}, nil
 }
 
 func stageEntry(ctx context.Context, stage *pkgbuild.Layout, name string, entry Entry, sources *sources) error {
