@@ -103,6 +103,13 @@ func bundleMutations() []bundleMutation {
 			}
 		}
 	}
+	const framework = "Contents/Frameworks/Nested.framework/"
+	copyVersion := func(t *testing.T, app string) {
+		t.Helper()
+		if err := os.CopyFS(filepath.Join(app, framework, "Versions/B"), os.DirFS(filepath.Join(app, framework, "Versions/A"))); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return []bundleMutation{
 		{"intact", func(*testing.T, string) {}, true, false, true},
 		{"optional localization removed", remove("Contents/Resources/en.lproj/Localizable.strings"), true, false, true},
@@ -111,7 +118,7 @@ func bundleMutations() []bundleMutation {
 		{"resource modified", write("Contents/Resources/message.txt", []byte("modified")), false, false, true},
 		{"resource removed", remove("Contents/Resources/message.txt"), false, false, true},
 		{"resource added", write("Contents/Resources/extra.txt", []byte("unsealed")), false, false, true},
-		{"framework resource added", write("Contents/Frameworks/Nested.framework/Versions/A/extra.txt", []byte("unsealed")), false, false, true},
+		{"framework resource added", write(framework+"Versions/A/extra.txt", []byte("unsealed")), false, false, true},
 		{"bundle root file added", write("extra", []byte("unsealed")), false, false, true},
 		{"symlink retargeted", symlink("Contents/Resources/link", "missing.txt"), false, false, true},
 		{"symlink replaced by file", func(t *testing.T, app string) {
@@ -140,7 +147,7 @@ func bundleMutations() []bundleMutation {
 		{"executable modified first architecture", corrupt("Contents/MacOS/fixture", 0), false, false, true},
 		{"executable modified second architecture", corrupt("Contents/MacOS/fixture", 1), false, false, true},
 		{"helper modified", corrupt("Contents/MacOS/helper", 1), false, false, true},
-		{"framework binary modified", corrupt("Contents/Frameworks/Nested.framework/Versions/A/Nested", 0), false, false, true},
+		{"framework binary modified", corrupt(framework+"Versions/A/Nested", 0), false, false, true},
 		{"shallow framework binary modified", corrupt("Contents/Frameworks/Shallow.framework/Shallow", 1), false, false, true},
 		{"nested app binary modified", corrupt("Contents/Helpers/Helper.app/Contents/MacOS/Helper", 0), false, false, true},
 		{"nested app info modified", func(t *testing.T, app string) {
@@ -150,7 +157,7 @@ func bundleMutations() []bundleMutation {
 		}, false, false, true},
 		// Same team, different code: a bundle binary is bound to its own Info.plist,
 		// and nested code under another identifier fails its recorded requirement.
-		{"framework binary swapped", replace("Contents/Frameworks/Nested.framework/Versions/A/Nested", "Contents/Frameworks/Shallow.framework/Shallow"), false, false, false},
+		{"framework binary swapped", replace(framework+"Versions/A/Nested", "Contents/Frameworks/Shallow.framework/Shallow"), false, false, false},
 		{"helper swapped", replace("Contents/MacOS/helper", "Contents/Helpers/Helper.app/Contents/MacOS/Helper"), false, true, false},
 		{"nested app swapped", func(t *testing.T, app string) {
 			t.Helper()
@@ -162,9 +169,80 @@ func bundleMutations() []bundleMutation {
 				t.Fatal(err)
 			}
 		}, false, false, false},
-		{"framework version added", write("Contents/Frameworks/Nested.framework/Versions/B/extra", []byte("other version")), false, true, false},
-		{"framework current retargeted", symlink("Contents/Frameworks/Nested.framework/Versions/Current", "B"), false, true, false},
-		{"framework root file added", write("Contents/Frameworks/Nested.framework/extra", []byte("unsealed")), false, true, true},
+		{"framework incomplete version", write(framework+"Versions/B/extra", []byte("other version")), false, false, true},
+		{"framework direct links", func(t *testing.T, app string) {
+			t.Helper()
+			symlink(framework+"Nested", "Versions/A/Nested")(t, app)
+			symlink(framework+"Resources", "Versions/A/Resources")(t, app)
+		}, true, false, true},
+		{"framework mixed links", symlink(framework+"Nested", "Versions/A/Nested"), true, false, true},
+		{"framework dot prefix", symlink(framework+"Nested", "./Versions/A/Nested"), true, false, true},
+		{"framework current dot prefix", symlink(framework+"Versions/Current", "./A"), true, false, true},
+		{"framework dotted current direct link", func(t *testing.T, app string) {
+			t.Helper()
+			symlink(framework+"Versions/Current", "./A")(t, app)
+			symlink(framework+"Nested", "Versions/./A/Nested")(t, app)
+		}, true, false, true},
+		{"framework dotted current mismatched direct link", func(t *testing.T, app string) {
+			t.Helper()
+			symlink(framework+"Versions/Current", "./A")(t, app)
+			symlink(framework+"Nested", "Versions/A/Nested")(t, app)
+		}, false, true, true},
+		{"framework unmatched dotted direct link", symlink(framework+"Nested", "Versions/./A/Nested"), false, true, true},
+		{"framework signed version added", copyVersion, true, false, true},
+		{"framework noncurrent code under requirement", func(t *testing.T, app string) {
+			t.Helper()
+			copyVersion(t, app)
+			file := filepath.Join(app, framework, "Versions/B/Nested")
+			data := readTestFile(t, file)
+			// The parent seals the arm64 cdhash. Keep only the independently
+			// signed x86_64 slice, which must satisfy the parent's requirement.
+			entry := data[8:28]
+			offset := binary.BigEndian.Uint32(entry[8:12])
+			size := binary.BigEndian.Uint32(entry[12:16])
+			writeTestFile(t, file, data[offset:offset+size], 0o755)
+		}, true, false, true},
+		{"framework select added version", func(t *testing.T, app string) {
+			t.Helper()
+			copyVersion(t, app)
+			symlink(framework+"Versions/Current", "B")(t, app)
+		}, true, false, true},
+		{"framework noncurrent resource modified", func(t *testing.T, app string) {
+			t.Helper()
+			copyVersion(t, app)
+			write(framework+"Versions/B/extra", []byte("unsealed"))(t, app)
+		}, false, false, true},
+		{"framework noncurrent binary modified", func(t *testing.T, app string) {
+			t.Helper()
+			copyVersion(t, app)
+			corrupt(framework+"Versions/B/Nested", 0)(t, app)
+		}, false, false, true},
+		{"framework noncurrent signature removed", func(t *testing.T, app string) {
+			t.Helper()
+			copyVersion(t, app)
+			remove(framework+"Versions/B/_CodeSignature")(t, app)
+		}, false, false, true},
+		{"framework noncurrent identity mismatch", func(t *testing.T, app string) {
+			t.Helper()
+			if err := os.CopyFS(filepath.Join(app, framework, "Versions/B"), os.DirFS(filepath.Join(app, "Contents/Frameworks/Shallow.framework"))); err != nil {
+				t.Fatal(err)
+			}
+		}, false, false, true},
+		{"framework link to noncurrent version", func(t *testing.T, app string) {
+			t.Helper()
+			copyVersion(t, app)
+			symlink(framework+"Nested", "Versions/B/Nested")(t, app)
+		}, false, true, true},
+		{"framework wrong namesake", symlink(framework+"Nested", "Versions/A/Resources"), false, true, true},
+		{"framework root escape", symlink(framework+"Nested", "../Shallow.framework/Shallow"), false, true, true},
+		{"framework current escape", symlink(framework+"Versions/Current", "../../Shallow.framework"), false, true, true},
+		{"framework current cycle", symlink(framework+"Versions/Current", "Current"), false, true, true},
+		{"framework version alias", symlink(framework+"Versions/B", "A"), false, true, true},
+		{"framework missing current", remove(framework + "Versions/Current"), false, true, true},
+		// Root aliases do not add contents; codesign permits missing namesakes.
+		{"framework dangling namesake", symlink(framework+"Missing", "Versions/Current/Missing"), true, false, true},
+		{"framework current retargeted", symlink(framework+"Versions/Current", "B"), false, true, false},
+		{"framework root file added", write(framework+"extra", []byte("unsealed")), false, true, true},
 	}
 }
 
@@ -217,6 +295,9 @@ func checkMutation(t *testing.T, mutation bundleMutation, result signature.Resul
 	}
 	if errors.Is(err, ErrUnsupported) != mutation.unsupported {
 		t.Fatalf("unsupported = %v, want %v: %v", errors.Is(err, ErrUnsupported), mutation.unsupported, err)
+	}
+	if mutation.accept && len(result.Replaced) != 0 {
+		t.Fatalf("unchanged nested code reported as replaced: %+v", result.Replaced)
 	}
 	if mutation.accept && (result.Signer != fixtureSigner || result.Name != "Woodleigh School" || result.Authority != "Developer ID Application" || result.Target != "NestedFixture.app") {
 		t.Fatalf("wrong result: %+v", result)

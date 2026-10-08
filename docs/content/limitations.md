@@ -60,8 +60,8 @@ attributes. Generic code verifies inside vendor DMGs and archives carrying Apple
 PAX attributes. Local trees without those attributes cannot verify generic code. The receipt the App Store
 adds to an application lies outside its signature, as it does for `codesign`. Of Apple's requirement
 language, only the Developer ID requirement `codesign` records by default is
-evaluated, and only for nested code that replaced the code its app sealed; other
-requirements accept only the sealed code. Legacy envelopes and detached signature
+evaluated, and only for nested code that replaced the code its app sealed and for a
+framework's non-current versions; other requirements accept only the sealed code. Legacy envelopes and detached signature
 files are rejected rather than emulated, identically on every host. Code signed with
 `codesign --options expires` is rejected unless a trusted timestamp dates its signature. Signature absence is a
 normal observation for supported formats; partial and ad-hoc signatures are not

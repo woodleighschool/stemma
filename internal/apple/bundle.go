@@ -104,9 +104,22 @@ func validateExecutable(executable string) error {
 	return nil
 }
 
-// verifyFramework verifies a versioned framework. Only the current version is
-// code; the root may hold Versions and the conventional symlinks into it.
-func (v *bundleVerifier) verifyFramework(bundle fs.ReadLinkFS, location, bundleName string) (codeIdentity, error) {
+// verifyFramework verifies every version against the enclosing resource seal.
+// Root links are aliases, not sealed resources; each must name the same entry
+// in the version selected by Current, directly or through Current itself.
+// Direct links preserve the literal Current target, including an optional "./".
+func (v *bundleVerifier) verifyFramework(bundle fs.ReadLinkFS, location, bundleName string, seal *resourceSeal) (codeIdentity, error) {
+	current, err := bundle.ReadLink("Versions/Current")
+	if err != nil {
+		return codeIdentity{}, fmt.Errorf("%w: framework without a current version: %w", ErrUnsupported, err)
+	}
+	versionName := strings.TrimPrefix(current, "./")
+	if !fs.ValidPath(versionName) || versionName == "." || versionName == "Current" || strings.ContainsAny(versionName, "/\\\x00") {
+		return codeIdentity{}, fmt.Errorf("%w: unsafe framework current version %q", ErrUnsupported, current)
+	}
+	if err := realDirectory(bundle, "Versions/"+versionName); err != nil {
+		return codeIdentity{}, fmt.Errorf("%w: framework current version: %w", ErrUnsupported, err)
+	}
 	entries, err := fs.ReadDir(bundle, ".")
 	if err != nil {
 		return codeIdentity{}, err
@@ -119,7 +132,8 @@ func (v *bundleVerifier) verifyFramework(bundle fs.ReadLinkFS, location, bundleN
 			if err != nil {
 				return codeIdentity{}, err
 			}
-			if target != "Versions/Current/"+entry.Name() {
+			target = strings.TrimPrefix(target, "./")
+			if target != "Versions/Current/"+entry.Name() && target != "Versions/"+current+"/"+entry.Name() {
 				return codeIdentity{}, fmt.Errorf("%w: framework symlink %q points to %q", ErrUnsupported, entry.Name(), target)
 			}
 		default:
@@ -130,33 +144,30 @@ func (v *bundleVerifier) verifyFramework(bundle fs.ReadLinkFS, location, bundleN
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	current, err := bundle.ReadLink("Versions/Current")
-	if err != nil {
-		return codeIdentity{}, fmt.Errorf("%w: framework without a current version: %w", ErrUnsupported, err)
-	}
+	var selected codeIdentity
 	for _, entry := range versions {
-		if entry.Name() != "Current" && (entry.Name() != current || !entry.IsDir()) {
-			return codeIdentity{}, fmt.Errorf("%w: framework version entry %q is not the current version", ErrUnsupported, entry.Name())
+		if entry.Name() == "Current" {
+			continue
+		}
+		if !entry.IsDir() {
+			return codeIdentity{}, fmt.Errorf("%w: framework version entry %q is not a directory", ErrUnsupported, entry.Name())
+		}
+		version, err := subtree(bundle, "Versions/"+entry.Name())
+		if err != nil {
+			return codeIdentity{}, err
+		}
+		versionLocation := path.Join(location, "Versions", entry.Name())
+		identity, err := v.verifyShallow(version, versionLocation, bundleName)
+		if err != nil {
+			return codeIdentity{}, fmt.Errorf("framework version %q: %w", entry.Name(), err)
+		}
+		if entry.Name() == versionName {
+			selected = identity
+		} else if err := verifyNestedIdentity(identity, seal); err != nil {
+			return codeIdentity{}, fmt.Errorf("framework version %q: %w", entry.Name(), err)
 		}
 	}
-	version, err := subtree(bundle, "Versions/"+current)
-	if err != nil {
-		return codeIdentity{}, err
-	}
-	infoPath := "Resources/Info.plist"
-	info, err := readRegular(version, infoPath, maxMetadata)
-	if errors.Is(err, fs.ErrNotExist) {
-		infoPath = "Info.plist"
-		info, err = readRegular(version, infoPath, maxMetadata)
-	}
-	if err != nil {
-		return codeIdentity{}, err
-	}
-	executable, err := bundleExecutable(info, bundleName)
-	if err != nil {
-		return codeIdentity{}, err
-	}
-	return v.verifyCode(version, path.Join(location, "Versions", current), executable, infoPath, info)
+	return selected, nil
 }
 
 // verifyShallow verifies a bundle whose signature, executable and resources
@@ -434,32 +445,41 @@ func (v *bundleVerifier) verifyNested(root fs.ReadLinkFS, location, name string,
 		return err
 	}
 	location = path.Join(location, name)
-	identity, err := v.verifyNestedCode(root, location, name, info.IsDir())
+	identity, err := v.verifyNestedCode(root, location, name, info.IsDir(), seal)
+	if err == nil {
+		err = verifyNestedIdentity(identity, seal)
+	}
 	if err != nil {
 		return fmt.Errorf("nested code %q: %w", name, err)
 	}
+	if !matchCDHash(identity, seal.cdhash) {
+		replacement := signature.Replacement{Path: location, Sealed: hex.EncodeToString(seal.cdhash)}
+		for _, cdhash := range identity.cdhashes {
+			replacement.CDHashes = append(replacement.CDHashes, hex.EncodeToString(cdhash))
+		}
+		v.replaced = append(v.replaced, replacement)
+	}
+	return nil
+}
+
+func verifyNestedIdentity(identity codeIdentity, seal *resourceSeal) error {
 	if matchCDHash(identity, seal.cdhash) {
 		return nil
 	}
 	if seal.requirement == "" {
-		return fmt.Errorf("nested code %q does not match its sealed cdhash", name)
+		return errors.New("does not match its sealed cdhash")
 	}
 	required, err := parseRequirement(seal.requirement)
 	if err != nil {
-		return fmt.Errorf("nested code %q does not match its sealed cdhash: %w", name, err)
+		return fmt.Errorf("does not match its sealed cdhash: %w", err)
 	}
 	if !required.satisfiedBy(identity) {
-		return fmt.Errorf("nested code %q matches neither its sealed cdhash nor its sealed requirement", name)
+		return errors.New("matches neither its sealed cdhash nor its sealed requirement")
 	}
-	replacement := signature.Replacement{Path: location, Sealed: hex.EncodeToString(seal.cdhash)}
-	for _, cdhash := range identity.cdhashes {
-		replacement.CDHashes = append(replacement.CDHashes, hex.EncodeToString(cdhash))
-	}
-	v.replaced = append(v.replaced, replacement)
 	return nil
 }
 
-func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, location, name string, bundle bool) (codeIdentity, error) {
+func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, location, name string, bundle bool, seal *resourceSeal) (codeIdentity, error) {
 	if !bundle {
 		f, size, err := openRegular(root, name)
 		if err != nil {
@@ -485,7 +505,7 @@ func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, location, name str
 	case isDirectory(nested, "Contents"):
 		return v.verifyContents(nested, location, path.Base(name))
 	case isDirectory(nested, "Versions"):
-		return v.verifyFramework(nested, location, path.Base(name))
+		return v.verifyFramework(nested, location, path.Base(name), seal)
 	case isDirectory(nested, "_CodeSignature"):
 		return v.verifyShallow(nested, location, path.Base(name))
 	default:

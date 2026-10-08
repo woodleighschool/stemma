@@ -343,7 +343,8 @@ timestamp. Nested code
 matches its exact recorded cdhash, or replaces the
 sealed code under the Developer ID requirement the app recorded for it: the same
 identifier, signed by the same team with a Developer ID Application certificate.
-`stemma signature` lists replaced nested code. Nested scripts and data files that
+`stemma signature` lists replaced nested code. A framework's non-current versions
+must satisfy the same requirement. Nested scripts and data files that
 `codesign` signs in extended attributes verify inside vendor DMGs and archives
 that carry those attributes. Generated images preserve them; vendor DMGs are
 published unchanged unless `package` selects PKG preparation. Notarisation and
