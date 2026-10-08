@@ -212,6 +212,49 @@ cover its selected content. Vendor-specific
 discovery and other metadata extraction belong in a resolver or resource plugin.
 Set `package.filename` only when the default output name needs to be overridden.
 
+## Wrap a selected installer
+
+An input can be another resource's output instead of a source. A `MacSoftware`
+resource without destinations selects a vendor installer, and the build carries
+that installer byte for byte, here to start it under Rosetta:
+
+```yaml
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata:
+  name: vendor-installer
+spec:
+  source:
+    url: https://vendor.example/downloads/Vendor.dmg
+  package_path: Vendor*.pkg
+---
+apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata:
+  name: vendor
+spec:
+  inputs:
+    installer:
+      resource:
+        kind: MacSoftware
+        name: vendor-installer
+  scripts:
+    postinstall: |-
+      #!/bin/zsh --no-rcs
+      exec /usr/bin/arch -x86_64 /usr/sbin/installer -pkg "${0:A:h}/installer.pkg" -target /
+    installer.pkg:
+      $input: installer
+  package:
+    identifier: org.example.pkg.vendor
+    version: "{{ inputs.installer.version }}"
+```
+
+The input is the PKG that `package_path` selected, whatever its name in the image,
+and `inputs.installer.version` is the version that resource derived, including one
+taken from a [selected application](mac-software.md#select-an-application-once).
+A third document publishes the build, as in [Package a directory](#package-a-directory).
+The source lock belongs to the `MacSoftware` resource.
+
 ## Compress the payload
 
 `package.compression` controls how the package payload is compressed:

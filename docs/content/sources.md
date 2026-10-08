@@ -219,6 +219,9 @@ References include the kind and name, plus the named output. `apiVersion` defaul
 to `stemma/v1alpha1`; supply it for external kinds. Required builds run before
 their consumers even when only the consumer was selected on the command line.
 
+A `MacSoftware` resource has an `installer` output as well: the installer it
+selected. A build can [take it as an input](building-packages.md#wrap-a-selected-installer).
+
 ## Understand the lock
 
 | Command          | Input behaviour                                                                                   |
