@@ -220,12 +220,25 @@ and the Project's named destinations:
 stemma schema --offline --output-file stemma.schema.json
 ```
 
-Track the generated file in the catalog and add a YAML language-server modeline
-using its raw repository URL:
+Track the generated file in the catalog and head each document with a YAML
+language-server modeline using its raw repository URL:
 
 ```yaml
+---
 # yaml-language-server: $schema=https://raw.githubusercontent.com/OWNER/CATALOG/main/stemma.schema.json
+apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+# ...
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/OWNER/CATALOG/main/stemma.schema.json
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+# ...
 ```
+
+The language server applies a modeline to one document, so a file holding several
+repeats it after each `---`. A comment above a `---` belongs to the document
+before it.
 
 For agents, [`stemma mcp`](commands.md#agents) exposes the same contracts through
 its `describe` tool, including field descriptions from built-ins and plugins.
