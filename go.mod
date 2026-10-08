@@ -30,7 +30,7 @@ require (
 	github.com/jferrl/go-githubauth v1.9.1
 	github.com/kaptinlin/jsonschema v0.9.10
 	github.com/klauspost/compress v1.20.1
-	github.com/mattn/go-runewidth v0.0.30
+	github.com/mattn/go-runewidth v0.0.31
 	github.com/mholt/archives v0.1.5
 	github.com/microsoft/kiota-abstractions-go v1.11.1
 	github.com/microsoft/kiota-http-go v1.5.7
