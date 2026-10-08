@@ -198,8 +198,8 @@ github.com/mikelolasagasti/xz v1.0.1 h1:Q2F2jX0RYJUG3+WsM+FJknv+6eVjsjXNDV0KJXZz
 github.com/mikelolasagasti/xz v1.0.1/go.mod h1:muAirjiOUxPRXwm9HdDtB3uoRPrGnL85XHtokL9Hcgc=
 github.com/minio/minlz v1.2.0 h1:6IOBuiHg04QxvbFfgFLT/9sMaO/UhL7S+ApW1mK8q5A=
 github.com/minio/minlz v1.2.0/go.mod h1:Ls9H7nlkASeCcdl5thjVD5Eraj6z+zGa7xtq57jIKD4=
-github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261007081651-8dd5d6a7e126 h1:VbovBS4715GEelj6FkvhXfraLBpAgEIb7/PA+3TgDtI=
-github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261007081651-8dd5d6a7e126/go.mod h1:dL7u98E/zjJTGzEq+j30jQ8K2k1mb6LeAH4inEcSGts=
+github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261008141702-71fd64651789 h1:352ARoalzQTtn3EjfclfMXguNtwdfG0sUwPoihe25d4=
+github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261008141702-71fd64651789/go.mod h1:dL7u98E/zjJTGzEq+j30jQ8K2k1mb6LeAH4inEcSGts=
 github.com/mrjoshuak/go-jpeg2000 v1.5.12 h1:i4LMEJo3sdQbwwpax52vA7Gwpo5WYzv4w1YVdfY0cU4=
 github.com/mrjoshuak/go-jpeg2000 v1.5.12/go.mod h1:Zvb2bdmP52/rpmJOuzMo1HQR75zex//CvqEvopdTweo=
 github.com/ncruces/go-sqlite3 v0.35.6 h1:0JGlMne89YzKNP2CJBuiH21EEzSQNuB7pfvCbKBn0Jg=
