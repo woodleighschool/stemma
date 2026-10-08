@@ -89,9 +89,11 @@ func (u Update) Failed() bool {
 	return u.Error != "" || slices.ContainsFunc(u.Proposals, func(proposal Proposal) bool { return proposal.Action == "failed" })
 }
 
-// Proposal reports one proposal branch.
+// Proposal reports one proposal branch, or a resource whose inputs could not
+// be resolved.
 type Proposal struct {
-	Resource    string         `json:"resource"`
+	// Name is the resource an update proposes, or names the lock refresh.
+	Name        string         `json:"name"`
 	Branch      string         `json:"branch,omitempty"`
 	Action      string         `json:"action"`
 	PullRequest string         `json:"pull_request,omitempty"`
@@ -114,10 +116,12 @@ type runner struct {
 	stateDir string
 }
 
-// Run applies the reviewed branch when it changed, then proposes one pull
-// request per resource whose current inputs differ from the lock. Both phases
-// read the reviewed project, so when it does not load neither runs. Otherwise
-// they fail independently: a broken apply never blocks update maintenance.
+// Run applies the reviewed branch when it changed, then proposes what differs
+// from the lock: one pull request per resource whose content changed and one
+// lock refresh for every difference that leaves content as reviewed. Both
+// phases read the reviewed project, so when it does not load neither runs.
+// Otherwise they fail independently: a broken apply never blocks update
+// maintenance.
 func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	defer func() {
 		if runErr != nil && runErr != ErrFailed { //nolint:errorlint // The sentinel alone means the report holds every failure.

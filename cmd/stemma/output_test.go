@@ -279,7 +279,7 @@ func TestReconcileSectionsKeepPhaseOutcomesTogether(t *testing.T) {
 		if err := o.beginPhase("update"); err != nil {
 			t.Fatal(err)
 		}
-		if err := o.proposalDone(reconcile.Proposal{Resource: "MacSoftware/example", Action: "created", PullRequest: "https://example.test/pull/1"}); err != nil {
+		if err := o.proposalDone(reconcile.Proposal{Name: "MacSoftware/example", Action: "created", PullRequest: "https://example.test/pull/1"}); err != nil {
 			t.Fatal(err)
 		}
 		want := "➤ Applying reviewed software\n\n✓ Reviewed main@123456789abc: already applied\n\n" +

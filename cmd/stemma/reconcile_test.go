@@ -30,9 +30,9 @@ func TestReconcileRequiresSourceControl(t *testing.T) {
 
 func TestReconcileStreamsOutcomesAndCountsProposals(t *testing.T) {
 	report := reconcile.Report{Branch: "main", Head: "0123456789abcdef", Apply: &reconcile.Apply{Commit: "0123456789abcdef", Summary: "2 resources, 3 destination changes"}, Update: &reconcile.Update{Proposals: []reconcile.Proposal{
-		{Resource: "MacSoftware/chrome", Branch: "stemma/MacSoftware/chrome", Action: "created", PullRequest: "https://github.example/pull/1", Summary: "MacSoftware/chrome 129: 3 planned changes across 1 destination"},
-		{Resource: "MacSoftware/broken", Action: "failed", Error: "download returned HTTP 404"},
-		{Resource: "MacSoftware/firefox", Action: "unchanged", PullRequest: "https://github.example/pull/2"},
+		{Name: "MacSoftware/chrome", Branch: "stemma/MacSoftware/chrome", Action: "created", PullRequest: "https://github.example/pull/1", Summary: "MacSoftware/chrome 129: 3 planned changes across 1 destination"},
+		{Name: "MacSoftware/broken", Action: "failed", Error: "download returned HTTP 404"},
+		{Name: "MacSoftware/firefox", Action: "unchanged", PullRequest: "https://github.example/pull/2"},
 	}}}
 	lookup := []engine.ResourceReport{
 		{Kind: "MacSoftware", Name: "chrome", Key: "stemma/v1alpha1/MacSoftware/chrome", Inputs: []lockfile.InputChange{{Resource: "stemma/v1alpha1/MacSoftware/chrome", Input: "source", ContentChanged: true}}},
@@ -100,7 +100,7 @@ func TestReconcileShowsEachFailureOnce(t *testing.T) {
 		"resources and proposals failed": {
 			report: reconcile.Report{Branch: "main", Head: head,
 				Apply:  &reconcile.Apply{Commit: head, Summary: "1 resource failed: chrome", Report: &engine.Report{Error: "MacSoftware/chrome: upload failed"}},
-				Update: &reconcile.Update{Proposals: []reconcile.Proposal{{Resource: "MacSoftware/firefox", Action: "failed", Error: "push rejected"}}},
+				Update: &reconcile.Update{Proposals: []reconcile.Proposal{{Name: "MacSoftware/firefox", Action: "failed", Error: "push rejected"}}},
 			},
 			err:    reconcile.ErrFailed,
 			stderr: "✗ reconcile: a phase failed\n",

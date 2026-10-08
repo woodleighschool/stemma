@@ -45,18 +45,21 @@ command.
    differs from the reviewed identity fail that resource and block consumers of its outputs; independent resources still
    publish. The applied marker moves only when the whole apply succeeded; a
    partial apply is retried next run.
-3. **Update.** Resolve the inputs of the same resources once and keep
-   one `stemma/Kind/name` branch per resource whose inputs differ from the lock.
-   The branch is regenerated from the reviewed commit with only that resource's
-   lock entries changed. The resource and every resource consuming its outputs
+3. **Update.** Resolve the inputs of the same resources once and compare them
+   with the lock. A resource whose content changed gets its own
+   `stemma/Kind/name` branch. Every difference that keeps the reviewed content
+   shares the `stemma/refresh-locks` branch: entries whose metadata, declaration
+   or resolver changed, and entries of resources the catalog no longer declares.
+   A branch is regenerated from the reviewed commit with only its own lock
+   entries changed. Its resources and every resource consuming their outputs
    are planned once against that exact proposal lock. Planning acquires locked
    inputs as needed, prepares artifacts and compares destinations without writing
    them. Other resources retain their reviewed inputs and plugins. The commit
    is pushed with a lease, the pull request is opened or updated with a summary
-   of the lock change and what merging does to each destination, and the
-   verification becomes the `stemma/plan` commit status. A failed plan still
-   creates or updates the proposal with a failing status and a safe summary;
-   detailed failures remain in the run report.
+   of the lock change and what merging does to each destination, and the plan's
+   outcome becomes the `stemma/plan` commit status. A failed plan still creates
+   or updates the proposal with a failing status and a safe summary; detailed
+   failures remain in the run report.
 
 Both phases start from the reviewed commit's project and lockfile. When either
 does not load, neither phase runs: the run fails with that one error, and the
@@ -70,20 +73,22 @@ the detail.
 
 Further behaviour of the update phase:
 
-- A resource the catalog no longer declares gets a lock-cleanup proposal that is
-  validated rather than prepared.
+- The lock refresh gives a row to each resource the reviewed branch cannot apply
+  until it merges, each one whose merge changes a destination and each one that
+  failed to plan. It lists the others by name.
 - A [suspended](catalogs.md#suspend-a-resource) resource keeps its reviewed lock
   entries and is neither applied nor proposed; run it locally with a selector.
 - A resource in a [profile](catalogs.md#group-opt-in-work-in-profiles) is treated
   the same way unless a resource outside every profile consumes its outputs; run
   it with its profile where that work happens.
-- A proposal a person closed without merging stays declined until its content
-  changes.
-- Branches whose resource no longer differs from the reviewed lock, including
-  merged ones, are closed and deleted.
-- A resource that fails to resolve is reported and its existing proposal is left
-  as it is. Consumers of its outputs are reported as blocked and retain their
-  proposals too. Successful independent resources still get update proposals.
+- A proposal a person closed without merging stays declined until an entry it
+  proposes changes.
+- Branches that no longer propose anything, including merged ones, are closed
+  and deleted.
+- A resource that fails to resolve is reported and its own proposal is left as
+  it is; the lock refresh continues without it. Consumers of its outputs are
+  reported as blocked and retain their proposals too. Successful independent
+  resources still get update proposals.
 - Plugins load from the reviewed lockfile, and reconcile never changes their
   entries. A plugin that does not load fails the phases that use it; fix its
   entry with `stemma plugins update` and commit the result. A plugin has to be

@@ -487,7 +487,7 @@ func renderReviewed(style textStyle, report reconcile.Report) string {
 // renderProposal describes one proposal branch's outcome.
 func renderProposal(style textStyle, proposal reconcile.Proposal) string {
 	var text strings.Builder
-	text.WriteString(style.outcomeLine(changes.Text(keyName(proposal.Resource)), proposal.Action))
+	text.WriteString(style.outcomeLine(changes.Text(proposal.Name), proposal.Action))
 	if proposal.PullRequest != "" {
 		fmt.Fprintf(&text, "\n  Pull request: %s", changes.Text(proposal.PullRequest))
 	}
