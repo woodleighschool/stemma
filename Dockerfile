@@ -3,7 +3,7 @@
 # Keep the container toolchain aligned with Mise. Renovate updates both.
 
 # ---- Go build -------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
