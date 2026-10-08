@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf16"
 
 	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 	"github.com/deploymenttheory/go-apfs-v2/pkg/disk"
@@ -20,7 +19,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/plugin"
-	"golang.org/x/text/unicode/norm"
 )
 
 // Compression names the codec that compresses a disk image's data chunks.
@@ -137,13 +135,11 @@ func (w *writer) entry(name, stored string, info fs.FileInfo) (*hfsplus.Entry, e
 	if err := safeName(stored); err != nil {
 		return nil, err
 	}
-	if len(utf16.Encode([]rune(norm.NFD.String(stored)))) > 255 {
-		return nil, fmt.Errorf("name %q exceeds the HFS+ limit", stored)
-	}
 	if err := archive.CheckMode(info); err != nil {
 		return nil, fmt.Errorf("%s: %w", name, err)
 	}
-	entry := &hfsplus.Entry{Name: stored, ModTime: w.timestamp, ModeExplicit: true}
+	// Open supplies logical bytes; retained compression attributes must not select storage.
+	entry := &hfsplus.Entry{Name: stored, ModTime: w.timestamp, ModeExplicit: true, BSDFlags: new(uint32)}
 	switch {
 	case info.Mode()&fs.ModeSymlink != 0:
 		target, err := w.source.ReadLink(name)
@@ -214,15 +210,8 @@ func (w *writer) children(dir string) ([]*hfsplus.Entry, error) {
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, err
 	}
-	// The volume folds case, so names that differ only by case are one name.
-	spelling := map[string]string{}
 	children := make([]*hfsplus.Entry, 0, len(listing))
 	for _, child := range listing {
-		folded := strings.ToLower(norm.NFD.String(child.Name()))
-		if prior, exists := spelling[folded]; exists {
-			return nil, fmt.Errorf("case-conflicting paths %q and %q", path.Join(dir, prior), path.Join(dir, child.Name()))
-		}
-		spelling[folded] = child.Name()
 		name := path.Join(dir, child.Name())
 		info, err := w.source.Lstat(name)
 		if err != nil {

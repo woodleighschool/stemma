@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"io"
 	"io/fs"
@@ -12,6 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 )
 
 var imageTime = time.Date(2026, time.March, 4, 5, 6, 7, 0, time.UTC)
@@ -316,5 +319,73 @@ func TestWriteApplicationLogicalSymlinks(t *testing.T) {
 				t.Fatalf("symlink target = %q, want %q: %v", target, test.target, err)
 			}
 		})
+	}
+}
+
+func TestWriteApplicationHFSNames(t *testing.T) {
+	for _, test := range []struct {
+		name, first, second string
+		reject              bool
+	}{
+		{"case", "readme", "README", true},
+		{"canonical", "é", "e\u0301", true},
+		{"ignored character", "file", "fi\u200cle", true},
+		{"HFS decomposition exclusion", "\u212b", "Å", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := fstest.MapFS{
+				"Example.app/" + test.first:  {Data: []byte("first"), Mode: 0o644},
+				"Example.app/" + test.second: {Data: []byte("second"), Mode: 0o644},
+			}
+			output := filepath.Join(t.TempDir(), "Example.dmg")
+			err := WriteApplication(t.Context(), source, "Example.app", output, Zlib, imageTime)
+			if (err != nil) != test.reject {
+				t.Fatalf("write = %v, reject = %v", err, test.reject)
+			}
+		})
+	}
+}
+
+type metadataFS struct {
+	fstest.MapFS
+
+	attribute []byte
+}
+
+func (m metadataFS) XattrValues(name string) (map[string]appledouble.Value, error) {
+	if name != "Example.app/file" {
+		return nil, nil
+	}
+	return map[string]appledouble.Value{"com.apple.decmpfs": bytes.NewReader(m.attribute)}, nil
+}
+
+func TestWriteApplicationKeepsCompressionAttributesInactive(t *testing.T) {
+	// Type 3 with an uncompressed inline block describes stale, different bytes.
+	stored := []byte("stale")
+	header := make([]byte, 17+len(stored))
+	binary.LittleEndian.PutUint32(header, 0x636d7066)
+	binary.LittleEndian.PutUint32(header[4:], 3)
+	binary.LittleEndian.PutUint64(header[8:], uint64(len(stored)))
+	header[16] = 0xff
+	copy(header[17:], stored)
+	for _, attribute := range [][]byte{header, []byte("invalid compression metadata")} {
+		source := metadataFS{MapFS: fstest.MapFS{"Example.app/file": {Data: []byte("current logical bytes"), Mode: 0o644}}, attribute: attribute}
+		output := filepath.Join(t.TempDir(), "Example.dmg")
+		if err := WriteApplication(t.Context(), source, "Example.app", output, Zlib, imageTime); err != nil {
+			t.Fatal(err)
+		}
+		image, err := Open(t.Context(), output)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = image.Close() })
+		data, err := fs.ReadFile(image, "Example.app/file")
+		if err != nil || string(data) != "current logical bytes" {
+			t.Fatalf("contents = %q: %v", data, err)
+		}
+		attrs, err := image.Xattrs("Example.app/file")
+		if err != nil || !bytes.Equal(attrs["com.apple.decmpfs"], attribute) {
+			t.Fatalf("metadata changed: %v", err)
+		}
 	}
 }
