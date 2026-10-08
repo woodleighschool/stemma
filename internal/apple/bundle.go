@@ -192,8 +192,15 @@ func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, location, executable, in
 		if openErr != nil {
 			return codeIdentity{}, openErr
 		}
+		defer func() { _ = f.Close() }()
+		machO, err := isMachO(f, size)
+		if err != nil {
+			return codeIdentity{}, err
+		}
+		if !machO {
+			return codeIdentity{}, v.unsignedGeneric(path.Join(location, executable), f)
+		}
 		_, verifyErr := verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info}, v.roots)
-		_ = f.Close()
 		if errors.Is(verifyErr, signature.ErrUnsigned) {
 			return codeIdentity{}, signature.ErrUnsigned
 		}

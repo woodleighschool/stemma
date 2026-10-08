@@ -48,6 +48,38 @@ func applicationFixture(t *testing.T) string {
 	return root
 }
 
+func TestUnsignedScriptApplicationExpectations(t *testing.T) {
+	root := applicationFixture(t)
+	zip := filepath.Join(t.TempDir(), "Example.zip")
+	testarchive.Zip(t, zip, root)
+	image := filepath.Join(t.TempDir(), "Example.dmg")
+	testdiskimage.Write(t, image, root)
+	for _, input := range []plugin.Artifact{
+		{Path: filepath.Join(root, "Example.app"), Filename: "Example.app", Tree: true},
+		{Path: zip, Filename: "Example.zip", Format: "zip"},
+		{Path: image, Filename: "Example.dmg", Format: "dmg"},
+	} {
+		t.Run(input.Filename, func(t *testing.T) {
+			spec := Spec{Signatures: []signature.Expectation{{Unsigned: true}}}
+			outputs, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var evidence []signature.Observation
+			if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &evidence); err != nil {
+				t.Fatal(err)
+			}
+			if len(evidence) != 1 || evidence[0].State != "unsigned" {
+				t.Fatalf("unsigned application evidence: %+v", evidence)
+			}
+			spec.Signatures = []signature.Expectation{{Signer: "apple:developer-id:AAAAAAAAAA"}}
+			if _, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()}); !errors.Is(err, signature.ErrUnsigned) {
+				t.Fatalf("signer expectation must fail as unsigned: %v", err)
+			}
+		})
+	}
+}
+
 func TestResolvedApplicationRootPublishesOnlyItsApplication(t *testing.T) {
 	root := t.TempDir()
 	if err := os.CopyFS(filepath.Join(root, "Example.app"), os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"strings"
 
@@ -56,6 +57,42 @@ func isMachO(r io.ReaderAt, size int64) (bool, error) {
 		return true, nil
 	}
 	return false, nil
+}
+
+// unsignedGeneric establishes absence without interpreting signature contents.
+// A generic executable can carry a signature even without a bundle envelope.
+func (v *bundleVerifier) unsignedGeneric(location string, file bundleFile) error {
+	if err := v.ctx.Err(); err != nil {
+		return err
+	}
+	var signed bool
+	if v.attributes != nil {
+		attributes, err := v.attributes.XattrValues(path.Join(v.base, location))
+		if err != nil {
+			return err
+		}
+		for name := range attributes {
+			if strings.HasPrefix(name, signatureAttribute) {
+				signed = true
+				break
+			}
+		}
+	} else if local, ok := file.(*os.File); ok {
+		var err error
+		signed, err = nativeSignatureAttributes(v.ctx, local)
+		if err != nil {
+			return fmt.Errorf("read executable signature attributes: %w", err)
+		}
+	} else {
+		return fmt.Errorf("%w: generic executable requires extended attributes from its source", ErrUnsupported)
+	}
+	if signed {
+		return errors.New("generic executable has signature attributes but no resource envelope")
+	}
+	if err := v.ctx.Err(); err != nil {
+		return err
+	}
+	return signature.ErrUnsigned
 }
 
 // verifyGeneric authenticates generic code at a location in the verified
