@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,6 +18,89 @@ import (
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
+
+func TestPreparationTreeLeaseContract(t *testing.T) {
+	for _, encoded := range []bool{false, true} {
+		for _, change := range []string{"none", "bytes", "member mode", "link target"} {
+			t.Run(fmt.Sprintf("tar=%v/%s", encoded, change), func(t *testing.T) {
+				if !encoded && change != "none" {
+					t.Skip("directory mutation covered by lease digest tests")
+				}
+				store, err := cas.Open(t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				directory := t.TempDir()
+				if err := os.WriteFile(filepath.Join(directory, "data"), []byte("original"), 0o640); err != nil {
+					t.Fatal(err)
+				}
+				ref, err := importPath(t.Context(), store, directory, true)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ops := &operations{registry: plugin.New("fixture", "1")}
+				operation := resourceOperation("fixture", "Fixture")
+				operation.TarInputs = encoded
+				operation.InputSchema, operation.OutputSchema = json.RawMessage(`{}`), json.RawMessage(`{}`)
+				err = ops.registry.Register(operation, func(_ context.Context, envelope plugin.Request) (plugin.Response, error) {
+					var request plugin.ResourceRequest[json.RawMessage]
+					if err := json.Unmarshal(envelope.Input, &request); err != nil {
+						return plugin.Response{}, err
+					}
+					input := request.Inputs["source"]
+					info, err := os.Stat(input.Path)
+					if err != nil {
+						return plugin.Response{}, err
+					}
+					if !input.Tree || input.Filename != "Input.app" || input.Mode != 0o750 || info.IsDir() == encoded || (input.Encoding == "tar") != encoded {
+						t.Fatalf("wrong lease: %+v, %v", input, info)
+					}
+					if change != "none" {
+						var data bytes.Buffer
+						w := tar.NewWriter(&data)
+						header := &tar.Header{Name: "data", Typeflag: tar.TypeReg, Mode: 0o640, Size: 8}
+						content := "original"
+						switch change {
+						case "bytes":
+							content = "modified"
+						case "member mode":
+							header.Mode = 0o600
+						case "link target":
+							header.Typeflag, header.Linkname, header.Size, content = tar.TypeSymlink, "other", 0, ""
+						}
+						if err := w.WriteHeader(header); err != nil {
+							return plugin.Response{}, err
+						}
+						if _, err := w.Write([]byte(content)); err != nil {
+							return plugin.Response{}, err
+						}
+						if err := w.Close(); err != nil {
+							return plugin.Response{}, err
+						}
+						if err := os.WriteFile(input.Path, data.Bytes(), 0o600); err != nil {
+							return plugin.Response{}, err
+						}
+					}
+					return plugin.Response{Output: json.RawMessage(`{}`)}, nil
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				inputs := map[string]Prepared{"source": {Payload: ref, Filename: "Input.app", Tree: true, Mode: 0o750}}
+				_, _, err = prepareResource(t.Context(), store, ops, resourcePlan{Operation: "fixture"}, inputs, t.TempDir(), "")
+				if change == "none" && err != nil {
+					t.Fatal(err)
+				}
+				if change != "none" && (err == nil || !strings.Contains(err.Error(), "modified immutable input source")) {
+					t.Fatalf("lease mutation accepted: %v", err)
+				}
+				if err := store.Verify(t.Context(), ref); err != nil {
+					t.Fatalf("lease shares cache storage: %v", err)
+				}
+			})
+		}
+	}
+}
 
 func TestPreparationKeepsInputsImmutable(t *testing.T) {
 	for _, change := range []string{"none", "content", "mode"} {

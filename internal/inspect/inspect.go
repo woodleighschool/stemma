@@ -137,7 +137,14 @@ func Source(ctx context.Context, source *contents.Source) (plugin.Facts, error) 
 	if input.ContentRoot != "" {
 		return Selection(ctx, source, ".")
 	}
-	if input.Tree || !source.Traversable() {
+	if input.Tree {
+		node, err := source.At(ctx, "")
+		if err != nil {
+			return plugin.Facts{}, err
+		}
+		return inspectNode(ctx, node)
+	}
+	if !source.Traversable() {
 		return Read(ctx, input.Path)
 	}
 	node, err := source.At(ctx, ".")
@@ -268,7 +275,23 @@ func Selection(ctx context.Context, source *contents.Source, selection string) (
 	if err != nil {
 		return plugin.Facts{}, err
 	}
+	facts, err := inspectNode(ctx, node)
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	for i := range facts.Subjects {
+		subject := &facts.Subjects[i]
+		subject.ID, subject.Path = path.Join(selection, subject.ID), path.Join(selection, subject.Path)
+		if subject.Parent != "" {
+			subject.Parent = path.Join(selection, subject.Parent)
+		}
+	}
+	return facts, nil
+}
+
+func inspectNode(ctx context.Context, node contents.Node) (plugin.Facts, error) {
 	var facts plugin.Facts
+	var err error
 	switch {
 	case node.Local != "":
 		facts, err = Read(ctx, node.Local)
@@ -280,7 +303,7 @@ func Selection(ctx context.Context, source *contents.Source, selection string) (
 		}
 		root := plugin.Subject{ID: ".", Path: ".", Kind: "file"}
 		switch {
-		case info.IsDir() && strings.EqualFold(path.Ext(node.Path), ".app"):
+		case info.IsDir() && applicationRoot(node):
 			var app apple.AppFacts
 			app, err = apple.InspectAppFS(ctx, node.FS, node.Path)
 			root.Kind, root.App = "app", appFacts(app)
@@ -295,7 +318,7 @@ func Selection(ctx context.Context, source *contents.Source, selection string) (
 				facts.Subjects, err = Contents(ctx, links)
 			}
 			root.Kind = "directory"
-		case strings.EqualFold(path.Ext(selection), ".pkg"):
+		case strings.EqualFold(path.Ext(node.Path), ".pkg"):
 			root.Kind = "container"
 		}
 		facts.Subjects = append([]plugin.Subject{root}, facts.Subjects...)
@@ -303,15 +326,13 @@ func Selection(ctx context.Context, source *contents.Source, selection string) (
 	if err != nil {
 		return plugin.Facts{}, err
 	}
-	for i := range facts.Subjects {
-		subject := &facts.Subjects[i]
-		subject.ID, subject.Path = path.Join(selection, subject.ID), path.Join(selection, subject.Path)
-		if subject.Parent != "" {
-			subject.Parent = path.Join(selection, subject.Parent)
-		}
-	}
 	facts.Version = plugin.FactsVersion
 	return facts, nil
+}
+
+func applicationRoot(node contents.Node) bool {
+	_, err := node.FS.Lstat(path.Join(node.Path, "Contents/Info.plist"))
+	return strings.EqualFold(path.Ext(node.Path), ".app") || !errors.Is(err, fs.ErrNotExist)
 }
 
 func fileDigest(ctx context.Context, file *os.File, size int64) (string, error) {

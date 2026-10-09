@@ -18,9 +18,11 @@ import (
 func registerKinds(ops *operations) error {
 	builder := resourceOperation("build.mac.pkg", "BuildMacPkg")
 	builder.ConfigSchema = schemaJSON(plugin.SchemaFor[macpkg.Spec]())
+	mac := resourceOperation("software.mac", "MacSoftware")
+	mac.TarInputs = true
 	for _, err := range []error{
 		plugin.Register(ops.registry, builder, buildMacPkg),
-		plugin.Register(ops.registry, resourceOperation("software.mac", "MacSoftware"), macSoftware),
+		plugin.Register(ops.registry, mac, macSoftware),
 		plugin.Register(ops.registry, resourceOperation("software.windows", "WindowsSoftware"), windowsSoftware),
 	} {
 		if err != nil {

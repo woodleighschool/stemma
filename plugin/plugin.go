@@ -61,6 +61,9 @@ func (i Identity) Digest() string {
 // Artifact is an immutable file or tree leased by the engine, never a writable
 // cache object. Version is selected by a consumer; Facts retain observed versions.
 type Artifact struct {
+	// Encoding is "tar" for a tree leased as its canonical TAR bytes.
+	// Filename and Mode still describe the logical root directory.
+	Encoding    string                     `json:"encoding,omitempty"`
 	ContentRoot string                     `json:"content_root,omitempty"`
 	Mode        uint32                     `json:"mode,omitempty"`
 	EntryPoint  string                     `json:"entry_point,omitempty"`

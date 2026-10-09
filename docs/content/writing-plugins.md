@@ -219,6 +219,18 @@ Do not retain workspace paths between requests or reach into the host's cache.
 Runs share one installed copy of a bundle, so do not write beside the executable.
 Plugin bundle identity participates in preparation cache keys.
 
+Resource operations can advertise `TarInputs` to receive trees as private
+canonical TAR files. These inputs have `Encoding: "tar"`; `Filename`, `Mode` and
+`Tree` describe the logical root directory, while `Path` names the leased TAR.
+The digest covers the TAR's bytes, member modes and symlink targets. Without this
+capability, tree inputs are leased as directories. Outputs must be ordinary files
+or directories.
+
+Canonical trees contain regular files, directories and confined relative
+symlinks, with normalized timestamps and ownership. The root directory's mode
+is carried separately in `Mode`. This transport does not preserve arbitrary host
+metadata; inputs with unsupported signature metadata are rejected.
+
 Typed facts retain separate subjects: a package receipt, contained application or
 MSI can each have its own identity and version. Paths describe artifact provenance;
 installed paths describe endpoint locations. Optional evidence such as

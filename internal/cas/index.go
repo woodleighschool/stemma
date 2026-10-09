@@ -60,10 +60,11 @@ func (s *Store) remember(ctx context.Context, dir, key string, value any, object
 	return nil
 }
 
-// Recall reads a derivation result only if the referenced object still verifies.
+// Recall locates an available derivation. Read verifies the returned object's
+// bytes while the caller consumes them.
 func (s *Store) Recall(ctx context.Context, key string) (Ref, bool) {
 	var ref Ref
-	if !s.recall(ctx, "derivations", key, &ref) || s.Verify(ctx, ref) != nil {
+	if !s.recall(ctx, "derivations", key, &ref) || !s.Has(ref) {
 		return Ref{}, false
 	}
 	return ref, true

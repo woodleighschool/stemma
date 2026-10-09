@@ -11,19 +11,17 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// VerifySubject checks a physical application or package in an opened input.
+// VerifySubject checks an application or package in an opened input.
 // Callers define the scope; component receipts are never signing subjects.
 func VerifySubject(ctx context.Context, source *contents.Source, subject plugin.Subject, workspace string) (signature.Result, error) {
 	if subject.Kind != "app" && subject.Kind != "container" {
 		return signature.Result{}, fmt.Errorf("%q is not an application or package signing subject", subject.Path)
 	}
-	if subject.Path == "." && source.Artifact().ContentRoot == "" {
-		if subject.Kind == "app" {
-			return VerifyApp(ctx, source.Artifact().Path, signature.Signer{})
-		}
-		return VerifyPackage(ctx, source.Artifact().Path, signature.Signer{})
+	selection := subject.Path
+	if selection == "." && source.Artifact().ContentRoot == "" {
+		selection = ""
 	}
-	node, err := source.At(ctx, subject.Path)
+	node, err := source.At(ctx, selection)
 	if err != nil {
 		return signature.Result{}, err
 	}

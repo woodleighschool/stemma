@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/cas"
+	"github.com/woodleighschool/stemma/internal/treefs"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -50,33 +52,29 @@ func (p Prepared) artifact() plugin.Artifact {
 	return plugin.Artifact{Mode: p.Mode, Path: p.Path, SHA256: p.Payload.SHA256, Size: p.Payload.Size, Filename: p.Filename, Format: p.Format, Version: p.Version, ContentRoot: p.ContentRoot, Tree: p.Tree, Facts: p.Facts, EntryPoint: p.EntryPoint, Evidence: p.Evidence}
 }
 
-func importPath(ctx context.Context, store *cas.Store, path string, tree bool, work string) (cas.Ref, error) {
-	if !tree {
-		file, err := os.Open(path)
-		if err != nil {
-			return cas.Ref{}, err
-		}
-		defer func() { _ = file.Close() }()
-		info, err := file.Stat()
-		if err != nil {
-			return cas.Ref{}, err
-		}
-		if !info.Mode().IsRegular() {
-			return cas.Ref{}, errors.New("artifact must be a regular file or tree")
-		}
-		return store.Import(ctx, file, "")
+func importPath(ctx context.Context, store *cas.Store, path string, tree bool) (cas.Ref, error) {
+	return store.Write(ctx, "", func(w io.Writer) error { return writePath(ctx, path, tree, w) })
+}
+
+func digestPath(ctx context.Context, path string, tree bool) (cas.Ref, error) {
+	return cas.Digest(ctx, func(w io.Writer) error { return writePath(ctx, path, tree, w) })
+}
+
+func writePath(ctx context.Context, name string, tree bool, w io.Writer) error {
+	if tree {
+		return archive.Pack(ctx, name, w)
 	}
-	packed, err := os.CreateTemp(work, "tree-*.tar")
+	root, err := os.OpenRoot(filepath.Dir(name))
 	if err != nil {
-		return cas.Ref{}, err
+		return err
 	}
-	defer func() { _ = os.Remove(packed.Name()) }()
-	err = archive.Pack(ctx, path, packed)
-	err = errors.Join(err, packed.Close())
+	defer func() { _ = root.Close() }()
+	f, err := treefs.OpenFile(treefs.Local(root), filepath.Base(name))
 	if err != nil {
-		return cas.Ref{}, err
+		return err
 	}
-	return store.ImportFile(ctx, packed.Name(), "")
+	_, err = io.Copy(w, f)
+	return errors.Join(err, f.Close())
 }
 
 var outputName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)

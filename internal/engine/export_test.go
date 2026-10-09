@@ -29,7 +29,7 @@ func TestExportPreservesArtifactAndSurvivesPruning(t *testing.T) {
 			if !tree {
 				input = filepath.Join(source, "run")
 			}
-			ref, err := importPath(t.Context(), store, input, tree, t.TempDir())
+			ref, err := importPath(t.Context(), store, input, tree)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -39,7 +39,7 @@ func TestExportPreservesArtifactAndSurvivesPruning(t *testing.T) {
 			if err != nil || path != target {
 				t.Fatalf("export=%s / %v", path, err)
 			}
-			if copied, err := importPath(t.Context(), store, path, tree, t.TempDir()); err != nil || copied != ref {
+			if copied, err := importPath(t.Context(), store, path, tree); err != nil || copied != ref {
 				t.Fatalf("export changed artifact: %+v / %+v / %v", copied, ref, err)
 			}
 			if _, err := expose(t.Context(), store, prepared, t.TempDir(), target); err == nil {

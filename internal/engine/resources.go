@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -356,25 +357,15 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		Modes                    map[string]uint32
 		Environment              map[string]string
 	}{"resource/2", ops.identity[plan.Operation], plan.Resource.Reference(), plan.Config, identityInputs, modes, plan.Environment})
-	cached, complete, err := recallOutputs(ctx, store, key)
-	if err != nil {
-		return nil, false, err
-	}
-	if complete && derive == "" {
-		for name, artifact := range cached {
-			artifact.Cached = true
-			artifact, err = materialize(ctx, store, artifact, filepath.Join(work, "cached", name))
-			if err != nil {
-				return nil, false, err
-			}
-			artifact.Path, err = filepath.EvalSymlinks(artifact.Path)
-			if err != nil {
-				return nil, false, err
-			}
-			cached[name] = artifact
+	if derive == "" {
+		cached, complete, err := recallOutputs(ctx, store, key, filepath.Join(work, "cached"))
+		if err != nil {
+			return nil, false, err
 		}
-		detail = strings.TrimSpace(outputDetail(cached) + " (cached)")
-		return cached, true, nil
+		if complete {
+			detail = strings.TrimSpace(outputDetail(cached) + " (cached)")
+			return cached, true, nil
+		}
 	}
 
 	done(nil, plugin.Detail("not cached"))
@@ -390,8 +381,12 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	request := plugin.ResourceRequest[json.RawMessage]{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Derive: derive, Environment: plan.Environment}
 	// Windows stores only the read-only bit, so compare modes against the lease.
 	leasedModes := map[string]os.FileMode{}
+	operation, err := ops.operation(plan.Operation)
+	if err != nil {
+		return nil, false, err
+	}
 	for name, input := range inputs {
-		leased, err := materialize(ctx, store, input, filepath.Join(work, "inputs", config.Fingerprint(name)))
+		leased, err := leaseInput(ctx, store, input, filepath.Join(work, "inputs", config.Fingerprint(name)), operation.TarInputs)
 		if err != nil {
 			return nil, false, err
 		}
@@ -404,7 +399,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			return nil, false, err
 		}
 		leasedModes[name] = info.Mode().Perm()
-		request.Inputs[name] = leased.artifact()
+		request.Inputs[name] = leased
 	}
 	var response plugin.ResourceResult
 	done(nil)
@@ -413,7 +408,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	done(runErr)
 	done = plugin.Stage(ctx, "Verifying workspace")
 	for name, input := range request.Inputs {
-		ref, err := importPath(ctx, store, input.Path, input.Tree, work)
+		ref, err := digestPath(ctx, input.Path, input.Tree && input.Encoding == "")
 		if err != nil {
 			return nil, false, errors.Join(runErr, err)
 		}
@@ -432,6 +427,9 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	done = plugin.Stage(ctx, "Recording artifacts")
 	outputs := map[string]Prepared{}
 	for name, artifact := range response.Artifacts {
+		if artifact.Encoding != "" {
+			return nil, false, fmt.Errorf("output %s must be a file or directory, not an encoded lease", name)
+		}
 		if !safeOutputName(name) {
 			return nil, false, fmt.Errorf("unsafe output name %q", name)
 		}
@@ -472,7 +470,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			return nil, false, errors.New("invalid artifact format")
 		}
 
-		observed.Payload, err = importPath(ctx, store, resolved, observed.Tree, work)
+		observed.Payload, err = importPath(ctx, store, resolved, observed.Tree)
 		if err != nil {
 			return nil, false, err
 		}
@@ -521,27 +519,41 @@ func rememberOutputs(ctx context.Context, store *cas.Store, key string, outputs 
 	return store.Remember(ctx, key, descriptor, dependencies...)
 }
 
-func recallOutputs(ctx context.Context, store *cas.Store, key string) (map[string]Prepared, bool, error) {
+func recallOutputs(ctx context.Context, store *cas.Store, key, work string) (map[string]Prepared, bool, error) {
 	empty := map[string]Prepared{}
 	descriptor, ok := store.Recall(ctx, key)
 	if !ok {
 		return empty, false, nil
 	}
-	filename, err := store.Path(descriptor)
-	if err != nil {
-		return nil, false, err
-	}
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, false, err
+	var data []byte
+	if err := store.Read(ctx, descriptor, func(r io.Reader) error {
+		var err error
+		data, err = io.ReadAll(r)
+		return err
+	}); err != nil {
+		return empty, false, ctx.Err()
 	}
 	var cached map[string]Prepared
 	valid := json.Unmarshal(data, &cached) == nil && cached != nil
 	for name, artifact := range cached {
-		valid = valid && safeOutputName(name) && safeFilename(artifact.Filename) && store.Verify(ctx, artifact.Payload) == nil
+		valid = valid && safeOutputName(name) && safeFilename(artifact.Filename) && store.Has(artifact.Payload)
 	}
 	if !valid {
 		return empty, false, nil
+	}
+	for name, artifact := range cached {
+		// Materialization verifies the bytes it copies. An unreadable cache
+		// result is disposable, including any peers already leased here.
+		leased, err := materialize(ctx, store, artifact, filepath.Join(work, name))
+		if err != nil {
+			return empty, false, errors.Join(ctx.Err(), os.RemoveAll(work))
+		}
+		leased.Path, err = filepath.EvalSymlinks(leased.Path)
+		if err != nil {
+			return nil, false, err
+		}
+		leased.Cached = true
+		cached[name] = leased
 	}
 	return cached, true, nil
 }

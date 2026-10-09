@@ -193,7 +193,7 @@ func TestExposeReplacesCopiesFromTheVerifiedObject(t *testing.T) {
 	if err := os.CopyFS(app, os.DirFS("../apple/testdata/SignedFixture.app")); err != nil {
 		t.Fatal(err)
 	}
-	tree, err := importPath(t.Context(), store, app, true, t.TempDir())
+	tree, err := importPath(t.Context(), store, app, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestExposeReplacesCopiesFromTheVerifiedObject(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if copied, err := importPath(t.Context(), store, path, prepared.Tree, t.TempDir()); err != nil || copied != prepared.Payload {
+				if copied, err := importPath(t.Context(), store, path, prepared.Tree); err != nil || copied != prepared.Payload {
 					t.Fatalf("copy %+v differs from %+v: %v", copied, prepared.Payload, err)
 				}
 				changed := path

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -13,23 +14,27 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/diskimage"
+	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/internal/treefs"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
 // Source owns open filesystems and expanded archives for one preparation.
-// Container contents are opened only when a consumer selects a path within them.
+// Vendor archives and disk images are opened when a consumer selects their contents.
 type Source struct {
-	input     plugin.Artifact
-	workspace string
-	original  *os.Root
-	container string
-	tree      *os.Root
-	image     *diskimage.Image
-	archive   *archive.Tree
+	input      plugin.Artifact
+	workspace  string
+	original   *os.Root
+	container  string
+	tree       *os.Root
+	image      *diskimage.Image
+	archive    *archive.Tree
+	packed     fs.ReadLinkFS
+	packedFile *treefs.File
 }
 
 // Node is a selected file or tree. FS does not outlive its Source.
-// Local is empty for nodes read directly from a disk image.
+// Local is empty for nodes read directly from a container.
 type Node struct {
 	FS    fs.ReadLinkFS
 	Path  string
@@ -51,7 +56,10 @@ func Open(ctx context.Context, input plugin.Artifact, workspace string) (*Source
 	if err != nil {
 		return nil, err
 	}
-	if info.IsDir() != input.Tree || !info.IsDir() && !info.Mode().IsRegular() {
+	if input.Encoding != "" && (input.Encoding != "tar" || !input.Tree) {
+		return nil, errors.New("unsupported leased input encoding")
+	}
+	if info.IsDir() != (input.Tree && input.Encoding == "") || !info.IsDir() && !info.Mode().IsRegular() {
 		return nil, errors.New("leased input file type changed or is unsupported")
 	}
 	root, err := os.OpenRoot(filepath.Dir(input.Path))
@@ -59,6 +67,18 @@ func Open(ctx context.Context, input plugin.Artifact, workspace string) (*Source
 		return nil, err
 	}
 	source := &Source{input: input, workspace: workspace, original: root}
+	if input.Encoding == "tar" {
+		file, err := treefs.OpenFile(treefs.Local(root), filepath.Base(input.Path))
+		if err != nil {
+			_ = root.Close()
+			return nil, err
+		}
+		source.packedFile = file
+		source.packed, err = archive.IndexTar(ctx, file, info.Size(), input.Filename, fs.FileMode(input.Mode))
+		if err != nil {
+			return nil, errors.Join(err, source.Close())
+		}
+	}
 	if !input.Tree {
 		file, err := root.Open(filepath.Base(input.Path))
 		if err != nil {
@@ -81,8 +101,11 @@ func Open(ctx context.Context, input plugin.Artifact, workspace string) (*Source
 
 func (s *Source) Close() error {
 	var err error
+	if s.packedFile != nil {
+		err = s.packedFile.Close()
+	}
 	if s.tree != nil {
-		err = s.tree.Close()
+		err = errors.Join(err, s.tree.Close())
 	}
 	if s.image != nil {
 		err = errors.Join(err, s.image.Close())
@@ -95,7 +118,10 @@ func (s *Source) Close() error {
 }
 
 func (s *Source) whole() Node {
-	return Node{FS: localFS{s.original.FS().(fs.ReadLinkFS)}, Path: filepath.Base(s.input.Path), Local: s.input.Path}
+	if s.packed != nil {
+		return Node{FS: s.packed, Path: s.input.Filename}
+	}
+	return Node{FS: treefs.Local(s.original), Path: filepath.Base(s.input.Path), Local: s.input.Path}
 }
 
 // At selects an exact path in the logical contents. A resolver-selected root
@@ -156,11 +182,18 @@ func (s *Source) IsImage() bool     { return s.image != nil }
 func (s *Source) Traversable() bool { return s.input.Tree || s.container != "" }
 
 func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
+	if s.packed != nil {
+		sub, err := fs.Sub(s.packed, s.input.Filename)
+		if err != nil {
+			return nil, "", err
+		}
+		return sub.(fs.ReadLinkFS), "", nil
+	}
 	if s.archive != nil {
 		return s.archive, s.archive.Name(), nil
 	}
 	if s.tree != nil {
-		return localFS{s.tree.FS().(fs.ReadLinkFS)}, s.tree.Name(), nil
+		return treefs.Local(s.tree), s.tree.Name(), nil
 	}
 	if s.image != nil {
 		return s.image, "", nil
@@ -192,7 +225,7 @@ func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return localFS{s.tree.FS().(fs.ReadLinkFS)}, local, nil
+	return treefs.Local(s.tree), local, nil
 }
 
 // Stat rejects traversal through links. A selected link itself is returned so
@@ -210,18 +243,39 @@ func (n Node) Stat() (fs.FileInfo, error) {
 	return n.FS.Lstat(n.Path)
 }
 
-// Materialize copies a DMG selection only when a native file is required.
-func (n Node) Materialize(ctx context.Context, destination string) (string, error) {
+// Materialize copies a selection only when a native file is required.
+func (n Node) Materialize(ctx context.Context, destination string) (name string, err error) {
 	if n.Local != "" {
 		return n.Local, nil
 	}
-	return n.image.Extract(ctx, destination, n.Path, nil)
-}
-
-// localFS exposes native symlink separators as POSIX paths for archive consumers.
-type localFS struct{ fs.ReadLinkFS }
-
-func (f localFS) ReadLink(name string) (string, error) {
-	target, err := f.ReadLinkFS.ReadLink(name)
-	return filepath.ToSlash(target), err
+	if n.image != nil {
+		return n.image.Extract(ctx, destination, n.Path, nil)
+	}
+	f, err := treefs.OpenFile(n.FS, n.Path)
+	if err != nil {
+		return "", err
+	}
+	defer func() { err = errors.Join(err, f.Close()) }()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(destination, 0o700); err != nil {
+		return "", err
+	}
+	leaf, err := filepath.Localize(path.Base(n.Path))
+	if err != nil {
+		return "", fmt.Errorf("selection filename: %w", err)
+	}
+	name = filepath.Join(destination, leaf)
+	output, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+	if err != nil {
+		return "", err
+	}
+	_, err = io.Copy(output, fileio.Reader{Context: ctx, Reader: f})
+	err = errors.Join(err, output.Close())
+	if err != nil {
+		_ = os.Remove(name)
+	}
+	return name, err
 }

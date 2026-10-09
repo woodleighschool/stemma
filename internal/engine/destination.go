@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/expression"
 	inspection "github.com/woodleighschool/stemma/internal/inspect"
@@ -168,7 +167,7 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	if err := s.ops.call(ctx, d.Operation, "validate", request, nil); err != nil {
 		return err
 	}
-	if err := verifyLeases(ctx, s.store, resource.work, request); err != nil {
+	if err := verifyLeases(ctx, request); err != nil {
 		return err
 	}
 	if !e.publishing() {
@@ -183,10 +182,10 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	err = s.ops.call(ctx, d.Operation, "plan", request, &response)
 	report.Changes = response.Changes
 	report.Origins = mergeOrigins(report.Origins, response.Origins)
-	err = errors.Join(err, verifyLeases(ctx, s.store, resource.work, request))
+	err = errors.Join(err, verifyLeases(ctx, request))
 	done(err, plugin.Detail(changeCount(len(response.Changes))))
 	if err == nil && e.opts.Method == "apply" {
-		report, err = e.deliver(ctx, d.Operation, resource.work, request, report)
+		report, err = e.deliver(ctx, d.Operation, request, report)
 	}
 	if err != nil {
 		report.Error = err.Error()
@@ -214,16 +213,16 @@ func (e *execution) request(ref destinationRef, prepared Prepared, metadata map[
 	}, nil
 }
 
-func (e *execution) deliver(ctx context.Context, operation, work string, request plugin.ReconcileRequest[json.RawMessage], report DestinationReport) (_ DestinationReport, runErr error) {
+func (e *execution) deliver(ctx context.Context, operation string, request plugin.ReconcileRequest[json.RawMessage], report DestinationReport) (_ DestinationReport, runErr error) {
 	done := plugin.Stage(ctx, "Applying destination")
 	defer func() { done(runErr) }()
-	if err := verifyLeases(ctx, e.session.store, work, request); err != nil {
+	if err := verifyLeases(ctx, request); err != nil {
 		return report, err
 	}
 	request.Method = "apply"
 	var response plugin.ReconcileResponse
 	err := e.session.ops.call(ctx, operation, "apply", request, &response)
-	err = errors.Join(err, verifyLeases(ctx, e.session.store, work, request))
+	err = errors.Join(err, verifyLeases(ctx, request))
 	report.Changes = response.Changes
 	report.Origins = mergeOrigins(report.Origins, response.Origins)
 	report.Applied = err == nil
@@ -256,7 +255,7 @@ func changeCount(count int) string {
 
 // verifyLeases checks that an operation left the artifacts it was lent as
 // they were.
-func verifyLeases(ctx context.Context, store *cas.Store, work string, request plugin.ReconcileRequest[json.RawMessage]) error {
+func verifyLeases(ctx context.Context, request plugin.ReconcileRequest[json.RawMessage]) error {
 	var artifacts []plugin.Artifact
 	if request.Artifact.Path != "" {
 		artifacts = append(artifacts, request.Artifact)
@@ -265,7 +264,7 @@ func verifyLeases(ctx context.Context, store *cas.Store, work string, request pl
 		artifacts = append(artifacts, input)
 	}
 	for _, artifact := range artifacts {
-		ref, err := importPath(ctx, store, artifact.Path, artifact.Tree, work)
+		ref, err := digestPath(ctx, artifact.Path, artifact.Tree)
 		if err != nil {
 			return err
 		}

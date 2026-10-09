@@ -38,6 +38,8 @@ type Descriptor struct {
 // providers must supply it when configuration is constrained.
 // RequiresInspection requests facts for the primary reconciliation artifact.
 type Operation struct {
+	// TarInputs accepts tree inputs as canonical TAR files instead of directories.
+	TarInputs          bool             `json:"tar_inputs,omitempty"`
 	Resolver           *ResolverKind    `json:"resolver,omitempty"`
 	Resource           *ResourceKind    `json:"resource,omitempty"`
 	Content            *ContentContract `json:"content,omitempty"`
@@ -284,6 +286,9 @@ func validateIdentity(name, version string) error {
 }
 
 func compileOperation(operation Operation) (registeredOperation, error) {
+	if operation.TarInputs && operation.Kind != "resource" {
+		return registeredOperation{}, errors.New("tar_inputs applies only to resource operations")
+	}
 	if !ValidOperationName(operation.Name) {
 		return registeredOperation{}, fmt.Errorf("operation %q requires a valid name", operation.Name)
 	}

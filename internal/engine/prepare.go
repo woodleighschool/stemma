@@ -36,6 +36,17 @@ type Prepared struct {
 	Path          string                     `json:"-"`
 }
 
+func leaseInput(ctx context.Context, store *cas.Store, p Prepared, work string, tarInputs bool) (plugin.Artifact, error) {
+	if p.Tree && tarInputs {
+		artifact := p.artifact()
+		artifact.Path = filepath.Join(work, "tree.tar")
+		artifact.Encoding = "tar"
+		return artifact, store.Materialize(ctx, p.Payload, artifact.Path)
+	}
+	leased, err := materialize(ctx, store, p, work)
+	return leased.artifact(), err
+}
+
 func materialize(ctx context.Context, store *cas.Store, p Prepared, work string) (Prepared, error) {
 	p.Path = filepath.Join(work, "payload", p.Filename)
 	if !p.Tree {
@@ -44,29 +55,41 @@ func materialize(ctx context.Context, store *cas.Store, p Prepared, work string)
 		}
 		return p, os.Chmod(p.Path, os.FileMode(p.Mode))
 	}
-	packed := filepath.Join(work, "payload.tar")
-	if err := store.Materialize(ctx, p.Payload, packed); err != nil {
-		return p, err
-	}
-	if err := os.MkdirAll(filepath.Dir(p.Path), 0o700); err != nil {
-		return p, err
-	}
-	if err := archive.Extract(ctx, packed, p.Path); err != nil {
+	if err := materializeTree(ctx, store, p.Payload, p.Path); err != nil {
 		return p, err
 	}
 	return p, os.Chmod(p.Path, os.FileMode(p.Mode))
+}
+
+func materializeTree(ctx context.Context, store *cas.Store, ref cas.Ref, target string) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return err
+	}
+	if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("artifact already exists or is inaccessible: %s", target)
+	}
+	staging, err := os.MkdirTemp(filepath.Dir(target), ".materialize-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(staging) }()
+	tree := filepath.Join(staging, "tree")
+	if err := store.Read(ctx, ref, func(r io.Reader) error { return archive.ExtractTar(ctx, r, tree) }); err != nil {
+		return err
+	}
+	return fileio.RenameExclusive(tree, target)
 }
 
 // expose replaces the operator's writable copy from the verified cache object.
 func expose(ctx context.Context, store *cas.Store, p Prepared, work, outputFile string) (path string, err error) {
 	done := plugin.Stage(ctx, "Materializing artifact", plugin.Detail(p.Filename))
 	defer func() { done(err) }()
+	if outputFile != "" {
+		return export(ctx, store, p, outputFile)
+	}
 	p, err = materialize(ctx, store, p, work)
 	if err != nil {
 		return "", err
-	}
-	if outputFile != "" {
-		return export(ctx, store, p, work, outputFile)
 	}
 	dir := filepath.Join(store.Dir, "materialized", p.Payload.SHA256)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -82,7 +105,7 @@ func expose(ctx context.Context, store *cas.Store, p Prepared, work, outputFile 
 	return path, nil
 }
 
-func export(ctx context.Context, store *cas.Store, p Prepared, work, target string) (string, error) {
+func export(ctx context.Context, store *cas.Store, p Prepared, target string) (string, error) {
 	target, err := filepath.Abs(target)
 	if err != nil {
 		return "", err
@@ -101,30 +124,15 @@ func export(ctx context.Context, store *cas.Store, p Prepared, work, target stri
 		return "", errors.New("output-file must be outside the disposable cache")
 	}
 	if p.Tree {
-		if _, statErr := os.Lstat(target); !errors.Is(statErr, os.ErrNotExist) {
-			return "", fmt.Errorf("output-file already exists or is inaccessible: %s", target)
-		}
-		if err := archive.Extract(ctx, filepath.Join(work, "payload.tar"), target); err != nil {
-			return "", err
-		}
+		err = materializeTree(ctx, store, p.Payload, target)
 	} else {
-		var in, out *os.File
-		in, err = os.Open(p.Path)
-		if err != nil {
-			return "", err
-		}
-		defer func() { _ = in.Close() }()
-		out, err = os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err != nil {
-			return "", err
-		}
-		_, err = io.Copy(out, fileio.Reader{Context: ctx, Reader: in})
-		err = errors.Join(err, out.Close())
-	}
-	if err == nil {
-		err = os.Chmod(target, os.FileMode(p.Mode))
+		err = store.Materialize(ctx, p.Payload, target)
 	}
 	if err != nil {
+		return "", fmt.Errorf("export artifact: %w", err)
+	}
+
+	if err := os.Chmod(target, os.FileMode(p.Mode)); err != nil {
 		_ = os.RemoveAll(target)
 		return "", fmt.Errorf("export artifact: %w", err)
 	}

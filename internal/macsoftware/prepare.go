@@ -58,13 +58,17 @@ func Prepare(ctx context.Context, spec Spec, request Request) (map[string]plugin
 
 // prepare publishes from one source: the leased input, or a disk image depth
 // levels inside it.
-func prepare(ctx context.Context, spec Spec, request Request, depth int) (map[string]plugin.Artifact, error) {
+func prepare(ctx context.Context, spec Spec, request Request, depth int) (outputs map[string]plugin.Artifact, err error) {
 	input, workspace := request.Input, request.Workspace
 	source, err := contents.Open(ctx, input, workspace)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = source.Close() }()
+	defer func() {
+		if closeErr := source.Close(); closeErr != nil {
+			err = closeErr
+		}
+	}()
 	if spec.PackagePath != "" && !source.Traversable() {
 		return nil, errors.New("package_path requires an archive source")
 	}

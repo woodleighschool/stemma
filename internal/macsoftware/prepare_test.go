@@ -15,6 +15,7 @@ import (
 
 	"github.com/deploymenttheory/go-apfs-v2/pkg/disk"
 	"github.com/woodleighschool/stemma/internal/apple"
+	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/diskimage"
 	"github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/munki"
@@ -54,8 +55,17 @@ func TestUnsignedScriptApplicationExpectations(t *testing.T) {
 	testarchive.Zip(t, zip, root)
 	image := filepath.Join(t.TempDir(), "Example.dmg")
 	testdiskimage.Write(t, image, root)
+	var packed bytes.Buffer
+	if err := archive.Pack(t.Context(), filepath.Join(root, "Example.app"), &packed); err != nil {
+		t.Fatal(err)
+	}
+	lease := filepath.Join(t.TempDir(), "tree.tar")
+	if err := os.WriteFile(lease, packed.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, input := range []plugin.Artifact{
 		{Path: filepath.Join(root, "Example.app"), Filename: "Example.app", Tree: true},
+		{Path: lease, Filename: "Example.app", Tree: true, Mode: 0o755, Encoding: "tar"},
 		{Path: zip, Filename: "Example.zip", Format: "zip"},
 		{Path: image, Filename: "Example.dmg", Format: "dmg"},
 	} {
