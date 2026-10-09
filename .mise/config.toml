@@ -1,7 +1,7 @@
 monorepo_root = true
 
 [tools]
-go = "1.27.1"
+go = "1.27.2"
 "go:github.com/google/go-licenses/v2" = "v2.0.1"
 "go:golang.org/x/vuln/cmd/govulncheck" = "v1.8.0"
 golangci-lint = "2.14.0"
@@ -90,6 +90,10 @@ run = [
 [tasks.docs-serve]
 description = "Preview the documentation with live reload"
 run = [{ task = "//docs:dev" }]
+
+[tasks.container-build]
+description = "Build the production container locally"
+run = 'docker build --build-arg GO_VERSION="$(mise config get tools.go)" --build-arg GO_LICENSES_VERSION="$(mise tool go:github.com/google/go-licenses/v2 --requested)" -t stemma:local .'
 
 [hooks]
 postinstall = "lefthook install"

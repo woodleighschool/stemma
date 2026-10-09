@@ -27,6 +27,8 @@ jobs:
     permissions:
       contents: read
     outputs:
+      go-version: ${{ steps.versions.outputs.go-version }}
+      go-licenses-version: ${{ steps.versions.outputs.go-licenses-version }}
       build-date: ${{ steps.versions.outputs.build-date }}
     steps:
       - name: Checkout
@@ -34,9 +36,18 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Setup Mise
+        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          install: false
+          cache: false
+
       - name: Resolve versions
         id: versions
-        run: echo "build-date=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "go-version=$(mise config get tools.go)" >> "$GITHUB_OUTPUT"
+          echo "go-licenses-version=$(mise tool go:github.com/google/go-licenses/v2 --requested)" >> "$GITHUB_OUTPUT"
+          echo "build-date=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
 
   release:
     name: Release
@@ -48,6 +59,8 @@ jobs:
     uses: docker/github-builder/.github/workflows/build.yml@58cb9f5b71b1836d6f690c1e95effdeb9b98cb8a # v1.17.0
     with:
       build-args: |
+        GO_VERSION=${{ needs.versions.outputs.go-version }}
+        GO_LICENSES_VERSION=${{ needs.versions.outputs.go-licenses-version }}
         VERSION=${{ github.ref_name }}
         COMMIT=${{ github.sha }}
         DATE=${{ needs.versions.outputs.build-date }}
