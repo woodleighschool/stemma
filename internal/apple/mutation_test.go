@@ -61,8 +61,13 @@ func TestMutationCannotBecomeUnsigned(t *testing.T) {
 
 func TestMutationInvalidatesVerifiedExecutable(t *testing.T) {
 	app := copyFixture(t, "SignedFixture.app")
+	root, err := os.OpenRoot(filepath.Dir(app))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
 	fsys := mutateReadFS{
-		ReadLinkFS: os.DirFS(filepath.Dir(app)).(fs.ReadLinkFS),
+		ReadLinkFS: root.FS().(fs.ReadLinkFS),
 		name:       "SignedFixture.app/Contents/MacOS/fixture",
 		mutate: func() {
 			name := filepath.Join(app, "Contents/MacOS/fixture")
@@ -80,9 +85,14 @@ func TestMutationInvalidatesVerifiedExecutable(t *testing.T) {
 func TestMutationInvalidatesNestedExecutable(t *testing.T) {
 	app := copyFixture(t, "NestedFixture.app")
 	dir := filepath.Join(app, "Contents/MacOS")
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
 	v := bundleVerifier{ctx: t.Context(), roots: pkgsign.AppleRootCertificates()}
 	fsys := mutateReadFS{
-		ReadLinkFS: os.DirFS(dir).(fs.ReadLinkFS),
+		ReadLinkFS: root.FS().(fs.ReadLinkFS),
 		name:       "helper",
 		mutate: func() {
 			name := filepath.Join(dir, "helper")

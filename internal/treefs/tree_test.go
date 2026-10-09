@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -48,6 +49,47 @@ func TestLocalAndVirtualTraversal(t *testing.T) {
 				t.Fatalf("walk = %v: %v", paths, err)
 			}
 		})
+	}
+}
+
+type cachedDirectoryFS struct {
+	fstest.MapFS
+
+	listing fstest.MapFS
+}
+
+func (f cachedDirectoryFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	return f.listing.ReadDir(name)
+}
+
+func TestWalkUsesCurrentEntryMetadata(t *testing.T) {
+	for _, directoryMode := range []fs.FileMode{fs.ModeDir | 0o700, 0o600} {
+		current := fstest.MapFS{
+			"nested":      &fstest.MapFile{Mode: fs.ModeDir | 0o750, ModTime: time.Unix(2, 0)},
+			"nested/file": &fstest.MapFile{Data: []byte("current"), Mode: 0o640},
+		}
+		tree := cachedDirectoryFS{MapFS: current, listing: fstest.MapFS{
+			"nested": &fstest.MapFile{Mode: directoryMode, ModTime: time.Unix(1, 0)},
+		}}
+		var paths []string
+		err := Walk(tree, func(name string, _ fs.ReadLinkFS, entry fs.DirEntry) error {
+			paths = append(paths, name)
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			want, err := current.Lstat(name)
+			if err != nil {
+				return err
+			}
+			if !same(info, want) {
+				t.Errorf("callback received stale metadata for %s", name)
+			}
+			return nil
+		})
+		if err != nil || strings.Join(paths, ",") != "nested,nested/file" {
+			t.Fatalf("walk with listing mode %s = %v: %v", directoryMode, paths, err)
+		}
 	}
 }
 
@@ -100,6 +142,7 @@ func TestFileMutation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			defer func() { _ = f.Close() }()
 			switch mutation {
 			case "replace":
 				if err := os.Rename(name, name+".old"); err != nil {
@@ -112,6 +155,14 @@ func TestFileMutation(t *testing.T) {
 				err = os.Chmod(name, 0o400)
 			case "parent":
 				err = os.Rename(nested, nested+".old")
+				if runtime.GOOS == "windows" && errors.Is(err, fs.ErrPermission) {
+					// Windows can block renaming a directory with an open child.
+					// A rejected mutation must leave the held file valid.
+					if err := f.Close(); err != nil {
+						t.Fatal(err)
+					}
+					return
+				}
 			}
 			if err != nil {
 				t.Fatal(err)

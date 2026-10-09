@@ -263,6 +263,13 @@ func walk(fsys fs.ReadLinkFS, workers int, visit func(string, fs.ReadLinkFS, fs.
 			return err
 		}
 		for _, entry := range entries {
+			// Directory listings can cache metadata on Windows. Observe the
+			// entry through the held parent before deciding how to visit it.
+			info, err := dir.Lstat(entry.Name())
+			if err != nil {
+				return err
+			}
+			entry = fs.FileInfoToDirEntry(info)
 			if workers > 1 && !entry.IsDir() {
 				group.Go(func() error { return check(entry) })
 				continue
@@ -270,7 +277,7 @@ func walk(fsys fs.ReadLinkFS, workers int, visit func(string, fs.ReadLinkFS, fs.
 			if err := group.Wait(); err != nil {
 				return err
 			}
-			err := check(entry)
+			err = check(entry)
 			if errors.Is(err, fs.SkipDir) && entry.IsDir() {
 				continue
 			}
