@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -177,18 +178,5 @@ func (m *Manager) readLocal(ctx context.Context, s fileRequest) (content Content
 }
 
 func (m *Manager) importTree(ctx context.Context, root *os.Root, names []string, expected string) (cas.Ref, error) {
-	staging, err := os.CreateTemp(filepath.Join(m.Store.Dir, "work"), "source-*.tar")
-	if err != nil {
-		return cas.Ref{}, err
-	}
-	defer func() { _ = os.Remove(staging.Name()) }()
-	packErr := archive.PackSelected(ctx, root, names, staging)
-	closeErr := staging.Close()
-	if packErr != nil {
-		return cas.Ref{}, packErr
-	}
-	if closeErr != nil {
-		return cas.Ref{}, closeErr
-	}
-	return m.Store.ImportFile(ctx, staging.Name(), expected)
+	return m.Store.Write(ctx, expected, func(w io.Writer) error { return archive.PackSelected(ctx, root, names, w) })
 }

@@ -1,4 +1,4 @@
-// Package archive extracts a bounded portable subset of ZIP and TAR into leased workspaces.
+// Package archive reads and writes bounded, portable archive trees.
 package archive
 
 import (
@@ -70,7 +70,30 @@ func Extract(ctx context.Context, input, destination string) error {
 	return extractArchive(ctx, input, destination, nil)
 }
 
-func extractArchive(ctx context.Context, input, destination string, metadata *Tree) (err error) {
+// ExtractTar materializes a canonical tree into a new directory. All member
+// files are literal input, including names vendor archives use for sidecars.
+func ExtractTar(ctx context.Context, stream io.Reader, destination string) error {
+	return extract(ctx, archives.Tar{}, stream, destination, nil, true)
+}
+
+func extractArchive(ctx context.Context, input, destination string, metadata *Tree) error {
+	f, err := os.Open(input)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	format, stream, err := identify(ctx, input, f)
+	if err != nil {
+		return err
+	}
+	reader, ok := format.(archives.Extractor)
+	if !ok {
+		return fmt.Errorf("%s is not a supported archive", input)
+	}
+	return extract(ctx, reader, stream, destination, metadata, false)
+}
+
+func extract(ctx context.Context, reader archives.Extractor, stream io.Reader, destination string, metadata *Tree, canonical bool) (err error) {
 	if err := os.Mkdir(destination, 0o700); err != nil {
 		return err
 	}
@@ -85,21 +108,10 @@ func extractArchive(ctx context.Context, input, destination string, metadata *Tr
 	}
 	defer func() { _ = root.Close() }()
 	x := extractor{ctx: ctx, root: root, seen: map[string]bool{}, spelling: map[string]string{}}
-	f, err := os.Open(input)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	format, stream, err := identify(ctx, input, f)
-	if err != nil {
-		return err
-	}
-	reader, ok := format.(archives.Extractor)
-	if !ok {
-		return fmt.Errorf("%s is not a supported archive", input)
-	}
+	defer func() { err = errors.Join(err, x.closeParents()) }()
+
 	err = reader.Extract(ctx, stream, func(_ context.Context, entry archives.FileInfo) error {
-		if metadata == nil && appleDouble(entry.NameInArchive) {
+		if metadata == nil && !canonical && appleDouble(entry.NameInArchive) {
 			return sidecarSignature(entry)
 		}
 		if header, ok := entry.Header.(*tar.Header); ok {
@@ -151,7 +163,16 @@ func extractArchive(ctx context.Context, input, destination string, metadata *Tr
 		if writeErr != nil {
 			return writeErr
 		}
-		return closeErr
+		if closeErr != nil {
+			return closeErr
+		}
+		if canonical && appleDouble(entry.NameInArchive) {
+			// TAR members are streams. Check the private copy so verification
+			// does not consume bytes before materialization can retain them.
+			entry.Open = func() (fs.File, error) { return root.Open(filepath.FromSlash(entry.NameInArchive)) }
+			return sidecarSignature(entry)
+		}
+		return nil
 	})
 	if err != nil {
 		return err
@@ -176,6 +197,10 @@ type directory struct {
 	name string
 	mode fs.FileMode
 }
+type outputDirectory struct {
+	name string
+	root *os.Root
+}
 type extractor struct {
 	ctx      context.Context
 	root     *os.Root
@@ -184,6 +209,48 @@ type extractor struct {
 	total    int64
 	links    []link
 	dirs     []directory
+	parents  []outputDirectory
+}
+
+// parent retains only the current ancestor chain. Archive order need not be
+// lexical; moving to another branch releases the directories left behind.
+func (x *extractor) parent(name string) (*os.Root, error) {
+	var parts []string
+	if name != "." {
+		parts = strings.Split(name, "/")
+	}
+	common := 0
+	for common < len(parts) && common < len(x.parents) && parts[common] == x.parents[common].name {
+		common++
+	}
+	for len(x.parents) > common {
+		last := x.parents[len(x.parents)-1]
+		x.parents = x.parents[:len(x.parents)-1]
+		if err := last.root.Close(); err != nil {
+			return nil, err
+		}
+	}
+	root := x.root
+	if common > 0 {
+		root = x.parents[common-1].root
+	}
+	for _, part := range parts[common:] {
+		if err := root.Mkdir(part, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return nil, err
+		}
+		child, err := root.OpenRoot(part)
+		if err != nil {
+			return nil, err
+		}
+		x.parents = append(x.parents, outputDirectory{part, child})
+		root = child
+	}
+	return root, nil
+}
+
+func (x *extractor) closeParents() error {
+	_, err := x.parent(".")
+	return err
 }
 
 // codeSignature prefixes the extended attributes where codesign keeps the
@@ -297,11 +364,12 @@ func (x *extractor) write(name string, mode fs.FileMode, size int64, target stri
 		return errors.New("archive exceeds expanded size limit")
 	}
 	x.total += size
-	if err := x.root.MkdirAll(path.Dir(name), 0o700); err != nil {
+	parent, err := x.parent(path.Dir(name))
+	if err != nil {
 		return err
 	}
 	if mode.IsDir() {
-		if err := x.root.MkdirAll(name, 0o700); err != nil {
+		if _, err := x.parent(name); err != nil {
 			return err
 		}
 		x.dirs = append(x.dirs, directory{name, mode.Perm()})
@@ -328,11 +396,14 @@ func (x *extractor) write(name string, mode fs.FileMode, size int64, target stri
 	if !mode.IsRegular() {
 		return fmt.Errorf("unsupported entry mode for %s", name)
 	}
-	f, err := x.root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode.Perm())
+	f, err := parent.OpenFile(path.Base(name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode.Perm())
 	if err != nil {
 		return err
 	}
 	n, err := io.Copy(f, io.LimitReader(fileio.Reader{Context: x.ctx, Reader: data}, size+1))
+	if err == nil {
+		err = f.Chmod(mode.Perm())
+	}
 	if closeErr := f.Close(); err == nil {
 		err = closeErr
 	}
@@ -342,10 +413,13 @@ func (x *extractor) write(name string, mode fs.FileMode, size int64, target stri
 	if n != size {
 		return fmt.Errorf("archive entry %s length mismatch", name)
 	}
-	return x.root.Chmod(name, mode.Perm())
+	return nil
 }
 
 func (x *extractor) finish() error {
+	if err := x.closeParents(); err != nil {
+		return err
+	}
 	// Links are installed last so no earlier write can traverse an archive-owned link.
 	for _, l := range x.links {
 		if err := x.root.Symlink(l.target, l.name); err != nil {

@@ -18,6 +18,7 @@ import (
 
 	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/internal/treefs"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -65,7 +66,7 @@ func Open(ctx context.Context, input, workspace string) (_ *Tree, err error) {
 	if err != nil {
 		return nil, err
 	}
-	tree.ReadLinkFS = tree.root.FS().(fs.ReadLinkFS)
+	tree.ReadLinkFS = treefs.Local(tree.root)
 	for _, attrs := range tree.attributes {
 		name := attrs.owner
 		if _, err := tree.Lstat(name); err != nil {
@@ -277,3 +278,5 @@ func (t *Tree) forOwner(name string) *fileAttributes {
 	}
 	return attrs
 }
+
+func (t *Tree) Sub(name string) (fs.FS, error) { return fs.Sub(t.ReadLinkFS, name) }

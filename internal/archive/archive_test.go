@@ -3,16 +3,60 @@ package archive
 import (
 	"archive/tar"
 	"archive/zip"
+	"bytes"
 	"errors"
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 )
+
+func TestExtractUnorderedTree(t *testing.T) {
+	var data bytes.Buffer
+	w := tar.NewWriter(&data)
+	files := []string{"one/deep/a", "two/deep/b", "one/deep/c", "root", "two/d"}
+	for _, name := range files {
+		if err := w.WriteHeader(&tar.Header{Name: name, Mode: 0o540, Size: int64(len(name))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, name := range []string{"one", "two"} {
+		if err := w.WriteHeader(&tar.Header{Name: name, Typeflag: tar.TypeDir, Mode: 0o500}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "tree")
+	if err := ExtractTar(t.Context(), &data, out); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range files {
+		got, err := os.ReadFile(filepath.Join(out, name))
+		if err != nil || string(got) != name {
+			t.Fatalf("%s: %q, %v", name, got, err)
+		}
+	}
+	for _, name := range []string{"one", "two"} {
+		info, err := os.Stat(filepath.Join(out, name))
+		if err != nil || runtime.GOOS != "windows" && info.Mode().Perm() != 0o500 {
+			t.Fatalf("%s: %v, %v", name, info, err)
+		}
+		// Restore write access so cleanup can remove the children.
+		if err := os.Chmod(filepath.Join(out, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
 func TestRejectUnsafeArchives(t *testing.T) {
 	for name, entries := range map[string][]string{

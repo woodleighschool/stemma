@@ -3,6 +3,7 @@ package archive
 import (
 	"archive/tar"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/internal/treefs"
 )
 
 // Pack writes a canonical TAR tree, retaining bytes, file and directory modes,
@@ -55,13 +57,7 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 	var total int64
 	count := 0
 	visited := map[string]bool{".": true}
-	err := fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if name == "." {
-			return nil
-		}
+	err := treefs.Walk(treefs.Local(root), func(name string, parent fs.ReadLinkFS, entry fs.DirEntry) error {
 		if selected != nil && !selected[name] {
 			if entry.IsDir() {
 				return fs.SkipDir
@@ -85,7 +81,10 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 		}
 		target := ""
 		if info.Mode()&os.ModeSymlink != 0 {
-			target, err = Readlink(root, name)
+			target, err = parent.ReadLink(entry.Name())
+			if err == nil {
+				err = checkLink(name, target)
+			}
 			if err != nil {
 				return err
 			}
@@ -121,11 +120,11 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 				return fmt.Errorf("tree exceeds size limit")
 			}
 			total += info.Size()
-			f, err := root.Open(name)
+			f, err := treefs.OpenFile(parent, entry.Name())
 			if err != nil {
 				return err
 			}
-			if err := CheckXattrs(ctx, f); err != nil {
+			if err := CheckXattrs(ctx, f.File.(*os.File)); err != nil {
 				_ = f.Close()
 				return err
 			}
@@ -152,5 +151,5 @@ func PackSelected(ctx context.Context, root *os.Root, names []string, output io.
 			return fmt.Errorf("selected input changed during import: %s", name)
 		}
 	}
-	return closeErr
+	return errors.Join(closeErr, ctx.Err())
 }

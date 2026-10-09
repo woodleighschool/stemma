@@ -2,6 +2,7 @@
 package cas
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -153,6 +154,12 @@ func (s *Store) Reuse(ctx context.Context, digest string) bool {
 
 // Verify hashes actual stored bytes instead of trusting file existence or size.
 func (s *Store) Verify(ctx context.Context, ref Ref) error {
+	return s.Read(ctx, ref, func(r io.Reader) error { _, err := io.Copy(io.Discard, r); return err })
+}
+
+// Read verifies the exact stream consumed by read, including any unread tail.
+// The caller must keep derived outputs private until Read succeeds.
+func (s *Store) Read(ctx context.Context, ref Ref, read func(io.Reader) error) error {
 	path, err := s.Path(ref)
 	if err != nil {
 		return err
@@ -163,11 +170,19 @@ func (s *Store) Verify(ctx context.Context, ref Ref) error {
 	}
 	defer func() { _ = f.Close() }()
 	h := sha256.New()
-	n, err := io.Copy(h, io.LimitReader(fileio.Reader{Context: ctx, Reader: f}, ref.Size+1))
+	r := &io.LimitedReader{R: fileio.Reader{Context: ctx, Reader: f}, N: ref.Size + 1}
+	stream := io.TeeReader(bufio.NewReaderSize(r, 1<<20), h)
+	err = read(stream)
+	if err == nil {
+		_, err = io.Copy(io.Discard, stream)
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		return err
 	}
-	if n != ref.Size || hex.EncodeToString(h.Sum(nil)) != ref.SHA256 {
+	if r.N != 1 || hex.EncodeToString(h.Sum(nil)) != ref.SHA256 {
 		return fmt.Errorf("cache object %s failed integrity verification", ref.SHA256)
 	}
 	s.touch(ctx, "objects", ref.SHA256)
@@ -187,6 +202,12 @@ func (s *Store) Has(ref Ref) bool {
 
 // Import streams bytes to a temporary object and atomically publishes the digest.
 func (s *Store) Import(ctx context.Context, r io.Reader, expected string) (Ref, error) {
+	return s.Write(ctx, expected, func(w io.Writer) error { _, err := io.Copy(w, r); return err })
+}
+
+// Write produces an object directly into private CAS storage. Failed producers,
+// cancellations and digest mismatches never publish the object.
+func (s *Store) Write(ctx context.Context, expected string, write func(io.Writer) error) (Ref, error) {
 	if expected != "" && !validDigest(expected) {
 		return Ref{}, errors.New("invalid expected SHA-256")
 	}
@@ -195,10 +216,10 @@ func (s *Store) Import(ctx context.Context, r io.Reader, expected string) (Ref, 
 		return Ref{}, err
 	}
 	defer func() { _ = os.Remove(f.Name()) }()
-	h := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(fileio.Reader{Context: ctx, Reader: r}, MaxObjectSize+1))
-	if err == nil && n > MaxObjectSize {
-		err = errors.New("artifact exceeds 16 GiB")
+	buffer := bufio.NewWriterSize(f, 1<<20)
+	ref, err := Digest(ctx, func(w io.Writer) error { return write(io.MultiWriter(w, buffer)) })
+	if err == nil {
+		err = buffer.Flush()
 	}
 	if err == nil {
 		err = f.Sync()
@@ -206,10 +227,12 @@ func (s *Store) Import(ctx context.Context, r io.Reader, expected string) (Ref, 
 	if closeErr := f.Close(); err == nil {
 		err = closeErr
 	}
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		return Ref{}, err
 	}
-	ref := Ref{SHA256: hex.EncodeToString(h.Sum(nil)), Size: n}
 	if expected != "" && expected != ref.SHA256 {
 		return Ref{}, fmt.Errorf("source integrity mismatch: expected %s, received %s; review the source before updating the lockfile", expected, ref.SHA256)
 	}
@@ -248,28 +271,47 @@ func (s *Store) ImportFile(ctx context.Context, path, expected string) (Ref, err
 
 // Materialize copies an object into a workspace, never exposing a writable hard link.
 func (s *Store) Materialize(ctx context.Context, ref Ref, path string) error {
-	if err := s.Verify(ctx, ref); err != nil {
-		return err
-	}
-	source, err := s.Path(ref)
-	if err != nil {
-		return err
-	}
-	in, err := os.Open(source)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	out, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	out, err := os.CreateTemp(filepath.Dir(path), ".materialize-*")
 	if err != nil {
 		return err
 	}
-	_, err = io.Copy(out, fileio.Reader{Context: ctx, Reader: in})
+	defer func() { _ = os.Remove(out.Name()) }()
+	err = s.Read(ctx, ref, func(r io.Reader) error { _, err := io.Copy(out, r); return err })
 	if closeErr := out.Close(); err == nil {
 		err = closeErr
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return fileio.RenameExclusive(out.Name(), path)
+}
+
+// Digest measures a canonical byte stream without storing another object.
+func Digest(ctx context.Context, write func(io.Writer) error) (Ref, error) {
+	h := sha256.New()
+	w := &boundedWriter{writer: fileio.Writer{Context: ctx, Writer: h}}
+	if err := write(w); err != nil {
+		return Ref{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return Ref{}, err
+	}
+	return Ref{SHA256: hex.EncodeToString(h.Sum(nil)), Size: w.size}, nil
+}
+
+type boundedWriter struct {
+	writer io.Writer
+	size   int64
+}
+
+func (w *boundedWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > MaxObjectSize-w.size {
+		return 0, errors.New("artifact exceeds 16 GiB")
+	}
+	n, err := w.writer.Write(p)
+	w.size += int64(n)
+	return n, err
 }

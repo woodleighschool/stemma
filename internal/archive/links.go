@@ -27,9 +27,13 @@ func Readlink(root *os.Root, name string) (string, error) {
 	if runtime.GOOS == "windows" {
 		target = filepath.ToSlash(target)
 	}
+	return target, checkLink(filepath.ToSlash(name), target)
+}
+
+func checkLink(name, target string) error {
 	resolved := path.Join(path.Dir(filepath.ToSlash(name)), target)
 	if target == "" || strings.ContainsRune(target, 0) || path.IsAbs(target) || filepath.IsAbs(target) || resolved == ".." || strings.HasPrefix(resolved, "../") {
-		return "", fmt.Errorf("escaping symlink %s", name)
+		return fmt.Errorf("escaping symlink %s", name)
 	}
-	return target, nil
+	return nil
 }
