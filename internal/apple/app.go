@@ -1,7 +1,9 @@
 package apple
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/deploymenttheory/go-macos-pkg/pkg/pkgsign"
 	"github.com/woodleighschool/stemma/internal/signature"
+	"github.com/woodleighschool/stemma/internal/treefs"
 	"howett.net/plist"
 )
 
@@ -67,14 +70,19 @@ func VerifyApp(ctx context.Context, appPath string, want signature.Signer) (sign
 		return signature.Result{}, err
 	}
 	defer func() { _ = root.Close() }()
-	bundle := rootFS(root)
-	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10), roots: pkgsign.AppleRootCertificates()}
-	return v.verifyApp(bundle, filepath.Base(appPath), want)
+	bundle, err := treefs.OpenDir(rootFS(root), ".")
+	if err != nil {
+		return signature.Result{}, err
+	}
+	v := &bundleVerifier{ctx: ctx, roots: pkgsign.AppleRootCertificates()}
+	result, err := v.verifyApp(bundle, filepath.Base(appPath), want)
+	closeRead(bundle, &err)
+	return result, err
 }
 
 // VerifyAppFS verifies a Contents-style bundle where it lies in a filesystem,
 // such as an open disk image.
-func VerifyAppFS(ctx context.Context, fsys fs.ReadLinkFS, appPath string, want signature.Signer) (signature.Result, error) {
+func VerifyAppFS(ctx context.Context, fsys fs.ReadLinkFS, appPath string, want signature.Signer) (result signature.Result, err error) {
 	if err := ctx.Err(); err != nil {
 		return signature.Result{}, err
 	}
@@ -82,7 +90,8 @@ func VerifyAppFS(ctx context.Context, fsys fs.ReadLinkFS, appPath string, want s
 	if err != nil {
 		return signature.Result{}, err
 	}
-	v := &bundleVerifier{ctx: ctx, buffer: make([]byte, 256<<10), roots: pkgsign.AppleRootCertificates(), base: appPath}
+	defer closeRead(bundle, &err)
+	v := &bundleVerifier{ctx: ctx, roots: pkgsign.AppleRootCertificates(), base: appPath}
 	v.attributes, _ = fsys.(xattrFS)
 	return v.verifyApp(bundle, path.Base(appPath), want)
 }
@@ -96,6 +105,7 @@ func (v *bundleVerifier) verifyApp(bundle fs.ReadLinkFS, name string, want signa
 	if signer.IsZero() {
 		return signature.Result{}, fmt.Errorf("%w: application is signed with neither a Developer ID Application nor an App Store certificate", ErrUnsupported)
 	}
+	slices.SortFunc(v.replaced, func(a, b signature.Replacement) int { return cmp.Compare(a.Path, b.Path) })
 	result := signature.Result{Signer: signer.String(), Name: identity.name, Authority: authority, Target: name, Verifier: signature.Verifier, Timestamped: identity.timestamped, Replaced: v.replaced}
 	if err := signature.Check(signer, want); err != nil {
 		return result, err
@@ -167,47 +177,13 @@ func highestOSVersion(versions ...string) (string, error) {
 	return highest, nil
 }
 
-// bundleFile is a regular file opened from a bundle: read in sequence for
-// digests and at offsets for Mach-O code pages.
-type bundleFile interface {
-	io.ReadCloser
-	io.ReaderAt
-}
+func rootFS(root *os.Root) fs.ReadLinkFS { return treefs.Local(root) }
 
-// rootFS exposes a directory on disk as a bundle filesystem. The root confines
-// every path to that directory.
-func rootFS(root *os.Root) fs.ReadLinkFS {
-	return hostLinks{root.FS().(fs.ReadLinkFS)}
-}
-
-// hostLinks reports symlink targets with forward slashes, the form signatures
-// seal, where the host's filesystem returns its own separator.
-type hostLinks struct{ fs.ReadLinkFS }
-
-func (h hostLinks) ReadLink(name string) (string, error) {
-	target, err := h.ReadLinkFS.ReadLink(name)
-	return filepath.ToSlash(target), err
-}
-
-// subtree roots a bundle directory by name. The rooting is only logical, so the
-// directory and its parents are established as real here, and confinement
-// stays with the filesystem underneath.
-func subtree(fsys fs.ReadLinkFS, dir string) (fs.ReadLinkFS, error) {
-	if dir == "." {
-		return fsys, nil
-	}
+func subtree(fsys fs.ReadLinkFS, dir string) (*treefs.Directory, error) {
 	if err := realDirectory(fsys, dir); err != nil {
 		return nil, err
 	}
-	sub, err := fs.Sub(fsys, dir)
-	if err != nil {
-		return nil, err
-	}
-	links, ok := sub.(fs.ReadLinkFS)
-	if !ok {
-		return nil, fmt.Errorf("%w: filesystem subtree does not report symlinks", ErrUnsupported)
-	}
-	return links, nil
+	return treefs.OpenDir(fsys, dir)
 }
 
 // realDirectory requires dir and each of its parents to be a directory itself,
@@ -227,49 +203,31 @@ func realDirectory(fsys fs.ReadLinkFS, dir string) error {
 
 // openRegular opens a regular file reached through real directories only. No
 // open relies on the filesystem to refuse a symlinked path.
-func openRegular(fsys fs.ReadLinkFS, name string) (bundleFile, int64, error) {
-	if err := realDirectory(fsys, path.Dir(name)); err != nil {
-		return nil, 0, err
-	}
-	info, err := fsys.Lstat(name)
+func openRegular(fsys fs.ReadLinkFS, name string) (*treefs.File, int64, error) {
+	f, err := treefs.OpenFile(fsys, name)
 	if err != nil {
 		return nil, 0, err
 	}
-	if info.Mode()&fs.ModeSymlink != 0 {
-		return nil, 0, fmt.Errorf("%w: app file %q is a symlink", ErrUnsupported, name)
+	if _, ok := f.File.(io.ReaderAt); !ok {
+		return nil, 0, errors.Join(fmt.Errorf("%w: filesystem does not read %s at offsets", ErrUnsupported, name), f.Close())
 	}
-	if !info.Mode().IsRegular() {
-		return nil, 0, fmt.Errorf("%s is not a regular file", name)
-	}
-	f, err := fsys.Open(name)
+	info, err := f.Stat()
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, errors.Join(err, f.Close())
 	}
-	file, ok := f.(bundleFile)
-	if !ok {
-		_ = f.Close()
-		return nil, 0, fmt.Errorf("%w: filesystem does not read %s at offsets", ErrUnsupported, name)
-	}
-	if info, err = f.Stat(); err == nil && !info.Mode().IsRegular() {
-		err = fmt.Errorf("%s is not a regular file", name)
-	}
-	if err != nil {
-		_ = file.Close()
-		return nil, 0, err
-	}
-	return file, info.Size(), nil
+	return f, info.Size(), nil
 }
 
-func readRegular(fsys fs.ReadLinkFS, name string, limit int64) ([]byte, error) {
+func readRegular(fsys fs.ReadLinkFS, name string, limit int64) (data []byte, err error) {
 	f, size, err := openRegular(fsys, name)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
+	defer closeRead(f, &err)
 	if size > limit {
 		return nil, fmt.Errorf("%s exceeds %d-byte limit", name, limit)
 	}
-	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	data, err = io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return nil, err
 	}
@@ -277,4 +235,12 @@ func readRegular(fsys fs.ReadLinkFS, name string, limit int64) ([]byte, error) {
 		return nil, fmt.Errorf("%s exceeds %d-byte limit", name, limit)
 	}
 	return data, nil
+}
+
+// A failed final identity check invalidates even an unsigned verdict. Joining
+// ErrUnsigned with the failure would let callers mistake damage for absence.
+func closeRead(c io.Closer, err *error) {
+	if closeErr := c.Close(); closeErr != nil {
+		*err = closeErr
+	}
 }

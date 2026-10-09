@@ -203,7 +203,7 @@ func (h hierarchy) verifyApp(t *testing.T, app string) (signature.Result, error)
 		t.Fatal(err)
 	}
 	defer func() { _ = root.Close() }()
-	v := &bundleVerifier{ctx: t.Context(), buffer: make([]byte, 64<<10), roots: h.roots}
+	v := &bundleVerifier{ctx: t.Context(), roots: h.roots}
 	return v.verifyApp(rootFS(root), filepath.Base(app), signature.Signer{})
 }
 

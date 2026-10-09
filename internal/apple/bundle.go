@@ -7,12 +7,15 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/signature"
+	"github.com/woodleighschool/stemma/internal/treefs"
 	"github.com/woodleighschool/stemma/plugin"
 	"howett.net/plist"
 )
@@ -26,8 +29,9 @@ const maxCodeResources = 64 << 20
 // every nested code item its exact cdhash or recorded requirement, and nothing
 // else is present. Locations are paths relative to the verified bundle.
 type bundleVerifier struct {
-	ctx    context.Context
-	buffer []byte
+	ctx     context.Context
+	buffers sync.Pool
+	mu      sync.Mutex
 	// roots anchors every signing certificate and timestamp in the bundle.
 	roots    []*x509.Certificate
 	entries  int
@@ -52,7 +56,7 @@ type resourceSeal struct {
 
 // verifyContents verifies a Contents-style bundle and returns its main code
 // identity. Without CFBundleExecutable the executable is named after the bundle.
-func (v *bundleVerifier) verifyContents(bundle fs.ReadLinkFS, location, bundleName string) (codeIdentity, error) {
+func (v *bundleVerifier) verifyContents(bundle fs.ReadLinkFS, location, bundleName string) (identity codeIdentity, err error) {
 	entries, err := fs.ReadDir(bundle, ".")
 	if err != nil {
 		return codeIdentity{}, err
@@ -64,6 +68,7 @@ func (v *bundleVerifier) verifyContents(bundle fs.ReadLinkFS, location, bundleNa
 	if err != nil {
 		return codeIdentity{}, err
 	}
+	defer closeRead(contents, &err)
 	info, err := readRegular(contents, "Info.plist", maxMetadata)
 	if err != nil {
 		return codeIdentity{}, err
@@ -158,6 +163,7 @@ func (v *bundleVerifier) verifyFramework(bundle fs.ReadLinkFS, location, bundleN
 		}
 		versionLocation := path.Join(location, "Versions", entry.Name())
 		identity, err := v.verifyShallow(version, versionLocation, bundleName)
+		err = errors.Join(err, version.Close())
 		if err != nil {
 			return codeIdentity{}, fmt.Errorf("framework version %q: %w", entry.Name(), err)
 		}
@@ -191,7 +197,7 @@ func (v *bundleVerifier) verifyShallow(bundle fs.ReadLinkFS, location, bundleNam
 
 // verifyCode authenticates the main executable within a resource root, whose
 // CodeDirectory seals Info.plist and CodeResources, then the envelope itself.
-func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, location, executable, infoPath string, info []byte) (codeIdentity, error) {
+func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, location, executable, infoPath string, info []byte) (identity codeIdentity, err error) {
 	if err := realDirectory(root, "_CodeSignature"); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return codeIdentity{}, err
 	}
@@ -203,7 +209,7 @@ func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, location, executable, in
 		if openErr != nil {
 			return codeIdentity{}, openErr
 		}
-		defer func() { _ = f.Close() }()
+		defer closeRead(f, &err)
 		machO, err := isMachO(f, size)
 		if err != nil {
 			return codeIdentity{}, err
@@ -239,8 +245,8 @@ func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, location, executable, in
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	identity, err := verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info, 3: resources}, v.roots)
-	_ = f.Close()
+	identity, err = verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info, 3: resources}, v.roots)
+	err = errors.Join(err, f.Close())
 	if errors.Is(err, signature.ErrUnsigned) {
 		return codeIdentity{}, fmt.Errorf("%s: resource envelope exists but executable is unsigned", executable)
 	}
@@ -282,24 +288,18 @@ func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, location string, da
 		}
 		seals[name] = seal
 	}
-	err := fs.WalkDir(root, ".", func(name string, entry fs.DirEntry, err error) error {
-		if canceled := v.ctx.Err(); canceled != nil {
-			return canceled
-		}
-		if err != nil {
+	err := treefs.WalkConcurrent(root, func(name string, parent fs.ReadLinkFS, entry fs.DirEntry) error {
+		if err := v.ctx.Err(); err != nil {
 			return err
 		}
-		if name == "." {
-			return nil
+		leaf := entry.Name()
+		if err := v.recordEntry(); err != nil {
+			return err
 		}
-		if v.entries++; v.entries > maxBundleEntries {
-			return errors.New("bundle contains too many entries")
-		}
-		v.report()
 		seal := seals[name]
 		switch {
 		case entry.Type()&fs.ModeSymlink != 0:
-			target, err := root.ReadLink(name)
+			target, err := parent.ReadLink(leaf)
 			if err != nil {
 				return err
 			}
@@ -324,7 +324,7 @@ func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, location string, da
 			if seal.kind != "nested" {
 				return fmt.Errorf("resource %q is a directory but sealed as a %s", name, seal.kind)
 			}
-			if err := v.verifyNested(root, location, name, seal); err != nil {
+			if err := v.verifyNested(parent, path.Join(location, path.Dir(name)), leaf, seal); err != nil {
 				return err
 			}
 			return fs.SkipDir
@@ -338,9 +338,9 @@ func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, location string, da
 			seal.seen = true
 			switch seal.kind {
 			case "file":
-				return v.verifySealedFile(root, name, seal.digest)
+				return v.verifySealedFile(parent, leaf, seal.digest)
 			case "nested":
-				return v.verifyNested(root, location, name, seal)
+				return v.verifyNested(parent, path.Join(location, path.Dir(name)), leaf, seal)
 			default:
 				return fmt.Errorf("resource %q is a regular file but sealed as a %s", name, seal.kind)
 			}
@@ -418,12 +418,17 @@ func unsealedByDefault(name string) bool {
 }
 
 func (v *bundleVerifier) verifySealedFile(root fs.ReadLinkFS, name string, expected []byte) error {
-	f, _, err := openRegular(root, name)
+	f, size, err := openRegular(root, name)
 	if err != nil {
 		return err
 	}
-	digest, err := fileDigest(v.ctx, f, v.buffer)
-	_ = f.Close()
+	buffer, _ := v.buffers.Get().(*[256 << 10]byte)
+	if buffer == nil {
+		buffer = new([256 << 10]byte)
+	}
+	defer v.buffers.Put(buffer)
+	digest, err := fileDigest(v.ctx, io.LimitReader(f, size), buffer[:])
+	err = errors.Join(err, f.Close())
 	if err != nil {
 		return err
 	}
@@ -457,7 +462,9 @@ func (v *bundleVerifier) verifyNested(root fs.ReadLinkFS, location, name string,
 		for _, cdhash := range identity.cdhashes {
 			replacement.CDHashes = append(replacement.CDHashes, hex.EncodeToString(cdhash))
 		}
+		v.mu.Lock()
 		v.replaced = append(v.replaced, replacement)
+		v.mu.Unlock()
 	}
 	return nil
 }
@@ -479,13 +486,13 @@ func verifyNestedIdentity(identity codeIdentity, seal *resourceSeal) error {
 	return nil
 }
 
-func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, location, name string, bundle bool, seal *resourceSeal) (codeIdentity, error) {
+func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, location, name string, bundle bool, seal *resourceSeal) (identity codeIdentity, err error) {
 	if !bundle {
-		f, size, err := openRegular(root, name)
-		if err != nil {
-			return codeIdentity{}, err
+		f, size, openErr := openRegular(root, name)
+		if openErr != nil {
+			return codeIdentity{}, openErr
 		}
-		defer func() { _ = f.Close() }()
+		defer closeRead(f, &err)
 		machO, err := isMachO(f, size)
 		if err != nil {
 			return codeIdentity{}, err
@@ -499,6 +506,7 @@ func (v *bundleVerifier) verifyNestedCode(root fs.ReadLinkFS, location, name str
 	if err != nil {
 		return codeIdentity{}, err
 	}
+	defer closeRead(nested, &err)
 	v.depth++
 	defer func() { v.depth-- }()
 	switch {
@@ -518,10 +526,16 @@ func isDirectory(fsys fs.ReadLinkFS, name string) bool {
 	return err == nil && info.IsDir()
 }
 
-func (v *bundleVerifier) report() {
+func (v *bundleVerifier) recordEntry() error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.entries++; v.entries > maxBundleEntries {
+		return errors.New("bundle contains too many entries")
+	}
 	if time.Since(v.progress) < 250*time.Millisecond {
-		return
+		return nil
 	}
 	v.progress = time.Now()
 	plugin.Logger(v.ctx).InfoContext(v.ctx, "Verifying sealed resources", "progress", true, "current", v.entries, "unit", "entries")
+	return nil
 }

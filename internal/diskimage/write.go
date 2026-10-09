@@ -18,6 +18,7 @@ import (
 	"github.com/deploymenttheory/go-apfs-v2/pkg/hfsplus"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/internal/treefs"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -85,7 +86,13 @@ func WriteApplication(ctx context.Context, source fs.ReadLinkFS, app, output str
 		return err
 	}
 	w := writer{ctx: ctx, source: source, selection: app, timestamp: timestamp}
-	bundle, err := w.entry(app, name, info)
+	defer func() { err = errors.Join(err, w.closeDirectory()) }()
+	parent, err := treefs.OpenDir(source, path.Dir(app))
+	if err != nil {
+		return err
+	}
+	bundle, err := w.entry(parent, app, name, info)
+	err = errors.Join(err, parent.Close())
 	if err != nil {
 		return fmt.Errorf("disk image: %w", err)
 	}
@@ -101,6 +108,9 @@ func WriteApplication(ctx context.Context, source fs.ReadLinkFS, app, output str
 	label := strings.TrimSuffix(name, filepath.Ext(name))
 	if err := hfsplus.CreateImage(volume, 0, label, root, &hfsplus.CreateOptions{FixedTime: timestamp, CaseInsensitive: true}); err != nil {
 		return fmt.Errorf("disk image: %w", err)
+	}
+	if err := w.closeDirectory(); err != nil {
+		return err
 	}
 	size, err := volume.Seek(0, io.SeekEnd)
 	if err != nil {
@@ -122,10 +132,12 @@ type writer struct {
 	timestamp time.Time
 	entries   int
 	total     int64
+	parent    string
+	directory *treefs.Directory
 }
 
 // entry describes the file at name, relative to the bundle, under its stored name.
-func (w *writer) entry(name, stored string, info fs.FileInfo) (*hfsplus.Entry, error) {
+func (w *writer) entry(parent fs.ReadLinkFS, name, stored string, info fs.FileInfo) (*hfsplus.Entry, error) {
 	if err := w.ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -142,7 +154,7 @@ func (w *writer) entry(name, stored string, info fs.FileInfo) (*hfsplus.Entry, e
 	entry := &hfsplus.Entry{Name: stored, ModTime: w.timestamp, ModeExplicit: true, BSDFlags: new(uint32)}
 	switch {
 	case info.Mode()&fs.ModeSymlink != 0:
-		target, err := w.source.ReadLink(name)
+		target, err := parent.ReadLink(path.Base(name))
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +166,7 @@ func (w *writer) entry(name, stored string, info fs.FileInfo) (*hfsplus.Entry, e
 		entry.Mode, entry.Data = fs.ModeSymlink|0o755, []byte(target)
 	case info.IsDir():
 		entry.Mode = fs.ModeDir | info.Mode().Perm()
-		children, err := w.children(name)
+		children, err := w.children(parent, name)
 		if err != nil {
 			return nil, err
 		}
@@ -195,8 +207,13 @@ func (w *writer) entry(name, stored string, info fs.FileInfo) (*hfsplus.Entry, e
 	return entry, nil
 }
 
-func (w *writer) children(dir string) ([]*hfsplus.Entry, error) {
-	directory, err := w.source.Open(dir)
+func (w *writer) children(parent fs.ReadLinkFS, dir string) (_ []*hfsplus.Entry, err error) {
+	scoped, err := treefs.OpenDir(parent, path.Base(dir))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, scoped.Close()) }()
+	directory, err := scoped.Open(".")
 	if err != nil {
 		return nil, err
 	}
@@ -213,11 +230,11 @@ func (w *writer) children(dir string) ([]*hfsplus.Entry, error) {
 	children := make([]*hfsplus.Entry, 0, len(listing))
 	for _, child := range listing {
 		name := path.Join(dir, child.Name())
-		info, err := w.source.Lstat(name)
+		info, err := child.Info()
 		if err != nil {
 			return nil, err
 		}
-		entry, err := w.entry(name, child.Name(), info)
+		entry, err := w.entry(scoped, name, child.Name(), info)
 		if err != nil {
 			return nil, err
 		}
@@ -226,10 +243,22 @@ func (w *writer) children(dir string) ([]*hfsplus.Entry, error) {
 	return children, nil
 }
 
-// open yields a file's content while the volume is written, so no more than the
-// volume writer's copy buffer is held at once.
+// The HFS+ writer opens and closes files serially. Retain only the current
+// parent while it copies that directory's files.
 func (w *writer) open(name string) (io.ReadCloser, error) {
-	file, err := w.source.Open(name)
+	parent := path.Dir(name)
+	if w.directory == nil || w.parent != parent {
+		if err := w.closeDirectory(); err != nil {
+			return nil, err
+		}
+		var err error
+		w.directory, err = treefs.OpenDir(w.source, parent)
+		if err != nil {
+			return nil, err
+		}
+		w.parent = parent
+	}
+	file, err := treefs.OpenFile(w.directory, path.Base(name))
 	if err != nil {
 		return nil, err
 	}
@@ -237,6 +266,15 @@ func (w *writer) open(name string) (io.ReadCloser, error) {
 		io.Reader
 		io.Closer
 	}{fileio.Reader{Context: w.ctx, Reader: file}, file}, nil
+}
+
+func (w *writer) closeDirectory() error {
+	if w.directory == nil {
+		return nil
+	}
+	err := w.directory.Close()
+	w.directory = nil
+	return err
 }
 
 type contextReaderAt struct {

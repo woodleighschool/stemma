@@ -349,7 +349,7 @@ func TestResourceEnvelopeRequiresFiles2(t *testing.T) {
 	}
 	defer func() { _ = root.Close() }()
 	contents := rootFS(root)
-	v := &bundleVerifier{ctx: t.Context(), buffer: make([]byte, 4096)}
+	v := &bundleVerifier{ctx: t.Context()}
 	for name, seals := range map[string]any{
 		"legacy": map[string]any{"files": map[string]any{"Resources/message.txt": make([]byte, 20)}},
 		"sha1":   map[string]any{"files2": map[string]any{"Resources/message.txt": map[string]any{"hash": make([]byte, 20)}}},
@@ -392,7 +392,7 @@ func TestSealedResourceNamesMayHoldBackslashes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v := &bundleVerifier{ctx: t.Context(), buffer: make([]byte, 4096)}
+	v := &bundleVerifier{ctx: t.Context()}
 	if err := v.verifyResources(contents, "Contents", data, "MacOS/fixture", "Info.plist"); err != nil {
 		t.Fatal(err)
 	}

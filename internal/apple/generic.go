@@ -11,6 +11,7 @@ import (
 
 	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 	"github.com/woodleighschool/stemma/internal/signature"
+	"github.com/woodleighschool/stemma/internal/treefs"
 )
 
 // Nested code that is not a Mach-O, such as a script or data file in a code
@@ -61,7 +62,7 @@ func isMachO(r io.ReaderAt, size int64) (bool, error) {
 
 // unsignedGeneric establishes absence without interpreting signature contents.
 // A generic executable can carry a signature even without a bundle envelope.
-func (v *bundleVerifier) unsignedGeneric(location string, file bundleFile) error {
+func (v *bundleVerifier) unsignedGeneric(location string, file *treefs.File) error {
 	if err := v.ctx.Err(); err != nil {
 		return err
 	}
@@ -77,7 +78,7 @@ func (v *bundleVerifier) unsignedGeneric(location string, file bundleFile) error
 				break
 			}
 		}
-	} else if local, ok := file.(*os.File); ok {
+	} else if local, ok := file.File.(*os.File); ok {
 		var err error
 		signed, err = nativeSignatureAttributes(v.ctx, local)
 		if err != nil {
