@@ -410,6 +410,19 @@ For a script-only wrapper, declare `icon: example` on the software resource and 
 finds `vendor` through the build dependencies and writes `icons/example.png`.
 An input containing multiple applications requires `--path`.
 
+Software without artwork of its own, such as fonts or a configuration package,
+can take another application's icon from the machine:
+
+```sh
+stemma icon MacSoftware/fonts --from "/System/Applications/Font Book.app"
+```
+
+`--from` reads an application, an ICNS or image file, or a folder, archive, disk
+image or package that holds applications, and `--path` selects one of several. In a
+package, `--path` is the application's path as `stemma inspect` reports it, such as
+`Payload/Example.app`. The resource needs only its `icon` declaration: it can have
+no source, and nothing is locked or prepared.
+
 `icons/` holds plain PNG files: square, between 128 and 1024 pixels, up to 1 MiB.
 You can also commit an asset directly. Resources share an asset by naming
 it, so a `WindowsSoftware` document can publish the icon created from its macOS

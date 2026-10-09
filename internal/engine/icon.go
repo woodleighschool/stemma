@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/inspect"
@@ -26,6 +28,9 @@ type IconOptions struct {
 	Size int
 	// Presentation styles the artwork; icon.Auto follows the host.
 	Presentation icon.Presentation
+	// From is a local application, installer or artwork file that supplies one
+	// resource's artwork in place of the software the resource prepares.
+	From string
 }
 
 // verifyIcons rejects declared assets that are missing or invalid before any
@@ -81,9 +86,9 @@ func iconOutcome(options IconOptions, root string, plan resourcePlan) string {
 	return ""
 }
 
-// createIcon writes the declared asset for one prepared resource and reports
-// the outcome in the words the CLI prints: the presentation created, or why
-// nothing could be.
+// createIcon writes one resource's declared asset from its prepared installer,
+// a selected input or a local source, and reports the outcome in the words the
+// CLI prints: the presentation created, or why nothing could be.
 func createIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, installer Prepared, selection InputSelection, work string) (string, error) {
 	name := plan.Icon
 	if installer.Path == "" {
@@ -93,16 +98,17 @@ func createIcon(ctx context.Context, options IconOptions, root string, plan reso
 	done := plugin.Stage(ctx, "Extracting artwork", plugin.Detail(installer.Filename))
 	var subject icon.Subject
 	var err error
-	if selection.Name != "" {
+	if selection.Name != "" || options.From != "" {
 		subject, err = inputIconSubject(ctx, installer.artifact(), selection.Path, workspace, options.Presentation)
 	} else {
 		subject, err = iconSubject(ctx, plan.Resource.Kind, installer.artifact(), workspace, options.Presentation)
 	}
 	done(err)
-	if errors.Is(err, macsoftware.ErrNoApplication) {
+	if errors.Is(err, macsoftware.ErrNoApplication) && options.From == "" {
 		return "no application selected; choose an input with --input and --path", nil
 	}
-	if errors.Is(err, icon.ErrNoArtwork) {
+	// A local source that holds no application has no artwork to offer.
+	if errors.Is(err, icon.ErrNoArtwork) || errors.Is(err, macsoftware.ErrNoApplication) {
 		return "no artwork", nil
 	}
 	if err != nil {
@@ -138,6 +144,26 @@ func inputIconSubject(ctx context.Context, input plugin.Artifact, selection, wor
 		return icon.Subject{}, err
 	}
 	defer func() { _ = source.Close() }()
+	if selection != "" && !source.Traversable() {
+		// A package is not a tree to walk; its inventory locates the application.
+		facts, err := inspect.Source(ctx, source)
+		if err != nil {
+			return icon.Subject{}, err
+		}
+		var names []string
+		for _, subject := range facts.Subjects {
+			if subject.App == nil {
+				continue
+			}
+			if subject.Path == selection {
+				return macsoftware.IconFromSource(ctx, source, subject, workspace, presentation)
+			}
+			names = append(names, subject.Path)
+		}
+		if len(names) > 0 {
+			return icon.Subject{}, fmt.Errorf("no such application; the package holds %s", inspect.FormatSubjectIDs(names))
+		}
+	}
 	if selection != "" {
 		node, err := source.At(ctx, selection)
 		if err != nil {
@@ -211,6 +237,91 @@ func (e *execution) inputIcon(ctx context.Context) error {
 		item.Icon, err = createIcon(ctx, e.opts.Icons, e.session.root, plan, input, e.opts.Input, work)
 		return err
 	})
+}
+
+// iconFrom creates one resource's declared asset from a local application,
+// installer or artwork file. The project supplies only the asset's name: no
+// lock entry, cached input or plugin takes part, so the resource needs neither
+// a source nor an earlier update.
+func iconFrom(ctx context.Context, opts Options, report *Report) error {
+	if opts.Input.Name != "" {
+		return errors.New("from and input name different artwork sources")
+	}
+	project, err := config.Load(opts.ConfigPath)
+	if err != nil {
+		return err
+	}
+	root, err := filepath.Abs(filepath.Dir(opts.ConfigPath))
+	if err != nil {
+		return err
+	}
+	roots, err := selectResources(project.Resources, opts.Resources, opts.Profiles)
+	if err != nil {
+		return err
+	}
+	if len(roots) != 1 {
+		return errors.New("from requires one resource selector")
+	}
+	key := roots[0]
+	resource := project.Resources[key]
+	ops, err := builtins(nil)
+	if err != nil {
+		return err
+	}
+	// Reading a plugin kind's declaration would mean loading its plugin.
+	kinds := resourceKinds(ops)
+	if _, builtin := kinds[plugin.ResourceKind{APIVersion: resource.APIVersion, Kind: resource.Kind}]; !builtin {
+		return fmt.Errorf("resource %s: from supports only built-in kinds", key)
+	}
+	plan, err := discoverKind(ctx, ops, kinds, key, resource, false, "")
+	if err != nil {
+		return err
+	}
+	if plan.Icon == "" {
+		return errors.New("selected resource must declare an icon")
+	}
+	// The path itself may be a link; what lies beneath it is read like any input.
+	source, err := filepath.EvalSymlinks(opts.Icons.From)
+	if err != nil {
+		return err
+	}
+	if source, err = filepath.Abs(source); err != nil {
+		return err
+	}
+	info, err := os.Lstat(source)
+	if err != nil {
+		return err
+	}
+	if opts.Started != nil {
+		if err := opts.Started(); err != nil {
+			return err
+		}
+	}
+	report.Resources = []ResourceReport{{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Key: key}}
+	item := &report.Resources[0]
+	var failure error
+	if item.Icon = iconOutcome(opts.Icons, root, plan); item.Icon == "" {
+		work, err := os.MkdirTemp("", "stemma-icon-*")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = os.RemoveAll(work) }()
+		local := Prepared{Path: source, Filename: filepath.Base(source), Tree: info.IsDir()}
+		item.Icon, err = createIcon(resourceContext(ctx, plan.Resource), opts.Icons, root, plan, local, InputSelection{Path: opts.Input.Path}, work)
+		if err != nil {
+			item.Error = err.Error()
+			failure = ResourceError{Resource: key, Err: err}
+		}
+	}
+	if item.Icon == "unchanged" || strings.HasPrefix(item.Icon, "created ") {
+		item.IconPath = icon.Relative(plan.Icon)
+	}
+	if opts.ResourceDone != nil {
+		if err := opts.ResourceDone(*item); err != nil {
+			return err
+		}
+	}
+	return failure
 }
 
 // iconSubject reads the installer artwork or bundle that presentation needs.

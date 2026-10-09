@@ -256,7 +256,9 @@ func (c *cli) runCommand(method string) *cobra.Command {
 	}
 	if method == "icon" {
 		cmd.Flags().StringVar(&input.Name, "input", "", "Extract from one resource's locked input without building its output")
-		cmd.Flags().StringVar(&input.Path, "path", "", "Application or artwork path within the selected input")
+		cmd.Flags().StringVar(&icons.From, "from", "", "Extract from the local application, installer or artwork file at `PATH` instead of the resource's software")
+		cmd.Flags().StringVar(&input.Path, "path", "", "Application or artwork path within the selected input or local source")
+		cmd.MarkFlagsMutuallyExclusive("input", "from")
 		cmd.Flags().BoolVar(&icons.Force, "force", false, "Replace icon assets that already exist")
 		cmd.Flags().StringVar(&presentation, "presentation", string(icon.Auto), "Icon presentation: auto (glassy on macOS, raw elsewhere), raw or glassy")
 		cmd.Flags().IntVar(&icons.Size, "size", icon.Size, "Glassy icon width and height in pixels")

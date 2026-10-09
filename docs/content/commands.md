@@ -98,6 +98,17 @@ stemma icon MacSoftware/example --input vendor --path Installer.app
 Input names inherited from build dependencies must be unambiguous. Only an input
 that references a resource output requires preparation.
 
+Use `--from PATH` to take the artwork from a local application, installer or
+artwork file, for software that carries none of its own:
+
+```sh
+stemma icon MacSoftware/fonts --from "/System/Applications/Font Book.app"
+```
+
+It writes the icon of one resource that declares `spec.icon`. The resource needs
+no source or lock entry, and `--path` selects within the local source as it does
+within an input.
+
 Existing icons stay unchanged unless `--force` is set. Only resources needing an
 icon are prepared. The command leaves the lockfile unchanged and does not contact
 destinations. Commit the icons so publication sends the same bytes on every host.
@@ -157,8 +168,9 @@ standard input and output. `describe` answers what documents can declare, from
 the built-in operations and the catalog's plugins; `inspect` reads a named input's
 static facts before a build; `prepare` tries documents
 against their current sources without the lockfile and reports the inspected
-artifact and its signer; `update`, `icon` and `check` match the commands. No
-tool contacts a destination.
+artifact and its signer; `update`, `icon` and `check` match the commands. A
+relative `from` given to `icon` starts at the catalog root. No tool contacts a
+destination.
 
 ## Inspection and configuration
 

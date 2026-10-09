@@ -21,6 +21,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
+	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -116,21 +117,26 @@ func iconPNG(t *testing.T, edge int, shade uint8) []byte {
 	return data.Bytes()
 }
 
+// icnsWith wraps one PNG as the 128-pixel entry of an ICNS file.
+func icnsWith(artwork []byte) []byte {
+	var icns bytes.Buffer
+	icns.WriteString("icns")
+	_ = binary.Write(&icns, binary.BigEndian, uint32(16+len(artwork)))
+	icns.WriteString("ic07")
+	_ = binary.Write(&icns, binary.BigEndian, uint32(8+len(artwork)))
+	icns.Write(artwork)
+	return icns.Bytes()
+}
+
 // iconFixtures writes a Mac bundle whose ICNS wraps artwork and copies the MSI
 // fixture that registers a product icon, returning both expected artworks.
 func iconFixtures(t *testing.T, root string) (bundle, setup []byte) {
 	t.Helper()
 	bundle = iconPNG(t, 128, 33)
-	var icns bytes.Buffer
-	icns.WriteString("icns")
-	_ = binary.Write(&icns, binary.BigEndian, uint32(16+len(bundle)))
-	icns.WriteString("ic07")
-	_ = binary.Write(&icns, binary.BigEndian, uint32(8+len(bundle)))
-	icns.Write(bundle)
 	for name, data := range map[string][]byte{
 		"Example.app/Contents/Info.plist":             []byte(`<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.app</string><key>CFBundleName</key><string>Example</string><key>CFBundleShortVersionString</key><string>1.2</string><key>CFBundleVersion</key><string>123</string><key>CFBundleExecutable</key><string>example</string><key>CFBundleIconFile</key><string>AppIcon</string></dict></plist>`),
 		"Example.app/Contents/MacOS/example":          []byte("#!/bin/sh\nexit 0\n"),
-		"Example.app/Contents/Resources/AppIcon.icns": icns.Bytes(),
+		"Example.app/Contents/Resources/AppIcon.icns": icnsWith(bundle),
 	} {
 		target := filepath.Join(root, filepath.FromSlash(name))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -411,5 +417,110 @@ spec:
 	selected, err := Run(t.Context(), opts)
 	if err != nil || selected.Resources[0].Icon != direct.Resources[0].Icon || !strings.HasPrefix(direct.Resources[0].Icon, "no application selected") {
 		t.Fatalf("default=%+v input=%+v error=%v", direct, selected, err)
+	}
+}
+
+func TestIconFromLocalSourceNeedsNoLockOrCache(t *testing.T) {
+	root, fixture := t.TempDir(), t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, fmt.Sprintf(iconProject, "http://vendor.invalid"))
+	bundleArtwork, _ := iconFixtures(t, fixture)
+	artwork := iconPNG(t, 128, 77)
+	artworkFile := filepath.Join(fixture, "artwork.icns")
+	if err := os.WriteFile(artworkFile, icnsWith(artwork), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(t.TempDir(), "cache")
+	var done []ResourceReport
+	// The resource has no source and nothing was ever locked for it.
+	options := Options{ConfigPath: filename, CacheDir: cache, Method: "icon", Resources: []string{"MacSoftware/branding"}, Icons: IconOptions{Presentation: icon.Raw, From: filepath.Join(fixture, "Example.app")}, ResourceDone: func(resource ResourceReport) error {
+		done = append(done, resource)
+		return nil
+	}}
+	outcome := func(want string, asset []byte) {
+		t.Helper()
+		report, err := Run(t.Context(), options)
+		if err != nil || len(report.Resources) != 1 || report.Resources[0].Icon != want {
+			t.Fatalf("icon from %s: %+v, %v", options.Icons.From, report.Resources, err)
+		}
+		got, err := icon.Read(root, "shared-artwork")
+		if err != nil || !bytes.Equal(got, asset) {
+			t.Fatalf("icons/shared-artwork.png holds %d bytes, want %d: %v", len(got), len(asset), err)
+		}
+	}
+	outcome("created raw", bundleArtwork)
+	if len(done) != 1 || done[0].IconPath != "icons/shared-artwork.png" {
+		t.Fatalf("completed resources: %+v", done)
+	}
+	options.Icons.From = artworkFile
+	outcome("unchanged", bundleArtwork)
+	options.Icons.Force = true
+	outcome("created raw", artwork)
+	for _, path := range []string{cache, filepath.Join(root, "stemma.lock.yaml")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("local icon touched %s: %v", path, err)
+		}
+	}
+
+	for want, change := range map[string]func(*Options){
+		"must declare an icon":      func(o *Options) { o.Resources = []string{"MacSoftware/plain"} },
+		"one resource selector":     func(o *Options) { o.Resources = nil },
+		"different artwork sources": func(o *Options) { o.Input.Name = "source" },
+	} {
+		rejected := options
+		change(&rejected)
+		if _, err := Run(t.Context(), rejected); err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("want %q: %v", want, err)
+		}
+	}
+}
+
+func TestIconFromSelectsAnApplicationInsideAContainer(t *testing.T) {
+	root, fixture := t.TempDir(), t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, fmt.Sprintf(iconProject, "http://vendor.invalid"))
+	iconFixtures(t, fixture)
+	if err := os.Remove(filepath.Join(fixture, "icon.msi")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.CopyFS(filepath.Join(fixture, "Other.app"), os.DirFS(filepath.Join(fixture, "Example.app"))); err != nil {
+		t.Fatal(err)
+	}
+	want := iconPNG(t, 128, 77)
+	if err := os.WriteFile(filepath.Join(fixture, "Other.app/Contents/Resources/AppIcon.icns"), icnsWith(want), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	image := filepath.Join(t.TempDir(), "vendor.dmg")
+	testdiskimage.Write(t, image, fixture)
+	pkg := filepath.Join(t.TempDir(), "vendor.pkg")
+	if err := pkgbuild.Build(t.Context(), fixture, pkg, pkgbuild.Options{Identifier: "org.example.vendor", Version: "1", InstallLocation: "/Applications", Payload: ".", Compression: pkgbuild.Gzip}); err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct{ name, source, path string }{
+		{"folder", fixture, "Other.app"},
+		{"disk image", image, "Other.app"},
+		{"package", pkg, "Payload/Other.app"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := os.RemoveAll(filepath.Join(root, icon.Directory)); err != nil {
+				t.Fatal(err)
+			}
+			options := Options{ConfigPath: filename, Method: "icon", Resources: []string{"MacSoftware/branding"}, Icons: IconOptions{Presentation: icon.Raw, From: test.source}}
+			if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "multiple applications") || !strings.Contains(err.Error(), test.path) {
+				t.Fatalf("ambiguous source: %v", err)
+			}
+			options.Input.Path = strings.Replace(test.path, "Other", "Missing", 1)
+			if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "Missing.app") {
+				t.Fatalf("missing application: %v", err)
+			}
+			options.Input.Path = test.path
+			report, err := Run(t.Context(), options)
+			if err != nil || report.Resources[0].Icon != "created raw" {
+				t.Fatalf("selected application: %+v, %v", report.Resources, err)
+			}
+			if got, err := icon.Read(root, "shared-artwork"); err != nil || !bytes.Equal(got, want) {
+				t.Fatalf("selected artwork differs: %v", err)
+			}
+		})
 	}
 }

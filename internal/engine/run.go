@@ -75,6 +75,11 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			return report, err
 		}
 		opts.Icons.Presentation = presentation
+		if opts.Icons.From != "" {
+			// A local source stops short of the session: nothing is locked or acquired.
+			err := iconFrom(ctx, opts, &report)
+			return report, err
+		}
 	}
 	// Update writes the lockfile and resolves plugin declarations. Every other
 	// run consumes it as reviewed.
@@ -194,7 +199,7 @@ func (e *execution) begin(ctx context.Context) (err error) {
 		return errors.New("inspect requires an input name")
 	}
 	if e.opts.Input.Path != "" && e.opts.Input.Name == "" {
-		return errors.New("path requires an input")
+		return errors.New("path requires --input or --from")
 	}
 	if e.opts.Input.Name != "" {
 		if len(e.roots) != 1 {

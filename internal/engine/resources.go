@@ -194,10 +194,65 @@ func resourceKinds(ops *operations) map[plugin.ResourceKind]plugin.Operation {
 // discoverResource evaluates one resource against its registered kind and
 // validates everything the declaration owns: its configuration, the resolvers
 // of its non-resource inputs, the resources it consumes and the destinations it
-// publishes to, when the run uses them. Without the environment, the kind
-// discovers the declaration as written and values that hold expressions are
-// checked by schema alone.
+// publishes to, when the run uses them.
 func discoverResource(ctx context.Context, p config.Project, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, key string, r config.Resource, environment, destinations bool, derive string) (resourcePlan, error) {
+	plan, err := discoverKind(ctx, ops, kinds, key, r, environment, derive)
+	if err != nil {
+		return resourcePlan{}, err
+	}
+	for inputName, input := range plan.Inputs {
+		if inputName == "" {
+			return resourcePlan{}, fmt.Errorf("resource %s has an unnamed input", key)
+		}
+		input.Base = r.Base
+		plan.Inputs[inputName] = input
+		if input.Resource == nil {
+			if err := ops.validateInput(ctx, input); err != nil {
+				return resourcePlan{}, fmt.Errorf("resource %s input %s: %w", key, inputName, err)
+			}
+		}
+		if input.Resource != nil {
+			ref := input.Resource
+			producer, ok := p.Resources[ref.Key()]
+			if !ok {
+				return resourcePlan{}, fmt.Errorf("resource %s input %s: unknown resource %s", key, inputName, ref.Key())
+			}
+			if producer.Suspend && !r.Suspend {
+				return resourcePlan{}, fmt.Errorf("resource %s input %s: depends on suspended resource %s; suspend %s as well", key, inputName, ref.Key(), key)
+			}
+			if ref.Output != "" && !safeOutputName(ref.Output) {
+				return resourcePlan{}, errors.New("invalid resource output name")
+			}
+		}
+	}
+	for destination := range plan.Destinations {
+		d, ok := p.Destinations[destination]
+		if !ok {
+			return resourcePlan{}, fmt.Errorf("resource %s: unknown destination %s", key, destination)
+		}
+		if !destinations {
+			continue
+		}
+		if err := ops.check(d.Operation, false); err != nil {
+			return resourcePlan{}, err
+		}
+		if err := ops.configuration(d.Operation, d.Config, false); err != nil {
+			return resourcePlan{}, fmt.Errorf("destination %s: %w", destination, err)
+		}
+	}
+	for destination, metadata := range plan.Destinations {
+		if err := expression.Check(destinationMetadata(metadata), "env", "facts", "evidence"); err != nil {
+			return resourcePlan{}, fmt.Errorf("resource %s destination %s: %w", key, destination, err)
+		}
+	}
+	return plan, nil
+}
+
+// discoverKind has a resource's registered kind read its declaration, checked
+// against the kind's schema. Without the environment, the kind discovers the
+// declaration as written and values that hold expressions are checked by
+// schema alone.
+func discoverKind(ctx context.Context, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, key string, r config.Resource, environment bool, derive string) (resourcePlan, error) {
 	kind := plugin.ResourceKind{APIVersion: r.APIVersion, Kind: r.Kind}
 	op, ok := kinds[kind]
 	if !ok {
@@ -235,51 +290,6 @@ func discoverResource(ctx context.Context, p config.Project, ops *operations, ki
 	}
 	if len(result.Config) == 0 {
 		return resourcePlan{}, fmt.Errorf("resource %s: kind did not return preparation configuration", key)
-	}
-	for inputName, input := range result.Inputs {
-		if inputName == "" {
-			return resourcePlan{}, fmt.Errorf("resource %s has an unnamed input", key)
-		}
-		input.Base = r.Base
-		result.Inputs[inputName] = input
-		if input.Resource == nil {
-			if err := ops.validateInput(ctx, input); err != nil {
-				return resourcePlan{}, fmt.Errorf("resource %s input %s: %w", key, inputName, err)
-			}
-		}
-		if input.Resource != nil {
-			ref := input.Resource
-			producer, ok := p.Resources[ref.Key()]
-			if !ok {
-				return resourcePlan{}, fmt.Errorf("resource %s input %s: unknown resource %s", key, inputName, ref.Key())
-			}
-			if producer.Suspend && !r.Suspend {
-				return resourcePlan{}, fmt.Errorf("resource %s input %s: depends on suspended resource %s; suspend %s as well", key, inputName, ref.Key(), key)
-			}
-			if ref.Output != "" && !safeOutputName(ref.Output) {
-				return resourcePlan{}, errors.New("invalid resource output name")
-			}
-		}
-	}
-	for destination := range result.Destinations {
-		d, ok := p.Destinations[destination]
-		if !ok {
-			return resourcePlan{}, fmt.Errorf("resource %s: unknown destination %s", key, destination)
-		}
-		if !destinations {
-			continue
-		}
-		if err := ops.check(d.Operation, false); err != nil {
-			return resourcePlan{}, err
-		}
-		if err := ops.configuration(d.Operation, d.Config, false); err != nil {
-			return resourcePlan{}, fmt.Errorf("destination %s: %w", destination, err)
-		}
-	}
-	for destination, metadata := range result.Destinations {
-		if err := expression.Check(destinationMetadata(metadata), "env", "facts", "evidence"); err != nil {
-			return resourcePlan{}, fmt.Errorf("resource %s destination %s: %w", key, destination, err)
-		}
 	}
 	return resourcePlan{Resource: r, Operation: op.Name, ResourceResult: result, Environment: bindings}, nil
 }

@@ -96,6 +96,28 @@ spec:
 	}
 }
 
+func TestIconToolReadsCatalogFileIntoDeclaredAsset(t *testing.T) {
+	root := committedProject(t)
+	data, err := os.ReadFile("../msi/testdata/icon.ico")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "artwork.ico"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "software", "policy.yaml"), strings.Replace(policy, "spec:", "spec:\n  icon: branding", 1))
+	session := connect(t, root)
+	// The test runs outside the catalog, so only its root can resolve the path.
+	var result icons
+	call(t, session, "icon", map[string]any{"resources": []string{"MacSoftware/policy"}, "from": "artwork.ico"}, &result)
+	if len(result.Resources) != 1 || !strings.HasPrefix(result.Resources[0].Icon, "created ") {
+		t.Fatalf("icon: %+v", result)
+	}
+	if _, err := icon.Read(root, "branding"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 	root := committedProject(t)
 	session := connect(t, root)

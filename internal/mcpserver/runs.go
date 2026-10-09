@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -51,7 +52,8 @@ type iconInput struct {
 	Resources []string `json:"resources" jsonschema:"Resources as Kind/name, such as MacSoftware/firefox."`
 	Force     bool     `json:"force,omitempty" jsonschema:"Replace icons that already exist."`
 	Input     string   `json:"input,omitempty" jsonschema:"Read a locked input of this resource or its build dependencies. The asset uses the selected resource's spec.icon."`
-	Path      string   `json:"path,omitempty" jsonschema:"Application, installer or artwork path within the selected input."`
+	From      string   `json:"from,omitempty" jsonschema:"Read this application, installer or artwork file instead, for one resource that declares spec.icon. A relative path starts at the catalog root."`
+	Path      string   `json:"path,omitempty" jsonschema:"Application, installer or artwork path within the selected input or file."`
 }
 
 type checkInput struct {
@@ -190,7 +192,11 @@ func (c catalog) icon(ctx context.Context, _ *mcp.CallToolRequest, in iconInput)
 	opts := c.options("icon")
 	opts.Resources = in.Resources
 	opts.Input = engine.InputSelection{Name: in.Input, Path: in.Path}
-	opts.Icons = engine.IconOptions{Presentation: icon.Auto, Size: icon.Size, Force: in.Force}
+	opts.Icons = engine.IconOptions{Presentation: icon.Auto, Size: icon.Size, Force: in.Force, From: in.From}
+	if in.From != "" && !filepath.IsAbs(in.From) {
+		// A client shares the catalog's files with the server, not its working directory.
+		opts.Icons.From = filepath.Join(filepath.Dir(c.config), in.From)
+	}
 	report, err := engine.Run(ctx, opts)
 	result := icons{Resources: []iconOutcome{}, Error: unreported(err)}
 	for _, resource := range report.Resources {
