@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.10.3](https://github.com/woodleighschool/stemma/compare/v0.10.2...v0.10.3) (2026-10-09)
+
+
+### Bug Fixes
+
+* **apple:** accept empty XAR contents without checksums ([f8ffb59](https://github.com/woodleighschool/stemma/commit/f8ffb5932d4b289084f737a896688f7058c65cf3))
+* **apple:** verify frameworks with direct root links and several versions ([893c83e](https://github.com/woodleighschool/stemma/commit/893c83e491fc87b27142ebb9e0cdad555f4fef2f))
+* **build:** unify Go toolchain and license tool versions ([9711802](https://github.com/woodleighschool/stemma/commit/9711802a1c611badff1051ff22caf9e154c46bc7))
+* **go:** update module github.com/google/go-github/v92 (d61c874 → 4dbe048) ([#145](https://github.com/woodleighschool/stemma/issues/145)) ([275198a](https://github.com/woodleighschool/stemma/commit/275198ae74f3de9c98cbff0c790a03193e020ecb))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (8dd5d6a → 71fd646) ([#141](https://github.com/woodleighschool/stemma/issues/141)) ([a7c3639](https://github.com/woodleighschool/stemma/commit/a7c36393e581c70d1b5b3b460dee063c6a89e706))
+
 ## [0.10.2](https://github.com/woodleighschool/stemma/compare/v0.10.1...v0.10.2) (2026-10-08)
 
 
