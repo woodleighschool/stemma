@@ -2,3 +2,4 @@
 self-hosted-runner:
   labels:
     - xcode-27
+    - codspeed-macro-arm64-graviton-ubuntu-22-04

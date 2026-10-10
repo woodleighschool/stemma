@@ -39,16 +39,17 @@ mise run bench-codspeed
 ```
 
 Both commands run benchmarks without correctness tests, one package at a time,
-with four Go scheduler threads. `bench` uses standard Go measurements;
+with four Go scheduler threads. `bench` reports native Go timings and allocations;
 `bench-codspeed` replaces the CodSpeed walltime data in `tmp/codspeed` without uploading.
 Fixture generation and output cleanup are outside the timed operations.
 
 The suite covers canonical tree acquisition, cache streams, physical and TAR-backed
 signature verification, PKG creation/inspection/extraction, DMG creation/opening/reading,
 and application update/cold/warm preparation. Packaging uses generated bundles with
-256 resources and a 17 MiB executable crossing a PBZX block boundary. Signature
-verification uses the existing signed fixtures. No installed applications or external
-fixture downloads are required.
+256 resources and a 17 MiB executable crossing a PBZX block boundary. An additional
+XZ build mixes zero-filled and varied deterministic data to exercise compression
+beyond repeated blocks. Signature verification uses the existing signed fixtures.
+No installed applications or external fixture downloads are required.
 
 `STEMMA_BENCH_APP=/Applications/Example.app` selects an installed application for
 acquisition, verification and preparation measurements. Keep those local results
@@ -61,9 +62,10 @@ The Benchmarks workflow reports PR and main-branch measurements through the
 PR comparisons use the main-branch baseline.
 Renovate updates the action pin and the Go integration's Mise pin;
 CI reads the latter from the local benchmark task.
-Walltime includes I/O; hosted-runner noise still affects comparisons, and Linux
-measurements do not reproduce macOS endpoint-protection overhead. Regressions are
-visible only in the operations and workloads exercised by the suite.
+CI measures walltime on CodSpeed ARM64 Macro Runners, including I/O. Compare runs
+from the same runner type. CodSpeed does not report Go allocations; use `bench`
+for those. Linux measurements do not reproduce macOS endpoint-protection overhead.
+Regressions are visible only in the operations and workloads exercised by the suite.
 
 ## Work on the docs
 
