@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.10.4](https://github.com/woodleighschool/stemma/compare/v0.10.3...v0.10.4) (2026-10-10)
+
+
+### Features
+
+* **icon:** take artwork from a local application or file ([883adb3](https://github.com/woodleighschool/stemma/commit/883adb34bd642d4dd705bc1c773ee33b27bb8de7))
+
+
+### Bug Fixes
+
+* **go:** update module github.com/google/go-github/v92 (4dbe048 → 40091e2) ([#151](https://github.com/woodleighschool/stemma/issues/151)) ([d3379dc](https://github.com/woodleighschool/stemma/commit/d3379dce9df2a25750e893391b6a4ce27e8834c7))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (71fd646 → da6ad80) ([#146](https://github.com/woodleighschool/stemma/issues/146)) ([60d41b3](https://github.com/woodleighschool/stemma/commit/60d41b3150ec44c96145981d7800406cb41101c6))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (da6ad80 → 3c08147) ([#150](https://github.com/woodleighschool/stemma/issues/150)) ([3d5401f](https://github.com/woodleighschool/stemma/commit/3d5401f7e6678330f410ba55bf2d0a0189deaa9f))
+* **treefs:** use current metadata during traversal ([3b7a096](https://github.com/woodleighschool/stemma/commit/3b7a09652c1e53f7e8ce22ddc85b8045e1460f2a))
+
+
+### Performance Improvements
+
+* **apple:** retain scoped handles while reading bundles ([871e92c](https://github.com/woodleighschool/stemma/commit/871e92c3fb5aeb0966517200025f14a62e286a52))
+* **engine:** prepare applications from canonical tree leases ([f82b466](https://github.com/woodleighschool/stemma/commit/f82b466a7ac16502bfe983a7a7ad3e1224cdc103))
+* **storage:** stream canonical trees through verified copies ([67ebd43](https://github.com/woodleighschool/stemma/commit/67ebd438074f3a5570e8f8b0b0821ecc87201981))
+
 ## [0.10.3](https://github.com/woodleighschool/stemma/compare/v0.10.2...v0.10.3) (2026-10-09)
 
 
