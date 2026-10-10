@@ -1,0 +1,58 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Benchmarks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  MISE_NO_HOOKS: "1"
+  MISE_TASK_RUN_AUTO_INSTALL: "false"
+  GOMAXPROCS: "4"
+  GOFLAGS: "-p=1"
+
+jobs:
+  benchmarks:
+    name: Portable operations
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Mise
+        uses: jdx/mise-action@2d8d4cafcbd33be2ea37d2b6f5ad595363d1f1ca # v5.1.1
+        with:
+          experimental: true
+          install_args: --locked go
+
+      - name: Resolve Go benchmark runner
+        id: tools
+        run: |
+          version=$(mise tasks info bench-codspeed --json | jq -er '.tools["github:CodSpeedHQ/codspeed-go"]')
+          echo "go-runner-version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Measure operations
+        uses: CodSpeedHQ/action@f842b9a3ffe213dbb81768fd7f7eeb4dfcf1c369 # v5.4.2
+        with:
+          mode: walltime
+          go-runner-version: ${{ steps.tools.outputs.go-runner-version }}
+          run: go test -bench=. -benchtime=1s ./internal/archive ./internal/apple ./internal/cas ./internal/diskimage ./internal/pkgbuild ./internal/engine

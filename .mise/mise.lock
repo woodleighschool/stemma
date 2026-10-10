@@ -31,6 +31,26 @@ url = "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_
 url_api = "https://api.github.com/repos/rhysd/actionlint/releases/assets/384924919"
 provenance = "github-attestations"
 
+[[tools."github:CodSpeedHQ/codspeed-go"]]
+version = "1.3.0"
+backend = "github:CodSpeedHQ/codspeed-go"
+specifiers = ["1.3.0"]
+
+[tools."github:CodSpeedHQ/codspeed-go"."platforms.linux-arm64"]
+checksum = "sha256:bbd3df1b39386f232b4bf52ac424b21dc34039aba779a8221fc5cb3f05783098"
+url = "https://github.com/CodSpeedHQ/codspeed-go/releases/download/v1.3.0/codspeed-go-runner-aarch64-unknown-linux-musl.tar.xz"
+url_api = "https://api.github.com/repos/CodSpeedHQ/codspeed-go/releases/assets/527724634"
+
+[tools."github:CodSpeedHQ/codspeed-go"."platforms.linux-x64"]
+checksum = "sha256:297b07b28c4833755d3d14a8c385ef29fb80cd2c8613e1f5b2e62a56c22f0399"
+url = "https://github.com/CodSpeedHQ/codspeed-go/releases/download/v1.3.0/codspeed-go-runner-x86_64-unknown-linux-musl.tar.xz"
+url_api = "https://api.github.com/repos/CodSpeedHQ/codspeed-go/releases/assets/527724651"
+
+[tools."github:CodSpeedHQ/codspeed-go"."platforms.macos-arm64"]
+checksum = "sha256:67c85efafd9dd64c653bb1b6fae23e2d72f8212ac745ee76444c6392f4e6f974"
+url = "https://github.com/CodSpeedHQ/codspeed-go/releases/download/v1.3.0/codspeed-go-runner-aarch64-apple-darwin.tar.xz"
+url_api = "https://api.github.com/repos/CodSpeedHQ/codspeed-go/releases/assets/527724637"
+
 [[tools."github:microsoft/kiota"]]
 version = "1.35.0"
 backend = "github:microsoft/kiota"

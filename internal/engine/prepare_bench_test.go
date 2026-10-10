@@ -17,7 +17,7 @@ import (
 func BenchmarkPrepareApplication(b *testing.B) {
 	app := os.Getenv("STEMMA_BENCH_APP")
 	if app == "" {
-		b.Skip("set STEMMA_BENCH_APP to an installed signed application")
+		app = "../apple/testdata/NestedFixture.app"
 	}
 	app, err := filepath.Abs(app)
 	if err != nil {
@@ -59,10 +59,15 @@ spec:
 				}
 			}
 			b.ReportAllocs()
+			if method == "cold" {
+				options.CacheDir = filepath.Join(b.TempDir(), "cache")
+			}
 			for b.Loop() {
 				if method == "cold" {
 					b.StopTimer()
-					options.CacheDir = b.TempDir()
+					if err := os.RemoveAll(options.CacheDir); err != nil {
+						b.Fatal(err)
+					}
 					b.StartTimer()
 				}
 				if _, err := Run(b.Context(), options); err != nil {
