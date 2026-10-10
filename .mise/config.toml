@@ -59,6 +59,20 @@ run = "go run ./internal/intune/generate.go"
 description = "Run Go tests"
 run = ["go vet ./...", "go test -race -count=1 ./..."]
 
+[tasks.bench]
+description = "Run portable benchmarks without correctness tests"
+env = { GOMAXPROCS = "4", GOFLAGS = "-p=1" }
+run = "go test -run='^$' -bench=. -benchtime=1s ./internal/archive ./internal/apple ./internal/cas ./internal/diskimage ./internal/pkgbuild ./internal/engine"
+
+[tasks.bench-codspeed]
+description = "Record local CodSpeed measurements without uploading"
+tools = { "github:CodSpeedHQ/codspeed-go" = "1.3.0" }
+env = { GOMAXPROCS = "4", GOFLAGS = "-p=1", CODSPEED_PROFILE_FOLDER = "{{config_root}}/tmp/codspeed" }
+run = [
+  'rm -rf "$CODSPEED_PROFILE_FOLDER"',
+  "codspeed-go-runner test -bench=. -benchtime=1s ./internal/archive ./internal/apple ./internal/cas ./internal/diskimage ./internal/pkgbuild ./internal/engine",
+]
+
 [tasks.lint-fix]
 description = "Run linters and apply fixes"
 run = "golangci-lint run --fix"

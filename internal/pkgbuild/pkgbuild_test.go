@@ -234,7 +234,7 @@ func TestBuildSymlinksStayWithinEachArchive(t *testing.T) {
 	}
 }
 
-func largeFixture(t *testing.T) (string, Options) {
+func largeFixture(t *testing.T, size int64) (string, Options) {
 	t.Helper()
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "Fixture.app/Contents/Info.plist"), []byte(`<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.large</string><key>CFBundleExecutable</key><string>large</string><key>CFBundleShortVersionString</key><string>1.2</string><key>CFBundleVersion</key><string>12</string></dict></plist>`), 0o644)
@@ -245,7 +245,6 @@ func largeFixture(t *testing.T) (string, Options) {
 		t.Fatal(err)
 	}
 	defer func() { _ = f.Close() }()
-	const size = 65 << 20
 	if err := f.Truncate(size); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +269,7 @@ func fileDigest(t *testing.T, filename string) [sha256.Size]byte {
 }
 
 func TestBuildLargeAppStreamsAndRemainsReproducible(t *testing.T) {
-	root, opts := largeFixture(t)
+	root, opts := largeFixture(t, 65<<20)
 	first := filepath.Join(t.TempDir(), "first.pkg")
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
@@ -291,6 +290,13 @@ func TestBuildLargeAppStreamsAndRemainsReproducible(t *testing.T) {
 	}
 	if _, err := apple.VerifyPackage(t.Context(), first, signature.Signer{}); err == nil || !strings.Contains(err.Error(), "not signed") {
 		t.Fatalf("large package integrity: %v", err)
+	}
+	extracted, err := apple.ExtractApplication(t.Context(), first, "Payload", "/Applications/Fixture.app", t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fileDigest(t, filepath.Join(extracted, "Contents/MacOS/large")) != fileDigest(t, filepath.Join(root, "Fixture.app/Contents/MacOS/large")) {
+		t.Fatal("payload bytes changed")
 	}
 	second := filepath.Join(t.TempDir(), "second.pkg")
 	if err := Build(t.Context(), root, second, opts); err != nil {
@@ -324,8 +330,11 @@ func TestBuildCompressesThePayloadAsDeclared(t *testing.T) {
 				t.Fatalf("scripts begin %q", scripts[:min(len(scripts), 4)])
 			}
 
-			// A 65 MiB executable spans several 16 MiB PBZX blocks.
-			root, opts = largeFixture(t)
+			if test.compression == Gzip {
+				return // The streaming test covers large gzip payloads and reproducibility.
+			}
+			// Cross the 16 MiB PBZX block boundary, including a partial final block.
+			root, opts = largeFixture(t, 17<<20)
 			opts.Compression = test.compression
 			first, second := filepath.Join(t.TempDir(), "first.pkg"), filepath.Join(t.TempDir(), "second.pkg")
 			for _, output := range []string{first, second} {

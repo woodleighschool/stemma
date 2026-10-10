@@ -59,3 +59,12 @@ func BenchmarkVerifyPackedApp(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkVerifyPackage(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := VerifyPackage(b.Context(), "testdata/fixture.pkg", signature.Signer{}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

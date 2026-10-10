@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -38,10 +37,7 @@ func TestExternalResolverEvidenceFeedsNativeMetadata(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../plugin/testdata/echo")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build plugin: %v\n%s", err, output)
-	}
+	writeEchoPlugin(t, binary)
 	payload, err := os.ReadFile("../apple/testdata/fixture.pkg")
 	if err != nil {
 		t.Fatal(err)
@@ -160,10 +156,7 @@ func TestExternalResolverBuilderAndNativeDestination(t *testing.T) {
 		t.Run(transport, func(t *testing.T) {
 			root := t.TempDir()
 			binary := filepath.Join(root, "echo")
-			build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../plugin/testdata/echo")
-			if output, err := build.CombinedOutput(); err != nil {
-				t.Fatalf("build plugin: %v\n%s", err, output)
-			}
+			writeEchoPlugin(t, binary)
 			payload, err := os.ReadFile("../apple/testdata/fixture.pkg")
 			if err != nil {
 				t.Fatal(err)
@@ -424,10 +417,7 @@ func TestStaleInterfaceFailsOnlyWhereUsed(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../plugin/testdata/echo")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build plugin: %v\n%s", err, output)
-	}
+	writeEchoPlugin(t, binary)
 	payload, err := os.ReadFile("../apple/testdata/fixture.pkg")
 	if err != nil {
 		t.Fatal(err)
