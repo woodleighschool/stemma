@@ -98,27 +98,17 @@ func (o *commandOutput) emit(text string) error {
 	return err
 }
 
-func (o *commandOutput) beginPhase(method string) error {
+func (o *commandOutput) reconcilePhase(method string) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.asJSON || o.resultOnly {
+	if o.asJSON {
 		return nil
 	}
-	title := map[string]string{
-		"update": "Updating inputs", "prepare": "Preparing software",
-		"signature": "Deriving signatures", "icon": "Extracting icons",
-		"plan": "Planning publications", "apply": "Applying publications",
-	}[method]
-	prefix := ""
-	if o.reconciling {
-		switch method {
-		case "apply":
-			title = "Applying reviewed software"
-		case "update":
-			title, prefix = "Checking for updates", "\n"
-		}
+	title, prefix := "Applying reviewed branch", ""
+	if method == "update" {
+		title, prefix = "Proposing updates", "\n"
 	}
-	return o.emit(prefix + o.outStyle.heading(title) + "\n\n")
+	return o.emit(prefix + o.outStyle.paint(title, color.Bold) + "\n\n")
 }
 
 // notice writes a diagnostic line to stderr, above the live region while it is

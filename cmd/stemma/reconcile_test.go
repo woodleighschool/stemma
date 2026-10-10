@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/lockfile"
@@ -29,7 +30,7 @@ func TestReconcileRequiresSourceControl(t *testing.T) {
 }
 
 func TestReconcileStreamsOutcomesAndCountsProposals(t *testing.T) {
-	report := reconcile.Report{Branch: "main", Head: "0123456789abcdef", Apply: &reconcile.Apply{Commit: "0123456789abcdef", Summary: "2 resources, 3 destination changes"}, Update: &reconcile.Update{Proposals: []reconcile.Proposal{
+	report := reconcile.Report{Branch: "main", Head: "0123456789abcdef", Apply: &reconcile.Apply{Commit: "0123456789abcdef", Summary: "2 resources, 3 destination changes", Elapsed: 65 * time.Second}, Update: &reconcile.Update{Proposals: []reconcile.Proposal{
 		{Name: "MacSoftware/chrome", Branch: "stemma/MacSoftware/chrome", Action: "created", PullRequest: "https://github.example/pull/1", Summary: "MacSoftware/chrome 129: 3 planned changes across 1 destination"},
 		{Name: "MacSoftware/broken", Action: "failed", Error: "download returned HTTP 404"},
 		{Name: "MacSoftware/firefox", Action: "unchanged", PullRequest: "https://github.example/pull/2"},
@@ -62,7 +63,7 @@ func TestReconcileStreamsOutcomesAndCountsProposals(t *testing.T) {
 		if err := o.reconciled(&out, report, nil); err != nil {
 			t.Fatal(err)
 		}
-		want := "✓ Reviewed main@0123456789ab: applied (2 resources, 3 destination changes)\n"
+		want := "✓ Reviewed main@0123456789ab: applied (2 resources, 3 destination changes) (1m5s)\n"
 		want += "✓ MacSoftware/chrome: created\n  Pull request: https://github.example/pull/1\n  MacSoftware/chrome 129: 3 planned changes across 1 destination\n" +
 			"➤ MacSoftware/broken: failed\n  ✗ download returned HTTP 404\n"
 		want += "Proposals: 1 created, 1 failed, 1 unchanged.\n"

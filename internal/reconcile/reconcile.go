@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/engine"
@@ -68,6 +69,7 @@ type Report struct {
 type Apply struct {
 	Commit  string         `json:"commit"`
 	Skipped bool           `json:"skipped"`
+	Elapsed time.Duration  `json:"elapsed_ns,omitempty"`
 	Summary string         `json:"summary,omitempty"`
 	Error   string         `json:"error,omitempty"`
 	Report  *engine.Report `json:"report,omitempty"`
@@ -303,8 +305,8 @@ func (r *runner) reject(ctx context.Context, head string) error {
 
 // apply publishes the reviewed commit from its frozen lock. The marker moves after
 // publication and its commit status succeed, so failures retry next run.
-func (r *runner) apply(ctx context.Context, head string, reviewed *git.Worktree) Apply {
-	result := Apply{Commit: head}
+func (r *runner) apply(ctx context.Context, head string, reviewed *git.Worktree) (result Apply) {
+	result.Commit = head
 	m, err := readMarker(r.stateDir)
 	if err != nil {
 		result.Error = err.Error()
@@ -314,10 +316,10 @@ func (r *runner) apply(ctx context.Context, head string, reviewed *git.Worktree)
 		result.Skipped = true
 		return result
 	}
-	done := plugin.Stage(ctx, "Applying reviewed branch", plugin.Detail(short(head)))
+	started := time.Now()
+	defer func() { result.Elapsed = time.Since(started) }()
 	report, applyErr := engine.Run(ctx, r.engineOptions("apply", r.configIn(reviewed), nil))
 	result.Report = &report
-	done(applyErr)
 	state, summary := applySummary(report, applyErr)
 	result.Summary = summary
 	if summary == "" {

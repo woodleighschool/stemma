@@ -277,14 +277,19 @@ reinforces these markers; the same text remains readable without it. Diff lines
 retain `+` and `-`, and literal payloads, YAML fragments and machine output retain
 their own syntax.
 
+Pipeline commands start with their resources. Reconcile separates Applying
+reviewed branch from Proposing updates with neutral section titles. The reviewed
+branch result includes its elapsed time.
+
 When stderr is a suitable terminal, a live region shows the resource being worked
 on: its heading, the step that is running, and above it completed transfers and
 other finished steps that took a second or longer. Pipeline steps sit under
 Acquire, Prepare and a section for each destination: Check during preparation,
-Plan during planning, or Publish during application. Only phases with visible
-work appear. Known-size transfers show a bar and counts. A step
+Plan during planning, or Publish during application. Phase labels are subdued,
+with a blank line between phases; resource headings stay prominent. Only phases
+with visible work appear. Known-size transfers show a bar and counts. A step
 that runs again within a phase continues its earlier line. Work that belongs to the command
-rather than a resource shows on its own line below. A block taller than the
+rather than a resource shows while no resource operation is running. A block taller than the
 terminal scrolls into history instead of being cut. The resource's result
 replaces its live block, and durable results have the same content in terminals
 and pipes. Results remain on stdout even when it is redirected. JSON, generated

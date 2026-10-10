@@ -292,11 +292,6 @@ func iconFrom(ctx context.Context, opts Options, report *Report) error {
 	if err != nil {
 		return err
 	}
-	if opts.Started != nil {
-		if err := opts.Started(); err != nil {
-			return err
-		}
-	}
 	report.Resources = []ResourceReport{{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Key: key}}
 	item := &report.Resources[0]
 	var failure error

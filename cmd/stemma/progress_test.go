@@ -200,23 +200,31 @@ func TestTallBlockScrollsIntoHistoryWithoutLosingSteps(t *testing.T) {
 	}
 }
 
-func TestProjectStepSitsBelowResourceProgress(t *testing.T) {
-	p := newTerminalProgress(io.Discard)
-	p.update(activity{label: "Applying reviewed branch", detail: "0e8c221a680f", stage: true})
+func TestResourceProgressTakesPrecedenceOverProjectActivity(t *testing.T) {
+	var out bytes.Buffer
+	p := newTerminalProgress(&out)
+	p.update(activity{label: "Resolving catalog", stage: true})
 	p.update(activity{label: "Validating operation contracts", stage: true})
 	p.update(activity{label: "Validating operation contracts", status: true, elapsed: 2 * time.Second})
-	if got := shown(p, time.UnixMilli(0)); got != "⠋ Applying reviewed branch: 0e8c221a680f" {
+	if got := shown(p, time.UnixMilli(0)); got != "⠋ Resolving catalog" {
 		t.Fatalf("project step alone: %q", got)
 	}
 	p.update(activity{scope: "MacSoftware/example", qualifier: "intune", label: "Planning destination", stage: true})
 	want := strings.Join([]string{
 		"➤ MacSoftware/example",
 		"  ⠋ Planning destination (intune)",
-		"",
-		"⠋ Applying reviewed branch: 0e8c221a680f",
 	}, "\n")
 	if got := shown(p, time.UnixMilli(0)); got != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	p.plain = true
+	p.draw(time.Now().Add(3 * time.Second))
+	if got := out.String(); !strings.Contains(got, "Planning destination") || strings.Contains(got, "Resolving catalog") {
+		t.Fatalf("plain progress competes with resource work: %q", got)
+	}
+	p.complete("MacSoftware/example")
+	if got := shown(p, time.UnixMilli(0)); got != "⠋ Resolving catalog" {
+		t.Fatalf("unscoped work did not resume: %s", got)
 	}
 }
 
@@ -420,11 +428,14 @@ func TestPipelinePhasesKeepTransferAndDestinationHistory(t *testing.T) {
 		"➤ MacSoftware/example",
 		"  Acquire",
 		"    ✓ Downloading source: vendor.pkg (3s)",
+		"",
 		"  Prepare",
 		"    ✓ Inspecting package: vendor.pkg (2s)",
+		"",
 		"  Publish → first",
 		"    ✓ Uploading installer: example.pkg 4.0 MiB",
 		"    ✓ Finalizing upload: example.pkg (3s)",
+		"",
 		"  Publish → second",
 		"    ✓ Uploading installer: example.pkg 4.0 MiB",
 		"    ✓ Finalizing upload: example.pkg (3s)",
@@ -443,7 +454,10 @@ func TestPhaseHeadingsAndStepsScrollOnce(t *testing.T) {
 			const resource = "MacSoftware/example"
 			want := "➤ " + resource + "\n"
 			var history strings.Builder
-			for _, phase := range []string{"Acquire", "Prepare", "Publish → repo"} {
+			for i, phase := range []string{"Acquire", "Prepare", "Publish → repo"} {
+				if i > 0 {
+					want += "\n"
+				}
 				want += "  " + phase + "\n"
 				for i := range 4 {
 					label := fmt.Sprintf("Step %d", i)

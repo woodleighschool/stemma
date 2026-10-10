@@ -726,7 +726,7 @@ func TestApplyRetriesWhenCommitStatusWasNotRecorded(t *testing.T) {
 	opts := Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()}
 	gh.rejectStatuses.Store(true)
 	failed, err := Run(t.Context(), opts)
-	if !errors.Is(err, ErrFailed) || failed.Apply == nil || !strings.Contains(failed.Apply.Error, "commit status") {
+	if !errors.Is(err, ErrFailed) || failed.Apply == nil || failed.Apply.Elapsed <= 0 || !strings.Contains(failed.Apply.Error, "commit status") {
 		t.Fatalf("status failure was not reported: %+v, %v", failed, err)
 	}
 	if m, err := readMarker(opts.StateDir); err != nil || m.Applied != "" {
@@ -734,7 +734,7 @@ func TestApplyRetriesWhenCommitStatusWasNotRecorded(t *testing.T) {
 	}
 	gh.rejectStatuses.Store(false)
 	retried, err := Run(t.Context(), opts)
-	if err != nil || retried.Apply == nil || retried.Apply.Skipped || retried.Apply.Failed() || gh.status(retried.Head, applyContext)["state"] != "success" {
+	if err != nil || retried.Apply == nil || retried.Apply.Elapsed <= 0 || retried.Apply.Skipped || retried.Apply.Failed() || gh.status(retried.Head, applyContext)["state"] != "success" {
 		t.Fatalf("status was not repaired by the next run: %+v, %v", retried, err)
 	}
 	if m, err := readMarker(opts.StateDir); err != nil || m.Applied != retried.Head {

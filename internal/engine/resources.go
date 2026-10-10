@@ -363,7 +363,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			return nil, false, err
 		}
 		if complete {
-			detail = strings.TrimSpace(outputDetail(cached) + " (cached)")
+			detail = strings.TrimSpace(cached["installer"].Filename + " (cached)")
 			return cached, true, nil
 		}
 	}
@@ -493,14 +493,8 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		}{identityInputs, modes})
 		outputs[name] = observed
 	}
-	detail = outputDetail(outputs)
+	detail = outputs["installer"].Filename
 	return outputs, false, rememberOutputs(ctx, store, key, outputs)
-}
-
-// outputDetail names a preparation's installer for progress displays.
-func outputDetail(outputs map[string]Prepared) string {
-	installer := outputs["installer"]
-	return strings.TrimSpace(installer.Filename + " " + installer.Version)
 }
 
 func rememberOutputs(ctx context.Context, store *cas.Store, key string, outputs map[string]Prepared) error {

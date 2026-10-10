@@ -237,7 +237,11 @@ func Verify(ctx context.Context, expectations []Expectation, subjects []plugin.S
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		done := plugin.Stage(ctx, "Inspecting signature", plugin.Detail(subject.Path))
+		detail := subject.Path
+		if detail == "." && len(subjects) == 1 {
+			detail = ""
+		}
+		done := plugin.Stage(ctx, "Inspecting signature", plugin.Detail(detail))
 		result, err := check(subject)
 		if errors.Is(err, ErrUnsigned) {
 			done(nil, plugin.Detail("unsigned"))

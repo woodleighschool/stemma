@@ -118,6 +118,8 @@ type progressGroup struct {
 	scrolled bool
 	// scrolledPhase is the last phase heading already in history.
 	scrolledPhase string
+	// A separator can scroll before the heading it introduces.
+	scrolledGap bool
 }
 
 // running returns the innermost unfinished step. The steps of one scope run
@@ -132,13 +134,18 @@ func (g *progressGroup) running() *progressLine {
 }
 
 // scrollLine forgets the block's top line, which history now holds.
-func (g *progressGroup) scrollLine(phase string) {
+func (g *progressGroup) scrollLine(phase string, gap bool) {
 	if !g.scrolled {
 		g.scrolled = true
 		return
 	}
+	if gap {
+		g.scrolledGap = true
+		return
+	}
 	if phase != "" {
 		g.scrolledPhase = phase
+		g.scrolledGap = false
 		return
 	}
 	i := slices.IndexFunc(g.rows, func(row progressLine) bool { return row.finished })
@@ -146,8 +153,8 @@ func (g *progressGroup) scrollLine(phase string) {
 }
 
 // terminalProgress owns a transient region: a block per resource with its
-// heading, its finished steps worth keeping and the step running now, then
-// the running project step. A block stays from the resource's first
+// heading, its finished steps worth keeping and the step running now.
+// Project activity yields to running resource work. A block stays from the resource's first
 // step until its report replaces it or another scope starts work. The clock,
 // activity updates and persistent writes share one lock: no renderer can
 // repaint a stale frame after a report has begun scrolling the terminal.
@@ -363,6 +370,7 @@ type regionLine struct {
 	text  string
 	group *progressGroup
 	phase string
+	gap   bool
 }
 
 func (p *terminalProgress) resourceLines(group *progressGroup, width int, now time.Time, frame string, active bool) []regionLine {
@@ -371,6 +379,7 @@ func (p *terminalProgress) resourceLines(group *progressGroup, width int, now ti
 		lines = append(lines, regionLine{text: p.style.heading(runewidth.Truncate(cleanLine(group.scope), max(0, width-3), "…")), group: group})
 	}
 	phase := group.scrolledPhase
+	separated := group.scrolledGap
 	var visible []*progressLine
 	for i := range group.rows {
 		if row := &group.rows[i]; row.finished {
@@ -384,8 +393,12 @@ func (p *terminalProgress) resourceLines(group *progressGroup, width int, now ti
 		indent := stepIndent
 		if row.phase != "" {
 			if row.phase != phase {
+				if phase != "" && !separated {
+					lines = append(lines, regionLine{group: group, gap: true})
+				}
 				title := runewidth.Truncate(cleanLine(row.phase), max(0, width-len(stepIndent)-1), "…")
-				lines = append(lines, regionLine{text: stepIndent + p.style.paint(title, color.Bold, color.FgHiMagenta), group: group, phase: row.phase})
+				lines = append(lines, regionLine{text: stepIndent + p.style.paint(title, color.Faint), group: group, phase: row.phase})
+				separated = false
 			}
 			indent += stepIndent
 		}
@@ -399,17 +412,23 @@ func (p *terminalProgress) resourceLines(group *progressGroup, width int, now ti
 	return lines
 }
 
-// view lays out each resource's heading, kept steps and running step, never
-// the steps that enclose it, then the running project step on a line of its
-// own. Only a region that fits the terminal can be erased, so a taller one
+func (p *terminalProgress) resourceRunning() bool {
+	return slices.ContainsFunc(p.groups, func(group *progressGroup) bool {
+		return group.scope != "" && group.running() != nil
+	})
+}
+
+// view keeps completed steps above the active operation. Only a region that
+// fits the terminal can be erased, so a taller one
 // sends its top lines to history and carries on below them.
 func (p *terminalProgress) view(now time.Time, width, height int) (history, region string) {
 	frame := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}[(now.UnixMilli()/100)%10]
 	var lines, project []regionLine
+	resourceRunning := p.resourceRunning()
 	for _, group := range p.groups {
 		running := group.running()
 		if group.scope == "" {
-			if running != nil {
+			if running != nil && !resourceRunning {
 				project = append(project, regionLine{text: progressText(p.style, running, "", width, now, frame)})
 			}
 			continue
@@ -424,7 +443,7 @@ func (p *terminalProgress) view(now time.Time, width, height int) (history, regi
 	var scrolled strings.Builder
 	for len(lines) > budget && lines[0].group != nil {
 		scrolled.WriteString(lines[0].text + "\n")
-		lines[0].group.scrollLine(lines[0].phase)
+		lines[0].group.scrollLine(lines[0].phase, lines[0].gap)
 		lines = lines[1:]
 	}
 	if len(lines) > budget {
@@ -439,7 +458,11 @@ func (p *terminalProgress) view(now time.Time, width, height int) (history, regi
 
 func (p *terminalProgress) draw(now time.Time) {
 	if p.plain {
+		resourceRunning := p.resourceRunning()
 		for _, group := range p.groups {
+			if group.scope == "" && resourceRunning {
+				continue
+			}
 			row := group.running()
 			if row == nil || now.Sub(row.started) < 2*time.Second || !row.announced.IsZero() && now.Sub(row.announced) < 30*time.Second {
 				continue

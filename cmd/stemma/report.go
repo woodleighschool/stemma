@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/dustin/go-humanize"
 	"github.com/fatih/color"
@@ -475,6 +476,9 @@ func renderReviewed(style textStyle, report reconcile.Report) string {
 	text.WriteString(style.outcomeLine("Reviewed "+changes.Text(head), outcome))
 	if apply.Summary != "" {
 		fmt.Fprintf(&text, " (%s)", changes.Text(apply.Summary))
+	}
+	if elapsed := apply.Elapsed.Round(time.Second); elapsed > 0 {
+		text.WriteString(style.paint(" ("+elapsed.String()+")", color.Faint))
 	}
 	text.WriteByte('\n')
 	// Resource failures streamed as they happened; the error is the rest.

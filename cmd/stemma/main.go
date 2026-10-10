@@ -229,9 +229,7 @@ func (c *cli) runCommand(method string) *cobra.Command {
 			}
 		}
 		c.display.selectors = slices.Clone(args)
-		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: method, Resources: args, Profiles: profiles, ChangedSince: changedSince, Icons: icons, Input: input, Started: func() error {
-			return c.display.beginPhase(method)
-		}, ResourceDone: func(resource engine.ResourceReport) error {
+		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: method, Resources: args, Profiles: profiles, ChangedSince: changedSince, Icons: icons, Input: input, ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone(method, resource)
 		}, Lock: lockfile.Options{Offline: offline}})
 		if err := c.display.report(c.out, method, report, runErr); err != nil {
@@ -302,7 +300,7 @@ func (c *cli) reconcileCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: c.cacheDir, StateDir: stateDir, PhaseStarted: c.display.beginPhase, ResourceDone: c.display.resourceDone, ApplyDone: c.display.applyDone, ProposalDone: c.display.proposalDone})
+		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: c.cacheDir, StateDir: stateDir, PhaseStarted: c.display.reconcilePhase, ResourceDone: c.display.resourceDone, ApplyDone: c.display.applyDone, ProposalDone: c.display.proposalDone})
 		if err := c.display.reconciled(c.out, report, runErr); err != nil {
 			return errors.Join(runErr, err)
 		}

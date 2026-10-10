@@ -1,8 +1,10 @@
 package signature
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -271,6 +273,51 @@ func TestVerifyCoverageAndStates(t *testing.T) {
 			_, err := Verify(t.Context(), []Expectation{test.expected}, subjects[:1], test.derive, func(plugin.Subject) (Result, error) { return test.result, test.err })
 			if (err == nil) != test.success {
 				t.Fatalf("verification: %v", err)
+			}
+		})
+	}
+}
+
+func TestSignatureProgressKeepsDistinctSubjectsAndOmitsLoneRoot(t *testing.T) {
+	for _, paths := range [][]string{{"."}, {"A.app"}, {".", "B.app"}} {
+		t.Run(strings.Join(paths, ","), func(t *testing.T) {
+			var logs bytes.Buffer
+			ctx := plugin.WithLogger(t.Context(), slog.New(slog.NewJSONHandler(&logs, nil)).With("input", "vendor"))
+			subjects := make([]plugin.Subject, len(paths))
+			for i, path := range paths {
+				subjects[i] = plugin.Subject{ID: path, Path: path}
+			}
+			observed, err := Verify(ctx, nil, subjects, true, func(plugin.Subject) (Result, error) {
+				return Result{Name: "Example Publisher"}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoder := json.NewDecoder(&logs)
+			for i, path := range paths {
+				if observed[i].Subject.Path != path {
+					t.Fatalf("observation path changed: %+v", observed[i])
+				}
+				for _, start := range []bool{true, false} {
+					var record struct {
+						Start  bool   `json:"stage"`
+						Detail string `json:"detail"`
+						Input  string `json:"input"`
+					}
+					if err := decoder.Decode(&record); err != nil {
+						t.Fatal(err)
+					}
+					want := "Example Publisher"
+					if start {
+						want = path
+						if path == "." && len(paths) == 1 {
+							want = ""
+						}
+					}
+					if record.Start != start || record.Detail != want || record.Input != "vendor" {
+						t.Fatalf("signature activity: %+v, want %q", record, want)
+					}
+				}
 			}
 		})
 	}

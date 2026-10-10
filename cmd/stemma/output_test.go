@@ -229,9 +229,6 @@ func TestPreparationKeepsEveryCompletedOutcome(t *testing.T) {
 			var out, diagnostic bytes.Buffer
 			o := newCommandOutput(&out, &diagnostic)
 			o.interactive = interactive
-			if err := o.beginPhase("prepare"); err != nil {
-				t.Fatal(err)
-			}
 			for _, resource := range resources {
 				before := out.String()
 				if err := o.resourceDone("prepare", resource); err != nil {
@@ -241,8 +238,7 @@ func TestPreparationKeepsEveryCompletedOutcome(t *testing.T) {
 					t.Fatalf("completed resource disappeared: %s", &out)
 				}
 			}
-			want := "➤ Preparing software\n\n" +
-				"✓ MacSoftware/cached (1.0): cached\n" +
+			want := "✓ MacSoftware/cached (1.0): cached\n" +
 				"✓ MacSoftware/built (2.0): prepared\n  installer: built-2.0.pkg\n" +
 				"➤ MacSoftware/failed: failed\n  ✗ source unavailable\n" +
 				"– MacSoftware/blocked: blocked\n  blocked by MacSoftware/failed\n"
@@ -270,20 +266,20 @@ func TestReconcileSectionsKeepPhaseOutcomesTogether(t *testing.T) {
 		var out, diagnostic bytes.Buffer
 		o := newCommandOutput(&out, &diagnostic)
 		o.asJSON, o.reconciling = asJSON, true
-		if err := o.beginPhase("apply"); err != nil {
+		if err := o.reconcilePhase("apply"); err != nil {
 			t.Fatal(err)
 		}
 		if err := o.applyDone(reconcile.Report{Branch: "main", Head: "123456789abc", Apply: &reconcile.Apply{Skipped: true}}); err != nil {
 			t.Fatal(err)
 		}
-		if err := o.beginPhase("update"); err != nil {
+		if err := o.reconcilePhase("update"); err != nil {
 			t.Fatal(err)
 		}
 		if err := o.proposalDone(reconcile.Proposal{Name: "MacSoftware/example", Action: "created", PullRequest: "https://example.test/pull/1"}); err != nil {
 			t.Fatal(err)
 		}
-		want := "➤ Applying reviewed software\n\n✓ Reviewed main@123456789abc: already applied\n\n" +
-			"➤ Checking for updates\n\n✓ MacSoftware/example: created\n  Pull request: https://example.test/pull/1\n"
+		want := "Applying reviewed branch\n\n✓ Reviewed main@123456789abc: already applied\n\n" +
+			"Proposing updates\n\n✓ MacSoftware/example: created\n  Pull request: https://example.test/pull/1\n"
 		if asJSON {
 			want = ""
 		}
