@@ -93,7 +93,14 @@ func (e *execution) reconcile(ctx context.Context, ref destinationRef) error {
 
 func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource preparedResource, peers map[string]json.RawMessage, item *ResourceReport) (runErr error) {
 	s, software, destination := e.session, e.plans[ref.Resource], ref.Destination
-	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", software.Resource.Kind+"/"+software.Resource.Metadata.Name, "destination", destination))
+	phase := "Check"
+	switch e.opts.Method {
+	case "plan":
+		phase = "Plan"
+	case "apply":
+		phase = "Publish"
+	}
+	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", software.Resource.Kind+"/"+software.Resource.Metadata.Name, "destination", destination, "phase", phase))
 	done := plugin.Stage(ctx, "Validating destination")
 	defer func() { done(runErr) }()
 	prepared, present := resource.outputs["installer"]
@@ -213,9 +220,7 @@ func (e *execution) request(ref destinationRef, prepared Prepared, metadata map[
 	}, nil
 }
 
-func (e *execution) deliver(ctx context.Context, operation string, request plugin.ReconcileRequest[json.RawMessage], report DestinationReport) (_ DestinationReport, runErr error) {
-	done := plugin.Stage(ctx, "Applying destination")
-	defer func() { done(runErr) }()
+func (e *execution) deliver(ctx context.Context, operation string, request plugin.ReconcileRequest[json.RawMessage], report DestinationReport) (DestinationReport, error) {
 	if err := verifyLeases(ctx, request); err != nil {
 		return report, err
 	}
@@ -226,7 +231,6 @@ func (e *execution) deliver(ctx context.Context, operation string, request plugi
 	report.Changes = response.Changes
 	report.Origins = mergeOrigins(report.Origins, response.Origins)
 	report.Applied = err == nil
-	done(err, plugin.Detail(changeCount(len(report.Changes))))
 	return report, err
 }
 

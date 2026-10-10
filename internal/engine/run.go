@@ -419,7 +419,11 @@ func (e *execution) prepare(ctx context.Context, key string) error {
 	if len(item.BlockedBy) > 0 {
 		failure = fmt.Errorf("blocked by %s", strings.Join(item.BlockedBy, ", "))
 	} else {
-		entries, item.InputCacheHits, failure = e.locked.Acquire(ctx, key)
+		acquireCtx := ctx
+		if e.opts.Method != "update" {
+			acquireCtx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("phase", "Acquire"))
+		}
+		entries, item.InputCacheHits, failure = e.locked.Acquire(acquireCtx, key)
 	}
 	result := preparedResource{report: len(e.report.Resources)}
 	if failure == nil && e.opts.Method != "update" {
@@ -435,7 +439,8 @@ func (e *execution) prepare(ctx context.Context, key string) error {
 			if e.opts.Method == "signature" {
 				derive = "signature"
 			}
-			result.outputs, item.Cached, failure = prepareResource(ctx, e.session.store, e.session.ops, plan, inputs, work, derive)
+			prepareCtx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("phase", "Prepare"))
+			result.outputs, item.Cached, failure = prepareResource(prepareCtx, e.session.store, e.session.ops, plan, inputs, work, derive)
 		}
 	}
 	item.Artifacts = result.outputs

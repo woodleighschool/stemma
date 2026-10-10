@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -35,11 +37,11 @@ func TestResourceBlockStaysWhileItsStepsChange(t *testing.T) {
 		t.Fatalf("enclosing step shown beside its step: %s", got)
 	}
 	p.update(activity{scope: resource, label: "Downloading input", status: true})
-	if got := shown(p, now); !strings.Contains(got, "Acquiring input") || strings.Contains(got, "Downloading") {
-		t.Fatalf("enclosing step is not the running one: %s", got)
+	if got := shown(p, now); !strings.Contains(got, "Acquiring input") || !strings.Contains(got, "✓ Downloading input: example.pkg 1.0 MiB") {
+		t.Fatalf("transfer lost its completed count: %s", got)
 	}
 	p.update(activity{scope: resource, label: "Acquiring input", status: true})
-	if got := shown(p, now); got != "➤ MacSoftware/example" {
+	if got := shown(p, now); got != "➤ MacSoftware/example\n  ✓ Downloading input: example.pkg 1.0 MiB" {
 		t.Fatalf("block changed between steps: %q", got)
 	}
 	p.update(activity{scope: resource, label: "Preparing outputs", stage: true})
@@ -394,5 +396,96 @@ func TestStderrNoticeAndProgressRedrawShareAWrite(t *testing.T) {
 	}
 	if len(out.writes) != 1 || !strings.Contains(out.writes[0], "! check configuration\n➤ MacSoftware/example\n") {
 		t.Fatalf("notice exposes separate clear/redraw frames: %q", out.writes)
+	}
+}
+
+func TestPipelinePhasesKeepTransferAndDestinationHistory(t *testing.T) {
+	p := newTerminalProgress(io.Discard)
+	const resource = "MacSoftware/example"
+	step := func(phase, label, detail string, elapsed time.Duration) {
+		p.update(activity{scope: resource, phase: phase, label: label, detail: detail, stage: true})
+		p.update(activity{scope: resource, phase: phase, label: label, elapsed: elapsed, status: true})
+	}
+	step("Acquire", "Downloading source", "vendor.pkg", 3*time.Second)
+	step("Prepare", "Inspecting package", "vendor.pkg", 2*time.Second)
+	for _, destination := range []string{"first", "second"} {
+		phase := "Publish → " + destination
+		p.update(activity{scope: resource, phase: phase, label: "Uploading installer", detail: "example.pkg", stage: true})
+		p.update(activity{scope: resource, phase: phase, progress: true, current: 4 << 20, total: 4 << 20, unit: "bytes"})
+		p.update(activity{scope: resource, phase: phase, label: "Uploading installer", status: true, elapsed: 100 * time.Millisecond})
+		step(phase, "Finalizing upload", "example.pkg", 3*time.Second)
+	}
+	p.update(activity{scope: resource, phase: "Publish → second", label: "Saving package", stage: true})
+	want := strings.Join([]string{
+		"➤ MacSoftware/example",
+		"  Acquire",
+		"    ✓ Downloading source: vendor.pkg (3s)",
+		"  Prepare",
+		"    ✓ Inspecting package: vendor.pkg (2s)",
+		"  Publish → first",
+		"    ✓ Uploading installer: example.pkg 4.0 MiB",
+		"    ✓ Finalizing upload: example.pkg (3s)",
+		"  Publish → second",
+		"    ✓ Uploading installer: example.pkg 4.0 MiB",
+		"    ✓ Finalizing upload: example.pkg (3s)",
+		"    ⠋ Saving package",
+	}, "\n")
+	if got := shown(p, time.UnixMilli(0)); got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestPhaseHeadingsAndStepsScrollOnce(t *testing.T) {
+	for _, height := range []int{1, 3, 6, 10} {
+		t.Run(strconv.Itoa(height), func(t *testing.T) {
+			var out bytes.Buffer
+			p := newTerminalProgress(&out)
+			const resource = "MacSoftware/example"
+			want := "➤ " + resource + "\n"
+			var history strings.Builder
+			for _, phase := range []string{"Acquire", "Prepare", "Publish → repo"} {
+				want += "  " + phase + "\n"
+				for i := range 4 {
+					label := fmt.Sprintf("Step %d", i)
+					p.update(activity{scope: resource, phase: phase, label: label, stage: true})
+					scrolled, _ := p.view(time.Now(), 50, height)
+					history.WriteString(scrolled)
+					p.update(activity{scope: resource, phase: phase, label: label, status: true, elapsed: 2 * time.Second})
+					want += "    ✓ " + label + " (2s)\n"
+				}
+			}
+			scrolled, _ := p.view(time.Now(), 50, height)
+			history.WriteString(scrolled)
+			p.complete(resource)
+			if got := history.String() + out.String(); got != want {
+				t.Fatalf("history:\n%s\nwant:\n%s", got, want)
+			}
+		})
+	}
+}
+
+func TestFastCachedPreparationDoesNotLeaveEmptyPhases(t *testing.T) {
+	p := newTerminalProgress(io.Discard)
+	p.update(activity{scope: "MacSoftware/example", phase: "Prepare", label: "Checking preparation cache", stage: true})
+	p.update(activity{scope: "MacSoftware/example", phase: "Prepare", label: "Checking preparation cache", status: true, detail: "cached"})
+	if got := shown(p, time.Now()); got != "➤ MacSoftware/example" {
+		t.Fatalf("empty phase: %s", got)
+	}
+}
+
+func TestPhaseContextIsSharedByTerminalAndPlainProgress(t *testing.T) {
+	var out bytes.Buffer
+	p := newTerminalProgress(&out)
+	attrs := []slog.Attr{slog.String("resource", "MacSoftware/example"), slog.String("phase", "Publish"), slog.String("destination", "woodstar")}
+	record := slog.NewRecord(time.Now(), slog.LevelInfo, "Uploading installer", 0)
+	record.AddAttrs(slog.Bool("stage", true), slog.String("detail", "example.pkg"))
+	p.update(readActivity(record, attrs))
+	if got := shown(p, time.UnixMilli(0)); got != "➤ MacSoftware/example\n  Publish → woodstar\n    ⠋ Uploading installer: example.pkg" {
+		t.Fatalf("phase or destination lost: %s", got)
+	}
+	p.plain = true
+	p.draw(time.Now().Add(3 * time.Second))
+	if got := out.String(); !strings.Contains(got, "MacSoftware/example: Publish → woodstar: Uploading installer: example.pkg") || strings.Contains(got, "\x1b") {
+		t.Fatalf("plain progress lost context: %q", got)
 	}
 }

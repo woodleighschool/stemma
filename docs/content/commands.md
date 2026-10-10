@@ -278,9 +278,12 @@ retain `+` and `-`, and literal payloads, YAML fragments and machine output reta
 their own syntax.
 
 When stderr is a suitable terminal, a live region shows the resource being worked
-on: its heading, the step that is running, and above it the finished steps that
-took a second or longer. Known-size transfers show a bar and counts. A step
-that runs again continues its earlier line. Work that belongs to the command
+on: its heading, the step that is running, and above it completed transfers and
+other finished steps that took a second or longer. Pipeline steps sit under
+Acquire, Prepare and a section for each destination: Check during preparation,
+Plan during planning, or Publish during application. Only phases with visible
+work appear. Known-size transfers show a bar and counts. A step
+that runs again within a phase continues its earlier line. Work that belongs to the command
 rather than a resource shows on its own line below. A block taller than the
 terminal scrolls into history instead of being cut. The resource's result
 replaces its live block, and durable results have the same content in terminals

@@ -21,10 +21,10 @@ type activity struct {
 	stage, progress, status bool
 	// label is the stage message; qualifier names the input, destination or
 	// plugin it works for.
-	label, qualifier, scope, detail, unit string
-	current, total                        int64
-	elapsed                               time.Duration
-	err                                   string
+	label, qualifier, scope, phase, detail, unit string
+	current, total                               int64
+	elapsed                                      time.Duration
+	err                                          string
 }
 
 // name is the stage message with what it works for.
@@ -60,7 +60,7 @@ func readActivity(record slog.Record, attrs []slog.Attr) activity {
 			if attr.Value.Any() != nil {
 				a.err = attr.Value.String()
 			}
-		case "resource", "input", "destination", "plugin":
+		case "resource", "phase", "input", "destination", "plugin":
 			values[attr.Key] = attr.Value.String()
 		}
 		return true
@@ -70,6 +70,11 @@ func readActivity(record slog.Record, attrs []slog.Attr) activity {
 	}
 	record.Attrs(read)
 	a.scope = values["resource"]
+	a.phase = values["phase"]
+	if a.phase != "" && values["destination"] != "" {
+		a.phase += " → " + values["destination"]
+		delete(values, "destination")
+	}
 	var qualifiers []string
 	for _, key := range []string{"input", "destination", "plugin"} {
 		if values[key] != "" {
@@ -111,6 +116,8 @@ type progressGroup struct {
 	rows  []progressLine
 	// scrolled marks a block whose heading has scrolled into history.
 	scrolled bool
+	// scrolledPhase is the last phase heading already in history.
+	scrolledPhase string
 }
 
 // running returns the innermost unfinished step. The steps of one scope run
@@ -125,9 +132,13 @@ func (g *progressGroup) running() *progressLine {
 }
 
 // scrollLine forgets the block's top line, which history now holds.
-func (g *progressGroup) scrollLine() {
+func (g *progressGroup) scrollLine(phase string) {
 	if !g.scrolled {
 		g.scrolled = true
+		return
+	}
+	if phase != "" {
+		g.scrolledPhase = phase
 		return
 	}
 	i := slices.IndexFunc(g.rows, func(row progressLine) bool { return row.finished })
@@ -221,13 +232,13 @@ func (p *terminalProgress) update(a activity) {
 	switch {
 	case a.stage:
 		for i := range group.rows {
-			group.rows[i].enclosing = group.rows[i].enclosing || !group.rows[i].finished
+			group.rows[i].enclosing = group.rows[i].enclosing || !group.rows[i].finished && group.rows[i].phase == a.phase
 		}
 		row := progressLine{activity: a, subject: a.detail, started: time.Now()}
 		// A step that runs again carries on from its earlier row and time
 		// instead of listing itself twice.
 		earlier := slices.IndexFunc(group.rows, func(other progressLine) bool {
-			return other.finished && other.label == a.label && other.qualifier == a.qualifier && other.subject == a.detail
+			return other.finished && other.phase == a.phase && other.label == a.label && other.qualifier == a.qualifier && other.subject == a.detail
 		})
 		if earlier >= 0 {
 			row.elapsed = group.rows[earlier].elapsed
@@ -236,7 +247,7 @@ func (p *terminalProgress) update(a activity) {
 		group.rows = append(group.rows, row)
 	case a.progress:
 		for i := len(group.rows) - 1; i >= 0; i-- {
-			if row := &group.rows[i]; !row.finished && row.qualifier == a.qualifier {
+			if row := &group.rows[i]; !row.finished && row.phase == a.phase && row.qualifier == a.qualifier {
 				row.current, row.total, row.unit = a.current, a.total, a.unit
 				break
 			}
@@ -244,7 +255,7 @@ func (p *terminalProgress) update(a activity) {
 	case a.status:
 		for i := len(group.rows) - 1; i >= 0; i-- {
 			row := &group.rows[i]
-			if row.finished || row.label != a.label || row.qualifier != a.qualifier {
+			if row.finished || row.phase != a.phase || row.label != a.label || row.qualifier != a.qualifier {
 				continue
 			}
 			row.finished, row.elapsed, row.err = true, row.elapsed+a.elapsed, a.err
@@ -256,10 +267,9 @@ func (p *terminalProgress) update(a activity) {
 					row.detail = row.subject + " (" + a.detail + ")"
 				}
 			}
-			// The steps inside an enclosing step account for its time, a
-			// quick step has nothing to show for itself, and project work
-			// shows only what is running.
-			if group.scope == "" || row.enclosing || row.err == "" && row.elapsed < keptStep {
+			// Keep transfers and slow or failed leaf steps. Enclosing stages
+			// and completed project activity do not add another result.
+			if group.scope == "" || row.enclosing || row.err == "" && row.elapsed < keptStep && row.unit == "" {
 				group.rows = slices.Delete(group.rows, i, i+1)
 			}
 			break
@@ -293,10 +303,8 @@ func (p *terminalProgress) remaining(group *progressGroup) string {
 	}
 	width, _ := p.size()
 	var rest strings.Builder
-	for i := range group.rows {
-		if row := &group.rows[i]; row.finished {
-			rest.WriteString(progressText(p.style, row, stepIndent, width, time.Time{}, "") + "\n")
-		}
+	for _, line := range p.resourceLines(group, width, time.Time{}, "", false) {
+		rest.WriteString(line.text + "\n")
 	}
 	return rest.String()
 }
@@ -354,6 +362,41 @@ func (p *terminalProgress) size() (int, int) {
 type regionLine struct {
 	text  string
 	group *progressGroup
+	phase string
+}
+
+func (p *terminalProgress) resourceLines(group *progressGroup, width int, now time.Time, frame string, active bool) []regionLine {
+	var lines []regionLine
+	if !group.scrolled {
+		lines = append(lines, regionLine{text: p.style.heading(runewidth.Truncate(cleanLine(group.scope), max(0, width-3), "…")), group: group})
+	}
+	phase := group.scrolledPhase
+	var visible []*progressLine
+	for i := range group.rows {
+		if row := &group.rows[i]; row.finished {
+			visible = append(visible, row)
+		}
+	}
+	if running := group.running(); active && running != nil {
+		visible = append(visible, running)
+	}
+	for _, row := range visible {
+		indent := stepIndent
+		if row.phase != "" {
+			if row.phase != phase {
+				title := runewidth.Truncate(cleanLine(row.phase), max(0, width-len(stepIndent)-1), "…")
+				lines = append(lines, regionLine{text: stepIndent + p.style.paint(title, color.Bold, color.FgHiMagenta), group: group, phase: row.phase})
+			}
+			indent += stepIndent
+		}
+		phase = row.phase
+		line := regionLine{text: progressText(p.style, row, indent, width, now, frame)}
+		if row.finished {
+			line.group = group
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 // view lays out each resource's heading, kept steps and running step, never
@@ -371,17 +414,7 @@ func (p *terminalProgress) view(now time.Time, width, height int) (history, regi
 			}
 			continue
 		}
-		if !group.scrolled {
-			lines = append(lines, regionLine{p.style.heading(runewidth.Truncate(cleanLine(group.scope), max(0, width-3), "…")), group})
-		}
-		for i := range group.rows {
-			if row := &group.rows[i]; row.finished {
-				lines = append(lines, regionLine{progressText(p.style, row, stepIndent, width, now, frame), group})
-			}
-		}
-		if running != nil {
-			lines = append(lines, regionLine{text: progressText(p.style, running, stepIndent, width, now, frame)})
-		}
+		lines = append(lines, p.resourceLines(group, width, now, frame, true)...)
 	}
 	if len(lines) > 0 && len(project) > 0 {
 		lines = append(lines, regionLine{})
@@ -391,7 +424,7 @@ func (p *terminalProgress) view(now time.Time, width, height int) (history, regi
 	var scrolled strings.Builder
 	for len(lines) > budget && lines[0].group != nil {
 		scrolled.WriteString(lines[0].text + "\n")
-		lines[0].group.scrollLine()
+		lines[0].group.scrollLine(lines[0].phase)
 		lines = lines[1:]
 	}
 	if len(lines) > budget {
@@ -412,6 +445,9 @@ func (p *terminalProgress) draw(now time.Time) {
 				continue
 			}
 			line := cleanLine(row.name())
+			if row.phase != "" {
+				line = cleanLine(row.phase) + ": " + line
+			}
 			if group.scope != "" {
 				line = cleanLine(group.scope) + ": " + line
 			}

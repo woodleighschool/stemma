@@ -396,11 +396,14 @@ progress; call the returned function with the operation error, and optionally
 `plugin.Detail(version)`, when the stage finishes. A detail names what the stage
 works on, then what it found. Supply plain labels and details without status
 markers, colour codes or alignment padding; the host formats their presentation.
-The live display shows the innermost running
-stage. A finished stage that ran for a second or longer stays listed until the
-resource's result is written, unless other stages ran inside it. Its line shows
+The host supplies resource, phase and destination context; plugins report the
+operations they perform. The live display shows the innermost running
+stage. Completed transfers and other finished stages that ran for a second or
+longer stay listed until the resource's result is written, unless other stages
+ran inside them. Finish a transfer stage before starting finalization so each
+keeps its own timing and the completed transfer retains its byte count. Its line shows
 both details, or the second alone when it contains the first. A stage that
-starts again with the same message and detail continues that line and adds to
+starts again in the same phase with the same message and detail continues that line and adds to
 its time. Wrap transfers in
 `plugin.ProgressReader` to show their bytes. Raw subprocess stderr is discarded
 by the host, so report operational failures through the protocol. Do not log

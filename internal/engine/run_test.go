@@ -247,7 +247,7 @@ spec:
     repo: {pkginfo: {catalogs: [testing]}}
 `, server.URL))
 	cache := t.TempDir()
-	for _, method := range []string{"update", "prepare", "plan"} {
+	for _, method := range []string{"update", "prepare", "plan", "apply"} {
 		var logs bytes.Buffer
 		ctx := plugin.WithLogger(t.Context(), slog.New(slog.NewJSONHandler(&logs, nil)))
 		if _, err := Run(ctx, Options{ConfigPath: filename, CacheDir: cache, Method: method}); err != nil {
@@ -259,16 +259,36 @@ spec:
 		acquired := false
 		for line := range bytes.SplitSeq(bytes.TrimSpace(logs.Bytes()), []byte{'\n'}) {
 			var record struct {
-				Message  string `json:"msg"`
-				Resource string `json:"resource"`
-				Start    bool   `json:"stage"`
-				End      bool   `json:"stage_result"`
+				Message     string `json:"msg"`
+				Resource    string `json:"resource"`
+				Phase       string `json:"phase"`
+				Destination string `json:"destination"`
+				Input       string `json:"input"`
+				Start       bool   `json:"stage"`
+				End         bool   `json:"stage_result"`
 			}
 			if err := json.Unmarshal(line, &record); err != nil {
 				t.Fatal(err)
 			}
 			if bytes.Count(line, []byte(`"resource":`)) > 1 {
 				t.Fatalf("%s repeated the resource scope: %s", method, line)
+			}
+			if record.Message == "Applying destination" {
+				t.Fatalf("aggregate apply stage obscures destination operations: %s", line)
+			}
+			if record.Resource != "" && (record.Start || record.End) {
+				want := "Prepare"
+				switch {
+				case method == "update":
+					want = ""
+				case record.Destination != "":
+					want = map[string]string{"prepare": "Check", "plan": "Plan", "apply": "Publish"}[method]
+				case record.Input != "":
+					want = "Acquire"
+				}
+				if record.Phase != want || bytes.Count(line, []byte(`"phase":`)) > 1 {
+					t.Fatalf("%s: expected phase %q: %s", method, want, line)
+				}
 			}
 			switch {
 			case record.Resource == "" && record.Start:
