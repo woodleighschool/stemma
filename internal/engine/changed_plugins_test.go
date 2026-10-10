@@ -19,10 +19,7 @@ import (
 
 func TestChangedSinceUsesEachCatalogsPluginOperations(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "echo")
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../plugin/testdata/echo")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build plugin: %v\n%s", err, output)
-	}
+	writeEchoPlugin(t, binary)
 	// The next implementation renames a configuration field. Comparing either
 	// declaration through the other implementation must fail its schema.
 	code, err := os.ReadFile("../../plugin/testdata/echo/main.go")
@@ -32,7 +29,7 @@ func TestChangedSinceUsesEachCatalogsPluginOperations(t *testing.T) {
 	nextSource := filepath.Join(t.TempDir(), "main.go")
 	writeFileText(t, nextSource, strings.Replace(string(code), `json:"source"`, `json:"input"`, 1))
 	nextBinary := filepath.Join(t.TempDir(), "echo")
-	build = exec.CommandContext(t.Context(), "go", "build", "-o", nextBinary, nextSource)
+	build := exec.CommandContext(t.Context(), "go", "build", "-ldflags=-s -w", "-o", nextBinary, nextSource)
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build next plugin: %v\n%s", err, output)
 	}

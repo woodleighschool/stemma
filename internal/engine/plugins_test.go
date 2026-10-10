@@ -3,11 +3,13 @@ package engine
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/lockfile"
@@ -25,10 +27,7 @@ func TestOnlyUpdatesLockPlugins(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../plugin/testdata/echo")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build plugin: %v\n%s", err, output)
-	}
+	writeEchoPlugin(t, binary)
 	filename := filepath.Join(root, "stemma.yaml")
 	testproject.Write(t, filename, `apiVersion: stemma/v1alpha1
 kind: Project
@@ -191,5 +190,33 @@ spec:
 	}
 	if _, err := os.Stat(cache); !os.IsNotExist(err) {
 		t.Fatal("inventory opened cache", err)
+	}
+}
+
+var echoPlugin struct {
+	once sync.Once
+	data []byte
+	err  error
+}
+
+func writeEchoPlugin(t *testing.T, filename string) {
+	t.Helper()
+	echoPlugin.once.Do(func() {
+		binary := filepath.Join(t.TempDir(), "echo")
+		cmd := exec.CommandContext(t.Context(), "go", "build", "-ldflags=-s -w", "-o", binary, "../../plugin/testdata/echo")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			echoPlugin.err = fmt.Errorf("build plugin: %w\n%s", err, output)
+			return
+		}
+		echoPlugin.data, echoPlugin.err = os.ReadFile(binary)
+	})
+	if echoPlugin.err != nil {
+		t.Fatal(echoPlugin.err)
+	}
+	if err := os.MkdirAll(filepath.Dir(filename), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filename, echoPlugin.data, 0o755); err != nil {
+		t.Fatal(err)
 	}
 }

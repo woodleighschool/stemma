@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/icon"
+	"github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 	"github.com/woodleighschool/stemma/plugin"
@@ -137,6 +138,21 @@ func TestIconExtractsOnlyDeclaredArtwork(t *testing.T) {
 	}
 }
 
+// Artwork policy tests use the physical bundle; the format matrix above covers preparation.
+func artworkInput(t *testing.T, root string) plugin.Artifact {
+	t.Helper()
+	app := filepath.Join(root, "Example.app")
+	facts, err := inspect.Read(t.Context(), app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := json.Marshal(facts.Subjects[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plugin.Artifact{Path: app, Filename: "Example.app", Tree: true, Evidence: map[string]json.RawMessage{"macos.application": evidence}}
+}
+
 func TestIconDoesNotBroadenMissingArtwork(t *testing.T) {
 	for _, name := range []string{"AppIcon", "", "../outside", "[O]ther.icns"} {
 		t.Run(name, func(t *testing.T) {
@@ -153,14 +169,10 @@ func TestIconDoesNotBroadenMissingArtwork(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, "Example.app/Contents/Resources/Other.icns"), []byte("not declared"), 0644); err != nil {
 				t.Fatal(err)
 			}
-			input := plugin.Artifact{Path: filepath.Join(root, "Example.app"), Filename: "Example.app", Tree: true}
-			outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
-			if err != nil {
-				t.Fatal(err)
-			}
+			input := artworkInput(t, root)
 			for _, presentation := range []icon.Presentation{icon.Raw, icon.Glassy} {
 				workspace := filepath.Join(t.TempDir(), "icon")
-				_, err := Icon(t.Context(), outputs["installer"], workspace, presentation)
+				_, err := Icon(t.Context(), input, workspace, presentation)
 				if name == "../outside" {
 					if err == nil {
 						t.Fatal("accepted escaping artwork")
@@ -199,30 +211,25 @@ func TestIconWithOnlyAssetCatalog(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, "Example.app/Contents/Resources/Assets.car"), []byte("catalog artwork"), 0644); err != nil {
 			t.Fatal(err)
 		}
-		for _, input := range bundleInputs(t, root) {
-			outputs, err := Prepare(t.Context(), Spec{Application: &Application{BundleID: "org.example.app"}}, Request{Input: input, Workspace: t.TempDir()})
+		input := artworkInput(t, root)
+		for _, presentation := range []icon.Presentation{icon.Raw, icon.Glassy} {
+			subject, err := Icon(t.Context(), input, t.TempDir(), presentation)
+			if !declared || presentation == icon.Raw {
+				want := icon.ErrNoArtwork
+				if declared {
+					want = icon.ErrUnsupportedArtwork
+				}
+				if !errors.Is(err, want) {
+					t.Fatalf("declared=%v %s: %v", declared, presentation, err)
+				}
+				continue
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, presentation := range []icon.Presentation{icon.Raw, icon.Glassy} {
-				subject, err := Icon(t.Context(), outputs["installer"], t.TempDir(), presentation)
-				if !declared || presentation == icon.Raw {
-					want := icon.ErrNoArtwork
-					if declared {
-						want = icon.ErrUnsupportedArtwork
-					}
-					if !errors.Is(err, want) {
-						t.Fatalf("declared=%v %s: %v", declared, presentation, err)
-					}
-					continue
-				}
-				if err != nil {
-					t.Fatal(err)
-				}
-				want := []string{"Contents/Info.plist", "Contents/MacOS/example", "Contents/Resources/Assets.car"}
-				if files := bundleFiles(t, subject.Path); !slices.Equal(files, want) {
-					t.Fatalf("extracted %v, want %v", files, want)
-				}
+			want := []string{"Contents/Info.plist", "Contents/MacOS/example", "Contents/Resources/Assets.car"}
+			if files := bundleFiles(t, subject.Path); !slices.Equal(files, want) {
+				t.Fatalf("extracted %v, want %v", files, want)
 			}
 		}
 	}
@@ -240,38 +247,23 @@ func TestIconResolvesUndeclaredExecutable(t *testing.T) {
 	if err := os.Rename(filepath.Join(root, "Example.app/Contents/MacOS/example"), filepath.Join(root, "Example.app/Contents/MacOS/Example")); err != nil {
 		t.Fatal(err)
 	}
-	for _, input := range bundleInputs(t, root) {
-		t.Run(input.Filename, func(t *testing.T) {
-			outputs, err := Prepare(t.Context(), Spec{Application: &Application{BundleID: "org.example.app"}}, Request{Input: input, Workspace: t.TempDir()})
-			if err != nil {
-				t.Fatal(err)
-			}
-			installer := outputs["installer"]
-			var app plugin.Subject
-			if err := json.Unmarshal(installer.Evidence["macos.application"], &app); err != nil {
-				t.Fatal(err)
-			}
-			if app.App == nil || app.App.Executable != "" {
-				t.Fatalf("invented executable: %+v", app.App)
-			}
-			subject, err := Icon(t.Context(), installer, t.TempDir(), icon.Glassy)
-			if err != nil {
-				t.Fatal(err)
-			}
-			stub, err := os.ReadFile(filepath.Join(subject.Path, "Contents/MacOS/Example"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(stub) != 32 || binary.LittleEndian.Uint32(stub) != 0xfeedfacf {
-				t.Fatal("missing native executable stub")
-			}
-			got, err := os.ReadFile(filepath.Join(subject.Path, "Contents/Info.plist"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !bytes.Equal(got, info) {
-				t.Fatal("staging changed declared metadata")
-			}
-		})
+	installer := artworkInput(t, root)
+	subject, err := Icon(t.Context(), installer, t.TempDir(), icon.Glassy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub, err := os.ReadFile(filepath.Join(subject.Path, "Contents/MacOS/Example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stub) != 32 || binary.LittleEndian.Uint32(stub) != 0xfeedfacf {
+		t.Fatal("missing native executable stub")
+	}
+	got, err := os.ReadFile(filepath.Join(subject.Path, "Contents/Info.plist"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, info) {
+		t.Fatal("staging changed declared metadata")
 	}
 }

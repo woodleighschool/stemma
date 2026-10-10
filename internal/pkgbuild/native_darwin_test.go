@@ -62,11 +62,11 @@ func TestNativePackagePayloadScriptsAndBOM(t *testing.T) {
 }
 
 // TestNativeLargeAppPayloadAndBOM has pkgutil expand each payload compression,
-// including an executable that spans several PBZX blocks.
+// including an executable that crosses the 16 MiB PBZX block boundary.
 func TestNativeLargeAppPayloadAndBOM(t *testing.T) {
 	for _, compression := range []Compression{Gzip, XZ} {
 		t.Run(string(compression), func(t *testing.T) {
-			root, opts := largeFixture(t)
+			root, opts := largeFixture(t, 17<<20)
 			opts.Compression = compression
 			output := filepath.Join(t.TempDir(), "large.pkg")
 			if err := Build(t.Context(), root, output, opts); err != nil {

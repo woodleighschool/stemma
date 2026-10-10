@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -29,10 +28,7 @@ func TestSigningEvidenceNoticesSurvivePreparationCache(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", binary, "../../plugin/testdata/echo")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build plugin: %v\n%s", err, output)
-	}
+	writeEchoPlugin(t, binary)
 	observed := []signature.Observation{{Subject: plugin.SubjectSelector{Path: "Example.app"}, State: "signed", Signer: "apple:developer-id:UBF8T346G9", Authority: "Developer ID Application", Verifier: signature.Verifier}}
 	evidence, err := json.Marshal(observed)
 	if err != nil {
