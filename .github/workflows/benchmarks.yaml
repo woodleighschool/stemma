@@ -27,7 +27,7 @@ env:
 jobs:
   benchmarks:
     name: Portable operations
-    runs-on: ubuntu-26.04
+    runs-on: codspeed-macro-arm64-graviton-ubuntu-22-04
     timeout-minutes: 20
     permissions:
       contents: read

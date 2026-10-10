@@ -1,6 +1,7 @@
 package pkgbuild
 
 import (
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"testing"
@@ -57,5 +58,32 @@ func BenchmarkPackage(b *testing.B) {
 				}
 			})
 		})
+	}
+}
+
+func BenchmarkPackageVaried(b *testing.B) {
+	app := testbundle.Write(b)
+	data := make([]byte, 17<<20)
+	_, _ = rand.NewChaCha8([32]byte{1}).Read(data)
+	// Mix compressible pages with distinct deterministic bytes across both PBZX blocks.
+	for offset := 0; offset < len(data); offset += 4096 {
+		clear(data[offset : offset+2048])
+	}
+	if err := os.WriteFile(filepath.Join(app, "Contents/MacOS/benchmark"), data, 0o755); err != nil {
+		b.Fatal(err)
+	}
+	opts := Options{Identifier: "org.example.benchmark", Version: "1.0", Payload: ".", InstallLocation: "/Applications/Benchmark.app", Compression: XZ, Timestamp: time.Unix(1700000000, 0)}
+	output := filepath.Join(b.TempDir(), "Benchmark.pkg")
+	b.SetBytes(int64(len(data)))
+	b.ReportAllocs()
+	for b.Loop() {
+		b.StopTimer()
+		if err := os.RemoveAll(output); err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+		if err := Build(b.Context(), app, output, opts); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
