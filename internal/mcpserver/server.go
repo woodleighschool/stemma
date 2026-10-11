@@ -15,6 +15,9 @@ type Options struct {
 	ConfigPath  string
 	CacheDir    string
 	CachePolicy cas.Policy
+	// GitHubToken authenticates release lookups of GitHub sources that declare
+	// no token.
+	GitHubToken string
 	// Version names the Stemma build to clients.
 	Version string
 }
@@ -42,7 +45,7 @@ func newServer(opts Options) *mcp.Server {
 			return result, err
 		}
 	})
-	tools := catalog{config: opts.ConfigPath, cache: opts.CacheDir}
+	tools := catalog{config: opts.ConfigPath, cache: opts.CacheDir, githubToken: opts.GitHubToken}
 	openWorld := true
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "describe",
@@ -89,5 +92,5 @@ func newServer(opts Options) *mcp.Server {
 
 // catalog runs the tools against one project.
 type catalog struct {
-	config, cache string
+	config, cache, githubToken string
 }

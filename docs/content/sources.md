@@ -86,6 +86,11 @@ source:
   include_prereleases: true
 ```
 
+GitHub allows 60 unauthenticated release lookups an hour from one address. When
+`GH_TOKEN`, or else `GITHUB_TOKEN`, is set, lookups for sources without a `token`
+use it and get the authenticated limit. That token goes to the GitHub API only;
+downloads never carry it. A source's own `token` is used for both.
+
 For an HTTP page containing a download link, use `resolver: http` with `url` and a
 `match` regular expression. HTML pages match on element attribute values, so links
 in comments, page text and script content are ignored; a plain-text release feed

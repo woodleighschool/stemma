@@ -36,6 +36,9 @@ const (
 type Options struct {
 	ConfigPath         string
 	CacheDir, StateDir string
+	// GitHubToken authenticates release lookups of GitHub sources that declare
+	// no token. Source control keeps its own credentials.
+	GitHubToken string
 	// PhaseStarted announces apply or update before its work begins.
 	PhaseStarted func(method string) error
 	// ResourceDone streams each engine run's results with the run's method;
@@ -272,7 +275,7 @@ func (r *runner) configIn(worktree *git.Worktree) string {
 }
 
 func (r *runner) engineOptions(method, configPath string, resources []string) engine.Options {
-	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Method: method, Resources: resources}
+	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, GitHubToken: r.opts.GitHubToken, Method: method, Resources: resources}
 	if r.opts.ResourceDone != nil {
 		opts.ResourceDone = func(resource engine.ResourceReport) error { return r.opts.ResourceDone(method, resource) }
 	}

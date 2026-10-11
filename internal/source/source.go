@@ -58,12 +58,15 @@ type record struct {
 
 // Manager owns acquisition and cached content, independently of resource kinds.
 type Manager struct {
-	metadata  *metadataCache
-	Store     *cas.Store
-	Root      string
-	Client    *http.Client
-	Offline   bool
-	resolvers map[string]Resolver
+	metadata *metadataCache
+	Store    *cas.Store
+	Root     string
+	Client   *http.Client
+	Offline  bool
+	// GitHubToken authenticates the release lookups of GitHub sources that
+	// declare no token. Downloads never carry it.
+	GitHubToken string
+	resolvers   map[string]Resolver
 }
 
 // New creates a manager with bounded HTTP lifetimes and credential-safe redirects.

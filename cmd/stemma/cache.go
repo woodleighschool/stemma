@@ -12,11 +12,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/changes"
 )
 
-type cacheSettings struct {
-	Dir     string `env:"STEMMA_CACHE_DIR"`
-	MaxSize string `env:"STEMMA_CACHE_MAX_SIZE" envDefault:"32GiB"`
-}
-
 func parseCachePolicy(value string) (cas.Policy, error) {
 	size, err := humanize.ParseBytes(value)
 	if err != nil || size > math.MaxInt64 {

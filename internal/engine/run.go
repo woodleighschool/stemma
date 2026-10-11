@@ -23,8 +23,11 @@ import (
 // Options configures one finite execution of the CLI.
 type Options struct {
 	ConfigPath, CacheDir string
-	Method               string
-	Resources            []string
+	// GitHubToken authenticates release lookups of GitHub sources that declare
+	// no token.
+	GitHubToken string
+	Method      string
+	Resources   []string
 	// Profiles selects the resources declaring any of these profiles, in place
 	// of the resources that declare none. A run names profiles or Resources.
 	Profiles []string

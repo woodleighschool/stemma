@@ -2,6 +2,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -74,20 +75,33 @@ func interruptContext() (context.Context, context.CancelFunc) {
 	return ctx, func() { cancel(context.Canceled) }
 }
 
-// cli is what every command shares: the project and cache flags, and the
-// output that renders progress and reports.
+// environment holds the process environment values commands start with.
+type environment struct {
+	CacheDir     string `env:"STEMMA_CACHE_DIR"`
+	CacheMaxSize string `env:"STEMMA_CACHE_MAX_SIZE" envDefault:"32GiB"`
+	// GHToken and GitHubToken authenticate release lookups of GitHub sources
+	// that declare no token. GH_TOKEN wins, as it does for the GitHub CLI.
+	GHToken     string `env:"GH_TOKEN"`
+	GitHubToken string `env:"GITHUB_TOKEN"`
+}
+
+func (e environment) githubToken() string { return cmp.Or(e.GHToken, e.GitHubToken) }
+
+// cli is what every command shares: the project and cache flags, the GitHub
+// token, and the output that renders progress and reports.
 type cli struct {
 	out                           io.Writer
 	display                       *commandOutput
 	rootDir, configPath, cacheDir string
 	cacheSize                     string
 	cachePolicy                   cas.Policy
+	githubToken                   string
 }
 
 func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
-	settings, settingsErr := env.ParseAs[cacheSettings]()
+	settings, settingsErr := env.ParseAs[environment]()
 	display := newCommandOutput(out, errOut)
-	c := &cli{out: finalWriter{Writer: out, output: display}, display: display}
+	c := &cli{out: finalWriter{Writer: out, output: display}, display: display, githubToken: settings.githubToken()}
 	root := &cobra.Command{Use: "stemma", Short: "Resolve, prepare and publish reviewed software artifacts", SilenceErrors: true, SilenceUsage: true, Version: version}
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
 		if settingsErr != nil {
@@ -106,8 +120,8 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 	root.SetErr(errOut)
 	root.PersistentFlags().StringVar(&c.rootDir, "root", "", "Stemma project directory (discovered from the current directory)")
 	root.PersistentFlags().StringVar(&c.configPath, "config", "", "Path to stemma.yaml")
-	root.PersistentFlags().StringVar(&c.cacheDir, "cache-dir", settings.Dir, "Disposable content cache directory")
-	root.PersistentFlags().StringVar(&c.cacheSize, "cache-max-size", settings.MaxSize, "Soft retained-cache budget; 0 disables automatic content eviction")
+	root.PersistentFlags().StringVar(&c.cacheDir, "cache-dir", settings.CacheDir, "Disposable content cache directory")
+	root.PersistentFlags().StringVar(&c.cacheSize, "cache-max-size", settings.CacheMaxSize, "Soft retained-cache budget; 0 disables automatic content eviction")
 	root.AddCommand(c.versionCommand(), c.schemaCommand(), c.validateCommand(), c.mcpCommand())
 	for _, method := range []string{"update", "prepare", "signature", "icon", "plan", "apply"} {
 		root.AddCommand(c.runCommand(method))
@@ -197,7 +211,7 @@ func (c *cli) mcpCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return mcpserver.Run(cmd.Context(), mcpserver.Options{ConfigPath: path, CacheDir: c.cacheDir, CachePolicy: c.cachePolicy, Version: version})
+		return mcpserver.Run(cmd.Context(), mcpserver.Options{ConfigPath: path, CacheDir: c.cacheDir, CachePolicy: c.cachePolicy, GitHubToken: c.githubToken, Version: version})
 	}}
 }
 
@@ -229,7 +243,7 @@ func (c *cli) runCommand(method string) *cobra.Command {
 			}
 		}
 		c.display.selectors = slices.Clone(args)
-		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: method, Resources: args, Profiles: profiles, ChangedSince: changedSince, Icons: icons, Input: input, ResourceDone: func(resource engine.ResourceReport) error {
+		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, GitHubToken: c.githubToken, Method: method, Resources: args, Profiles: profiles, ChangedSince: changedSince, Icons: icons, Input: input, ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone(method, resource)
 		}, Lock: lockfile.Options{Offline: offline}})
 		if err := c.display.report(c.out, method, report, runErr); err != nil {
@@ -272,7 +286,7 @@ func (c *cli) artifactCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: "artifact", Resources: args, Output: output, OutputFile: outputFile, ResourceDone: func(resource engine.ResourceReport) error {
+		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, GitHubToken: c.githubToken, Method: "artifact", Resources: args, Output: output, OutputFile: outputFile, ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone("artifact", resource)
 		}, Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
 		if err != nil {
@@ -300,7 +314,7 @@ func (c *cli) reconcileCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: c.cacheDir, StateDir: stateDir, PhaseStarted: c.display.reconcilePhase, ResourceDone: c.display.resourceDone, ApplyDone: c.display.applyDone, ProposalDone: c.display.proposalDone})
+		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: c.cacheDir, StateDir: stateDir, GitHubToken: c.githubToken, PhaseStarted: c.display.reconcilePhase, ResourceDone: c.display.resourceDone, ApplyDone: c.display.applyDone, ProposalDone: c.display.proposalDone})
 		if err := c.display.reconciled(c.out, report, runErr); err != nil {
 			return errors.Join(runErr, err)
 		}
@@ -325,7 +339,7 @@ func (c *cli) inspectCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Method: "inspect", Resources: args, Input: engine.InputSelection{Name: input, Path: selection}, Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
+			report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, GitHubToken: c.githubToken, Method: "inspect", Resources: args, Input: engine.InputSelection{Name: input, Path: selection}, Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
 			if err != nil {
 				return err
 			}

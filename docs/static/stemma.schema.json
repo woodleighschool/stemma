@@ -1232,7 +1232,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional bearer token for release discovery and acquisition.",
+              "description": "Optional bearer token for release discovery and acquisition. Without one, discovery uses GH_TOKEN, then GITHUB_TOKEN, from the environment.",
               "writeOnly": true
             }
           },
@@ -8321,7 +8321,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional bearer token for release discovery and acquisition.",
+              "description": "Optional bearer token for release discovery and acquisition. Without one, discovery uses GH_TOKEN, then GITHUB_TOKEN, from the environment.",
               "writeOnly": true
             }
           },

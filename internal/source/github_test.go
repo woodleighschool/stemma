@@ -194,17 +194,72 @@ func TestGitHubAssetSelection(t *testing.T) {
 }
 
 func TestGitHubLookupReportsHTTPStatus(t *testing.T) {
-	store, err := cas.Open(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
+	const limited = "API rate limit exceeded for 203.0.113.9."
+	const hint = "set GH_TOKEN or GITHUB_TOKEN"
+	for _, tc := range []struct {
+		name, token, message, documentation string
+		status                              int
+		headers                             http.Header
+		hinted                              bool
+	}{
+		{name: "missing release", status: http.StatusNotFound, message: "Not Found"},
+		{name: "anonymous quota", status: http.StatusForbidden, message: limited, headers: http.Header{"X-Ratelimit-Remaining": {"0"}}, hinted: true},
+		{name: "anonymous quota as 429", status: http.StatusTooManyRequests, message: limited, headers: http.Header{"X-Ratelimit-Remaining": {"0"}}, hinted: true},
+		{name: "secondary quota", status: http.StatusForbidden, message: limited, documentation: "https://docs.github.com/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits", hinted: true},
+		{name: "authenticated quota", token: "synthetic-token", status: http.StatusForbidden, message: limited, headers: http.Header{"X-Ratelimit-Remaining": {"0"}}},
+		{name: "rejected token", token: "synthetic-token", status: http.StatusUnauthorized, message: "Bad credentials"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := manager(t)
+			m.GitHubToken = tc.token
+			m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(`{"message":"` + tc.message + `","documentation_url":"` + tc.documentation + `"}`)), Header: tc.headers, Request: r}, nil
+			})
+			_, err := m.Resolve(t.Context(), plugin.Input{Resolver: "github", Config: map[string]any{"repository": "example/app", "release": "v9", "asset": "App.pkg"}})
+			want := fmt.Sprintf("GitHub release lookup returned HTTP %d: %s", tc.status, tc.message)
+			if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), hint) != tc.hinted {
+				t.Fatalf("got %v, want %q with hint=%v", err, want, tc.hinted)
+			}
+		})
 	}
-	m := New(store, t.TempDir(), false)
-	m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusNotFound, Body: io.NopCloser(strings.NewReader(`{"message":"Not Found"}`)), Header: http.Header{}, Request: r}, nil
-	})
-	_, err = m.Resolve(t.Context(), plugin.Input{Resolver: "github", Config: map[string]any{"repository": "example/app", "release": "v9", "asset": "App.pkg"}})
-	if err == nil || !strings.Contains(err.Error(), "GitHub release lookup returned HTTP 404") {
-		t.Fatalf("missing release: %v", err)
+}
+
+// TestGitHubRunTokenAuthenticatesLookupsOnly covers the token a run supplies
+// for sources that declare none: it raises the API quota and stays off
+// downloads, which a declared token still accompanies.
+func TestGitHubRunTokenAuthenticatesLookupsOnly(t *testing.T) {
+	for _, tc := range []struct{ name, declared, lookup, download string }{
+		{name: "run token", lookup: "Bearer run-token"},
+		{name: "declared token", declared: "declared-token", lookup: "Bearer declared-token", download: "Bearer declared-token"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := manager(t)
+			m.GitHubToken = "run-token"
+			lookups, downloads := 0, 0
+			m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				body, want := "installer", tc.download
+				if r.URL.Host == "api.github.com" {
+					lookups++
+					body, want = `{"id":12,"tag_name":"v1.2.3","assets":[{"id":34,"name":"App.pkg","browser_download_url":"https://github.com/example/app/releases/download/v1.2.3/App.pkg"}]}`, tc.lookup
+				} else {
+					downloads++
+				}
+				if got := r.Header.Get("Authorization"); got != want {
+					t.Errorf("%s carried Authorization %q, want %q", r.URL, got, want)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}, Request: r}, nil
+			})
+			config := map[string]any{"repository": "example/app", "asset": "App.pkg"}
+			if tc.declared != "" {
+				config["token"] = tc.declared
+			}
+			if _, err := m.Resolve(t.Context(), plugin.Input{Resolver: "github", Config: config}); err != nil {
+				t.Fatal(err)
+			}
+			if lookups != 1 || downloads != 1 {
+				t.Fatalf("lookups=%d downloads=%d", lookups, downloads)
+			}
+		})
 	}
 }
 

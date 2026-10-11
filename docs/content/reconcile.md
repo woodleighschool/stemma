@@ -167,4 +167,6 @@ The shape is the same everywhere:
 - a large cache volume for `STEMMA_CACHE_DIR` that need not be backed up;
 - a small state volume for `STEMMA_STATE_DIR`, which keeps a run from applying
   an unchanged commit again;
-- the variables `stemma.yaml` references, from the scheduler's secret store.
+- the variables `stemma.yaml` references, from the scheduler's secret store;
+- `GH_TOKEN` or `GITHUB_TOKEN` when the catalog follows more GitHub releases than
+  the [unauthenticated limit](sources.md#discover-a-release) allows.

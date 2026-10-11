@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/caarlos0/env/v11"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/intunewin"
@@ -25,6 +26,21 @@ import (
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
+
+func TestEnvironmentPrefersTheGitHubCLIToken(t *testing.T) {
+	for _, tc := range []struct{ cli, workflow, want string }{
+		{"", "", ""},
+		{"", "workflow-token", "workflow-token"},
+		{"cli-token", "workflow-token", "cli-token"},
+	} {
+		t.Setenv("GH_TOKEN", tc.cli)
+		t.Setenv("GITHUB_TOKEN", tc.workflow)
+		settings, err := env.ParseAs[environment]()
+		if err != nil || settings.githubToken() != tc.want {
+			t.Fatalf("GH_TOKEN=%q GITHUB_TOKEN=%q selected %q: %v", tc.cli, tc.workflow, settings.githubToken(), err)
+		}
+	}
+}
 
 func TestReportRetainsIndependentDestinationResults(t *testing.T) {
 	report := engine.Report{Resources: []engine.ResourceReport{

@@ -118,7 +118,7 @@ func (c catalog) describe(ctx context.Context, _ *mcp.CallToolRequest, in descri
 }
 
 func (c catalog) options(method string) engine.Options {
-	return engine.Options{ConfigPath: c.config, CacheDir: c.cache, Method: method}
+	return engine.Options{ConfigPath: c.config, CacheDir: c.cache, GitHubToken: c.githubToken, Method: method}
 }
 
 func summarizeKind(operation plugin.Operation) kindSummary {

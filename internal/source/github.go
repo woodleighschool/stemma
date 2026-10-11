@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"path"
 	"strings"
@@ -23,7 +24,7 @@ type githubConfig struct {
 	Asset              string `json:"asset" jsonschema_description:"GitHub asset-name glob using doublestar semantics. Must match exactly one release asset; exact names also work."`
 	Filename           string `json:"filename,omitempty" jsonschema_description:"Optional input basename override. Defaults to the selected asset name. Independent of publication naming."`
 	SHA256             string `json:"sha256,omitempty" jsonschema_description:"Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."`
-	Token              string `json:"token,omitempty" jsonschema_description:"Optional bearer token for release discovery and acquisition."`
+	Token              string `json:"token,omitempty" jsonschema_description:"Optional bearer token for release discovery and acquisition. Without one, discovery uses GH_TOKEN, then GITHUB_TOKEN, from the environment."`
 }
 
 type githubObservation struct {
@@ -145,6 +146,9 @@ func acquireGitHub(_ context.Context, s githubConfig, observation json.RawMessag
 func (m *Manager) github(ctx context.Context, s githubConfig, observed *githubObservation) (err error) {
 	done := plugin.Stage(ctx, "Discovering GitHub release", plugin.Detail(s.Repository))
 	defer func() { done(err, plugin.Detail(observed.Release)) }()
+	if s.Token == "" {
+		s.Token = m.GitHubToken
+	}
 	options := []github.ClientOptionsFunc{github.WithHTTPClient(m.metadataClient()), github.WithUserAgent(userAgent)}
 	if s.Token != "" {
 		options = append(options, github.WithAuthToken(s.Token))
@@ -198,10 +202,10 @@ func selectRelease(ctx context.Context, client *github.Client, s githubConfig) (
 	switch {
 	case !pattern && !latest:
 		release, _, err := client.Repositories.GetReleaseByTag(ctx, owner, repo, url.PathEscape(s.Release))
-		return release, githubError(err)
+		return release, githubError(err, s.Token == "")
 	case !pattern && !s.IncludePrereleases:
 		release, _, err := client.Repositories.GetLatestRelease(ctx, owner, repo)
-		return release, githubError(err)
+		return release, githubError(err, s.Token == "")
 	}
 	// Publication time is independent of tag version and commit creation time.
 	var newest *github.RepositoryRelease
@@ -209,7 +213,7 @@ func selectRelease(ctx context.Context, client *github.Client, s githubConfig) (
 	for {
 		releases, response, err := client.Repositories.ListReleases(ctx, owner, repo, page)
 		if err != nil {
-			return nil, githubError(err)
+			return nil, githubError(err, s.Token == "")
 		}
 		for _, candidate := range releases {
 			if candidate.Draft || candidate.Prerelease && !s.IncludePrereleases || pattern && !doublestar.MatchUnvalidated(s.Release, candidate.TagName) {
@@ -241,12 +245,33 @@ func selectRelease(ctx context.Context, client *github.Client, s githubConfig) (
 	return nil, errors.New("no published GitHub releases found")
 }
 
-// githubError reports an API failure by its status. Other failures are
-// transport errors.
-func githubError(err error) error {
-	var response *github.ErrorResponse
-	if errors.As(err, &response) && response.Response != nil {
-		return fmt.Errorf("GitHub release lookup returned HTTP %d", response.Response.StatusCode)
+// githubError reports an API failure by its status and GitHub's reason. Other
+// failures are transport errors.
+func githubError(err error, anonymous bool) error {
+	var api *github.ErrorResponse
+	var primary *github.RateLimitError
+	var secondary *github.AbuseRateLimitError
+	var response *http.Response
+	var message string
+	switch {
+	case errors.As(err, &api):
+		response, message = api.Response, api.Message
+	case errors.As(err, &primary):
+		response, message = primary.Response, primary.Message
+	case errors.As(err, &secondary):
+		response, message = secondary.Response, secondary.Message
+	}
+	if response != nil {
+		status := response.StatusCode
+		failure := fmt.Sprintf("GitHub release lookup returned HTTP %d", status)
+		if message != "" {
+			failure += ": " + message
+		}
+		// GitHub answers an exhausted anonymous quota with either status.
+		if anonymous && (status == http.StatusForbidden || status == http.StatusTooManyRequests) {
+			failure += "; set GH_TOKEN or GITHUB_TOKEN to authenticate lookups"
+		}
+		return errors.New(failure)
 	}
 	if err != nil {
 		return transportError("GitHub release lookup", err)
