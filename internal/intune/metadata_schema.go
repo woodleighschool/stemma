@@ -68,10 +68,16 @@ func MetadataSchema() *jsonschema.Schema {
 	mac := common()
 	mac["type"] = &jsonschema.Schema{Enum: []any{"pkg", "dmg"}, Description: "A Mac app follows its installer: pkg for a PKG and dmg for a disk image."}
 	mac["ignore_version_detection"] = &jsonschema.Schema{Type: "boolean", Description: "Ignore installed app versions during detection. Explicit false is managed."}
-	mac["included_apps"] = &jsonschema.Schema{Type: "array", MinItems: new(uint64(1)), MaxItems: new(uint64(500)), Description: "Identifiers and versions that detect the installation; every entry must be installed and the first identifies the app. A PKG app accepts package receipts as well as applications. Derived from the selected application, or from receipts when a PKG selects no application, as a payloadless package does. DMG and line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique.", Items: objectSchema(map[string]*jsonschema.Schema{
+	appIdentity := objectSchema(map[string]*jsonschema.Schema{
 		"id":      {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application bundle identifier, or package receipt identifier for a PKG app."},
 		"version": {Type: "string", MinLength: new(uint64(1)), MaxLength: new(uint64(1000)), Description: "Application CFBundleShortVersionString or package receipt version."},
-	}, "id", "version")}
+	}, "id", "version")
+	subject := &jsonschema.Schema{Type: "object", Required: []string{"kind"}, AdditionalProperties: jsonschema.TrueSchema}
+	mac["included_apps"] = &jsonschema.Schema{
+		Type: "array", MinItems: new(uint64(1)), MaxItems: new(uint64(500)),
+		Description: "Identifiers and versions that detect the installation; every entry must be installed and the first identifies the app. Entries can be identifier/version pairs or inspected subjects, written as expressions such as {{ facts.name }}. Applications use their short version, with their build preserved for line-of-business apps. PKG apps also accept package subjects with a payload, which leaves a receipt. DMG and line-of-business subjects must be applications installed under /Applications. Omission derives the list from the selected application, or from payload receipts when a PKG selects no application. Explicit entries replace the derived list. Identifiers must be unique.",
+		Items:       &jsonschema.Schema{AnyOf: []*jsonschema.Schema{appIdentity, subject}},
+	}
 	for key, description := range map[string]string{
 		"pre_install_script":  "Script that runs before a PKG app installs. A nonzero exit stops the installation, which Intune tries again at the next check-in.",
 		"post_install_script": "Script that runs after a PKG app installs. Intune reports the app as installed whatever the script's exit status.",

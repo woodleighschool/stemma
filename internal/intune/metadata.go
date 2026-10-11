@@ -1,7 +1,9 @@
 package intune
 
 import (
+	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -133,6 +135,13 @@ func declaration(req plugin.ReconcileRequest[Config]) (object, error) {
 		}
 		if !ok {
 			return nil, fmt.Errorf("unsupported Intune %s field %q", appType, key)
+		}
+		if key == "included_apps" {
+			declared[key], err = resolveIncludedApps(value, appType)
+			if err != nil {
+				return nil, fmt.Errorf("included_apps: %w", err)
+			}
+			continue
 		}
 		if _, err := spec.convert(value); err != nil {
 			return nil, fmt.Errorf("%s: %w", key, err)
@@ -410,8 +419,9 @@ func validateMSIProperties(value any) error {
 	return nil
 }
 
-// includedApps translates the application or package identities that detect a Mac installation.
-func includedApps(value any) (any, error) {
+// resolveIncludedApps normalizes native pairs and inspected subjects to the
+// identities that detect a Mac installation.
+func resolveIncludedApps(value any, appType string) ([]any, error) {
 	apps, ok := value.([]any)
 	if !ok || len(apps) == 0 || len(apps) > 500 {
 		return nil, errors.New("must contain between 1 and 500 identifier and version pairs")
@@ -423,7 +433,13 @@ func includedApps(value any) (any, error) {
 		if !ok {
 			return nil, errors.New("included app must be an object")
 		}
-		if err := fields(app, "id", "version"); err != nil {
+		if _, subject := app["kind"]; subject {
+			var err error
+			app, err = includedSubject(app, appType)
+			if err != nil {
+				return nil, fmt.Errorf("item %d: %w", len(result)+1, err)
+			}
+		} else if err := fields(app, "id", "version"); err != nil {
 			return nil, err
 		}
 		id, version := text(app["id"]), text(app["version"])
@@ -434,7 +450,47 @@ func includedApps(value any) (any, error) {
 			return nil, errors.New("contains duplicate identifiers")
 		}
 		seen[id] = true
-		result = append(result, object{"bundleId": id, "bundleVersion": version})
+		result = append(result, app)
+	}
+	return result, nil
+}
+
+func includedSubject(item object, appType string) (object, error) {
+	var subject plugin.Subject
+	decoder := json.NewDecoder(bytes.NewReader(raw(item)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&subject); err != nil {
+		return nil, fmt.Errorf("invalid inspected subject: %w", err)
+	}
+	var selected *plugin.Subject
+	switch {
+	case subject.Kind == "app" && subject.App != nil:
+		selected = &subject
+	case subject.Kind == "package" && subject.Package != nil:
+		if appType != "pkg" {
+			return nil, errors.New("a package subject requires a PKG app")
+		}
+	default:
+		return nil, errors.New("expected an identifier and version pair or an inspected application or package, such as {{ facts.name }}")
+	}
+	apps, _, err := detectedApps(plugin.Facts{Subjects: []plugin.Subject{subject}}, selected, appType)
+	if err != nil {
+		return nil, err
+	}
+	app := apps[0]
+	result := object{"id": app.id, "version": app.version}
+	if appType == "lob" {
+		result["build"] = app.build
+	}
+	return result, nil
+}
+
+func includedApps(value any) (any, error) {
+	apps := value.([]any)
+	result := make([]any, len(apps))
+	for i, item := range apps {
+		app := item.(object)
+		result[i] = object{"bundleId": app["id"], "bundleVersion": app["version"]}
 	}
 	return result, nil
 }

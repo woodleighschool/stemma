@@ -63,7 +63,7 @@ The provider writes pkginfo, installers, declared icons and catalog indexes as
 `pkgsinfo/<name>-<version>.plist` and `pkgs/<installer filename>`, numbered when
 another item holds the name, and catalog entries omit `notes` and private keys. An
 item already in the repository keeps its paths. You do not need an intermediate
-pkginfo-rendering document. `version` is the prepared installer's managed version:
+pkginfo-rendering document. `version` defaults to the prepared installer's managed version:
 the selected application's, otherwise the Distribution product version or the
 version shared by its components. Application evidence supplies detection and DMG
 copy details where applicable. A PKG's static PackageInfo and Distribution
@@ -202,8 +202,25 @@ Set `included_apps` to replace the derived list, for example to require every
 application of a suite, or when static inspection cannot determine the installed
 application or an installer chooses it conditionally. A PKG app accepts receipts
 there too, so it can be detected by its package even when it installs an
-application. `display_name`,
-`description` and `publisher` are always set; the artifact never supplies them.
+application. Each entry can be an inspected subject or an explicit identifier and
+version:
+
+```yaml
+included_apps:
+  - "{{ facts.draw }}"
+  - "{{ facts.graph }}"
+  - id: org.example.script-installed
+    version: "2.0"
+```
+
+Application subjects use `CFBundleShortVersionString`; line-of-business detection
+also retains `CFBundleVersion`. Package subjects use the receipt identifier and
+version and require a payload. DMG and line-of-business entries accept application
+subjects installed under `/Applications`. The list replaces the derived detection
+list; its first entry supplies the primary identity.
+
+`display_name`, `description` and `publisher` are always set; the artifact never
+supplies them.
 
 A PKG can also publish as a line-of-business app, so that is the one `type` to
 declare. Stemma checks what Intune requires before uploading it: a flat PKG with

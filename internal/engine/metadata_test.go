@@ -414,6 +414,61 @@ spec:
 	published(document(read()), "installer_item_location", "notes")
 }
 
+func TestIntuneIncludedAppSubjectsResolveBeforePreview(t *testing.T) {
+	root := t.TempDir()
+	suitePackage(t, filepath.Join(root, "suite.pkg"), map[string]string{"Draw": "26.1"})
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: publication}
+spec:
+  imports: ['*.software.yaml']
+  destinations:
+    intune: {operation: intune, config: {token: "{{ env.STEMMA_TEST_UNSET_INTUNE_TOKEN }}"}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: suite}
+spec:
+  source: {path: suite.pkg}
+  minimum_os: '13.2'
+  subjects:
+    draw: {bundle_id: org.example.suite.draw}
+    receipt: {package_id: org.example.suite}
+  destinations:
+    intune:
+      display_name: Suite
+      description: Drawing suite
+      publisher: Example
+      included_apps:
+        - "{{ facts.draw }}"
+        - "{{ facts.receipt }}"
+        - {id: org.example.script-installed, version: '7.0'}
+`)
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	options.Method = "prepare"
+	report, err := Run(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication := report.Resources[0].Publications[0]
+	var metadata map[string]any
+	if err := json.Unmarshal(publication.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	want := []any{
+		map[string]any{"id": "org.example.suite.draw", "version": "26.1"},
+		map[string]any{"id": "org.example.suite", "version": "1.0"},
+		map[string]any{"id": "org.example.script-installed", "version": "7.0"},
+	}
+	if publication.Deferred != "" || !reflect.DeepEqual(metadata["included_apps"], want) || metadata["primary_bundle_version"] != "26.1" || metadata["minimum_os"] != "13.0" || publication.Origins["included_apps"] != "expression" {
+		t.Fatalf("included app publication = %+v", publication)
+	}
+}
+
 func TestJamfPatchVersionExpressionKeepsTheArtifactVersion(t *testing.T) {
 	root := t.TempDir()
 	suitePackage(t, filepath.Join(root, "suite.pkg"), map[string]string{"Draw": "26.1"})

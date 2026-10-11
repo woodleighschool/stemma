@@ -62,7 +62,7 @@ func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string
 		first := declared.([]any)[0].(object)
 		primary := object{"primary_bundle_id": first["id"], "primary_bundle_version": first["version"]}
 		if lob {
-			primary["primary_bundle_build"] = first["version"]
+			primary["primary_bundle_build"] = cmp.Or(text(first["build"]), text(first["version"]))
 		}
 		return mergeDerived(m, primary, "included_apps", origins)
 	}

@@ -5119,47 +5119,63 @@
                   "items": {
                     "anyOf": [
                       {
-                        "additionalProperties": false,
-                        "properties": {
-                          "id": {
-                            "anyOf": [
-                              {
-                                "maxLength": 1000,
-                                "minLength": 1,
-                                "type": "string"
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 1000,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Application bundle identifier, or package receipt identifier for a PKG app."
                               },
-                              {
-                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                "type": "string"
+                              "version": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 1000,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Application CFBundleShortVersionString or package receipt version."
                               }
+                            },
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "version"
                             ],
-                            "description": "Application bundle identifier, or package receipt identifier for a PKG app."
+                            "type": "object"
                           },
-                          "version": {
-                            "anyOf": [
-                              {
-                                "maxLength": 1000,
-                                "minLength": 1,
-                                "type": "string"
-                              },
-                              {
-                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                "type": "string"
+                          {
+                            "additionalProperties": true,
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
                               }
+                            },
+                            "required": [
+                              "kind"
                             ],
-                            "description": "Application CFBundleShortVersionString or package receipt version."
+                            "type": "object"
                           }
-                        },
-                        "propertyNames": {
-                          "not": {
-                            "pattern": "\\{\\{"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "version"
-                        ],
-                        "type": "object"
+                        ]
                       },
                       {
                         "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
@@ -5176,7 +5192,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Identifiers and versions that detect the installation; every entry must be installed and the first identifies the app. A PKG app accepts package receipts as well as applications. Derived from the selected application, or from receipts when a PKG selects no application, as a payloadless package does. DMG and line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
+              "description": "Identifiers and versions that detect the installation; every entry must be installed and the first identifies the app. Entries can be identifier/version pairs or inspected subjects, written as expressions such as {{ facts.name }}. Applications use their short version, with their build preserved for line-of-business apps. PKG apps also accept package subjects with a payload, which leaves a receipt. DMG and line-of-business subjects must be applications installed under /Applications. Omission derives the list from the selected application, or from payload receipts when a PKG selects no application. Explicit entries replace the derived list. Identifiers must be unique."
             },
             "information_url": {
               "anyOf": [
@@ -5641,47 +5657,63 @@
                   "items": {
                     "anyOf": [
                       {
-                        "additionalProperties": false,
-                        "properties": {
-                          "id": {
-                            "anyOf": [
-                              {
-                                "maxLength": 1000,
-                                "minLength": 1,
-                                "type": "string"
+                        "anyOf": [
+                          {
+                            "additionalProperties": false,
+                            "properties": {
+                              "id": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 1000,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Application bundle identifier, or package receipt identifier for a PKG app."
                               },
-                              {
-                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                "type": "string"
+                              "version": {
+                                "anyOf": [
+                                  {
+                                    "maxLength": 1000,
+                                    "minLength": 1,
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Application CFBundleShortVersionString or package receipt version."
                               }
+                            },
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "version"
                             ],
-                            "description": "Application bundle identifier, or package receipt identifier for a PKG app."
+                            "type": "object"
                           },
-                          "version": {
-                            "anyOf": [
-                              {
-                                "maxLength": 1000,
-                                "minLength": 1,
-                                "type": "string"
-                              },
-                              {
-                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                "type": "string"
+                          {
+                            "additionalProperties": true,
+                            "propertyNames": {
+                              "not": {
+                                "pattern": "\\{\\{"
                               }
+                            },
+                            "required": [
+                              "kind"
                             ],
-                            "description": "Application CFBundleShortVersionString or package receipt version."
+                            "type": "object"
                           }
-                        },
-                        "propertyNames": {
-                          "not": {
-                            "pattern": "\\{\\{"
-                          }
-                        },
-                        "required": [
-                          "id",
-                          "version"
-                        ],
-                        "type": "object"
+                        ]
                       },
                       {
                         "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
@@ -5698,7 +5730,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Identifiers and versions that detect the installation; every entry must be installed and the first identifies the app. A PKG app accepts package receipts as well as applications. Derived from the selected application, or from receipts when a PKG selects no application, as a payloadless package does. DMG and line-of-business apps only include applications installed under /Applications. Explicit entries replace the derived list. Identifiers must be unique."
+              "description": "Identifiers and versions that detect the installation; every entry must be installed and the first identifies the app. Entries can be identifier/version pairs or inspected subjects, written as expressions such as {{ facts.name }}. Applications use their short version, with their build preserved for line-of-business apps. PKG apps also accept package subjects with a payload, which leaves a receipt. DMG and line-of-business subjects must be applications installed under /Applications. Omission derives the list from the selected application, or from payload receipts when a PKG selects no application. Explicit entries replace the derived list. Identifiers must be unique."
             },
             "information_url": {
               "anyOf": [
