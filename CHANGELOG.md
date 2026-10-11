@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.11.0](https://github.com/woodleighschool/stemma/compare/v0.10.4...v0.11.0) (2026-10-11)
+
+
+### ⚠ BREAKING CHANGES
+
+* **plugin:** lease reconciliation content on demand
+* **report:** use artifact versions or native metadata instead of destination.version.
+* **lockfile:** reviewed source locks use the stemma.lock directory.
+* **plugin:** reconciliation operations use interface version 2.
+* **inspect:** resource operations use interface version 3.
+
+### Features
+
+* **cli:** group pipeline progress by phase ([b58d096](https://github.com/woodleighschool/stemma/commit/b58d096defdee4a1381e686249ad528a57bdda01))
+* **icon:** select an application in the prepared installer ([b82ebc6](https://github.com/woodleighschool/stemma/commit/b82ebc629d8605afe537487bc5db6852344e7f0e))
+* **inspect:** read files directly from artifacts ([4ee1dbe](https://github.com/woodleighschool/stemma/commit/4ee1dbe15db6069a493e87cd976888fbced4abb4))
+* **inspect:** report application executable architectures ([9619302](https://github.com/woodleighschool/stemma/commit/96193028b982cdef66729073b7de4e6bf5d7afb7))
+* **intune:** accept inspected subjects in included apps ([dea0ce1](https://github.com/woodleighschool/stemma/commit/dea0ce178db60b47b2f21d631c6a0674a546f06e))
+* **jamf:** allow an explicit patch version ([531b5b3](https://github.com/woodleighschool/stemma/commit/531b5b32b45063a238a64ecef0de99b4840b532d))
+* **lockfile:** store reviewed inputs by resource ([debdd81](https://github.com/woodleighschool/stemma/commit/debdd819cbe6124f116940466723f66c0f38fddd))
+* **munki:** derive detection from inspected applications ([a519013](https://github.com/woodleighschool/stemma/commit/a5190131365f11649f34fb85d3a773f92b3dd060))
+* **plugin:** lease reconciliation content on demand ([0f2b998](https://github.com/woodleighschool/stemma/commit/0f2b998b16313902599b3c08a391eef4d9cc258e))
+* **plugin:** preview managed publication metadata ([5e52c82](https://github.com/woodleighschool/stemma/commit/5e52c82e4c7dbddbd7c03ff962129c949b2469d4))
+* **plugin:** select package subjects by identifier ([a80d5dd](https://github.com/woodleighschool/stemma/commit/a80d5dddbfff9811b6c7539711c76273ca39dd6b))
+* **software:** retain source version provenance ([4fd6d74](https://github.com/woodleighschool/stemma/commit/4fd6d745c839e0c8fcb8869bd3525ba5050198e7))
+* **source:** authenticate GitHub lookups from the environment ([974a57f](https://github.com/woodleighschool/stemma/commit/974a57f40d13f3804b7b594d042afe464c0c8b0c))
+* **source:** select the highest captured download version ([c2795b4](https://github.com/woodleighschool/stemma/commit/c2795b49417c709dc8c8fc7b67b564ccd3f0744b))
+* **validate:** compare declarations with reviewed inputs ([9a6228c](https://github.com/woodleighschool/stemma/commit/9a6228c5b74f1fa6f4da5ea5a772b132d7c41f21))
+
+
+### Bug Fixes
+
+* **go:** update module github.com/modelcontextprotocol/go-sdk (218aedd → 944ac19) ([#164](https://github.com/woodleighschool/stemma/issues/164)) ([42628f5](https://github.com/woodleighschool/stemma/commit/42628f5f8c5c70c3cbfe9ce9c48afdc5b0bda5fd))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (3c08147 → 218aedd) ([#159](https://github.com/woodleighschool/stemma/issues/159)) ([c4327bf](https://github.com/woodleighschool/stemma/commit/c4327bf5d8568390e6dcbeff47aa8b46d74866d9))
+* **go:** update module golang.org/x/image (v0.46.0 → v0.47.0) ([#152](https://github.com/woodleighschool/stemma/issues/152)) ([5bd1215](https://github.com/woodleighschool/stemma/commit/5bd1215c72bbb42820ee54184f3fa6b781b7be1c))
+* **go:** update module golang.org/x/net (v0.60.0 → v0.61.0) ([#144](https://github.com/woodleighschool/stemma/issues/144)) ([176de2d](https://github.com/woodleighschool/stemma/commit/176de2df7bf741dd681040fc1ce05adc55fa18c0))
+* **go:** update module golang.org/x/sync (v0.23.0 → v0.24.0) ([#148](https://github.com/woodleighschool/stemma/issues/148)) ([36fc2fc](https://github.com/woodleighschool/stemma/commit/36fc2fcbd583025f9ea83e4680b5101b432b3d8d))
+* **go:** update module golang.org/x/term (v0.46.0 → v0.47.0) ([#153](https://github.com/woodleighschool/stemma/issues/153)) ([23ae862](https://github.com/woodleighschool/stemma/commit/23ae8627adb330d9791ebaeabea42d630b847414))
+* **go:** update module golang.org/x/text (v0.42.0 → v0.43.0) ([#154](https://github.com/woodleighschool/stemma/issues/154)) ([ca304be](https://github.com/woodleighschool/stemma/commit/ca304be043182259dbaf43ec26909beec7bfb0ae))
+* **intune:** derive publication previews before Graph translation ([f475760](https://github.com/woodleighschool/stemma/commit/f47576094c936475a66252cef125fa254dfd61b3))
+* **jamf:** preview locally derived publication metadata ([7180a1c](https://github.com/woodleighschool/stemma/commit/7180a1c3c18e70db6b64ef7db92feaeb4e72337a))
+* **report:** separate artifact and publication versions ([d64d544](https://github.com/woodleighschool/stemma/commit/d64d544bb7f9b8a865672d8ec408cab486f20f25))
+
 ## [0.10.4](https://github.com/woodleighschool/stemma/compare/v0.10.3...v0.10.4) (2026-10-10)
 
 
