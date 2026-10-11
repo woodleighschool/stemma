@@ -184,8 +184,12 @@ func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 	// same source, so it finds that preparation cached.
 	var check checkResult
 	call(t, session, "check", map[string]any{"since": "HEAD"}, &check)
-	if !check.Valid || len(check.Resources) != 1 || check.Resources[0].Resource != "MacSoftware/app" || check.Resources[0].Status != "cached" {
+	if !check.Valid || check.Locked != nil || len(check.Resources) != 1 || check.Resources[0].Resource != "MacSoftware/app" || check.Resources[0].Status != "cached" {
 		t.Fatalf("check = %+v", check)
+	}
+	call(t, session, "check", map[string]any{"since": "HEAD", "locked": true}, &check)
+	if !check.Valid || check.Locked == nil || check.Locked.Compared != 1 || len(check.Locked.Unresolved) != 0 {
+		t.Fatalf("locked check = %+v", check)
 	}
 }
 

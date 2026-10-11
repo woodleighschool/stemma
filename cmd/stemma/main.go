@@ -186,22 +186,39 @@ func (c *cli) schemaCommand() *cobra.Command {
 }
 
 func (c *cli) validateCommand() *cobra.Command {
-	var resolved, offline bool
+	var resolved, locked, offline bool
 	cmd := &cobra.Command{Use: "validate", Short: "Validate the catalog as written, without environment values or software acquisition", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		path, err := c.project()
 		if err != nil {
 			return err
 		}
-		p, err := engine.ValidateProject(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}}, resolved)
+		opts := engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}}
+		var compared engine.LockComparison
+		if locked {
+			opts.Compared = &compared
+		}
+		p, err := engine.ValidateProject(cmd.Context(), opts, resolved)
 		if err != nil {
 			return err
 		}
 		if resolved {
 			return writeJSON(c.out, p)
 		}
-		return printSuccess(c.out, "Configuration is valid.")
+		if err := printSuccess(c.out, "Configuration is valid."); err != nil || !locked {
+			return err
+		}
+		if err := printSuccess(c.out, "The lock matches the declaration of "+quantity(compared.Compared, "input")+". No input content was acquired or read."); err != nil {
+			return err
+		}
+		for _, input := range compared.Unresolved {
+			if err := printSkipped(c.out, "Unresolved: "+input+" reads environment values, so the lock was not compared with it. Add --resolved."); err != nil {
+				return err
+			}
+		}
+		return nil
 	}}
 	cmd.Flags().BoolVar(&resolved, "resolved", false, "Evaluate environment values as runs do and print the resolved composition as JSON")
+	cmd.Flags().BoolVar(&locked, "locked", false, "Also require the lock to answer every declared input, comparing declarations without acquiring or reading content; inputs that read environment values are listed as unresolved")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use cached plugins without contacting a registry")
 	return cmd
 }

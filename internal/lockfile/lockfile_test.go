@@ -498,6 +498,58 @@ func TestFrozenRunsSayWhyAnEntryIsStale(t *testing.T) {
 	}
 }
 
+// Compare answers whether the lock still fits the declarations with neither
+// the sources nor the bytes: a changed declaration fails it, and changed or
+// absent content does not.
+func TestCompareReadsDeclarationsAndNoContent(t *testing.T) {
+	m := manager(t)
+	if err := os.WriteFile(filepath.Join(m.Root, "payload.pkg"), []byte("installer"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	requests := 0
+	m.Client.Transport = roundTrip(func(*http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("installer")), Header: http.Header{}}, nil
+	})
+	const other = "stemma/v1alpha1/Software/remote"
+	remote := func(filename string) plugin.Input {
+		return plugin.Input{Resolver: "http", Config: map[string]any{"url": "https://vendor.example/App.pkg", "filename": filename}}
+	}
+	inputs := map[string]map[string]plugin.Input{resource: {"source": {Resolver: "file", Config: map[string]any{"path": "payload.pkg"}}}, other: {"source": remote("App.pkg")}}
+	if _, err := prepare(t, m, inputs, Options{Refresh: true}); err != nil {
+		t.Fatal(err)
+	}
+	// Neither the cache nor the sources hold the reviewed bytes any more.
+	fresh := manager(t)
+	fresh.Root = m.Root
+	fresh.Client.Transport = m.Client.Transport
+	if err := os.WriteFile(filepath.Join(m.Root, "payload.pkg"), []byte("edited"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fetched := requests
+	never := func(plugin.Input) bool { return false }
+	locked, err := Load(m.Root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Compare(locked, inputs, fresh, never); err != nil || requests != fetched {
+		t.Fatalf("comparison read content or a source: %v, %d requests", err, requests-fetched)
+	}
+	inputs[other]["source"] = remote("Renamed.pkg")
+	want := "lockfile: " + other + " input source: input declaration changed since it was locked; run stemma update Software/remote"
+	if err := Compare(locked, inputs, fresh, never); err == nil || err.Error() != want {
+		t.Fatalf("changed declaration: %v, want %s", err, want)
+	}
+	// A declaration only a run can read is left to that run.
+	if err := Compare(locked, inputs, fresh, func(input plugin.Input) bool { return input.Resolver == "http" }); err != nil {
+		t.Fatalf("unreadable declaration was compared: %v", err)
+	}
+	delete(inputs, other)
+	if err := Compare(locked, inputs, fresh, never); err == nil || !strings.Contains(err.Error(), "stemma.lock/Software/remote.yaml locks a resource that is no longer declared") {
+		t.Fatalf("leftover document: %v", err)
+	}
+}
+
 func TestProjectLockReportsOnlyContention(t *testing.T) {
 	root := t.TempDir()
 	var logs bytes.Buffer

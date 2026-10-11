@@ -86,7 +86,8 @@ type iconInput struct {
 }
 
 type checkInput struct {
-	Since string `json:"since" jsonschema:"Git revision the change is compared with, such as origin/main."`
+	Since  string `json:"since" jsonschema:"Git revision the change is compared with, such as origin/main."`
+	Locked bool   `json:"locked,omitempty" jsonschema:"Also require the lock to answer every declared input of the catalog. It compares declarations without acquiring or reading input content."`
 }
 
 // preparation answers prepare. Error carries a failure no resource reports.
@@ -171,10 +172,19 @@ type iconOutcome struct {
 
 // checkResult answers check. Error carries a validation or lockfile failure.
 type checkResult struct {
-	Valid     bool      `json:"valid"`
-	Resources []checked `json:"resources,omitempty"`
-	Warnings  []string  `json:"warnings,omitempty"`
-	Error     string    `json:"error,omitempty"`
+	Valid     bool            `json:"valid"`
+	Resources []checked       `json:"resources,omitempty"`
+	Locked    *lockComparison `json:"locked,omitempty"`
+	Warnings  []string        `json:"warnings,omitempty"`
+	Error     string          `json:"error,omitempty"`
+}
+
+// lockComparison is what comparing the lock with the declarations covered. It
+// acquires or reads no input content. Unresolved names each input whose
+// declaration reads environment values, which nothing compared.
+type lockComparison struct {
+	Compared   int      `json:"compared"`
+	Unresolved []string `json:"unresolved,omitempty"`
 }
 
 // checked is a resource the change prepared: prepared, cached, failed or
@@ -261,10 +271,18 @@ func (c catalog) check(ctx context.Context, _ *mcp.CallToolRequest, in checkInpu
 	opts := c.options("prepare")
 	opts.ChangedSince = in.Since
 	report, err := engine.Run(ctx, opts)
+	var compared engine.LockComparison
 	if err == nil {
-		_, err = engine.ValidateProject(ctx, c.options(""), false)
+		validation := c.options("")
+		if in.Locked {
+			validation.Compared = &compared
+		}
+		_, err = engine.ValidateProject(ctx, validation, false)
 	}
 	result := checkResult{Valid: err == nil, Warnings: report.Warnings, Error: unreported(err)}
+	if in.Locked && err == nil {
+		result.Locked = &lockComparison{Compared: compared.Compared, Unresolved: compared.Unresolved}
+	}
 	for _, resource := range report.Resources {
 		result.Resources = append(result.Resources, checked{Resource: resourceName(resource), Status: status(resource), Error: resource.Error, BlockedBy: keyNames(resource.BlockedBy)})
 	}

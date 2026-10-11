@@ -86,7 +86,8 @@ func newServer(opts Options) *mcp.Server {
 		Name: "check",
 		Description: "Check the catalog as pull requests do: prepare affected resources " +
 			"from the lockfile since a Git revision, then validate every document. " +
-			"Suspended resources are only validated, and so are profiled resources unless an affected resource consumes their outputs.",
+			"Suspended resources are only validated, and so are profiled resources unless an affected resource consumes their outputs. " +
+			"Set locked to also compare the lock with every declared input, which acquires nothing and reads no content: locked.compared counts the inputs whose entry matches their declaration, and locked.unresolved names each input it could not compare because its declaration reads environment values.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld},
 	}, tools.check)
 	return server

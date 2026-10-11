@@ -81,3 +81,10 @@ func printSuccess(out io.Writer, message string) error {
 	_, err := fmt.Fprintln(out, style.paint("✓", color.FgHiGreen)+" "+changes.Text(message))
 	return err
 }
+
+// printSkipped reports work a command left undone.
+func printSkipped(out io.Writer, message string) error {
+	style := newTextStyle(out)
+	_, err := fmt.Fprintln(out, style.paint("–", color.FgHiYellow)+" "+changes.Text(message))
+	return err
+}

@@ -98,6 +98,11 @@ func ValidateProject(ctx context.Context, opts Options, resolved bool) (result c
 	if _, err := planDestinations(ctx, p, plans, ops, root, selected, resolved); err != nil {
 		return p, err
 	}
+	if opts.Compared != nil {
+		if err := compareLock(root, p, declarations(plans, selected), ops, resolved, opts.Compared); err != nil {
+			return p, err
+		}
+	}
 	if !resolved {
 		return p, nil
 	}
@@ -118,6 +123,39 @@ func ValidateProject(ctx context.Context, opts Options, resolved bool) (result c
 		}
 	}
 	return evaluated, nil
+}
+
+// compareLock checks that the reviewed lock answers every declared input,
+// reading neither sources nor content. A declaration that holds expressions
+// is named as unresolved unless validation resolved it, since only its
+// evaluated value compares. A suspended resource may have no entries, since
+// no run acquires its inputs.
+func compareLock(root string, p config.Project, inputs map[string]map[string]plugin.Input, ops *operations, resolved bool, result *LockComparison) error {
+	*result = LockComparison{}
+	manager := source.New(nil, root, true)
+	if err := registerResolvers(manager, ops, ""); err != nil {
+		return err
+	}
+	locked, err := lockfile.Load(root)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	unread := func(input plugin.Input) bool { return !resolved && expression.Has(input.Config) }
+	for _, key := range sortedKeys(inputs) {
+		resource := p.Resources[key]
+		if resource.Suspend && len(locked.Inputs[key]) == 0 {
+			delete(inputs, key)
+			continue
+		}
+		for _, name := range sortedKeys(inputs[key]) {
+			if unread(inputs[key][name]) {
+				result.Unresolved = append(result.Unresolved, resource.Kind+"/"+resource.Metadata.Name+" input "+name)
+			} else {
+				result.Compared++
+			}
+		}
+	}
+	return lockfile.Compare(locked, inputs, manager, unread)
 }
 
 func projectOperations(ctx context.Context, p config.Project, opts Options) (*operations, func(), error) {

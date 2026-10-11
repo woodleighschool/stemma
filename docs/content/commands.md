@@ -200,6 +200,7 @@ destination.
 ```sh
 stemma inspect installer.pkg
 stemma validate --resolved
+stemma validate --locked
 stemma schema --output-file stemma.schema.json
 stemma schema --offline --output-file -
 stemma version
@@ -232,6 +233,18 @@ its inventory entry. Inspect the package itself to read its receipts and payload
 environment value, as runs do, and prints the merged configuration with connection
 settings resolved. It needs every referenced variable and may expose secrets: do
 not share it without reviewing it.
+
+`validate --locked` also requires the lock to answer every declared input: each
+entry records the resolver, resolver version and declaration its input has now,
+and no document locks a resource that is no longer declared. It compares
+declarations only, without acquiring or reading input content. It does not verify
+that the pinned bytes remain available or match their digest: `prepare` verifies
+content. Validation still loads the project's plugins. A
+suspended resource may have no entries. An input whose declaration reads the
+environment is not compared: the command names it as unresolved and still
+succeeds, and `--resolved` compares it with the evaluated value. MCP `check` takes
+`locked` for the same comparison and returns the count compared with the
+unresolved inputs.
 
 ## Plugins and cache
 
@@ -286,7 +299,8 @@ selected scope, regardless of `--all`. For each prepared resource, `publications
 has an entry for every destination, made with no connection to it. Where the
 destination reports it, as `munki` does, `metadata` is the declared metadata with
 each value derived from the artifact, and null or an empty value for a field the
-destination clears; `plan` proposes exactly those values and `apply` writes them.
+destination clears. It describes the fields this publication manages, not the
+complete remote item; `plan` compares them with the destination's current state.
 `origins` names where each field's value came from, such as `explicit`,
 `expression`, `artifact.version` or `installer.receipts`. An entry without
 `metadata` is not a preview of the publication, and its `deferred` says why: the

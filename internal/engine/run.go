@@ -53,6 +53,18 @@ type Options struct {
 	Handlers map[string]reconcileHandler
 	// ResourceDone receives each final resource result, including failures.
 	ResourceDone func(ResourceReport) error
+	// Compared, when set, has validation also compare the reviewed lock with
+	// every declaration and report what that covered.
+	Compared *LockComparison
+}
+
+// LockComparison is what a lock comparison covered: the number of inputs whose
+// entry it compared with their declaration, and each input it could not
+// compare, as Kind/name and the input's name. Those declarations read
+// environment values, which resolved validation and runs evaluate.
+type LockComparison struct {
+	Compared   int
+	Unresolved []string
 }
 
 // Run resolves locked resources in dependency order and reconciles destinations independently.

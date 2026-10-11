@@ -408,6 +408,33 @@ func check(old File, inputs map[string]map[string]plugin.Input, retain []string)
 	return errors.Join(stale...)
 }
 
+// Compare checks a loaded lock's shape and declarations without acquiring
+// input content. Unreadable declarations are checked for an entry but left
+// to a run to evaluate and compare.
+func Compare(locked File, inputs map[string]map[string]plugin.Input, m *source.Manager, unreadable func(plugin.Input) bool) error {
+	if err := check(locked, inputs, nil); err != nil {
+		return err
+	}
+	var stale []error
+	for _, resource := range names(inputs) {
+		for _, name := range names(inputs[resource]) {
+			input := inputs[resource][name]
+			if unreadable(input) {
+				continue
+			}
+			version, declaration, err := m.Declaration(input)
+			if err != nil {
+				return fmt.Errorf("%s input %s: %w", resource, name, err)
+			}
+			entry := locked.Inputs[resource][name]
+			if entry.Resolver != input.Resolver || entry.ResolverVersion != version || entry.Declaration != declaration {
+				stale = append(stale, fmt.Errorf("lockfile: %s input %s: %w", resource, name, updateRequired(resource, staleReason(entry, input, version, m.IsLocal(input.Resolver)))))
+			}
+		}
+	}
+	return errors.Join(stale...)
+}
+
 // notDeclared names the document that locks a resource the catalog no longer
 // declares, which goes with the declaration.
 func notDeclared(resource string) error {

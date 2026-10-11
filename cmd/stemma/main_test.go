@@ -280,6 +280,10 @@ spec:
 	if downloads.Load() != 1 {
 		t.Fatal("unexpected acquisition count")
 	}
+	// Comparing the lock states what it compared and that it read no content.
+	if output := string(invoke(true, "validate", "--locked", "--offline")); output != "✓ Configuration is valid.\n✓ The lock matches the declaration of 1 input. No input content was acquired or read.\n" || downloads.Load() != 1 {
+		t.Fatalf("lock comparison printed %q", output)
+	}
 	materialized, found := strings.CutSuffix(string(invoke(true, "artifact", "MacSoftware/fixture")), "\n")
 	if !found || !strings.HasPrefix(materialized, filepath.Join(cache, "materialized")+string(filepath.Separator)) {
 		t.Fatalf("artifact printed %q", materialized)

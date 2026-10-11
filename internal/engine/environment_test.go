@@ -1,7 +1,10 @@
 package engine
 
 import (
+	"bytes"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -141,5 +144,90 @@ func TestCommandsReadEnvironmentValuesWhereTheyUseThem(t *testing.T) {
 	}
 	if err := run("plan", "STEMMA_TEST_KEY"); err != nil {
 		t.Fatalf("publication with every value it uses: %v", err)
+	}
+}
+
+// Validation can compare the reviewed lock with every declaration, reading
+// neither sources nor content. A declaration that reads the environment is
+// left to runs, and a suspended resource needs no entries.
+func TestValidationComparesTheLockWithDeclarations(t *testing.T) {
+	installer, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(installer) }))
+	defer server.Close()
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: locked}
+spec: {imports: ['*.software.yaml']}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: local}
+spec:
+  source: {path: local.pkg}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: vendor}
+spec:
+  source: {url: "{{ env.STEMMA_TEST_VENDOR }}/vendor.pkg"}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: paused}
+suspend: true
+spec:
+  source: {path: absent.pkg}
+`)
+	if err := os.WriteFile(filepath.Join(root, "local.pkg"), installer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STEMMA_TEST_VENDOR", server.URL)
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Unsetenv("STEMMA_TEST_VENDOR"); err != nil {
+		t.Fatal(err)
+	}
+	// The reviewed bytes are gone from the cache and the checkout.
+	options.CacheDir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "local.pkg"), []byte("edited"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var compared LockComparison
+	options.Compared = &compared
+	if _, err := ValidateProject(t.Context(), options, false); err != nil || compared.Compared != 1 || !slices.Equal(compared.Unresolved, []string{"MacSoftware/vendor input source"}) {
+		t.Fatalf("comparison = %+v: %v", compared, err)
+	}
+	// Resolved validation reads the value, so it compares that input too and
+	// fails once the value is not the one that was locked.
+	t.Setenv("STEMMA_TEST_VENDOR", server.URL)
+	if _, err := ValidateProject(t.Context(), options, true); err != nil || compared.Compared != 2 || len(compared.Unresolved) != 0 {
+		t.Fatalf("resolved comparison = %+v: %v", compared, err)
+	}
+	t.Setenv("STEMMA_TEST_VENDOR", server.URL+"/moved")
+	if _, err := ValidateProject(t.Context(), options, true); err == nil || !strings.Contains(err.Error(), "input declaration changed since it was locked; run stemma update MacSoftware/vendor") {
+		t.Fatalf("a changed environment value passed: %v", err)
+	}
+	if err := os.Unsetenv("STEMMA_TEST_VENDOR"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(root, "local.pkg"), filepath.Join(root, "moved.pkg")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "resources.software.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "resources.software.yaml"), bytes.Replace(data, []byte("local.pkg"), []byte("moved.pkg"), 1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateProject(t.Context(), options, false); err == nil || !strings.Contains(err.Error(), "local input declaration changed since it was locked, as a new path or a moved document does; run stemma update MacSoftware/local") {
+		t.Fatalf("a changed declaration passed: %v", err)
 	}
 }
