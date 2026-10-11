@@ -43,6 +43,7 @@ type ResourceReport struct {
 	Artifacts    map[string]Prepared    `json:"artifacts,omitempty"`
 	Cached       bool                   `json:"cached"`
 	Destinations []DestinationReport    `json:"destinations,omitempty"`
+	Publications []Publication          `json:"publications,omitempty"`
 	// Icon reports what the icon method did for the resource's declared asset.
 	Icon     string `json:"icon,omitempty"`
 	IconPath string `json:"icon_path,omitempty"`
@@ -60,6 +61,15 @@ func signatureNotices(resource plugin.ResourceReference, artifacts map[string]Pr
 		notices = append(notices, signature.Notices(resource, artifacts[name].Evidence)...)
 	}
 	return notices
+}
+
+// Publication reports managed metadata without reading destination state.
+// Deferred says why Metadata is absent.
+type Publication struct {
+	Destination string            `json:"destination"`
+	Metadata    json.RawMessage   `json:"metadata,omitempty"`
+	Origins     map[string]string `json:"origins,omitempty"`
+	Deferred    string            `json:"deferred,omitempty"`
 }
 
 // DestinationReport describes semantic drift independently of cache hits.

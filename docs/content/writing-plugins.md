@@ -322,6 +322,13 @@ the value.
 connecting: it receives no `Config`. `plan` and `apply` receive the connection
 settings with their environment values evaluated.
 
+For a prepared artifact, `validate` also answers with what it will publish.
+`Metadata` is the request's metadata in the declaration's own shape, with every
+value the destination derives from the artifact and null or an empty value for
+each field it clears; `Origins` maps each field to where its value came from. Leave out anything the destination assigns, such as a
+stored file's location. `stemma prepare --json` reports both, so return
+`Metadata` only when the derived state reads in the declaration's terms.
+
 `plan` reads the destination and returns semantic `Change` records without
 mutations. `apply` re-observes and performs the necessary changes. Preserve absent,
 null, false and empty collection values when decoding native metadata; they have

@@ -3,10 +3,13 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -175,5 +178,88 @@ func TestResolvedExpressionMustSatisfyProviderSchema(t *testing.T) {
 	err = ops.call(t.Context(), "munki", "validate", request, nil)
 	if err == nil || called || !strings.Contains(err.Error(), "boolean") {
 		t.Fatalf("resolved string reached boolean provider field: called=%v err=%v", called, err)
+	}
+}
+
+func TestPrepareReportsWhatEachDestinationDerives(t *testing.T) {
+	root := t.TempDir()
+	installer, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "app.pkg"), installer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: publications}
+spec:
+  imports: ['*.software.yaml']
+  destinations:
+    repo: {operation: munki, config: {path: "{{ env.STEMMA_TEST_UNSET_REPOSITORY }}"}}
+    staging: {operation: munki, config: {path: staging}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: app}
+spec:
+  source: {path: app.pkg}
+  destinations:
+    repo:
+      pkginfo:
+        catalogs: [testing]
+        display_name: "Fixture {{ facts['PackageInfo'].package.version }}"
+    staging:
+      pkginfo:
+        catalogs: ["{{ env.STEMMA_TEST_UNSET_CATALOG }}"]
+`)
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	options.Method = "prepare"
+	report, err := Run(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publications := report.Resources[0].Publications
+	if len(publications) != 2 || publications[0].Destination != "repo" || publications[1].Destination != "staging" {
+		t.Fatalf("publications = %+v", publications)
+	}
+	var derived struct {
+		Pkginfo map[string]any `json:"pkginfo"`
+	}
+	if err := json.Unmarshal(publications[0].Metadata, &derived); err != nil {
+		t.Fatal(err)
+	}
+	pkginfo := derived.Pkginfo
+	if pkginfo["name"] != "app" || pkginfo["version"] != "1.2.3" || pkginfo["display_name"] != "Fixture 1.2.3" || pkginfo["uninstall_method"] != "removepackages" || len(pkginfo["receipts"].([]any)) != 1 || len(pkginfo["installer_item_hash"].(string)) != 64 {
+		t.Fatalf("derived pkginfo = %+v", pkginfo)
+	}
+	if _, named := pkginfo["installer_item_location"]; named {
+		t.Fatal("reported a location the repository assigns")
+	}
+	for field, origin := range map[string]string{"pkginfo.catalogs": "explicit", "pkginfo.display_name": "expression", "pkginfo.name": "software.name", "pkginfo.version": "artifact.version", "pkginfo.receipts": "installer.receipts"} {
+		if publications[0].Origins[field] != origin {
+			t.Errorf("origin of %s = %q, want %q", field, publications[0].Origins[field], origin)
+		}
+	}
+	if len(publications[1].Metadata) != 0 || !strings.Contains(publications[1].Deferred, "environment values") {
+		t.Fatalf("metadata reading the environment = %+v", publications[1])
+	}
+	if _, err := os.Stat(filepath.Join(root, "staging")); !os.IsNotExist(err) {
+		t.Fatalf("preparation reached a repository: %v", err)
+	}
+	options.Handlers = map[string]reconcileHandler{"munki": func(context.Context, plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
+		return plugin.ReconcileResponse{Origins: map[string]string{"pkginfo.name": "software.name"}}, nil
+	}}
+	report, err = Run(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication := report.Resources[0].Publications[0]
+	if len(publication.Metadata) != 0 || publication.Deferred == "" || publication.Origins["pkginfo.name"] != "software.name" {
+		t.Fatalf("origins without metadata = %+v", publication)
 	}
 }

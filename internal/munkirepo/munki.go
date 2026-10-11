@@ -42,11 +42,7 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 		return plugin.ReconcileResponse{}, err
 	}
 	if request.Method == "validate" {
-		input, _, _, err := nativeInput(request)
-		if err == nil {
-			_, err = munki.Build(input)
-		}
-		return plugin.ReconcileResponse{}, err
+		return derive(request)
 	}
 	if request.Method != "plan" && request.Method != "apply" {
 		return plugin.ReconcileResponse{}, fmt.Errorf("unsupported Munki method %q", request.Method)
@@ -86,6 +82,31 @@ func (config Config) Validate() error {
 		return errors.New("munki repository path is required")
 	}
 	return nil
+}
+
+// derive answers validation with the pkginfo the request publishes. The
+// repository names the installer's file, so its location is left out.
+func derive(request plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, error) {
+	input, _, derived, err := nativeInput(request)
+	if err != nil {
+		return plugin.ReconcileResponse{}, err
+	}
+	pkginfo, err := munki.Render(input)
+	if err != nil {
+		return plugin.ReconcileResponse{}, err
+	}
+	delete(pkginfo, "installer_item_location")
+	// A field derivation owns is null when the artifact gives it no value, as
+	// a declared null is.
+	for _, field := range derived.Cleared {
+		pkginfo[field] = nil
+	}
+	destination, err := munki.DecodeDestination(request.Metadata)
+	if err != nil {
+		return plugin.ReconcileResponse{}, err
+	}
+	metadata, err := json.Marshal(munki.DestinationMetadata{Pkginfo: raw(pkginfo), Retention: destination.Retention})
+	return plugin.ReconcileResponse{Origins: derived.Origins, Metadata: metadata}, err
 }
 
 func nativeInput(request plugin.ReconcileRequest[Config]) (munki.Input, map[string]any, munki.Derived, error) {

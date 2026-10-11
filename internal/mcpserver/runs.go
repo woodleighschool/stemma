@@ -97,11 +97,22 @@ type preparation struct {
 }
 
 type prepared struct {
-	Resource  string     `json:"resource"`
-	Error     string     `json:"error,omitempty"`
-	BlockedBy []string   `json:"blocked_by,omitempty"`
-	Inputs    []input    `json:"inputs,omitempty"`
-	Artifacts []artifact `json:"artifacts,omitempty"`
+	Resource     string        `json:"resource"`
+	Error        string        `json:"error,omitempty"`
+	BlockedBy    []string      `json:"blocked_by,omitempty"`
+	Inputs       []input       `json:"inputs,omitempty"`
+	Artifacts    []artifact    `json:"artifacts,omitempty"`
+	Publications []publication `json:"publications,omitempty"`
+}
+
+// publication is what one destination will publish for the artifact: the
+// declared metadata with every derived value, and the origin of each field.
+// Deferred says why Metadata is absent.
+type publication struct {
+	Destination string            `json:"destination"`
+	Metadata    map[string]any    `json:"metadata,omitempty"`
+	Origins     map[string]string `json:"origins,omitempty"`
+	Deferred    string            `json:"deferred,omitempty"`
 }
 
 // input is a source as the lockfile records it: what its resolver observed and
@@ -189,6 +200,15 @@ func (c catalog) prepare(ctx context.Context, _ *mcp.CallToolRequest, in resourc
 	result := preparation{Resources: []prepared{}, Warnings: report.Warnings, Error: unreported(err)}
 	for _, resource := range report.Resources {
 		item := prepared{Resource: resourceName(resource), Error: resource.Error, BlockedBy: keyNames(resource.BlockedBy), Inputs: inputs(resource.Inputs)}
+		for _, derived := range resource.Publications {
+			published := publication{Destination: derived.Destination, Origins: derived.Origins, Deferred: derived.Deferred}
+			if len(derived.Metadata) > 0 {
+				if err := json.Unmarshal(derived.Metadata, &published.Metadata); err != nil {
+					published.Deferred = "the destination reported metadata that is not an object"
+				}
+			}
+			item.Publications = append(item.Publications, published)
+		}
 		for _, output := range slices.Sorted(maps.Keys(resource.Artifacts)) {
 			item.Artifacts = append(item.Artifacts, describeArtifact(output, resource.Artifacts[output]))
 		}

@@ -109,9 +109,14 @@ type MinimumOS struct {
 }
 
 // ReconcileResponse carries the changes a run planned or made.
+//
+// Validate may return Metadata in the declaration's shape, including derived
+// values and nulls for cleared fields. It excludes destination-assigned values
+// and preserved remote state. Origins names each managed field's source.
 type ReconcileResponse struct {
-	Changes []Change          `json:"changes,omitempty"`
-	Origins map[string]string `json:"origins,omitempty"`
+	Changes  []Change          `json:"changes,omitempty"`
+	Origins  map[string]string `json:"origins,omitempty"`
+	Metadata json.RawMessage   `json:"metadata,omitempty"`
 }
 
 // Change is a semantic destination change; an empty Changes list needs no write.

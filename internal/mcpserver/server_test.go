@@ -156,6 +156,9 @@ func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 	if len(app.Artifacts) != 1 || app.Artifacts[0].Version != "1.2.3" || !strings.Contains(app.Artifacts[0].Signatures, "signer: apple:developer-id:SMLKBTR495") || len(app.Artifacts[0].Subjects) == 0 {
 		t.Fatalf("artifacts = %+v", app.Artifacts)
 	}
+	if published := app.Publications; len(published) != 1 || published[0].Destination != "repo" || published[0].Metadata["pkginfo"].(map[string]any)["version"] != "1.2.3" || published[0].Origins["pkginfo.version"] != "artifact.version" {
+		t.Fatalf("publications = %+v", app.Publications)
+	}
 	if _, err := os.Stat(lockfile); !os.IsNotExist(err) {
 		t.Fatalf("prepare wrote the lockfile: %v", err)
 	}

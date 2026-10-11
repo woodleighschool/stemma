@@ -65,6 +65,8 @@ func (e *execution) reconcile(ctx context.Context, ref destinationRef) error {
 		if failure == nil {
 			failure = e.publishTo(ctx, ref, prepared, peers, item)
 		}
+	} else if failure == nil {
+		item.Publications = append(item.Publications, Publication{Destination: ref.Destination, Deferred: "its metadata reads environment values, which plan and apply evaluate"})
 	}
 	if failure != nil {
 		e.failed[ref] = true
@@ -171,12 +173,18 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 		}
 		request.Inputs["icon"] = artifact
 	}
-	if err := s.ops.call(ctx, d.Operation, "validate", request, nil); err != nil {
+	var derived plugin.ReconcileResponse
+	if err := s.ops.call(ctx, d.Operation, "validate", request, &derived); err != nil {
 		return err
 	}
 	if err := verifyLeases(ctx, request); err != nil {
 		return err
 	}
+	publication := Publication{Destination: destination, Metadata: derived.Metadata, Origins: mergeOrigins(origins, derived.Origins)}
+	if len(derived.Metadata) == 0 {
+		publication.Deferred = "the " + d.Operation + " destination does not report the values it derives"
+	}
+	item.Publications = append(item.Publications, publication)
 	if !e.publishing() {
 		return nil
 	}

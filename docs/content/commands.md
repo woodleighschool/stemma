@@ -191,7 +191,7 @@ standard input and output. `describe` answers what documents can declare, from
 the built-in operations and the catalog's plugins; `inspect` reads a named input's
 static facts before a build; `prepare` tries documents
 against their current sources without the lockfile and reports the inspected
-artifact and its signer; `update`, `icon` and `check` match the commands. A
+artifact, its signer and each destination's `publications`; `update`, `icon` and `check` match the commands. A
 relative `from` given to `icon` starts at the catalog root. No tool contacts a
 destination.
 
@@ -282,7 +282,16 @@ unchanged. `--all` includes unchanged resources in human
 reports. Preparation shows filenames for newly prepared artifacts; cached resources
 use one line unless explicitly selected or expanded with `--all`. Totals always
 describe the whole run. JSON includes all resources in the
-selected scope, regardless of `--all`. Reconcile prints the reviewed commit's
+selected scope, regardless of `--all`. For each prepared resource, `publications`
+has an entry for every destination, made with no connection to it. Where the
+destination reports it, as `munki` does, `metadata` is the declared metadata with
+each value derived from the artifact, and null or an empty value for a field the
+destination clears; `plan` proposes exactly those values and `apply` writes them.
+`origins` names where each field's value came from, such as `explicit`,
+`expression`, `artifact.version` or `installer.receipts`. An entry without
+`metadata` is not a preview of the publication, and its `deferred` says why: the
+metadata reads environment values, or the destination reports origins only, as
+`intune` and `jamf` do. Reconcile prints the reviewed commit's
 publication followed by proposal outcomes, under separate applying and update-checking
 sections.
 
@@ -290,6 +299,7 @@ sections.
 stemma plan
 stemma plan --json --all > plan.json
 stemma prepare --all
+stemma prepare MacSoftware/foo --json | jq '.resources[].publications'
 ```
 
 Human reports use `➤` for headings, `✓` for successful or unchanged outcomes,

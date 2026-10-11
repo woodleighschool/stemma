@@ -64,7 +64,9 @@ func newServer(opts Options) *mcp.Server {
 		Name: "prepare",
 		Description: "Prepare resources from their sources as they are now, ignoring the lockfile. " +
 			"Reports the lockfile changes update would record, each artifact with its inspected facts, and signed or unsigned observations and the signatures block to declare. " +
-			"Destination metadata is checked against the artifact. Writes nothing to the catalog.",
+			"Destination metadata is checked against the artifact, and publications has an entry for each destination. " +
+			"Where the destination reports it, as munki does, metadata is the declared metadata with every derived value, null or empty for a field the destination clears, and origins names each field's source. " +
+			"An entry with deferred and no metadata is not a preview: deferred says why. Writes nothing to the catalog.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld},
 	}, tools.prepare)
 	mcp.AddTool(server, &mcp.Tool{
