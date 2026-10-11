@@ -264,7 +264,7 @@ func TestExecutableProtocol(t *testing.T) {
 		if description.Name != "other" || description.Version != "2.0.0" || description.Revision != "0123abcd" || len(description.Operations) != 1 || description.Operations[0].Name != "other.download" {
 			t.Fatalf("usable operations = %+v", description)
 		}
-		if len(description.Unavailable) != 2 || description.Unavailable[0].Name != "other.publish" || !strings.Contains(description.Unavailable[0].Reason, "reconcile interface 2; this Stemma uses 1") || description.Unavailable[1].Name != "other.notify" {
+		if len(description.Unavailable) != 2 || description.Unavailable[0].Name != "other.publish" || !strings.Contains(description.Unavailable[0].Reason, fmt.Sprintf("reconcile interface %d; this Stemma uses %d", plugin.ReconcileInterface+1, plugin.ReconcileInterface)) || description.Unavailable[1].Name != "other.notify" {
 			t.Fatalf("unavailable operations = %+v", description.Unavailable)
 		}
 	})

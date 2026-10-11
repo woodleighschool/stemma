@@ -446,7 +446,7 @@ spec:
     remote: {}
 `, server.URL))
 	t.Setenv("STEMMA_ECHO_STALE_KIND", "reconcile")
-	const reason = "operation echo.reconcile is unavailable: plugin provider implements reconcile interface 2; this Stemma uses 1"
+	reason := fmt.Sprintf("operation echo.reconcile is unavailable: plugin provider implements reconcile interface %d; this Stemma uses %d", plugin.ReconcileInterface+1, plugin.ReconcileInterface)
 	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
 	report, err := Run(t.Context(), opts)
 	if err != nil || len(report.Resources) != 1 || len(report.Resources[0].Inputs) != 1 {

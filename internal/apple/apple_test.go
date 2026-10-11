@@ -16,6 +16,8 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +33,37 @@ func TestAppFixtureInspection(t *testing.T) {
 	}
 	if facts.BundleID != "au.edu.vic.woodleigh.stemma.fixture" || facts.Version != "1.2.3" || facts.Build != "42" {
 		t.Fatalf("wrong app facts: %+v", facts)
+	}
+}
+
+// The main executable's header names the architectures. A launcher that is
+// not a Mach-O leaves them unknown instead of claiming there are none.
+func TestAppArchitecturesFollowTheMainExecutable(t *testing.T) {
+	script := copyApp(t)
+	writeTestFile(t, filepath.Join(script, "Contents/MacOS/fixture"), []byte("#!/bin/sh\nexec true\n"), 0o755)
+	fallback := copyApp(t)
+	info, err := plist.Marshal(map[string]string{"CFBundleName": "Fixture"}, plist.XMLFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(fallback, "Contents/Info.plist"), info, 0o644)
+	if err := os.Rename(filepath.Join(fallback, "Contents/MacOS/fixture"), filepath.Join(fallback, "Contents/MacOS/Fixture")); err != nil {
+		t.Fatal(err)
+	}
+	for app, want := range map[string][]string{
+		"testdata/Fixture.app":            {"arm64", "x86_64"},
+		"testdata/RequirementFixture.app": {"arm64"},
+		script:                            nil,
+		fallback:                          {"arm64", "x86_64"},
+	} {
+		facts, err := InspectApp(t.Context(), app)
+		if err != nil || !slices.Equal(facts.Architectures, want) {
+			t.Fatalf("%s architectures = %v, want %v: %v", app, facts.Architectures, want, err)
+		}
+	}
+	packaged, err := InspectPackageContents(t.Context(), "testdata/fixture.pkg")
+	if err != nil || len(packaged.Applications) != 1 || !slices.Equal(packaged.Applications[0].App.Architectures, []string{"arm64", "x86_64"}) {
+		t.Fatalf("payload application architectures: %+v: %v", packaged.Applications, err)
 	}
 }
 
@@ -57,7 +90,8 @@ func TestBinaryPlistMetadataAndExecutableTraversal(t *testing.T) {
 	}
 	writeTestFile(t, filepath.Join(app, "Contents/Info.plist"), data, 0644)
 	got, err := InspectApp(t.Context(), app)
-	if err != nil || got != facts {
+	got.Architectures = nil
+	if err != nil || !reflect.DeepEqual(got, facts) {
 		t.Fatalf("binary plist: %+v: %v", got, err)
 	}
 	facts.Executable = "../../escape"

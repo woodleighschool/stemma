@@ -480,6 +480,7 @@ func TestInspectDescribesALocalArtifact(t *testing.T) {
   Version: 1.2.3
   Build: 42
   Executable: fixture
+  Architectures: arm64, x86_64
   Minimum OS: 13.0
 `, sha256.Sum256(data))
 	if got := inspect(fixture); got != want {

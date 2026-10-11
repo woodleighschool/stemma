@@ -53,6 +53,10 @@ Software kinds expose inspected subjects and can name selections for destination
 metadata. Their fields retain the
 inspection model's meanings: for example, `app.version` is the application's
 short version and `app.build` is its separate build version.
+`app.architectures` lists the CPU architectures of the application's main
+executable, such as `arm64` and `x86_64`. It is absent when that file is not a
+Mach-O binary, as with a script launcher, which says nothing about where the
+application runs. No destination field is set from it.
 
 An inspected subject is addressed by its path, such as
 `facts['Core.pkg/PackageInfo']`. `subjects` names one by what identifies it instead:

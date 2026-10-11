@@ -17,8 +17,8 @@ import (
 // implements that kind at the host's version.
 const (
 	ResolveInterface   = 3
-	ResourceInterface  = 2
-	ReconcileInterface = 1
+	ResourceInterface  = 3
+	ReconcileInterface = 2
 )
 
 // interfaces maps each operation kind to the version this SDK implements.
@@ -163,6 +163,10 @@ type AppFacts struct {
 	IconFile   string `json:"icon_file,omitempty"`
 	IconName   string `json:"icon_name,omitempty"`
 	MinimumOS  string `json:"minimum_os,omitempty"`
+	// Architectures names the CPU architectures of the main executable, such
+	// as arm64 and x86_64. It is absent when they are unknown: the executable
+	// is missing, a link or not a Mach-O binary.
+	Architectures []string `json:"architectures,omitempty"`
 }
 
 // VersionKey selects the Info.plist key holding the application's comparable

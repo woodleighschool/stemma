@@ -15,6 +15,7 @@ import (
 	"io"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +47,53 @@ func TestPackageContentsRetainsOriginalAndVersions(t *testing.T) {
 	}
 	if !bytes.Equal(before, readTestFile(t, "testdata/fixture.pkg")) {
 		t.Fatal("inspection changed package")
+	}
+}
+
+func TestPayloadArchitecturesRequireAnUnambiguousExecutable(t *testing.T) {
+	executable := fileEntry("Example.app/Contents/MacOS/Example", 0o755, string(readTestFile(t, "testdata/Fixture.app/Contents/MacOS/fixture")))
+	script := fileEntry(executable.header.Name, 0o755, "#!/bin/sh\n")
+	linked := executable
+	linked.header.NLink = 2
+	for _, test := range []struct {
+		name  string
+		files []payloadEntry
+		want  []string
+	}{
+		{"regular", []payloadEntry{executable}, []string{"arm64", "x86_64"}},
+		{"replaced", []payloadEntry{executable, script}, nil},
+		{"duplicate", []payloadEntry{executable, executable}, nil},
+		{"hardlink", []payloadEntry{linked}, nil},
+		{"symlink parent", []payloadEntry{executable, {header: cpio.Header{Name: "Example.app/Contents/MacOS", Mode: cpio.ModeSymlink | 0o777}, body: []byte("elsewhere")}}, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := append([]payloadEntry{plistEntry(t, "Example.app/Contents/Info.plist", "Example")}, test.files...)
+			apps, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(cpioPayload(t, files))), newPayloadBudget(), "")
+			if err != nil || len(apps) != 1 {
+				t.Fatalf("applications: %+v: %v", apps, err)
+			}
+			if !slices.Equal(apps[0].App.Architectures, test.want) {
+				t.Fatalf("architectures = %v, want %v", apps[0].App.Architectures, test.want)
+			}
+		})
+	}
+}
+
+func TestPackageRootApplicationRetainsExecutableFallback(t *testing.T) {
+	info, err := plist.Marshal(map[string]string{"CFBundleName": "Example"}, plist.XMLFormat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := applicationPackage(t, "/Applications/Example.app", []payloadEntry{
+		fileEntry("Contents/Info.plist", 0o644, string(info)),
+		fileEntry("Contents/MacOS/Example", 0o755, string(readTestFile(t, "testdata/Fixture.app/Contents/MacOS/fixture"))),
+	})
+	facts, err := InspectPackageContents(t.Context(), name)
+	if err != nil || len(facts.Applications) != 1 {
+		t.Fatalf("applications: %+v: %v", facts.Applications, err)
+	}
+	if !slices.Equal(facts.Applications[0].App.Architectures, []string{"arm64", "x86_64"}) {
+		t.Fatalf("architectures = %v", facts.Applications[0].App.Architectures)
 	}
 }
 
@@ -130,14 +178,14 @@ func TestPackageContentsRejectsUnsafeAndIncompletePayloads(t *testing.T) {
 	t.Run("ancestor_symlink", func(t *testing.T) {
 		payload := cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example"), {cpio.Header{Name: "./Example.app", Mode: cpio.ModeSymlink | 0o777}, []byte("outside")}})
 		budget := newPayloadBudget()
-		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), budget, false); err == nil {
+		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), budget, ""); err == nil {
 			t.Fatal("accepted symlink application ancestor")
 		}
 	})
 	t.Run("truncated", func(t *testing.T) {
 		payload := cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")})
 		budget := newPayloadBudget()
-		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload[:90])), budget, false); err == nil {
+		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload[:90])), budget, ""); err == nil {
 			t.Fatal("accepted truncated payload")
 		}
 	})
@@ -145,7 +193,7 @@ func TestPackageContentsRejectsUnsafeAndIncompletePayloads(t *testing.T) {
 		payload := compressPayload(t, "gzip", cpioPayload(t, []payloadEntry{plistEntry(t, "./Example.app/Contents/Info.plist", "Example")}))
 		payload[len(payload)-5] ^= 1
 		budget := newPayloadBudget()
-		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), budget, false); err == nil {
+		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), budget, ""); err == nil {
 			t.Fatal("accepted corrupt compression trailer after plist")
 		}
 	})
@@ -153,7 +201,7 @@ func TestPackageContentsRejectsUnsafeAndIncompletePayloads(t *testing.T) {
 		file := plistEntry(t, "./Example.app/Contents/Info.plist", "Example")
 		payload := cpioPayload(t, []payloadEntry{file, file})
 		budget := newPayloadBudget()
-		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), budget, false); err == nil {
+		if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), budget, ""); err == nil {
 			t.Fatal("accepted duplicate plist")
 		}
 	})
@@ -248,10 +296,10 @@ func TestPayloadBudgetsSpanComponents(t *testing.T) {
 			t.Run(test.name+"/"+compression, func(t *testing.T) {
 				budget := *test.budget
 				data := compressPayload(t, compression, payload)
-				if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(data)), &budget, false); err != nil {
+				if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(data)), &budget, ""); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(data)), &budget, false); err == nil {
+				if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(data)), &budget, ""); err == nil {
 					t.Fatal("component reset aggregate inspection budget")
 				}
 			})
@@ -267,7 +315,7 @@ func TestPayloadRejectsOversizedXZDictionary(t *testing.T) {
 	block := []byte{2, 0, 0x21, 1, 30, 0, 0, 0, 0, 0, 0, 0}
 	binary.LittleEndian.PutUint32(block[8:], crc32.ChecksumIEEE(block[:8]))
 	stream = append(stream, block...)
-	if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(stream)), newPayloadBudget(), false); !errors.Is(err, xzdecode.ErrMemlimit) {
+	if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(stream)), newPayloadBudget(), ""); !errors.Is(err, xzdecode.ErrMemlimit) {
 		t.Fatalf("XZ dictionary limit not enforced: %v", err)
 	}
 }
@@ -477,7 +525,7 @@ func TestLargePackageInventory(t *testing.T) {
 	}
 	entries = append(entries, plistEntry(t, "./Example.app/Contents/Info.plist", "Example"))
 	payload := cpioPayload(t, entries)
-	apps, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), newPayloadBudget(), false)
+	apps, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), newPayloadBudget(), "")
 	if err != nil || len(apps) != 1 {
 		t.Fatalf("large inventory: %d apps, %v", len(apps), err)
 	}
@@ -537,7 +585,7 @@ func TestPBZXPayloadPreservesLimitsAndTrailingChecks(t *testing.T) {
 				_ = output.Close()
 				done <- err
 			}()
-			if _, err := readPayload(t.Context(), input, budget, false); err == nil {
+			if _, err := readPayload(t.Context(), input, budget, ""); err == nil {
 				t.Fatal("accepted invalid PBZX payload")
 			}
 			if err := <-done; err != nil && !errors.Is(err, io.ErrClosedPipe) {
@@ -560,7 +608,7 @@ func TestPBZXPayloadCancellationClosesSource(t *testing.T) {
 	written := make(chan error, 1)
 	go func() { _, err := output.Write(header[:]); written <- err }()
 	done := make(chan error, 1)
-	go func() { _, err := readPayload(ctx, input, newPayloadBudget(), false); done <- err }()
+	go func() { _, err := readPayload(ctx, input, newPayloadBudget(), ""); done <- err }()
 	if err := <-written; err != nil {
 		t.Fatal(err)
 	}
@@ -585,7 +633,7 @@ func TestPBZXPayloadEarlyFailureClosesSource(t *testing.T) {
 	written := make(chan error, 1)
 	go func() { _, err := output.Write(data); written <- err }()
 	done := make(chan error, 1)
-	go func() { _, err := readPayload(t.Context(), input, newPayloadBudget(), false); done <- err }()
+	go func() { _, err := readPayload(t.Context(), input, newPayloadBudget(), ""); done <- err }()
 	select {
 	case err := <-done:
 		if err == nil || !strings.Contains(err.Error(), "CPIO") {
@@ -630,7 +678,7 @@ func TestPayloadRejectsIncompleteHeadersAndTrailingContent(t *testing.T) {
 		"trailing content": append(bytes.Clone(payload), []byte("unexpected content")...),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(data)), newPayloadBudget(), false); err == nil {
+			if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(data)), newPayloadBudget(), ""); err == nil {
 				t.Fatal("accepted incomplete payload")
 			}
 		})
@@ -643,7 +691,7 @@ func TestRepeatedPayloadPathCannotChangeType(t *testing.T) {
 		directoryEntry("./Example.app"),
 		plistEntry(t, "./Example.app/Contents/Info.plist", "Example"),
 	})
-	if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), newPayloadBudget(), false); err == nil {
+	if _, err := readPayload(t.Context(), io.NopCloser(bytes.NewReader(payload)), newPayloadBudget(), ""); err == nil {
 		t.Fatal("accepted a path changing type")
 	}
 }

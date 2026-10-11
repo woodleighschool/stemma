@@ -33,16 +33,24 @@ type AppFacts struct {
 	// MinimumOS is the scalar requirement, or the highest declared architecture
 	// requirement when LSMinimumSystemVersion is absent.
 	MinimumOS string `json:"minimum_os" plist:"LSMinimumSystemVersion"`
+	// Architectures names the CPU architectures of the main executable, sorted.
+	// It is nil when that file is absent, a link or not a Mach-O, which leaves
+	// them unknown.
+	Architectures []string `json:"architectures,omitempty" plist:"-"`
 }
 
 // InspectApp reads XML or binary Info.plist metadata in a Contents-style bundle.
 func InspectApp(ctx context.Context, appPath string) (AppFacts, error) {
-	root, err := os.OpenRoot(appPath)
+	appPath, err := filepath.Abs(appPath)
+	if err != nil {
+		return AppFacts{}, err
+	}
+	root, err := os.OpenRoot(filepath.Dir(appPath))
 	if err != nil {
 		return AppFacts{}, err
 	}
 	defer func() { _ = root.Close() }()
-	return InspectAppFS(ctx, rootFS(root), ".")
+	return InspectAppFS(ctx, rootFS(root), filepath.Base(appPath))
 }
 
 // InspectAppFS reads conventional application metadata where the bundle lies
@@ -55,7 +63,30 @@ func InspectAppFS(ctx context.Context, fsys fs.ReadLinkFS, appPath string) (AppF
 	if err != nil {
 		return AppFacts{}, err
 	}
-	return ParseAppInfo(data)
+	facts, err := ParseAppInfo(data)
+	if err != nil {
+		return facts, err
+	}
+	facts.Architectures = executableArchitectures(fsys, appPath, facts.Executable)
+	return facts, nil
+}
+
+func executableArchitectures(fsys fs.ReadLinkFS, appPath, declared string) []string {
+	name, err := ResolveExecutable(declared, path.Base(appPath))
+	if err != nil {
+		return nil
+	}
+	f, _, err := openRegular(fsys, path.Join(appPath, "Contents/MacOS", name))
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = f.Close() }()
+	header := make([]byte, architectureHeader)
+	n, err := f.ReadAt(header, 0)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil
+	}
+	return architectures(header[:n])
 }
 
 // VerifyApp verifies the complete signature of a Contents-style bundle on disk

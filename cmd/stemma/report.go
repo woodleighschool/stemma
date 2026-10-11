@@ -702,7 +702,7 @@ func renderInspection(style textStyle, inspection engine.Inspection) string {
 			name = " " + subject.Path
 		}
 		if app := subject.App; app != nil {
-			writeFields(&text, style, "Application"+name, [][2]string{{"Installed path", subject.InstalledPath}, {"Bundle ID", app.BundleID}, {"Name", app.Name}, {"Version", app.Version}, {"Build", app.Build}, {"Executable", app.Executable}, {"Minimum OS", app.MinimumOS}})
+			writeFields(&text, style, "Application"+name, [][2]string{{"Installed path", subject.InstalledPath}, {"Bundle ID", app.BundleID}, {"Name", app.Name}, {"Version", app.Version}, {"Build", app.Build}, {"Executable", app.Executable}, {"Architectures", strings.Join(app.Architectures, ", ")}, {"Minimum OS", app.MinimumOS}})
 		}
 		if installer := subject.Installer; installer != nil {
 			writeFields(&text, style, "Installer"+name, [][2]string{{"Version", installer.Version}, {"Minimum OS", installer.MinimumOS}, {"Restart action", installer.RestartAction}})

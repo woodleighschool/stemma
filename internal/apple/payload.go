@@ -98,7 +98,11 @@ func inspectPackageReader(ctx context.Context, reader io.ReaderAt, size int64) (
 		}
 		payloadPath := path.Join(path.Dir(entry.Path), "Payload")
 		payloads[payloadPath] = true
-		apps, err := archive.payloadApps(ctx, payloadPath, budget, strings.HasSuffix(metadata.InstallLocation, ".app"))
+		var applicationRoot string
+		if strings.HasSuffix(metadata.InstallLocation, ".app") {
+			applicationRoot = path.Base(metadata.InstallLocation)
+		}
+		apps, err := archive.payloadApps(ctx, payloadPath, budget, applicationRoot)
 		if err != nil {
 			return PackageFacts{}, fmt.Errorf("%s: %w", payloadPath, err)
 		}
@@ -329,7 +333,7 @@ func (r contextReaderAt) ReadAt(p []byte, off int64) (int, error) {
 	return r.ReaderAt.ReadAt(p, off)
 }
 
-func (a *xarArchive) payloadApps(ctx context.Context, name string, budget *payloadBudget, applicationRoot bool) ([]PackageApp, error) {
+func (a *xarArchive) payloadApps(ctx context.Context, name string, budget *payloadBudget, applicationRoot string) ([]PackageApp, error) {
 	entry, err := a.openEntry(name, maxEntrySize)
 	if err != nil {
 		return nil, err
@@ -340,7 +344,7 @@ func (a *xarArchive) payloadApps(ctx context.Context, name string, budget *paylo
 	return readPayload(ctx, io.NopCloser(entry), budget, applicationRoot)
 }
 
-func readPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudget, applicationRoot bool) ([]PackageApp, error) {
+func readPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudget, applicationRoot string) ([]PackageApp, error) {
 	var apps []PackageApp
 	err := streamPayload(ctx, source, budget, func(content io.Reader) (err error) {
 		apps, err = readCPIO(content, budget, applicationRoot)
@@ -535,8 +539,10 @@ func (c *cpioReader) skip(entry cpioEntry) error {
 	return nil
 }
 
-func readCPIO(r io.Reader, budget *payloadBudget, applicationRoot bool) ([]PackageApp, error) {
+func readCPIO(r io.Reader, budget *payloadBudget, applicationRoot string) ([]PackageApp, error) {
 	var apps []PackageApp
+	// Info.plist and its executable may appear in either order in the stream.
+	executables := map[string][]string{}
 	entries := newCPIOReader(r, budget)
 	for {
 		entry, err := entries.next()
@@ -547,7 +553,18 @@ func readCPIO(r io.Reader, budget *payloadBudget, applicationRoot bool) ([]Packa
 			return nil, err
 		}
 		name := entry.name
-		if metadata := strings.HasSuffix(name, ".app/Contents/Info.plist") || applicationRoot && name == "Contents/Info.plist"; !metadata {
+		if dir := path.Dir(name); entry.kind() == cpioRegular && (strings.HasSuffix(dir, ".app/Contents/MacOS") || applicationRoot != "" && dir == "Contents/MacOS") {
+			header := make([]byte, min(entry.size, architectureHeader))
+			if _, err := io.ReadFull(r, header); err != nil {
+				return nil, fmt.Errorf("CPIO %s: %w", name, err)
+			}
+			executables[name] = architectures(header)
+			if entry.duplicate || entry.links > 1 {
+				executables[name] = nil
+			}
+			entry.size -= int64(len(header))
+		}
+		if metadata := strings.HasSuffix(name, ".app/Contents/Info.plist") || applicationRoot != "" && name == "Contents/Info.plist"; !metadata {
 			if err := entries.skip(entry); err != nil {
 				return nil, err
 			}
@@ -577,10 +594,20 @@ func readCPIO(r io.Reader, budget *payloadBudget, applicationRoot bool) ([]Packa
 		}
 		apps = append(apps, PackageApp{Path: appPath, App: facts})
 	}
-	for _, app := range apps {
+	for i, app := range apps {
 		for parent := path.Join(app.Path, "Contents"); parent != "."; parent = path.Dir(parent) {
 			if kind, exists := entries.seen[parent]; exists && kind != cpioDirectory {
 				return nil, fmt.Errorf("%w: application ancestor %q is not a directory", ErrUnsupported, parent)
+			}
+		}
+		bundle := path.Base(app.Path)
+		if app.Path == "." {
+			bundle = applicationRoot
+		}
+		if name, err := ResolveExecutable(app.App.Executable, bundle); err == nil {
+			dir := path.Join(app.Path, "Contents/MacOS")
+			if kind, exists := entries.seen[dir]; !exists || kind == cpioDirectory {
+				apps[i].App.Architectures = executables[path.Join(dir, name)]
 			}
 		}
 	}

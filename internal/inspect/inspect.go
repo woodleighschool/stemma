@@ -259,7 +259,7 @@ func packageSubjects(pkg apple.PackageFacts) ([]plugin.Subject, error) {
 }
 
 func appFacts(app apple.AppFacts) *plugin.AppFacts {
-	return &plugin.AppFacts{BundleID: app.BundleID, Name: app.Name, Version: app.Version, Build: app.Build, Executable: app.Executable, IconFile: app.IconFile, IconName: app.IconName, MinimumOS: app.MinimumOS}
+	return &plugin.AppFacts{BundleID: app.BundleID, Name: app.Name, Version: app.Version, Build: app.Build, Executable: app.Executable, IconFile: app.IconFile, IconName: app.IconName, MinimumOS: app.MinimumOS, Architectures: app.Architectures}
 }
 
 // Selection inventories only the subtree a consumer copies, retaining paths
