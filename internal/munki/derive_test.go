@@ -40,12 +40,11 @@ func TestDestinationDerivesSelectedDMGAppAndNativeOverrides(t *testing.T) {
 	if _, exists := decoded["description"]; !exists || derived.Origins["pkginfo.description"] != "explicit" {
 		t.Fatal("explicit null lost")
 	}
-	request.Metadata = json.RawMessage(`{"pkginfo":{"version":"9","items_to_copy":[{"source_item":"Editor.app","destination_path":"/Applications/Managed","destination_item":"Renamed.app"}],"installs":[],"supported_architectures":["arm64"]}}`)
+	request.Metadata = json.RawMessage(`{"pkginfo":{"items_to_copy":[{"source_item":"Editor.app","destination_path":"/Applications/Managed","destination_item":"Renamed.app"}]}}`)
 	if _, err := munki.Derive(request); err == nil {
 		t.Fatal("copy destination disagreeing with the installed path was accepted")
 	}
-	editor.InstalledPath = "/Applications/Managed/Renamed.app"
-	request.Artifact = selected(request.Artifact, editor, "")
+	request.Metadata = json.RawMessage(`{"pkginfo":{"version":"9","items_to_copy":[{"source_item":"Editor.app","destination_path":"/Applications/Managed","destination_item":"Renamed.app"}],"installs":[],"supported_architectures":["arm64"]}}`)
 	derived, err = munki.Derive(request)
 	if err != nil {
 		t.Fatal(err)

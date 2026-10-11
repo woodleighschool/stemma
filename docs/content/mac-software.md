@@ -184,6 +184,42 @@ when the publisher's build number is the version you need to manage.
 For an existing PKG, Stemma does not rewrite its payload to match a declared
 endpoint path. Keep that path consistent with the vendor installer.
 
+## Detect several applications
+
+`application` selects the one application whose version the software takes. To
+detect a suite by several applications, name them under `subjects` and list them
+as a Munki destination's `installs`.
+
+```yaml
+spec:
+  subjects:
+    draw:
+      bundle_id: com.vendor.suite.draw
+    graph:
+      bundle_id: com.vendor.suite.graph
+  destinations:
+    munki:
+      pkginfo:
+        version: "{{ facts.draw.app.version }}"
+        installs:
+          - "{{ facts.draw }}"
+          - "{{ facts.graph }}"
+```
+
+Each listed application becomes an `installs` item at its installed path, with its
+bundle identifier and version. Detection and the managed version are separate
+decisions: `installs` says which Macs need the installer, and `version` names the
+release. Stemma takes that version from the installer, the selected application
+or the declaration, and never composes one.
+
+A release whose version does not change still reaches the destination: its
+content changes the lock, and publication replaces the item published under that
+version. Munki then installs it on every Mac where an `installs` item is older.
+Changed bytes alone do not trigger installation when the detection versions
+remain unchanged.
+State a version that changes with each release when the earlier one should stay
+published beside it.
+
 ## Select a nested installer
 
 A driver download such as Wacom can contain a PKG inside a DMG. When the image or

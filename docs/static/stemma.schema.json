@@ -7310,136 +7310,152 @@
                       "items": {
                         "anyOf": [
                           {
-                            "additionalProperties": false,
-                            "properties": {
-                              "CFBundleIdentifier": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
+                            "anyOf": [
+                              {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "CFBundleIdentifier": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ]
                                   },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
+                                  "CFBundleName": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "CFBundleShortVersionString": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "CFBundleVersion": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "installer_item_location": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "md5checksum": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "minimum_update_version": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "minosversion": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "path": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "type": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ]
+                                  },
+                                  "version_comparison_key": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ]
                                   }
-                                ]
+                                },
+                                "propertyNames": {
+                                  "not": {
+                                    "pattern": "\\{\\{"
+                                  }
+                                },
+                                "type": "object"
                               },
-                              "CFBundleName": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
+                              {
+                                "additionalProperties": true,
+                                "propertyNames": {
+                                  "not": {
+                                    "pattern": "\\{\\{"
                                   }
-                                ]
-                              },
-                              "CFBundleShortVersionString": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "CFBundleVersion": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "installer_item_location": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "md5checksum": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "minimum_update_version": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "minosversion": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "path": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "type": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
-                              },
-                              "version_comparison_key": {
-                                "anyOf": [
-                                  {
-                                    "type": "string"
-                                  },
-                                  {
-                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
-                                    "type": "string"
-                                  }
-                                ]
+                                },
+                                "required": [
+                                  "kind"
+                                ],
+                                "type": "object"
                               }
-                            },
-                            "propertyNames": {
-                              "not": {
-                                "pattern": "\\{\\{"
-                              }
-                            },
-                            "type": "object"
+                            ]
                           },
                           {
                             "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
@@ -7454,7 +7470,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Complete native detection list using application or bundle or plist or file entries."
+                  "description": "Complete native detection list using application or bundle or plist or file entries. An item can instead be an inspected application, written as an expression such as {{ facts.name }}, which is detected at its installed path by its bundle identifier and version."
                 },
                 "items_to_copy": {
                   "anyOf": [

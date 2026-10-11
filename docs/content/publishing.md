@@ -71,7 +71,9 @@ declarations supply receipts, installed size and restart requirement; installer
 scripts are never evaluated. Receipts or copied items also supply the removal
 method, and an item with a method is uninstallable unless `uninstallable` is set.
 Explicit `installs`, `receipts`, `installcheck_script` and other supported native
-fields allow more specific behaviour.
+fields allow more specific behaviour. An `installs` item can be an inspected
+application, written as `"{{ facts.name }}"`, to
+[detect several applications](mac-software.md#detect-several-applications).
 
 `minimum_os_version` is the software's
 [minimum macOS](mac-software.md#minimum-macos); pkginfo cannot declare it.

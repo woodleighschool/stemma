@@ -3,14 +3,19 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
+	"howett.net/plist"
 )
 
 func TestMetadataExpressionsPreserveNativeValuesAndOrigins(t *testing.T) {
@@ -261,5 +266,171 @@ spec:
 	publication := report.Resources[0].Publications[0]
 	if len(publication.Metadata) != 0 || publication.Deferred == "" || publication.Origins["pkginfo.name"] != "software.name" {
 		t.Fatalf("origins without metadata = %+v", publication)
+	}
+}
+
+func TestPublicationIsWhatPlanAndApplyPublish(t *testing.T) {
+	root := t.TempDir()
+	suitePackage(t, filepath.Join(root, "suite.pkg"), map[string]string{"Draw": "26.1", "Graph": "8.2"})
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: publication}
+spec:
+  imports: ['*.software.yaml']
+  destinations:
+    repo: {operation: munki, config: {path: repo}}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: suite}
+spec:
+  source: {path: suite.pkg}
+  subjects:
+    draw: {bundle_id: org.example.suite.draw}
+    graph: {bundle_id: org.example.suite.graph}
+  destinations:
+    repo:
+      pkginfo:
+        catalogs: [production]
+        category: Media
+        uninstallable: false
+        version: "{{ facts.draw.app.version }}"
+        installs: ["{{ facts.draw }}", "{{ facts.graph }}"]
+`)
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir()}
+	run := func(method string) ResourceReport {
+		t.Helper()
+		options.Method = method
+		report, err := Run(t.Context(), options)
+		if err != nil {
+			t.Fatalf("%s: %v", method, err)
+		}
+		return report.Resources[0]
+	}
+	run("update")
+	prepared := run("prepare").Publications[0]
+	var reported struct {
+		Pkginfo map[string]any `json:"pkginfo"`
+	}
+	if err := json.Unmarshal(prepared.Metadata, &reported); err != nil {
+		t.Fatal(err)
+	}
+	pkginfo := reported.Pkginfo
+	installs, _ := pkginfo["installs"].([]any)
+	if pkginfo["version"] != "26.1" || pkginfo["category"] != "Media" || pkginfo["uninstallable"] != false || len(installs) != 2 || len(pkginfo["receipts"].([]any)) != 1 {
+		t.Fatalf("publication = %s", prepared.Metadata)
+	}
+	for _, field := range []string{"RestartAction", "items_to_copy", "minimum_os_version", "uninstall_method"} {
+		if value, listed := pkginfo[field]; !listed || value != nil {
+			t.Errorf("%s = %v (listed %t), want null", field, value, listed)
+		}
+	}
+	for field, origin := range map[string]string{"pkginfo.category": "explicit", "pkginfo.uninstallable": "explicit", "pkginfo.version": "expression", "pkginfo.installs": "expression", "pkginfo.receipts": "installer.receipts"} {
+		if prepared.Origins[field] != origin {
+			t.Errorf("origin of %s = %q, want %q", field, prepared.Origins[field], origin)
+		}
+	}
+	// published compares a pkginfo document with the publication, apart from
+	// the fields the repository holds without the declaration managing them.
+	published := func(document map[string]any, unmanaged ...string) {
+		t.Helper()
+		for field, want := range pkginfo {
+			if got, written := document[field]; want == nil && written || want != nil && !reflect.DeepEqual(got, want) {
+				t.Errorf("%s is %v, reported as %v", field, got, want)
+			}
+		}
+		for field := range document {
+			if _, known := pkginfo[field]; !known && !slices.Contains(unmanaged, field) {
+				t.Errorf("%s is published without being reported", field)
+			}
+		}
+	}
+	// document decodes a native value as the publication's JSON decodes.
+	document := func(value any) map[string]any {
+		t.Helper()
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]any
+		if err := json.Unmarshal(data, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields
+	}
+
+	planned := run("plan")
+	if !reflect.DeepEqual(planned.Publications[0], prepared) || !reflect.DeepEqual(planned.Destinations[0].Origins, prepared.Origins) {
+		t.Fatalf("plan reports %+v with origins %v, preparation %+v", planned.Publications[0], planned.Destinations[0].Origins, prepared)
+	}
+	var created map[string]any
+	for _, change := range planned.Destinations[0].Changes {
+		if change.Field == "pkginfo" && change.Action == "create" {
+			created = document(change.After)
+		}
+	}
+	if created == nil {
+		t.Fatalf("plan = %+v", planned.Destinations[0].Changes)
+	}
+	published(created, "installer_item_location")
+	run("apply")
+
+	// An item that holds fields derivation clears loses them, and keeps one
+	// the declaration never managed.
+	stored := filepath.Join(root, "repo", "pkgsinfo", "suite-26.1.plist")
+	read := func() map[string]any {
+		t.Helper()
+		data, err := os.ReadFile(stored)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var native map[string]any
+		if _, err := plist.Unmarshal(data, &native); err != nil {
+			t.Fatal(err)
+		}
+		return native
+	}
+	native := read()
+	published(document(native), "installer_item_location")
+	native["RestartAction"], native["minimum_os_version"], native["notes"] = "RequireRestart", "12.0", "Kept by hand"
+	data, err := plist.MarshalIndent(native, plist.XMLFormat, "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stored, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var cleared []string
+	for _, change := range run("plan").Destinations[0].Changes {
+		if change.Action == "clear" {
+			cleared = append(cleared, change.Field)
+		}
+	}
+	if slices.Sort(cleared); !slices.Equal(cleared, []string{"RestartAction", "minimum_os_version"}) {
+		t.Fatalf("plan clears %v", cleared)
+	}
+	run("apply")
+	published(document(read()), "installer_item_location", "notes")
+}
+
+// suitePackage builds a vendor suite: one component package, always version
+// 1.0, that installs each named application at its own version.
+func suitePackage(t *testing.T, filename string, versions map[string]string) {
+	t.Helper()
+	source := t.TempDir()
+	for name, version := range versions {
+		contents := filepath.Join(source, "payload", name+".app", "Contents")
+		if err := os.MkdirAll(contents, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		info := fmt.Sprintf(`<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>org.example.suite.%s</string><key>CFBundleName</key><string>%s</string><key>CFBundleShortVersionString</key><string>%s</string><key>CFBundleVersion</key><string>%s</string></dict></plist>`, strings.ToLower(name), name, version, version)
+		if err := os.WriteFile(filepath.Join(contents, "Info.plist"), []byte(info), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = os.Remove(filename)
+	if err := pkgbuild.Build(t.Context(), source, filename, pkgbuild.Options{Identifier: "org.example.suite", Version: "1.0", Payload: "payload", InstallLocation: "/Applications", Compression: pkgbuild.Gzip}); err != nil {
+		t.Fatal(err)
 	}
 }

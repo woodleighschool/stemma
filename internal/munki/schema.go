@@ -16,5 +16,9 @@ func MetadataSchema() *jsonschema.Schema {
 	metadata.Properties.Set("name", &jsonschema.Schema{Type: "string", Description: "Stable native Munki name. Defaults to the software name when creating a package."})
 	metadata.Properties.Set("version", &jsonschema.Schema{Type: "string", Description: "Explicit native content version. Omit to derive a version from the inspected artifact."})
 	metadata.Properties.Set("installer_type", &jsonschema.Schema{Type: "string", Enum: []any{"pkg", "copy_from_dmg", "nopkg"}, Description: "Preserve a vendor PKG, select items in an existing DMG, or publish a script-only item. PKG is inferred only from a .pkg payload."})
+	installs, _ := metadata.Properties.Get("installs")
+	installs.Description += " An item can instead be an inspected application, written as an expression such as {{ facts.name }}, which is detected at its installed path by its bundle identifier and version."
+	application := &jsonschema.Schema{Type: "object", Required: []string{"kind"}, AdditionalProperties: jsonschema.TrueSchema}
+	installs.Items = &jsonschema.Schema{AnyOf: []*jsonschema.Schema{installs.Items, application}}
 	return metadata
 }

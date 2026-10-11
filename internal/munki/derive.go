@@ -39,6 +39,11 @@ func DecodeDestination(data json.RawMessage) (DestinationMetadata, error) {
 	if len(metadata.Pkginfo) == 0 {
 		metadata.Pkginfo = json.RawMessage(`{}`)
 	}
+	var err error
+	metadata.Pkginfo, err = resolveSubjects(metadata.Pkginfo)
+	if err != nil {
+		return metadata, err
+	}
 	if _, _, err := Compose(Input{}, metadata.Pkginfo); err != nil {
 		return metadata, err
 	}
@@ -175,14 +180,6 @@ func Derive[C any](request plugin.ReconcileRequest[C]) (Derived, error) {
 		}
 	}
 	if selected != nil {
-		app := selected.App
-		version := app.Version
-		if versionKey == "" {
-			versionKey = app.VersionKey()
-		}
-		if versionKey == "CFBundleVersion" {
-			version = app.Build
-		}
 		endpoint := selected.InstalledPath
 		if kind == "copy_from_dmg" {
 			if _, exists := values["items_to_copy"]; !exists {
@@ -199,39 +196,27 @@ func Derive[C any](request plugin.ReconcileRequest[C]) (Derived, error) {
 				}
 				put("items_to_copy", []CopyItem{{SourceItem: selected.Path, DestinationPath: destination, DestinationItem: destinationItem}}, "app.copy")
 			}
-			data, _ := json.Marshal(values["items_to_copy"])
-			var copies []CopyItem
-			if err := json.Unmarshal(data, &copies); err != nil {
-				return Derived{}, err
-			}
-			var copyEndpoint string
-			for _, action := range copies {
-				if path.Clean(action.SourceItem) == path.Clean(selected.Path) {
-					name := action.DestinationItem
-					if name == "" {
-						name = path.Base(action.SourceItem)
-					}
-					if copyEndpoint != "" {
-						return Derived{}, errors.New("selected app has multiple copy destinations; set installs explicitly")
-					}
-					copyEndpoint = path.Join(action.DestinationPath, name)
+			if detects {
+				data, _ := json.Marshal(values["items_to_copy"])
+				var copies []CopyItem
+				if err := json.Unmarshal(data, &copies); err != nil {
+					return Derived{}, err
 				}
-			}
-			if endpoint != "" && copyEndpoint != "" && endpoint != copyEndpoint {
-				return Derived{}, errors.New("application.installed_path disagrees with items_to_copy")
-			}
-			if copyEndpoint != "" {
-				endpoint = copyEndpoint
+				endpoint, err = installedPath(selected.Path, endpoint, copies)
+				if err != nil {
+					return Derived{}, err
+				}
 			}
 		}
 		if detects {
 			if endpoint == "" {
 				return Derived{}, errors.New("selected application has no known installed path; set application.installed_path or installs")
 			}
-			if app.BundleID == "" || version == "" {
-				return Derived{}, errors.New("selected application requires a bundle identifier and comparison version")
+			item, err := applicationItem(*selected.App, endpoint, versionKey)
+			if err != nil {
+				return Derived{}, fmt.Errorf("selected application: %w", err)
 			}
-			put("installs", []InstallItem{{Type: "application", Path: endpoint, BundleIdentifier: app.BundleID, BundleName: app.Name, BundleShortVersion: app.Version, BundleVersion: app.Build, VersionComparisonKey: versionKey, MinimumOSVersion: app.MinimumOS}}, "app.installed_path")
+			put("installs", []InstallItem{item}, "app.installed_path")
 		}
 	}
 	if _, exists := values["version"]; !exists && (kind == "pkg" || kind == "copy_from_dmg") {
