@@ -10,7 +10,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.8.2
 	github.com/antlr4-go/antlr/v4 v4.13.1
-	github.com/bmatcuk/doublestar/v4 v4.10.2
+	github.com/bmatcuk/doublestar/v4 v4.10.3
 	github.com/caarlos0/env/v11 v11.4.1
 	github.com/deploymenttheory/go-apfs-v2 v0.18.0
 	github.com/deploymenttheory/go-bindings-macosplatform v0.20.1
