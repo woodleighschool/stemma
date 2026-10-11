@@ -18,7 +18,7 @@ import (
 const (
 	ResolveInterface   = 3
 	ResourceInterface  = 3
-	ReconcileInterface = 2
+	ReconcileInterface = 3
 )
 
 // interfaces maps each operation kind to the version this SDK implements.
@@ -58,8 +58,9 @@ func (i Identity) Digest() string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Artifact is an immutable file or tree leased by the engine, never a writable
-// cache object. Version is selected by a consumer; Facts retain observed versions.
+// Artifact describes immutable content. Path is present only when the engine
+// leases bytes to an invocation, never a writable cache object. Version is
+// selected by a consumer; Facts retain observed versions.
 type Artifact struct {
 	// Encoding is "tar" for a tree leased as its canonical TAR bytes.
 	// Filename and Mode still describe the logical root directory.
@@ -68,7 +69,7 @@ type Artifact struct {
 	Mode        uint32                     `json:"mode,omitempty"`
 	EntryPoint  string                     `json:"entry_point,omitempty"`
 	Evidence    map[string]json.RawMessage `json:"evidence,omitempty"`
-	Path        string                     `json:"path"`
+	Path        string                     `json:"path,omitempty"`
 	SHA256      string                     `json:"sha256"`
 	Size        int64                      `json:"size"`
 	Filename    string                     `json:"filename"`
@@ -110,13 +111,27 @@ type MinimumOS struct {
 
 // ReconcileResponse carries the changes a run planned or made.
 //
+// Content requests bytes needed to complete this method. Return it before any
+// writes. The engine retries the method once with verified private copies of
+// all requested artifacts; paths expire when that invocation returns. Apply
+// must observe remote state again and request content if it now needs an upload.
+// Consumers verify the bytes they publish against the artifact identity and
+// the destination's transfer integrity contract.
+//
 // Validate may return Metadata in the declaration's shape, including derived
 // values and nulls for cleared fields. It excludes destination-assigned values
 // and preserved remote state. Origins names each managed field's source.
 type ReconcileResponse struct {
+	Content  *ContentRequest   `json:"content,omitempty"`
 	Changes  []Change          `json:"changes,omitempty"`
 	Origins  map[string]string `json:"origins,omitempty"`
 	Metadata json.RawMessage   `json:"metadata,omitempty"`
+}
+
+// ContentRequest selects the primary artifact and named inputs to materialize.
+type ContentRequest struct {
+	Artifact bool     `json:"artifact,omitempty"`
+	Inputs   []string `json:"inputs,omitempty"`
 }
 
 // Change is a semantic destination change; an empty Changes list needs no write.

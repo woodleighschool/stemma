@@ -28,6 +28,18 @@ import (
 // Handle implements read-only planning and content-first publication to a local repository.
 // Apply serializes writers sharing this repository; external writers must use the same lock.
 func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, error) {
+	_, document := request.Inputs["installer"]
+	if (document || request.Artifact.Format == "json") && request.Artifact.Path == "" {
+		needed := &plugin.ContentRequest{Artifact: true}
+		if request.Method == "apply" {
+			for _, name := range []string{"installer", "icon"} {
+				if input := request.Inputs[name]; input.SHA256 != "" && input.Path == "" {
+					needed.Inputs = append(needed.Inputs, name)
+				}
+			}
+		}
+		return plugin.ReconcileResponse{Content: needed}, nil
+	}
 	var inputErr error
 	request, inputErr = munki.DocumentInput(ctx, request)
 	if inputErr != nil {
@@ -37,7 +49,7 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	if inputErr != nil {
 		return plugin.ReconcileResponse{}, inputErr
 	}
-	if request.Method == "validate" && !request.Prepared && request.Artifact.Path == "" {
+	if request.Method == "validate" && !request.Prepared && request.Artifact.SHA256 == "" {
 		_, err := munki.DecodeDestination(request.Metadata)
 		return plugin.ReconcileResponse{}, err
 	}
@@ -343,6 +355,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		desired["catalogs"] = []string{"testing"}
 	}
 	response := plugin.ReconcileResponse{Origins: origins}
+	contentNeeded, iconNeeded := false, false
 	contentPath := ""
 	if input.InstallerType != "nopkg" {
 		contentPath = filepath.Join(root, "pkgs", filepath.FromSlash(input.InstallerLocation))
@@ -351,6 +364,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 			return response, err
 		}
 		if !matches {
+			contentNeeded = true
 			// Replacing bytes in place must not break another item that installs them.
 			for _, other := range items {
 				if other.path != pkginfoPath && other.document["installer_item_location"] == input.InstallerLocation {
@@ -369,6 +383,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 			return response, err
 		}
 		if !matches {
+			iconNeeded = true
 			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "icon", Action: "upload", Filename: request.Inputs["icon"].Filename, Before: raw(old["icon_hash"]), After: raw(request.Inputs["icon"].SHA256)})
 		}
 	}
@@ -408,13 +423,21 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		}
 		return response, err
 	}
+	needed := plugin.ContentRequest{Artifact: contentNeeded && request.Artifact.Path == ""}
+	if iconNeeded && request.Inputs["icon"].Path == "" {
+		needed.Inputs = []string{"icon"}
+	}
+	if needed.Artifact || len(needed.Inputs) != 0 {
+		response.Content = &needed
+		return response, nil
+	}
 	// No catalog references an installer before its complete bytes are available.
-	if contentPath != "" {
+	if contentNeeded {
 		if err := publishContent(ctx, contentPath, request.Artifact); err != nil {
 			return response, err
 		}
 	}
-	if iconPath != "" {
+	if iconNeeded {
 		if err := publishContent(ctx, iconPath, request.Inputs["icon"]); err != nil {
 			return response, err
 		}
@@ -560,12 +583,6 @@ func fileMatches(ctx context.Context, path string, artifact plugin.Artifact) (bo
 	return hex.EncodeToString(h.Sum(nil)) == artifact.SHA256, nil
 }
 func publishContent(ctx context.Context, path string, artifact plugin.Artifact) (err error) {
-	check := plugin.Stage(ctx, "Checking Munki content", plugin.Detail(filepath.Base(path)))
-	matches, err := fileMatches(ctx, path, artifact)
-	check(err)
-	if err != nil || matches {
-		return err
-	}
 	done := plugin.Stage(ctx, "Publishing Munki content", plugin.Detail(filepath.Base(path)))
 	defer func() { done(err) }()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

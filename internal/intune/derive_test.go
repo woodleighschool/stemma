@@ -175,7 +175,7 @@ func TestSelectedApplicationDetectionFailsWithoutFallback(t *testing.T) {
 // lobRequest describes a signed flat PKG prepared for a line-of-business app.
 func lobRequest(metadata object, selected *plugin.Subject, subjects ...plugin.Subject) plugin.ReconcileRequest[Config] {
 	req := macRequest(metadata, selected, subjects...)
-	req.Artifact.Path, req.Artifact.Filename, req.Artifact.Format, req.Artifact.Size = "leased.pkg", "exporter-1.4.0.pkg", "pkg", 4096
+	req.Artifact.SHA256, req.Artifact.Filename, req.Artifact.Format, req.Artifact.Size = strings.Repeat("a", 64), "exporter-1.4.0.pkg", "pkg", 4096
 	if req.Artifact.Evidence == nil {
 		req.Artifact.Evidence = map[string]json.RawMessage{}
 	}
@@ -391,7 +391,7 @@ func TestLOBRequiresThePublishedRootInstallerObservation(t *testing.T) {
 		`[{"subject":{"path":"Companion.app"},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Application","verifier":"stemma.signature/4"}]`,
 		`[{"subject":{"path":"PackageInfo"},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/4"}]`,
 	} {
-		artifact := plugin.Artifact{Path: "/leased/upload.pkg", Filename: "upload.pkg", Evidence: map[string]json.RawMessage{"signatures": json.RawMessage(evidence)}}
+		artifact := plugin.Artifact{SHA256: strings.Repeat("a", 64), Filename: "upload.pkg", Evidence: map[string]json.RawMessage{"signatures": json.RawMessage(evidence)}}
 		if err := validateLOB(artifact, nil, false); err == nil || !strings.Contains(err.Error(), "published PKG root") {
 			t.Fatalf("accepted wrong signature evidence: %v", err)
 		}

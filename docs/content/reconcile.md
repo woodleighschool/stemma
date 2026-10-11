@@ -39,7 +39,7 @@ command.
    are checked out into temporary directories.
 2. **Apply.** When the reviewed commit differs from the last one applied in full,
    run frozen `apply` without selectors and record the result as the
-   `stemma/apply` commit status. Each resource reuses verified cached inputs or
+   `stemma/apply` commit status. Each resource reuses cached inputs or
    acquires them from their locked observations before its destinations are
    written. Missing or stale lock entries, unavailable content, or content that
    differs from the reviewed identity fail that resource and block consumers of its outputs; independent resources still

@@ -54,7 +54,7 @@ func (p *preparedArtifact) close() {
 // identifyArtifact derives the publication identity of an artifact. A Win32
 // setup tree runs its prepared entry point; an existing envelope keeps its own.
 func identifyArtifact(ctx context.Context, artifact plugin.Artifact, appType string) (artifactIdentity, error) {
-	if artifact.Path == "" || (!artifact.Tree && (artifact.Filename == "" || filepath.Base(artifact.Filename) != artifact.Filename || strings.ContainsAny(artifact.Filename, `\:`))) {
+	if artifact.SHA256 == "" || (!artifact.Tree && (artifact.Filename == "" || filepath.Base(artifact.Filename) != artifact.Filename || strings.ContainsAny(artifact.Filename, `\:`))) {
 		return artifactIdentity{}, errors.New("intune requires immutable content; file artifacts need a simple filename")
 	}
 	digest, err := hex.DecodeString(artifact.SHA256)

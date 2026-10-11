@@ -274,7 +274,7 @@ func resolveType(req plugin.ReconcileRequest[Config], m object) (string, error) 
 		switch {
 		case format == "pkg" || format == "dmg":
 			return format, nil
-		case req.Artifact.Path == "":
+		case req.Artifact.SHA256 == "":
 			// Without an artifact the format is unknown; a PKG app takes every
 			// field a DMG app does.
 			return "pkg", nil

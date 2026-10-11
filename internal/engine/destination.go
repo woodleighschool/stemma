@@ -11,9 +11,9 @@ import (
 	"slices"
 	"strconv"
 
+	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/expression"
-	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -60,7 +60,7 @@ func (e *execution) reconcile(ctx context.Context, ref destinationRef) error {
 		if err != nil {
 			return err
 		}
-		peers, err := resolvePeerMetadata(ctx, e.plans, ref.Destination, plan.peers, e.prepared, operation.MetadataSchema)
+		peers, err := resolvePeerMetadata(ctx, e.session.store, e.plans, ref.Destination, plan.peers, e.prepared, operation.MetadataSchema)
 		failure = err
 		if failure == nil {
 			failure = e.publishTo(ctx, ref, prepared, peers, item)
@@ -128,7 +128,7 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 		return err
 	}
 	if present && !prepared.SuppliedFacts && (operation.RequiresInspection || slices.Contains(roots, "facts")) {
-		prepared.Facts, err = inspection.Read(ctx, prepared.Path)
+		prepared.Facts, err = inspectPrepared(ctx, s.store, prepared)
 		if err != nil {
 			return fmt.Errorf("required inspection: %w", err)
 		}
@@ -138,12 +138,7 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 		return fmt.Errorf("metadata: %w", err)
 	}
 	work := filepath.Join(resource.work, "destinations", destination)
-	if present {
-		prepared, err = materialize(ctx, s.store, prepared, work)
-		if err != nil {
-			return err
-		}
-	}
+	prepared.Path = ""
 	request, err := e.request(ref, prepared, effective, peers)
 	if err != nil {
 		return err
@@ -160,24 +155,18 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 		if !exists {
 			return fmt.Errorf("missing input %s output %s", input, reference)
 		}
-		artifact, err = materialize(ctx, s.store, artifact, filepath.Join(work, "inputs", input))
-		if err != nil {
-			return err
-		}
+		artifact.Path = ""
 		request.Inputs[input] = artifact.artifact()
 	}
 	if software.Icon != "" && e.publishing() {
-		artifact, err := iconInput(s.root, software.Icon, filepath.Join(work, "inputs", "icon"))
+		artifact, err := iconInput(ctx, s.store, s.root, software.Icon)
 		if err != nil {
 			return err
 		}
-		request.Inputs["icon"] = artifact
+		request.Inputs["icon"] = artifact.artifact()
 	}
-	var derived plugin.ReconcileResponse
-	if err := s.ops.call(ctx, d.Operation, "validate", request, &derived); err != nil {
-		return err
-	}
-	if err := verifyLeases(ctx, request); err != nil {
+	derived, err := e.callDestination(ctx, d.Operation, request, work)
+	if err != nil {
 		return err
 	}
 	publication := Publication{Destination: destination, Metadata: derived.Metadata, Origins: mergeOrigins(origins, derived.Origins)}
@@ -193,14 +182,16 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	done = plugin.Stage(ctx, "Planning destination")
 	request.Method = "plan"
 	request.Config = e.connections[destination]
-	var response plugin.ReconcileResponse
-	err = s.ops.call(ctx, d.Operation, "plan", request, &response)
+	response, err := e.callDestination(ctx, d.Operation, request, work)
 	report.Changes = response.Changes
 	report.Origins = mergeOrigins(report.Origins, response.Origins)
-	err = errors.Join(err, verifyLeases(ctx, request))
 	done(err, plugin.Detail(changeCount(len(response.Changes))))
 	if err == nil && e.opts.Method == "apply" {
-		report, err = e.deliver(ctx, d.Operation, request, report)
+		request.Method = "apply"
+		response, err = e.callDestination(ctx, d.Operation, request, work)
+		report.Changes = response.Changes
+		report.Origins = mergeOrigins(report.Origins, response.Origins)
+		report.Applied = err == nil
 	}
 	if err != nil {
 		report.Error = err.Error()
@@ -228,18 +219,54 @@ func (e *execution) request(ref destinationRef, prepared Prepared, metadata map[
 	}, nil
 }
 
-func (e *execution) deliver(ctx context.Context, operation string, request plugin.ReconcileRequest[json.RawMessage], report DestinationReport) (DestinationReport, error) {
-	if err := verifyLeases(ctx, request); err != nil {
-		return report, err
-	}
-	request.Method = "apply"
+// callDestination keeps byte leases private to one method. A consumer requests
+// all needed content before writes; the retry must finish or fail clearly.
+func (e *execution) callDestination(ctx context.Context, operation string, request plugin.ReconcileRequest[json.RawMessage], work string) (plugin.ReconcileResponse, error) {
 	var response plugin.ReconcileResponse
-	err := e.session.ops.call(ctx, operation, "apply", request, &response)
-	err = errors.Join(err, verifyLeases(ctx, request))
-	report.Changes = response.Changes
-	report.Origins = mergeOrigins(report.Origins, response.Origins)
-	report.Applied = err == nil
-	return report, err
+	if err := e.session.ops.call(ctx, operation, request.Method, request, &response); err != nil || response.Content == nil {
+		return response, err
+	}
+	needed := response.Content
+	if !needed.Artifact && len(needed.Inputs) == 0 {
+		return response, errors.New("destination requested no content")
+	}
+	work = filepath.Join(work, request.Method)
+	defer func() { cleanupError(ctx, os.RemoveAll(work)) }()
+	lease := func(artifact plugin.Artifact, name, directory string) (plugin.Artifact, error) {
+		if artifact.SHA256 == "" || artifact.Path != "" {
+			return artifact, fmt.Errorf("destination requested unavailable content %q", name)
+		}
+		done := plugin.Stage(ctx, "Materializing destination content", plugin.Detail(name))
+		prepared := Prepared{Payload: cas.Ref{SHA256: artifact.SHA256, Size: artifact.Size}, Filename: artifact.Filename, Mode: artifact.Mode, Tree: artifact.Tree}
+		leased, err := materialize(ctx, e.session.store, prepared, filepath.Join(work, directory))
+		done(err)
+		artifact.Path = leased.Path
+		return artifact, err
+	}
+	var err error
+	if needed.Artifact {
+		request.Artifact, err = lease(request.Artifact, "artifact", "artifact")
+		if err != nil {
+			return response, err
+		}
+	}
+	request.Inputs = maps.Clone(request.Inputs)
+	for _, name := range needed.Inputs {
+		artifact, ok := request.Inputs[name]
+		if !ok {
+			return response, fmt.Errorf("destination requested unknown input %q", name)
+		}
+		request.Inputs[name], err = lease(artifact, name, "input-"+config.Fingerprint(name))
+		if err != nil {
+			return response, err
+		}
+	}
+	response = plugin.ReconcileResponse{}
+	err = e.session.ops.call(ctx, operation, request.Method, request, &response)
+	if err == nil && response.Content != nil {
+		err = errors.New("destination requested content again after materialization; retry the command")
+	}
+	return response, err
 }
 
 // connectionSettings evaluates a destination's settings for publication and
@@ -263,32 +290,6 @@ func changeCount(count int) string {
 		return "1 change"
 	}
 	return strconv.Itoa(count) + " changes"
-}
-
-// verifyLeases checks that an operation left the artifacts it was lent as
-// they were.
-func verifyLeases(ctx context.Context, request plugin.ReconcileRequest[json.RawMessage]) error {
-	var artifacts []plugin.Artifact
-	if request.Artifact.Path != "" {
-		artifacts = append(artifacts, request.Artifact)
-	}
-	for _, input := range request.Inputs {
-		artifacts = append(artifacts, input)
-	}
-	for _, artifact := range artifacts {
-		ref, err := digestPath(ctx, artifact.Path, artifact.Tree)
-		if err != nil {
-			return err
-		}
-		info, err := os.Stat(artifact.Path)
-		if err != nil {
-			return err
-		}
-		if ref.SHA256 != artifact.SHA256 || ref.Size != artifact.Size || uint32(info.Mode().Perm()) != artifact.Mode {
-			return errors.New("operation modified an immutable leased artifact")
-		}
-	}
-	return nil
 }
 
 func destinationReferences(metadata map[string]any) map[string]string {

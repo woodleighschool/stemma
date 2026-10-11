@@ -75,7 +75,7 @@ func plan(current *observed, desired map[string]json.RawMessage, content payload
 	return changes
 }
 
-func inspectPayload(ctx context.Context, identity plugin.Identity, artifact plugin.Artifact) (payload, error) {
+func describePayload(identity plugin.Identity, artifact plugin.Artifact) (payload, error) {
 	if identity.Project == "" || identity.Resource.Name == "" || identity.Destination == "" {
 		return payload{}, errors.New("jamf requires a complete logical identity")
 	}
@@ -86,6 +86,18 @@ func inspectPayload(ctx context.Context, identity plugin.Identity, artifact plug
 		return payload{}, fmt.Errorf("jamf publishes PKG artifacts, not %s; set package to publish the application in a PKG", artifact.Filename)
 	case extension != ".pkg":
 		return payload{}, fmt.Errorf("jamf publishes PKG artifacts, not %s", artifact.Filename)
+	}
+	digest, err := hex.DecodeString(artifact.SHA256)
+	if err != nil || len(digest) != sha256.Size || artifact.Tree || artifact.Size <= 0 {
+		return payload{}, errors.New("jamf artifact requires a nonempty file with a SHA-256 digest")
+	}
+	return payload{filename: artifact.Filename, sha256: artifact.SHA256, size: artifact.Size}, nil
+}
+
+func inspectPayload(ctx context.Context, identity plugin.Identity, artifact plugin.Artifact) (payload, error) {
+	content, err := describePayload(identity, artifact)
+	if err != nil {
+		return payload{}, err
 	}
 	f, err := os.Open(artifact.Path)
 	if err != nil {
@@ -108,7 +120,8 @@ func inspectPayload(ctx context.Context, identity plugin.Identity, artifact plug
 	if digest != artifact.SHA256 || n != artifact.Size {
 		return payload{}, errors.New("jamf artifact bytes disagree with the immutable artifact descriptor")
 	}
-	return payload{filename: artifact.Filename, sha256: digest, sha3512: hex.EncodeToString(hash3.Sum(nil)), size: n}, nil
+	content.sha3512 = hex.EncodeToString(hash3.Sum(nil))
+	return content, nil
 }
 
 func contentMatches(current *observed, content payload) bool {

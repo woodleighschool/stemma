@@ -358,7 +358,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		Environment              map[string]string
 	}{"resource/2", ops.identity[plan.Operation], plan.Resource.Reference(), plan.Config, identityInputs, modes, plan.Environment})
 	if derive == "" {
-		cached, complete, err := recallOutputs(ctx, store, key, filepath.Join(work, "cached"))
+		cached, complete, err := recallOutputs(ctx, store, key)
 		if err != nil {
 			return nil, false, err
 		}
@@ -513,7 +513,7 @@ func rememberOutputs(ctx context.Context, store *cas.Store, key string, outputs 
 	return store.Remember(ctx, key, descriptor, dependencies...)
 }
 
-func recallOutputs(ctx context.Context, store *cas.Store, key, work string) (map[string]Prepared, bool, error) {
+func recallOutputs(ctx context.Context, store *cas.Store, key string) (map[string]Prepared, bool, error) {
 	empty := map[string]Prepared{}
 	descriptor, ok := store.Recall(ctx, key)
 	if !ok {
@@ -536,18 +536,9 @@ func recallOutputs(ctx context.Context, store *cas.Store, key, work string) (map
 		return empty, false, nil
 	}
 	for name, artifact := range cached {
-		// Materialization verifies the bytes it copies. An unreadable cache
-		// result is disposable, including any peers already leased here.
-		leased, err := materialize(ctx, store, artifact, filepath.Join(work, name))
-		if err != nil {
-			return empty, false, errors.Join(ctx.Err(), os.RemoveAll(work))
-		}
-		leased.Path, err = filepath.EvalSymlinks(leased.Path)
-		if err != nil {
-			return nil, false, err
-		}
-		leased.Cached = true
-		cached[name] = leased
+		store.Reuse(ctx, artifact.Payload.SHA256)
+		artifact.Cached = true
+		cached[name] = artifact
 	}
 	return cached, true, nil
 }

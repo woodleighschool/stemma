@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
@@ -116,6 +117,37 @@ func iconPNG(t *testing.T, edge int, shade uint8) []byte {
 		t.Fatal(err)
 	}
 	return data.Bytes()
+}
+
+func TestUnchangedIconReusesCachedObject(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "icons"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "icons", "example.png"), iconPNG(t, 128, 10), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := cas.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := iconInput(t.Context(), store, root, "example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path, _ := store.Path(first.Payload)
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := iconInput(t.Context(), store, root, "example")
+	if err != nil || second.Payload != first.Payload {
+		t.Fatalf("icon identity changed: %+v %v", second, err)
+	}
+	after, err := os.Stat(path)
+	if err != nil || !os.SameFile(before, after) {
+		t.Fatalf("unchanged icon rewrote its cached object: %v", err)
+	}
 }
 
 // icnsWith wraps one PNG as the 128-pixel entry of an ICNS file.

@@ -97,8 +97,16 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest[Config]) (response 
 	if req.Method != "validate" && req.Method != "plan" && req.Method != "apply" {
 		return plugin.ReconcileResponse{}, fmt.Errorf("unsupported Intune method %q", req.Method)
 	}
+	// Trees and existing envelopes need inspection to establish their identity.
+	if desired["type"] == "win32" && (req.Artifact.Tree || strings.HasSuffix(strings.ToLower(req.Artifact.Filename), ".intunewin")) && req.Artifact.Path == "" {
+		needed := &plugin.ContentRequest{Artifact: true}
+		if icon := req.Inputs["icon"]; req.Method == "apply" && icon.SHA256 != "" && icon.Path == "" {
+			needed.Inputs = []string{"icon"}
+		}
+		return plugin.ReconcileResponse{Content: needed}, nil
+	}
 	var artifact artifactIdentity
-	if req.Artifact.Path != "" || req.Method != "validate" {
+	if req.Artifact.SHA256 != "" || req.Method != "validate" {
 		artifact, err = identifyArtifact(ctx, req.Artifact, appTypes[text(desired["type"])])
 		if err != nil {
 			return response, err
@@ -216,6 +224,14 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		return response, nil
 	}
 	if len(response.Changes) == 0 && current["publishingState"] == "published" {
+		return response, nil
+	}
+	needed := plugin.ContentRequest{Artifact: contentChanged && req.Artifact.Path == ""}
+	if len(iconChanges) != 0 && req.Inputs["icon"].Path == "" {
+		needed.Inputs = []string{"icon"}
+	}
+	if needed.Artifact || len(needed.Inputs) != 0 {
+		response.Content = &needed
 		return response, nil
 	}
 	var prepared *preparedArtifact

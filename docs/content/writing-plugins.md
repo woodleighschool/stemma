@@ -329,6 +329,17 @@ each field it clears; `Origins` maps each field to where its value came from. Le
 stored file's location. `stemma prepare --json` reports both, so return
 `Metadata` only when the derived state reads in the declaration's terms.
 
+Artifact identity, size, format, facts and evidence are available without `Path`.
+When a method needs bytes, return `ReconcileResponse.Content` selecting `Artifact`
+or named `Inputs`, before making any writes. The engine retries that method once
+with verified private copies of all requested content. These paths expire when
+the invocation returns. Request only the inputs the method actually needs.
+
+Keep metadata-only plans and updates independent of installer bytes. Apply must
+re-observe remote state and request content if an upload becomes necessary after
+plan. Verify bytes against their declared identity when publishing, and use the
+storage service's transfer checksum.
+
 `plan` reads the destination and returns semantic `Change` records without
 mutations. `apply` re-observes and performs the necessary changes. Preserve absent,
 null, false and empty collection values when decoding native metadata; they have

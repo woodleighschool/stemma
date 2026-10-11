@@ -59,7 +59,7 @@ func deriveMetadata(request plugin.ReconcileRequest[Config]) (metadata, plugin.R
 			patch.Version = new(request.Artifact.Version)
 			response.Origins["patch.version"] = "artifact.version"
 		}
-		if (patch.Version == nil || strings.TrimSpace(*patch.Version) == "") && (request.Prepared || request.Artifact.Path != "" || request.Method != "validate") {
+		if (patch.Version == nil || strings.TrimSpace(*patch.Version) == "") && (request.Prepared || request.Artifact.SHA256 != "" || request.Method != "validate") {
 			return m, response, errors.New("jamf patch has no managed version; set patch.version")
 		}
 		if p := patch.Policy; p != nil {

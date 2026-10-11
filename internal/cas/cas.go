@@ -108,8 +108,8 @@ func (s *Store) Path(ref Ref) (string, error) {
 	return filepath.Join(s.Dir, "objects", ref.SHA256), nil
 }
 
-// Lookup describes a stored object without certifying its bytes. Verify must
-// succeed before a consumer uses the returned reference.
+// Lookup describes a stored object without certifying its bytes. Read verifies
+// bytes when a consumer needs them.
 func (s *Store) Lookup(digest string) (Ref, error) {
 	ref := Ref{SHA256: digest}
 	path, err := s.Path(ref)
@@ -159,6 +159,8 @@ func (s *Store) Verify(ctx context.Context, ref Ref) error {
 
 // Read verifies the exact stream consumed by read, including any unread tail.
 // The caller must keep derived outputs private until Read succeeds.
+// An object that fails integrity verification is discarded so a later run can
+// acquire or rebuild it. Consumer errors and cancellation do not discard it.
 func (s *Store) Read(ctx context.Context, ref Ref, read func(io.Reader) error) error {
 	path, err := s.Path(ref)
 	if err != nil {
@@ -183,7 +185,14 @@ func (s *Store) Read(ctx context.Context, ref Ref, read func(io.Reader) error) e
 		return err
 	}
 	if r.N != 1 || hex.EncodeToString(h.Sum(nil)) != ref.SHA256 {
-		return fmt.Errorf("cache object %s failed integrity verification", ref.SHA256)
+		failure := fmt.Errorf("cache object %s failed integrity verification", ref.SHA256)
+		if err := f.Close(); err != nil {
+			return errors.Join(failure, err)
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return errors.Join(failure, err)
+		}
+		return fmt.Errorf("%w; discarded corrupt content, retry to acquire or rebuild it", failure)
 	}
 	s.touch(ctx, "objects", ref.SHA256)
 	return nil
@@ -202,7 +211,10 @@ func (s *Store) Has(ref Ref) bool {
 
 // Import streams bytes to a temporary object and atomically publishes the digest.
 func (s *Store) Import(ctx context.Context, r io.Reader, expected string) (Ref, error) {
-	return s.Write(ctx, expected, func(w io.Writer) error { _, err := io.Copy(w, r); return err })
+	return s.Write(ctx, expected, func(w io.Writer) error {
+		_, err := io.Copy(w, r)
+		return err
+	})
 }
 
 // Write produces an object directly into private CAS storage. Failed producers,
@@ -279,7 +291,10 @@ func (s *Store) Materialize(ctx context.Context, ref Ref, path string) error {
 		return err
 	}
 	defer func() { _ = os.Remove(out.Name()) }()
-	err = s.Read(ctx, ref, func(r io.Reader) error { _, err := io.Copy(out, r); return err })
+	err = s.Read(ctx, ref, func(r io.Reader) error {
+		_, err := io.Copy(out, r)
+		return err
+	})
 	if closeErr := out.Close(); err == nil {
 		err = closeErr
 	}

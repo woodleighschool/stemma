@@ -2,6 +2,7 @@ package intune
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/plugin"
@@ -52,7 +53,7 @@ func TestSelectedMSIDefaultsAndNativeOverrides(t *testing.T) {
 func TestMSIPropertiesExtendTheDerivedInstallCommand(t *testing.T) {
 	msi := &plugin.MSIFacts{ProductName: "Example", Manufacturer: "Vendor", ProductCode: "{11111111-1111-4111-8111-111111111111}", ProductVersion: "2.0.0"}
 	properties := object{"PORTAL": "vpn.example.com", "zConfig": `AU2_EnableAutoUpdate=true;Title="Example"`, "CONNECTMETHOD": "", "INSTALLDIR": `C:\Program Files\Vendor`}
-	req := plugin.ReconcileRequest[Config]{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "example"}}, Metadata: raw(object{"msi_properties": properties}), Artifact: plugin.Artifact{Path: "/leased/Example.msi", Filename: "Example.msi", Evidence: selectedMSI(msi)}}
+	req := plugin.ReconcileRequest[Config]{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "example"}}, Metadata: raw(object{"msi_properties": properties}), Artifact: plugin.Artifact{SHA256: strings.Repeat("a", 64), Filename: "Example.msi", Evidence: selectedMSI(msi)}}
 	metadata, _, err := derive(req)
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +62,7 @@ func TestMSIPropertiesExtendTheDerivedInstallCommand(t *testing.T) {
 	if metadata["install_command"] != want || metadata["msi_properties"] != nil {
 		t.Fatalf("install command: %v", metadata["install_command"])
 	}
-	req.Artifact = plugin.Artifact{Path: "/leased/setup.exe", Filename: "setup.exe"}
+	req.Artifact = plugin.Artifact{SHA256: strings.Repeat("a", 64), Filename: "setup.exe"}
 	if _, _, err := derive(req); err == nil {
 		t.Fatal("accepted msi_properties for an EXE setup file")
 	}

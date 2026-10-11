@@ -218,8 +218,9 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 	return entry, reused && m.Store.Reuse(ctx, entry.Content.SHA256), entry.Validate()
 }
 
-// FetchLocked uses verified cached content or fetches the locked observation
-// again. It never refreshes remote discovery; local inputs are always rehashed.
+// FetchLocked ensures locked content is available, fetching it when absent.
+// Cached bytes are verified when consumed. Remote discovery is not refreshed;
+// local inputs are always rehashed.
 // The source index keeps whatever the fetch returned, so a source that moved
 // on is proposed by the next refresh without another download.
 func (m *Manager) FetchLocked(ctx context.Context, input plugin.Input, entry Entry) (bool, error) {
@@ -233,7 +234,7 @@ func (m *Manager) FetchLocked(ctx context.Context, input plugin.Input, entry Ent
 	if entry.Resolver != input.Resolver || entry.ResolverVersion != version || entry.Declaration != declaration {
 		return false, errors.New("invalid or stale input lock")
 	}
-	cached := m.Store.VerifyDigest(ctx, entry.Content.SHA256)
+	_, cached := m.Store.Lookup(entry.Content.SHA256)
 	resolver, _ := m.resolver(input.Resolver)
 	if resolver.Local {
 		current, err := m.Resolve(ctx, input)
@@ -246,6 +247,7 @@ func (m *Manager) FetchLocked(ctx context.Context, input plugin.Input, entry Ent
 		return cached == nil, nil
 	}
 	if cached == nil {
+		m.Store.Reuse(ctx, entry.Content.SHA256)
 		return true, nil
 	}
 	if !errors.Is(cached, os.ErrNotExist) {

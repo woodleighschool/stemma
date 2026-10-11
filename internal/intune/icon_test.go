@@ -50,11 +50,17 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 	if original == "" {
 		t.Fatal("existing app did not acquire missing icon")
 	}
-	if result := run(); len(result.Changes) != 0 {
+	req.Artifact.Path = ""
+	unleased := first
+	unleased.Path = ""
+	req.Inputs["icon"] = unleased
+	if result := run(); len(result.Changes) != 0 || result.Content != nil {
 		t.Fatalf("unchanged icon planned writes: %+v", result.Changes)
 	}
 	// Changed bytes are ordinary drift: planning reports them, applying replaces them.
-	req.Inputs["icon"] = second
+	unleased = second
+	unleased.Path = ""
+	req.Inputs["icon"] = unleased
 	req.Method = "plan"
 	if result := run(); len(result.Changes) != 1 || result.Changes[0].Field != "icon" {
 		t.Fatalf("changed icon plan: %+v", result.Changes)
@@ -63,6 +69,10 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 		t.Fatal("plan wrote icon")
 	}
 	req.Method = "apply"
+	if result := run(); result.Content == nil || result.Content.Artifact || len(result.Content.Inputs) != 1 || result.Content.Inputs[0] != "icon" {
+		t.Fatalf("icon upload did not request just its bytes: %+v", result)
+	}
+	req.Inputs["icon"] = second
 	run()
 	replaced := text(fake.app["largeIcon"].(object)["value"])
 	if replaced == original {

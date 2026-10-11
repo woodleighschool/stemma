@@ -18,12 +18,23 @@ import (
 
 func (c *client) reconcileIcon(ctx context.Context, req plugin.ReconcileRequest[Config], current object, apply bool) ([]plugin.Change, error) {
 	artifact := req.Inputs["icon"]
-	if artifact.Path == "" {
+	if artifact.SHA256 == "" {
 		return nil, nil
 	}
 	existing, _ := current["largeIcon"].(object)
-	if artifact.Tree || artifact.Format != "png" || artifact.Size <= 0 || artifact.Size > 32<<20 {
+	digest, err := hex.DecodeString(artifact.SHA256)
+	if err != nil || len(digest) != sha256.Size || artifact.Tree || artifact.Format != "png" || artifact.Size <= 0 || artifact.Size > 32<<20 {
 		return nil, errors.New("intune icon requires a bounded PNG artifact")
+	}
+	if data, err := base64.StdEncoding.DecodeString(text(existing["value"])); err == nil && text(existing["type"]) == "image/png" {
+		hash := sha256.Sum256(data)
+		if int64(len(data)) == artifact.Size && hex.EncodeToString(hash[:]) == artifact.SHA256 {
+			return nil, nil
+		}
+	}
+	changes := []plugin.Change{{Kind: "content", Field: "icon", Action: "upload", Filename: artifact.Filename, After: raw(artifact.SHA256)}}
+	if !apply {
+		return changes, nil
 	}
 	file, err := os.Open(artifact.Path)
 	if err != nil {
@@ -34,8 +45,8 @@ func (c *client) reconcileIcon(ctx context.Context, req plugin.ReconcileRequest[
 	if err != nil {
 		return nil, err
 	}
-	digest := sha256.Sum256(data)
-	if int64(len(data)) != artifact.Size || hex.EncodeToString(digest[:]) != artifact.SHA256 {
+	hash := sha256.Sum256(data)
+	if int64(len(data)) != artifact.Size || hex.EncodeToString(hash[:]) != artifact.SHA256 {
 		return nil, errors.New("intune icon differs from its artifact digest")
 	}
 	config, err := png.DecodeConfig(bytes.NewReader(data))
@@ -46,13 +57,6 @@ func (c *client) reconcileIcon(ctx context.Context, req plugin.ReconcileRequest[
 		return nil, err
 	}
 	value := base64.StdEncoding.EncodeToString(data)
-	if text(existing["value"]) == value && text(existing["type"]) == "image/png" {
-		return nil, nil
-	}
-	changes := []plugin.Change{{Kind: "content", Field: "icon", Action: "upload", Filename: artifact.Filename, After: raw(artifact.SHA256)}}
-	if !apply {
-		return changes, nil
-	}
 	id := text(current["id"])
 	if id == "" {
 		return changes, errors.New("intune icon requires an existing app")

@@ -620,6 +620,20 @@ func newFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest[Config]) {
 	return fake, request
 }
 
+func TestValidationNeedsNoPackageLease(t *testing.T) {
+	server, request := newFixture(t)
+	request.Artifact.Path = ""
+	request.Method = "validate"
+	if response, err := Handle(t.Context(), request); err != nil || response.Content != nil {
+		t.Fatalf("validation=%+v err=%v", response, err)
+	}
+	request.Method = "plan"
+	response, err := Handle(t.Context(), request)
+	if err != nil || response.Content == nil || !response.Content.Artifact || len(server.writes()) != 0 {
+		t.Fatalf("inspection request=%+v err=%v", response, err)
+	}
+}
+
 func fixtureArtifact(t *testing.T, content string) plugin.Artifact {
 	t.Helper()
 	return fixtureArtifactNamed(t, "vendor.pkg", content)

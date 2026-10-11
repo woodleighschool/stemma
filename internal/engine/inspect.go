@@ -10,10 +10,27 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/plugin"
 )
+
+func inspectPrepared(ctx context.Context, store *cas.Store, artifact Prepared) (plugin.Facts, error) {
+	if artifact.Path != "" {
+		return inspect.Read(ctx, artifact.Path)
+	}
+	work, err := os.MkdirTemp(filepath.Join(store.Dir, "work"), "inspection-*")
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	defer func() { cleanupError(ctx, os.RemoveAll(work)) }()
+	artifact, err = materialize(ctx, store, artifact, work)
+	if err != nil {
+		return plugin.Facts{}, err
+	}
+	return inspect.Read(ctx, artifact.Path)
+}
 
 func (e *execution) inspectInput(ctx context.Context) error {
 	return e.withInput(ctx, func(ctx context.Context, input Prepared, work string, _ *ResourceReport) error {

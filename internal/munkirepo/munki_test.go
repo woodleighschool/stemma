@@ -20,6 +20,43 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
+func TestReconciliationRequestsContentOnlyForChangedFiles(t *testing.T) {
+	root, request := repositoryRequest(t, "Example.pkg", `{}`)
+	path := request.Artifact.Path
+	request.Artifact.Path = ""
+	for _, method := range []string{"validate", "plan"} {
+		request.Method = method
+		response, err := munkirepo.Handle(t.Context(), request)
+		if err != nil || response.Content != nil {
+			t.Fatalf("%s response=%+v err=%v", method, response, err)
+		}
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Fatalf("planning created repository: %v", err)
+	}
+	request.Method = "apply"
+	response, err := munkirepo.Handle(t.Context(), request)
+	if err != nil || response.Content == nil || !response.Content.Artifact {
+		t.Fatalf("missing installer response=%+v err=%v", response, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "pkgsinfo")); !os.IsNotExist(err) {
+		t.Fatalf("published metadata before content: %v", err)
+	}
+	request.Artifact.Path = path
+	pkginfo := apply(t, root, &request)
+	request.Artifact.Path = ""
+	for _, metadata := range []string{`{}`, `{"description":"Changed"}`} {
+		request.Metadata = nativeMetadata(metadata)
+		response, err := munkirepo.Handle(t.Context(), request)
+		if err != nil || response.Content != nil {
+			t.Fatalf("metadata response=%+v err=%v", response, err)
+		}
+	}
+	if document := readNative[map[string]any](t, pkginfo); document["description"] != "Changed" {
+		t.Fatalf("metadata update was not applied: %+v", document)
+	}
+}
+
 func TestOmittedNativeMetadataSurvivesReconciliation(t *testing.T) {
 	for _, test := range []struct {
 		name, filename, first, second string

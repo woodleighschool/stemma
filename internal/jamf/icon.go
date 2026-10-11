@@ -28,7 +28,7 @@ type selfServiceIcon struct {
 }
 
 func newSelfServiceIcon(artifact plugin.Artifact) (*selfServiceIcon, error) {
-	if artifact.Path == "" {
+	if artifact.SHA256 == "" {
 		return nil, nil
 	}
 	digest, err := hex.DecodeString(artifact.SHA256)

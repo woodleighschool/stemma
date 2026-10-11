@@ -374,7 +374,13 @@ func (e *execution) icons(ctx context.Context) error {
 		if key == e.roots[0] {
 			selection.Path = e.opts.Input.Path
 		}
-		item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], prepared.outputs["installer"], selection, prepared.work)
+		installer := prepared.outputs["installer"]
+		if installer.Payload.SHA256 != "" && installer.Path == "" {
+			installer, err = materialize(ctx, e.session.store, installer, filepath.Join(prepared.work, "artwork"))
+		}
+		if err == nil {
+			item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], installer, selection, prepared.work)
+		}
 		if err != nil {
 			item.Error = err.Error()
 			e.fail(ctx, ResourceError{Resource: key, Err: err})

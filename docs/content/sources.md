@@ -317,9 +317,15 @@ stemma cache info
 stemma prepare --offline
 ```
 
-`--offline` requires verified cached network inputs and still checks local files.
+`--offline` requires cached network inputs and still checks local files.
 It controls source and plugin acquisition; **it does not disable destination
 network access for `plan` or `apply`**.
+
+Reusing prepared outputs verifies their recorded identity and inspection results.
+Destinations can reconcile metadata without installer bytes. Content is copied
+and verified when a consumer needs it; corrupt cached content is discarded and
+the command fails. Retry to fetch or rebuild it. Local inputs are still read in
+full to compare their current content with the lock.
 
 Repeated source lookups share cached responses and check with the publisher for
 changes on later runs. A failed lookup remains a failure, even with cached data.

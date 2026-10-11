@@ -36,6 +36,9 @@ func TestReadAuthenticatesUnreadTail(t *testing.T) {
 			if (err == nil) != (mutation == "none") {
 				t.Fatalf("read: %v", err)
 			}
+			if mutation != "none" && s.HasDigest(ref.SHA256) {
+				t.Fatal("retained corrupt cache object")
+			}
 			target := filepath.Join(t.TempDir(), "copy")
 			err = s.Materialize(t.Context(), ref, target)
 			if mutation == "none" {
@@ -136,5 +139,23 @@ func TestReadCancellationAfterConsumingBufferedContent(t *testing.T) {
 	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("read after cancellation: %v", err)
+	}
+	if err := s.Verify(t.Context(), ref); err != nil {
+		t.Fatal("cancellation discarded valid content:", err)
+	}
+}
+
+func TestConsumerFailureKeepsCachedContent(t *testing.T) {
+	s, _ := testStore(t)
+	ref, err := s.Import(t.Context(), strings.NewReader("content"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := errors.New("consumer rejected format")
+	if err := s.Read(t.Context(), ref, func(io.Reader) error { return failure }); !errors.Is(err, failure) {
+		t.Fatal(err)
+	}
+	if err := s.Verify(t.Context(), ref); err != nil {
+		t.Fatal("consumer error discarded content:", err)
 	}
 }

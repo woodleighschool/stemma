@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/contents"
 	"github.com/woodleighschool/stemma/internal/icon"
@@ -51,25 +53,20 @@ func verifyIcons(root string, plans map[string]resourcePlan, keys []string) erro
 	return nil
 }
 
-// iconInput leases a copy of the declared asset for one destination.
-func iconInput(root, name, dir string) (plugin.Artifact, error) {
+// iconInput records the declared asset independently of a destination's lease.
+func iconInput(ctx context.Context, store *cas.Store, root, name string) (Prepared, error) {
 	data, err := icon.Read(root, name)
 	if err != nil {
-		return plugin.Artifact{}, err
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return plugin.Artifact{}, err
-	}
-	target := filepath.Join(dir, name+".png")
-	if err := os.WriteFile(target, data, 0o644); err != nil {
-		return plugin.Artifact{}, err
-	}
-	info, err := os.Stat(target)
-	if err != nil {
-		return plugin.Artifact{}, err
+		return Prepared{}, err
 	}
 	digest := sha256.Sum256(data)
-	return plugin.Artifact{Path: target, Filename: name + ".png", Format: "png", Size: int64(len(data)), SHA256: hex.EncodeToString(digest[:]), Mode: uint32(info.Mode().Perm())}, nil
+	ref := cas.Ref{SHA256: hex.EncodeToString(digest[:]), Size: int64(len(data))}
+	if !store.Has(ref) {
+		ref, err = store.Import(ctx, bytes.NewReader(data), ref.SHA256)
+	} else {
+		store.Reuse(ctx, ref.SHA256)
+	}
+	return Prepared{Payload: ref, Filename: name + ".png", Format: "png", Mode: 0o644}, err
 }
 
 // iconOutcome reports, in the words the CLI prints, why a resource needs no

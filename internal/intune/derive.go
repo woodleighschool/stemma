@@ -55,7 +55,7 @@ func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string
 			origin = fmt.Sprintf("%s %s → %s", origin, minimum.Version, release)
 		}
 		m["minimum_os"], origins["minimum_os"] = release, origin
-	} else if req.Prepared || req.Artifact.Path != "" {
+	} else if req.Prepared || req.Artifact.SHA256 != "" {
 		return nil, errors.New("no minimum macOS is known for this software; set minimum_os")
 	}
 	if declared, exists := m["included_apps"]; exists {
@@ -66,7 +66,7 @@ func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string
 		}
 		return mergeDerived(m, primary, "included_apps", origins)
 	}
-	if !req.Prepared && req.Artifact.Path == "" && len(req.Artifact.Facts.Subjects) == 0 {
+	if !req.Prepared && req.Artifact.SHA256 == "" && len(req.Artifact.Facts.Subjects) == 0 {
 		return m, nil
 	}
 	var selected *plugin.Subject
@@ -156,7 +156,7 @@ const lobLimit = 2 << 30
 // managed needs one component that installs one application under
 // /Applications. Validation without an artifact checks nothing here.
 func validateLOB(artifact plugin.Artifact, declared []any, managed bool) error {
-	if artifact.Path == "" {
+	if artifact.SHA256 == "" {
 		return nil
 	}
 	if artifact.Tree || !strings.EqualFold(path.Ext(artifact.Filename), ".pkg") {
@@ -240,7 +240,7 @@ func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origi
 	}
 	data := req.Artifact.Evidence["windows.installer"]
 	if !strings.EqualFold(path.Ext(setup), ".msi") || len(data) == 0 {
-		if properties != nil && req.Artifact.Path != "" {
+		if properties != nil && req.Artifact.SHA256 != "" {
 			return nil, errors.New("msi_properties requires an MSI setup file")
 		}
 		return metadata, nil
@@ -289,7 +289,7 @@ func deriveVersionRules(req plugin.ReconcileRequest[Config], metadata object, or
 		}
 		version := req.Artifact.Version
 		switch {
-		case version == "" && !req.Prepared && req.Artifact.Path == "":
+		case version == "" && !req.Prepared && req.Artifact.SHA256 == "":
 			continue
 		case version == "":
 			return errors.New("the artifact has no managed version to detect; set the version rule's value")

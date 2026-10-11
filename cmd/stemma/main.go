@@ -279,7 +279,7 @@ func (c *cli) runCommand(method string) *cobra.Command {
 	if method == "plan" || method == "apply" {
 		cmd.Flags().Bool("details", false, "Show complete initial object fields")
 	}
-	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Use cached locked inputs without source network access")
 	cmd.Flags().StringArrayVar(&profiles, "profile", nil, "Run the resources that declare the profile `NAME` instead of those that declare none; repeat for more")
 	if method == "prepare" {
 		cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the lockfile, then prepare only resources whose preparation changed since the Git revision `REV`")
@@ -337,7 +337,7 @@ func (c *cli) artifactCommand() *cobra.Command {
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Export to a new file or directory outside the disposable cache")
 	cmd.Flags().StringVar(&read, "read", "", readUsage)
 	cmd.MarkFlagsMutuallyExclusive("read", "output-file")
-	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Use cached locked inputs without source network access")
 	cmd.Flags().BoolVar(&noInputLock, "no-input-lock", false, "Resolve inputs from their sources now instead of their lock entries; plugins stay locked")
 	cmd.MarkFlagsMutuallyExclusive("offline", "no-input-lock")
 	return cmd
@@ -370,7 +370,7 @@ func (c *cli) inspectCommand() *cobra.Command {
 	cmd.Flags().StringVar(&input, "input", "", "Inspect this resource input without building the resource")
 	cmd.Flags().StringVar(&selection, "path", "", "Subject path within the artifact or resource input")
 	cmd.Flags().StringVar(&read, "read", "", readUsage)
-	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
+	cmd.Flags().BoolVar(&offline, "offline", false, "Use cached locked inputs without source network access")
 	cmd.Flags().BoolVar(&noInputLock, "no-input-lock", false, "Resolve current inputs without changing their lock entries")
 	cmd.MarkFlagsMutuallyExclusive("offline", "no-input-lock")
 	asJSON := jsonFlag(cmd)

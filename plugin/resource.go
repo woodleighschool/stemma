@@ -198,7 +198,7 @@ type ContentContract struct {
 }
 
 func (contract ContentContract) Accepts(artifact Artifact) error {
-	if artifact.Path == "" {
+	if artifact.SHA256 == "" {
 		if contract.SourceFree {
 			return nil
 		}

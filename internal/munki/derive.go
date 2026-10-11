@@ -113,7 +113,7 @@ func Derive[C any](request plugin.ReconcileRequest[C]) (Derived, error) {
 		return result, nil
 	}
 	icon := request.Inputs["icon"]
-	if icon.Path != "" && !declared("icon_name") && !declared("icon_hash") {
+	if icon.SHA256 != "" && !declared("icon_name") && !declared("icon_hash") {
 		digest, err := hex.DecodeString(icon.SHA256)
 		if err != nil || len(digest) != 32 || icon.Format != "png" || icon.Tree || icon.Size <= 0 || icon.Size > 32<<20 {
 			return Derived{}, errors.New("icon input requires a bounded PNG artifact with a SHA-256 digest")

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +9,6 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/plugin"
 )
 
 func TestCachedOutputsVerifyDescriptorBeforeUsingMetadata(t *testing.T) {
@@ -48,7 +46,7 @@ func TestCachedOutputsVerifyDescriptorBeforeUsingMetadata(t *testing.T) {
 	if err := os.WriteFile(name, changed, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, hit, err = recallOutputs(t.Context(), store, key, filepath.Join(t.TempDir(), "cached"))
+	_, hit, err = recallOutputs(t.Context(), store, key)
 	if err != nil || hit {
 		t.Fatalf("used corrupt descriptor: hit=%v error=%v", hit, err)
 	}
@@ -97,17 +95,27 @@ func TestCachedOutputsVerifyTheConsumedBytes(t *testing.T) {
 					}
 				}
 				work := filepath.Join(t.TempDir(), "cached")
-				outputs, hit, err := recallOutputs(t.Context(), store, key, work)
-				if err != nil || hit == corrupt {
+				outputs, hit, err := recallOutputs(t.Context(), store, key)
+				if err != nil || !hit {
 					t.Fatalf("cache hit=%v: %v", hit, err)
 				}
+				if outputs["installer"].Path != "" {
+					t.Fatal("metadata recall materialized content")
+				}
+				leased, err := materialize(t.Context(), store, outputs["installer"], work)
 				if corrupt {
-					if _, err := os.Stat(work); !os.IsNotExist(err) {
-						t.Fatalf("retained failed cache lease: %v", err)
+					if err == nil {
+						t.Fatal("consumed corrupt cached output")
+					}
+					if _, err := os.Stat(leased.Path); !os.IsNotExist(err) {
+						t.Fatalf("published failed cache lease: %v", err)
 					}
 					return
 				}
-				observed, err := digestPath(t.Context(), outputs["installer"].Path, tree)
+				if err != nil {
+					t.Fatal(err)
+				}
+				observed, err := digestPath(t.Context(), leased.Path, tree)
 				if err != nil || observed != ref {
 					t.Fatalf("leased payload: %+v %v", observed, err)
 				}
@@ -157,7 +165,7 @@ func TestTreeMaterializationChecksEntireObjectBeforePublication(t *testing.T) {
 	}
 }
 
-func TestLeaseDigestCoversCanonicalMetadataWithoutImport(t *testing.T) {
+func TestDigestCoversCanonicalMetadataWithoutImport(t *testing.T) {
 	for _, change := range []string{"none", "bytes", "mode", "symlink"} {
 		t.Run(change, func(t *testing.T) {
 			store, err := cas.Open(t.TempDir())
@@ -177,11 +185,6 @@ func TestLeaseDigestCoversCanonicalMetadataWithoutImport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			info, err := os.Stat(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			request := plugin.ReconcileRequest[json.RawMessage]{Artifact: plugin.Artifact{Path: dir, Tree: true, SHA256: ref.SHA256, Size: ref.Size, Mode: uint32(info.Mode().Perm())}}
 			switch change {
 			case "bytes":
 				err = os.WriteFile(name, []byte("changed"), 0o600)
@@ -196,9 +199,9 @@ func TestLeaseDigestCoversCanonicalMetadataWithoutImport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = verifyLeases(t.Context(), request)
-			if (err == nil) != (change == "none") {
-				t.Fatalf("lease check: %v", err)
+			observed, err := digestPath(t.Context(), dir, true)
+			if err != nil || (observed == ref) != (change == "none") {
+				t.Fatalf("canonical digest: %+v %v", observed, err)
 			}
 			entries, err := os.ReadDir(filepath.Join(store.Dir, "objects"))
 			if err != nil || len(entries) != 1 {

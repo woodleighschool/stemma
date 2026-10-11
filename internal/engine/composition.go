@@ -9,9 +9,9 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/expression"
-	inspection "github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -181,7 +181,7 @@ func checkPublication(ctx context.Context, project config.Project, plans map[str
 	if metadata, err = json.Marshal(resolved); err != nil {
 		return plan, err
 	}
-	peers, err := resolvePeerMetadata(ctx, plans, destination, plan.peers, nil, op.MetadataSchema)
+	peers, err := resolvePeerMetadata(ctx, nil, plans, destination, plan.peers, nil, op.MetadataSchema)
 	if err != nil {
 		return plan, fmt.Errorf("%s/%s: %w", key, destination, err)
 	}
@@ -196,7 +196,7 @@ func checkPublication(ctx context.Context, project config.Project, plans map[str
 	return plan, nil
 }
 
-func resolvePeerMetadata(ctx context.Context, plans map[string]resourcePlan, destination string, peers map[string]json.RawMessage, prepared map[string]preparedResource, schema json.RawMessage) (map[string]json.RawMessage, error) {
+func resolvePeerMetadata(ctx context.Context, store *cas.Store, plans map[string]resourcePlan, destination string, peers map[string]json.RawMessage, prepared map[string]preparedResource, schema json.RawMessage) (map[string]json.RawMessage, error) {
 	result := make(map[string]json.RawMessage, len(peers))
 	for _, key := range sortedKeys(peers) {
 		plan := plans[key]
@@ -219,7 +219,7 @@ func resolvePeerMetadata(ctx context.Context, plans map[string]resourcePlan, des
 			return nil, fmt.Errorf("peer %s references missing output %s", key, output)
 		}
 		if present && !artifact.SuppliedFacts && slices.Contains(roots, "facts") {
-			artifact.Facts, err = inspection.Read(ctx, artifact.Path)
+			artifact.Facts, err = inspectPrepared(ctx, store, artifact)
 			if err != nil {
 				return nil, fmt.Errorf("peer %s required inspection: %w", key, err)
 			}

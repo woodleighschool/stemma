@@ -101,6 +101,43 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	}
 }
 
+func TestReconciliationRequestsContentBeforePublication(t *testing.T) {
+	fake, c := newGraphFixture(t)
+	req := fixtureRequest(t)
+	path := req.Artifact.Path
+	req.Artifact.Path = ""
+	req.Method = "validate"
+	if response, err := Handle(t.Context(), req); err != nil || response.Content != nil {
+		t.Fatalf("validation=%+v err=%v", response, err)
+	}
+	desired, err := compileRequest(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Method = "plan"
+	if response, err := reconcileFixture(t, c, req, desired); err != nil || response.Content != nil || len(response.Changes) == 0 {
+		t.Fatalf("planning=%+v err=%v", response, err)
+	}
+	req.Method = "apply"
+	response, err := reconcileFixture(t, c, req, desired)
+	if err != nil || response.Content == nil || !response.Content.Artifact || fake.writes != 0 {
+		t.Fatalf("publication=%+v err=%v writes=%d", response, err, fake.writes)
+	}
+	req.Artifact.Path = path
+	if response, err := reconcileFixture(t, c, req, desired); err != nil || response.Content != nil {
+		t.Fatalf("leased publication=%+v err=%v", response, err)
+	}
+	req.Artifact.Path = ""
+	writes := fake.writes
+	if response, err := reconcileFixture(t, c, req, desired); err != nil || response.Content != nil || len(response.Changes) != 0 || fake.writes != writes {
+		t.Fatalf("unchanged=%+v err=%v", response, err)
+	}
+	desired["description"] = "Changed"
+	if response, err := reconcileFixture(t, c, req, desired); err != nil || response.Content != nil || fake.app["description"] != "Changed" || fake.versions != 1 {
+		t.Fatalf("metadata=%+v err=%v", response, err)
+	}
+}
+
 func TestAssignmentFilterAndNotificationsBelongToTheAssignment(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)

@@ -97,18 +97,18 @@ func TestPeerMetadataUsesPreparedDestinationOutputAndNativeSchema(t *testing.T) 
 	}}}}
 	peers := map[string]json.RawMessage{peer: nil}
 	schema := json.RawMessage(`{"type":"object","additionalProperties":false,"required":["name","enabled"],"properties":{"name":{"type":"string"},"enabled":{"type":"boolean"}}}`)
-	resolved, err := resolvePeerMetadata(t.Context(), plans, "repo", peers, prepared, schema)
+	resolved, err := resolvePeerMetadata(t.Context(), nil, plans, "repo", peers, prepared, schema)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(resolved[peer]) != `{"enabled":true,"name":"Prepared Peer"}` {
 		t.Fatalf("peer expressions were not resolved from the selected output: %s", resolved[peer])
 	}
-	if _, err := resolvePeerMetadata(t.Context(), plans, "repo", peers, nil, schema); err == nil || !strings.Contains(err.Error(), "requires preparation") {
+	if _, err := resolvePeerMetadata(t.Context(), nil, plans, "repo", peers, nil, schema); err == nil || !strings.Contains(err.Error(), "requires preparation") {
 		t.Fatalf("unprepared peer's facts were accepted: %v", err)
 	}
 	plans[peer].Destinations["repo"]["enabled"] = "{{ 'yes' }}"
-	if _, err := resolvePeerMetadata(t.Context(), plans, "repo", peers, prepared, schema); err == nil {
+	if _, err := resolvePeerMetadata(t.Context(), nil, plans, "repo", peers, prepared, schema); err == nil {
 		t.Fatal("resolved peer bypassed its native schema")
 	}
 }
