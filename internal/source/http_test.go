@@ -381,7 +381,7 @@ func TestHTTPFailureIdentifiesTheRespondingEndpoint(t *testing.T) {
 	if err == nil || err.Error() != want {
 		t.Fatalf("error=%v, want %q", err, want)
 	}
-	_, err = m.discoverLink(t.Context(), httpConfig{URL: server.URL + "/start", Match: "pkg"})
+	_, _, err = m.discoverLink(t.Context(), httpConfig{URL: server.URL + "/start", Match: "pkg"})
 	if err == nil || err.Error() != "download page "+server.URL+"/blocked.pkg: HTTP 503 Service Unavailable" {
 		t.Fatalf("discovery error=%v", err)
 	}

@@ -226,6 +226,91 @@ func TestDownloadPageRejectsAmbiguousOrUnsafeMatches(t *testing.T) {
 	}
 }
 
+// TestDownloadPageSelectsTheHighestVersion covers pages that keep older
+// releases beside the current one, in no useful order.
+func TestDownloadPageSelectsTheHighestVersion(t *testing.T) {
+	const installers = `https://vendor\.example/installers/download\.php\?file=App-(?P<version>[0-9.]+)-osx-installer\.dmg`
+	link := func(file string) string {
+		return `<a href="https://vendor.example/installers/download.php?file=` + file + `">` + file + `</a>`
+	}
+	for _, tc := range []struct{ name, body, pattern, url, version, fails string }{
+		{
+			name:    "release index",
+			body:    link("App-6.3.4-osx-installer.dmg") + link("App-6.3.5-windows-x64-installer.exe") + link("App-5.1.5-osx-installer.dmg") + link("App-6.3.5-osx-installer.dmg") + link("App-6.2.0-osx-installer.dmg") + link("App-5.4.0-osx-installer.dmg"),
+			pattern: installers,
+			url:     "https://vendor.example/installers/download.php?file=App-6.3.5-osx-installer.dmg",
+			version: "6.3.5",
+		},
+		{
+			name:    "numeric order",
+			body:    `<a href="/files/App-9.12.dmg">9</a><a href="/files/App-10.2.dmg">10</a><a href="/files/App-9.2.dmg">9</a>`,
+			pattern: `/files/App-(?P<version>[0-9.]+)\.dmg`,
+			url:     "https://vendor.example/files/App-10.2.dmg",
+			version: "10.2",
+		},
+		{
+			name:    "repeated link",
+			body:    `<a href="/files/App-2.0.dmg">Download</a><a href="https://vendor.example/files/App-2.0.dmg">Mirror</a><a href="/files/App-1.9.dmg">Previous</a>`,
+			pattern: `(?:https://vendor\.example)?/files/App-(?P<version>[0-9.]+)\.dmg`,
+			url:     "https://vendor.example/files/App-2.0.dmg",
+			version: "2.0",
+		},
+		{
+			name:    "two files for the highest version",
+			body:    `<a href="/arm64/App-2.0.0.dmg">Apple silicon</a><a href="/intel/App-2.0.dmg">Intel</a><a href="/arm64/App-1.9.dmg">Previous</a>`,
+			pattern: `/[a-z0-9]+/App-(?P<version>[0-9.]+)\.dmg`,
+			fails:   "matched 2 distinct artifact URLs for version 2.0.0; expected one: https://vendor.example/arm64/App-2.0.0.dmg, https://vendor.example/intel/App-2.0.dmg",
+		},
+		{
+			name:    "prerelease",
+			body:    `<a href="/files/App-2.0.dmg">Download</a><a href="/files/App-2.1b3.dmg">Beta</a>`,
+			pattern: `/files/App-(?P<version>[0-9a-z.]+)\.dmg`,
+			fails:   `captured version "2.1b3"`,
+		},
+		{
+			name:    "version group left out of a match",
+			body:    `<a href="/files/App-2.0.dmg">Download</a><a href="/files/App-latest.dmg">Latest</a>`,
+			pattern: `/files/App-(?:(?P<version>[0-9.]+)|latest)\.dmg`,
+			fails:   `captured version ""`,
+		},
+		{
+			name:    "no version group",
+			body:    `<a href="/files/App-2.0.dmg">Download</a><a href="/files/App-1.9.dmg">Previous</a>`,
+			pattern: `/files/App-[0-9.]+\.dmg`,
+			fails:   "matched 2 distinct artifact URLs; expected one: https://vendor.example/files/App-1.9.dmg, https://vendor.example/files/App-2.0.dmg",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := manager(t)
+			m.Client.Transport = roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				body := "installer"
+				switch request.URL.String() {
+				case "https://vendor.example/download":
+					body = tc.body
+				case tc.url:
+				default:
+					t.Errorf("unexpected request %s", request.URL)
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(body)), Header: http.Header{}}, nil
+			})
+			input := plugin.Input{Resolver: "http", Config: map[string]any{"url": "https://vendor.example/download", "match": tc.pattern}}
+			entry, err := m.Resolve(t.Context(), input)
+			if tc.fails != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.fails) {
+					t.Fatalf("got %v, want %s", err, tc.fails)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := observation(t, entry).URL; got != tc.url || entry.InputVersion != tc.version {
+				t.Fatalf("selected %q at version %q, want %q at %q", got, entry.InputVersion, tc.url, tc.version)
+			}
+		})
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

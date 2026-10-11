@@ -1,22 +1,30 @@
 package source
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/woodleighschool/stemma/plugin"
 	"golang.org/x/net/html"
 )
 
-// discoverLink finds the one download URL a page's match selects.
-func (m *Manager) discoverLink(ctx context.Context, s httpConfig) (link string, err error) {
+// dottedVersion is what a match's version group may capture.
+var dottedVersion = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)*$`)
+
+// discoverLink finds the one download URL a page's match selects. A pattern
+// with a version group may match several; the highest version selects the
+// URL and is returned with it.
+func (m *Manager) discoverLink(ctx context.Context, s httpConfig) (link, version string, err error) {
 	var host string
 	if page, err := url.Parse(s.URL); err == nil {
 		host = page.Hostname()
@@ -28,27 +36,27 @@ func (m *Manager) discoverLink(ctx context.Context, s httpConfig) (link string, 
 	}()
 	req, err := m.request(ctx, s.URL, s.headers(s.URL))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	res, err := m.metadataClient().Do(req)
 	if err != nil {
-		return "", transportError("download page", err)
+		return "", "", transportError("download page", err)
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
-		return "", httpStatusError("download page", req, res)
+		return "", "", httpStatusError("download page", req, res)
 	}
 	const limit = 4 << 20
 	data, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
 	if err != nil {
-		return "", transportError("download page", err)
+		return "", "", transportError("download page", err)
 	}
 	if len(data) > limit {
-		return "", errors.New("download page exceeds 4 MiB")
+		return "", "", errors.New("download page exceeds 4 MiB")
 	}
 	pattern, err := regexp.Compile(s.Match)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	base := req.URL
 	if res.Request != nil {
@@ -60,28 +68,82 @@ func (m *Manager) discoverLink(ctx context.Context, s httpConfig) (link string, 
 	if markup(res.Header.Get("Content-Type"), data) {
 		searched, base = attributes(string(data), base)
 	}
-	matches := map[string]bool{}
+	group := pattern.SubexpIndex("version")
+	matches := map[string]string{}
 	for _, text := range searched {
-		for _, address := range pattern.FindAllString(text, -1) {
-			reference, err := url.Parse(address)
-			if err != nil || address == "" {
-				return "", errors.New("download page match is not a valid URL reference")
+		for _, match := range pattern.FindAllStringSubmatch(text, -1) {
+			reference, err := url.Parse(match[0])
+			if err != nil || match[0] == "" {
+				return "", "", errors.New("download page match is not a valid URL reference")
 			}
-			resolved := base.ResolveReference(reference)
-			address = resolved.String()
+			address := base.ResolveReference(reference).String()
 			if err := validateHTTPURL(address); err != nil {
-				return "", fmt.Errorf("download page match must resolve to a stable HTTP(S) URL: %w", err)
+				return "", "", fmt.Errorf("download page match must resolve to a stable HTTP(S) URL: %w", err)
 			}
-			matches[address] = true
+			captured := ""
+			if group >= 0 {
+				captured = match[group]
+				if !dottedVersion.MatchString(captured) || len(captured) > 64 {
+					return "", "", fmt.Errorf("download page match captured version %q; a version group captures dotted numbers", captured)
+				}
+			}
+			if known, ok := matches[address]; !ok || compareDotted(captured, known) > 0 {
+				matches[address] = captured
+			}
 		}
 	}
-	if len(matches) != 1 {
-		return "", fmt.Errorf("download page matched %d distinct artifact URLs; expected one", len(matches))
+	// Without a version group every capture is empty and all URLs tie.
+	var selected []string
+	for _, address := range slices.Sorted(maps.Keys(matches)) {
+		order := 1
+		if len(selected) > 0 {
+			order = compareDotted(matches[address], matches[selected[0]])
+		}
+		switch {
+		case order > 0:
+			selected = []string{address}
+		case order == 0:
+			selected = append(selected, address)
+		}
 	}
-	for address := range matches {
-		link = address
+	switch {
+	case len(selected) == 1:
+		return selected[0], matches[selected[0]], nil
+	case group >= 0 && len(selected) > 1:
+		return "", "", fmt.Errorf("download page matched %d distinct artifact URLs for version %s; expected one%s", len(selected), matches[selected[0]], matched(selected))
 	}
-	return link, nil
+	return "", "", fmt.Errorf("download page matched %d distinct artifact URLs; expected one%s", len(selected), matched(selected))
+}
+
+// matched lists the first URLs of an ambiguous match.
+func matched(addresses []string) string {
+	const shown = 5
+	switch {
+	case len(addresses) == 0:
+		return ""
+	case len(addresses) > shown:
+		return fmt.Sprintf(": %s and %d more", strings.Join(addresses[:shown], ", "), len(addresses)-shown)
+	}
+	return ": " + strings.Join(addresses, ", ")
+}
+
+// compareDotted orders dotted numeric versions of any length. Missing
+// components compare as zero, so 6.3 and 6.3.0 are equal.
+func compareDotted(a, b string) int {
+	left, right := strings.Split(a, "."), strings.Split(b, ".")
+	for i := range max(len(left), len(right)) {
+		var x, y string
+		if i < len(left) {
+			x = strings.TrimLeft(left[i], "0")
+		}
+		if i < len(right) {
+			y = strings.TrimLeft(right[i], "0")
+		}
+		if order := cmp.Or(cmp.Compare(len(x), len(y)), strings.Compare(x, y)); order != 0 {
+			return order
+		}
+	}
+	return 0
 }
 
 // markup reports whether a download page is HTML. Pages served without a

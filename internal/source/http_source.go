@@ -15,7 +15,7 @@ import (
 
 type httpConfig struct {
 	URL      string            `json:"url" jsonschema_description:"Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."`
-	Match    string            `json:"match,omitempty" jsonschema_description:"Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."`
+	Match    string            `json:"match,omitempty" jsonschema_description:"Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL. With a named group version capturing dotted numbers, several URLs may match: the highest version selects the URL and becomes the input's version."`
 	Filename string            `json:"filename,omitempty" jsonschema_description:"Optional input basename override. Defaults to Content-Disposition, then final and original URL basenames. Independent of publication naming."`
 	SHA256   string            `json:"sha256,omitempty" jsonschema_description:"Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."`
 	Token    string            `json:"token,omitempty" jsonschema_description:"Optional bearer token. Mutually exclusive with an Authorization header."`
@@ -106,9 +106,10 @@ func (m *Manager) httpResolver() Resolver {
 
 func (m *Manager) discoverHTTP(ctx context.Context, s httpConfig) (Discovery, error) {
 	observed := httpObservation{}
+	var version string
 	if s.Match != "" {
 		var err error
-		observed.URL, err = m.discoverLink(ctx, s)
+		observed.URL, version, err = m.discoverLink(ctx, s)
 		if err != nil {
 			return Discovery{}, err
 		}
@@ -120,7 +121,7 @@ func (m *Manager) discoverHTTP(ctx context.Context, s httpConfig) (Discovery, er
 	if _, err := acquireHTTP(ctx, s, data); err != nil {
 		return Discovery{}, err
 	}
-	found := Discovery{Observation: data, Immutable: s.SHA256 != ""}
+	found := Discovery{Observation: data, Immutable: s.SHA256 != "", Version: version}
 	// A response-selected filename needs an initial fetch even with a digest.
 	if s.SHA256 != "" && s.Filename != "" {
 		found.Content = &Content{SHA256: s.SHA256, Filename: s.Filename, Mode: 0o644}

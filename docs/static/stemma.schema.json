@@ -1405,7 +1405,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL. With a named group version capturing dotted numbers, several URLs may match: the highest version selects the URL and becomes the input's version."
             },
             "sha256": {
               "anyOf": [
@@ -1509,7 +1509,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL. With a named group version capturing dotted numbers, several URLs may match: the highest version selects the URL and becomes the input's version."
             },
             "resolver": {
               "const": "http",
@@ -8480,7 +8480,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL. With a named group version capturing dotted numbers, several URLs may match: the highest version selects the URL and becomes the input's version."
             },
             "sha256": {
               "anyOf": [
@@ -8581,7 +8581,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL."
+              "description": "Download page regular expression whose full matches are URL references resolved against the page's base URL. HTML pages match element attribute values; other pages match the response body. Must identify one distinct stable HTTP(S) download URL. With a named group version capturing dotted numbers, several URLs may match: the highest version selects the URL and becomes the input's version."
             },
             "resolver": {
               "const": "http",

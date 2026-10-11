@@ -99,6 +99,20 @@ configured source origin. `Accept`, `Accept-Encoding`, `Accept-Language` and
 so rotating them does not stale the lock. Discovery belongs to the resolver; the software kind still receives
 one file. External plugins can supply other [resolvers](writing-plugins.md#resolvers).
 
+A page that keeps older releases beside the current one matches several URLs.
+Name a `version` group in the pattern to select the highest:
+
+```yaml
+source:
+  url: https://vendor.example/downloads
+  match: https://vendor\.example/files/App-(?P<version>[0-9.]+)\.dmg
+```
+
+The group captures dotted numbers such as `6.3.5`, compared number by number, so
+`10.2` is above `9.12` and `2.0` equals `2.0.0`. Any other capture fails, so keep
+betas out with the pattern. Two different URLs at the highest version fail too. The
+captured version becomes the input's version, as a GitHub release tag does.
+
 ## Follow Homebrew releases
 
 Homebrew casks and bottles provide download hashes, so `stemma update` checks for
@@ -259,6 +273,11 @@ are reported as blocked, with the resources that blocked them. Successful
 resources can still update their entries. `update` can therefore write the
 lockfile and exit nonzero after reporting every resource. A failed refresh stays
 a failure even when the previous locked bytes remain cached.
+
+`stemma update Kind/name` and `stemma update --profile NAME` refresh the selected
+resources and the builds they reference. Every other entry stays as reviewed, so
+the lock diff holds only what the run selected. An `update` without a selection
+also removes the entries of resources that are no longer declared.
 
 A registry hash can be stale: resolution may succeed and preparation then fail.
 Every consuming path verifies the required digest before using content. Offline
