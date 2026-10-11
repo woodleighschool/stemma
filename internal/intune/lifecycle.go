@@ -27,9 +27,6 @@ func lifecycleMetadata(m object) (lifecycle, error) {
 		if !owned {
 			continue
 		}
-		if m["@odata.type"] != win32Type {
-			return result, errors.New("dependencies and supersedes require a Win32 app")
-		}
 		list, ok := value.([]any)
 		limit := 99
 		flag := "auto_install"

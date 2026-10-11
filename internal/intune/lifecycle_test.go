@@ -32,9 +32,9 @@ func TestInterruptedUpdateRecoversContent(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
 			req := fixtureRequest(t)
-			desired, _ := compile(req)
+			desired, _ := compileRequest(req)
 			delete(desired, "assignments")
-			if _, err := c.handle(t.Context(), req, desired); err != nil {
+			if _, err := reconcileFixture(t, c, req, desired); err != nil {
 				t.Fatal(err)
 			}
 			first := publishedMarker(t, fake)
@@ -42,7 +42,7 @@ func TestInterruptedUpdateRecoversContent(t *testing.T) {
 			fake.mu.Lock()
 			fake.failBlob = true
 			fake.mu.Unlock()
-			if _, err := c.handle(t.Context(), req, desired); err == nil {
+			if _, err := reconcileFixture(t, c, req, desired); err == nil {
 				t.Fatal("expected interrupted upload")
 			}
 			// The tenant now holds uncommitted version 2 while the app still runs version 1.
@@ -60,7 +60,7 @@ func TestInterruptedUpdateRecoversContent(t *testing.T) {
 				want = "3"
 			}
 			fake.mu.Unlock()
-			if _, err := c.handle(t.Context(), req, desired); err != nil {
+			if _, err := reconcileFixture(t, c, req, desired); err != nil {
 				t.Fatal(err)
 			}
 			if published := publishedMarker(t, fake); published.content != want || published.payload == first.payload {
@@ -78,9 +78,9 @@ func TestInterruptedUpdateRecoversContent(t *testing.T) {
 func TestReferenceRetryDoesNotUploadAgain(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, _ := compile(req)
+	desired, _ := compileRequest(req)
 	delete(desired, "assignments")
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	changePayload(t, &req, "second")
@@ -90,7 +90,7 @@ func TestReferenceRetryDoesNotUploadAgain(t *testing.T) {
 	fake.relatedApps["runtime-app"] = object{"id": "runtime-app", "@odata.type": win32Type, "publishingState": "published"}
 	fake.failRelationships = true
 	fake.mu.Unlock()
-	if _, err := c.handle(t.Context(), req, desired); err == nil {
+	if _, err := reconcileFixture(t, c, req, desired); err == nil {
 		t.Fatal("expected relationship failure")
 	}
 	fake.mu.Lock()
@@ -100,7 +100,7 @@ func TestReferenceRetryDoesNotUploadAgain(t *testing.T) {
 	fake.failRelationships = false
 	fake.mu.Unlock()
 	// The tenant records the activated content, so the retry only finishes the rest.
-	response, err := c.handle(t.Context(), req, desired)
+	response, err := reconcileFixture(t, c, req, desired)
 	if err != nil || slices.ContainsFunc(response.Changes, func(change plugin.Change) bool { return change.Kind == "content" }) {
 		t.Fatalf("reference retry: %+v, %v", response.Changes, err)
 	}
@@ -114,9 +114,9 @@ func TestReferenceRetryDoesNotUploadAgain(t *testing.T) {
 func TestRelationshipsPreserveOmittedCategoriesAndInboundReferences(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, _ := compile(req)
+	desired, _ := compileRequest(req)
 	delete(desired, "assignments")
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	desired["dependencies"] = []any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": false}}
@@ -129,7 +129,7 @@ func TestRelationshipsPreserveOmittedCategoriesAndInboundReferences(t *testing.T
 	}
 	lists := fake.appLists
 	fake.mu.Unlock()
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()
@@ -142,12 +142,12 @@ func TestRelationshipsPreserveOmittedCategoriesAndInboundReferences(t *testing.T
 		t.Fatalf("dependency did not resolve to the peer's app: %+v", fake.relations["app-1"])
 	}
 	fake.mu.Unlock()
-	response, err := c.handle(t.Context(), req, desired)
+	response, err := reconcileFixture(t, c, req, desired)
 	if err != nil || len(response.Changes) != 0 {
 		t.Fatalf("unchanged references did not settle: %+v, %v", response.Changes, err)
 	}
 	desired["dependencies"] = []any{}
-	if _, err = c.handle(t.Context(), req, desired); err != nil {
+	if _, err = reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()

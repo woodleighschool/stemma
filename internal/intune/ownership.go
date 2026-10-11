@@ -18,9 +18,6 @@ type cleared struct{}
 func mergeDerived(declared, defaults object, origin string, origins map[string]string) (object, error) {
 	merged, missing := fillDerived(declared, defaults, "", origin, origins)
 	if len(missing) != 0 {
-		for i, property := range missing {
-			missing[i] = reportName(property)
-		}
 		slices.Sort(missing)
 		return nil, fmt.Errorf("%s supplies no value for %s; set each field", origin, strings.Join(missing, ", "))
 	}
@@ -36,7 +33,7 @@ func fillDerived(declared, defaults object, prefix, origin string, origins map[s
 	for key, value := range defaults {
 		field := prefix + key
 		explicit, present := declared[key]
-		if nested, ok := value.(object); ok && field != "minimumSupportedOperatingSystem" {
+		if nested, ok := value.(object); ok {
 			previous, objectValue := explicit.(object)
 			if present && !objectValue {
 				continue

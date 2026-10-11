@@ -21,7 +21,7 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 	desired := object{"@odata.type": pkgType, "displayName": "Example", "description": "Synthetic application", "publisher": "Example", "primaryBundleId": "org.example.app", "primaryBundleVersion": "1.0", "includedApps": []any{object{"bundleId": "org.example.app", "bundleVersion": "1.0"}}, "minimumSupportedOperatingSystem": object{"v12_0": true}}
 	run := func() plugin.ReconcileResponse {
 		t.Helper()
-		result, err := c.handle(t.Context(), req, desired)
+		result, err := reconcileFixture(t, c, req, desired)
 		if err != nil {
 			t.Fatal(err)
 		}

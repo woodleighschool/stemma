@@ -39,9 +39,9 @@ func TestSetupTreePublicationAndEntrypointIdentity(t *testing.T) {
 	req := fixtureRequest(t)
 	req.Artifact = treeArtifact(t)
 	req.Artifact.Version = "4.2"
-	desired, _ := compile(req)
+	desired, _ := compileRequest(req)
 	delete(desired, "assignments")
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	first := publishedMarker(t, fake)
@@ -67,14 +67,14 @@ func TestSetupTreePublicationAndEntrypointIdentity(t *testing.T) {
 		}
 	}
 	desired["displayName"] = "Metadata only"
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	if publishedMarker(t, fake) != first {
 		t.Fatal("metadata change published content again")
 	}
 	req.Artifact.EntryPoint = "bin/repair.cmd"
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	last := publishedMarker(t, fake)
@@ -91,7 +91,7 @@ func TestSetupTreeRejectsChangedBytesAndUnsafeEntrypoints(t *testing.T) {
 			fake, c := newGraphFixture(t)
 			req := fixtureRequest(t)
 			req.Artifact = treeArtifact(t)
-			desired, _ := compile(req)
+			desired, _ := compileRequest(req)
 			switch name {
 			case "changed companion":
 				if err := os.WriteFile(filepath.Join(req.Artifact.Path, "payload.cab"), []byte("changed"), 0o644); err != nil {
@@ -108,7 +108,7 @@ func TestSetupTreeRejectsChangedBytesAndUnsafeEntrypoints(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			_, err := c.handle(t.Context(), req, desired)
+			_, err := reconcileFixture(t, c, req, desired)
 			if err == nil {
 				t.Fatal("accepted invalid setup content")
 			}

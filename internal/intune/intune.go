@@ -80,27 +80,41 @@ func (t *tenantApps) find(ctx context.Context, identity string) (string, error) 
 // Plan and apply connect with the credentials in the request Config; validate
 // requests carry none.
 func Handle(ctx context.Context, req plugin.ReconcileRequest[Config]) (response plugin.ReconcileResponse, err error) {
-	req, response.Origins, err = Derive(req)
+	if req.Method != "validate" {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 30*time.Minute)
+		defer cancel()
+	}
+	desired, origins, err := derive(req)
 	if err != nil {
 		return response, err
 	}
-	desired, err := decodeObject(req.Metadata)
-	if err != nil {
-		return response, err
-	}
+	response.Origins = origins
 	_, err = lifecycleMetadata(desired)
 	if err != nil {
 		return response, err
 	}
-	if req.Method == "validate" {
-		if req.Artifact.Path != "" {
-			_, err := identifyArtifact(ctx, req.Artifact, text(desired["@odata.type"]))
+	if req.Method != "validate" && req.Method != "plan" && req.Method != "apply" {
+		return plugin.ReconcileResponse{}, fmt.Errorf("unsupported Intune method %q", req.Method)
+	}
+	var artifact artifactIdentity
+	if req.Artifact.Path != "" || req.Method != "validate" {
+		artifact, err = identifyArtifact(ctx, req.Artifact, appTypes[text(desired["type"])])
+		if err != nil {
 			return response, err
 		}
+		if desired["type"] == "win32" {
+			desired["setup_file"] = artifact.setup
+			response.Origins["setup_file"] = "installer.entry_point"
+		}
+	}
+	if req.Method == "validate" {
+		response.Metadata = raw(desired)
 		return response, nil
 	}
-	if req.Method != "plan" && req.Method != "apply" {
-		return plugin.ReconcileResponse{}, fmt.Errorf("unsupported Intune method %q", req.Method)
+	desired, err = compile(desired)
+	if err != nil {
+		return response, err
 	}
 	if err := req.Config.Validate(); err != nil {
 		return response, err
@@ -109,12 +123,12 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest[Config]) (response 
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
 	}
-	result, err := c.handle(ctx, req, desired)
+	result, err := c.handle(ctx, req, desired, artifact)
 	result.Origins = response.Origins
 	return result, err
 }
 
-func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config], desired object) (response plugin.ReconcileResponse, err error) {
+func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config], desired object, artifact artifactIdentity) (response plugin.ReconcileResponse, err error) {
 	lifecycle, err := lifecycleMetadata(desired)
 	if err != nil {
 		return response, err
@@ -127,12 +141,6 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 	typedClient := *c
 	typedClient.appType = text(desired["@odata.type"])
 	c = &typedClient
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
-	defer cancel()
-	artifact, err := identifyArtifact(ctx, req.Artifact, c.appType)
-	if err != nil {
-		return response, err
-	}
 	tenant := &tenantApps{client: c}
 	identity := req.Identity.Digest()
 	current, err := c.observe(ctx, tenant, pinned, identity)
@@ -169,9 +177,6 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 	}
 	if contentChanged {
 		response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "payload_sha256", Action: "upload", Filename: uploadFilename(req.Identity.Resource.Name, req.Artifact, artifact), Before: raw(published.active(current)), After: raw(artifact.identity)})
-	}
-	if c.appType == win32Type {
-		desired["setupFilePath"] = artifact.setup
 	}
 	_, changes := metadataPatch(current, desired, published)
 	if current != nil {

@@ -15,11 +15,11 @@ func TestCategoriesOwnTheCompleteSet(t *testing.T) {
 	run := func(metadata object) (plugin.ReconcileResponse, error) {
 		t.Helper()
 		req.Metadata = raw(metadata)
-		desired, err := compile(req)
+		desired, err := compileRequest(req)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return c.handle(t.Context(), req, desired)
+		return reconcileFixture(t, c, req, desired)
 	}
 	held := func() []string {
 		fake.mu.Lock()
@@ -120,12 +120,12 @@ func TestCategoriesUseExactNames(t *testing.T) {
 	}
 	metadata["categories"] = []any{"Business", "business", "BUSINESS"}
 	req.Metadata = raw(metadata)
-	desired, err := compile(req)
+	desired, err := compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	req.Method = "plan"
-	response, err := c.handle(t.Context(), req, desired)
+	response, err := reconcileFixture(t, c, req, desired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestCategoriesUseExactNames(t *testing.T) {
 		t.Fatalf("category plan: %+v, writes=%d", response.Changes, fake.writes)
 	}
 	req.Method = "apply"
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(fake.appCategories, []string{"cat-1", "cat-2", "cat-3"}) || fake.categories[2]["displayName"] != "BUSINESS" {
@@ -147,7 +147,7 @@ func TestCategoryNamesAreValidatedBeforeConnecting(t *testing.T) {
 	for _, categories := range []any{"Productivity", []any{"Productivity", "Productivity"}, []any{""}, []any{1}} {
 		req := fixtureRequest(t)
 		req.Metadata = raw(object{"categories": categories})
-		if _, err := compile(req); err == nil {
+		if _, err := compileRequest(req); err == nil {
 			t.Fatalf("accepted categories %#v", categories)
 		}
 	}

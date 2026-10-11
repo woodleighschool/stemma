@@ -15,63 +15,56 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// Derive compiles the declaration into Graph metadata and fills what the
-// artifact supplies. Declared fields win over derived ones. A derivation
-// manages every field it can supply: one the artifact gives no value is
-// cleared, or must be set where Graph requires a value. Origins use the
-// declaration's field names.
-func Derive(req plugin.ReconcileRequest[Config]) (plugin.ReconcileRequest[Config], map[string]string, error) {
-	m, err := compile(req)
+// derive fills semantic metadata from the artifact. Declared fields win over
+// derived ones. A derivation manages every field it can supply: one the artifact
+// gives no value is cleared, or must be set where Graph requires a value.
+func derive(req plugin.ReconcileRequest[Config]) (object, map[string]string, error) {
+	m, err := declaration(req)
 	if err != nil {
-		return req, nil, err
+		return nil, nil, err
 	}
 	origins := map[string]string{}
-	if m["@odata.type"] == win32Type {
+	if m["type"] == "win32" {
 		m, err = deriveInstaller(req, m, origins)
 	} else {
 		m, err = deriveMac(req, m, origins)
 	}
 	if err != nil {
-		return req, nil, err
+		return nil, nil, err
 	}
-	req.Metadata = raw(m)
-	reported := make(map[string]string, len(origins))
-	for property, origin := range origins {
-		reported[reportName(property)] = origin
-	}
-	return req, reported, nil
+	return m, origins, nil
 }
 
 // deriveMac supplies the minimum OS from the software's effective requirement
 // and detection from its selected application or PKG receipts.
 func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string]string) (object, error) {
-	lob := m["@odata.type"] == lobType
+	lob := m["type"] == "lob"
 	if lob {
-		declared, _ := m["childApps"].([]any)
-		if err := validateLOB(req.Artifact, declared, m["installAsManaged"] == true); err != nil {
+		declared, _ := m["included_apps"].([]any)
+		if err := validateLOB(req.Artifact, declared, m["install_as_managed"] == true); err != nil {
 			return nil, err
 		}
 	}
 	if minimum := req.MinimumOS; minimum != nil {
-		field, lossy, err := minimumOS(minimum.Version)
+		release, lossy, err := minimumOS(minimum.Version)
 		if err != nil {
 			return nil, err
 		}
 		origin := minimum.Origin
 		if lossy {
-			origin = fmt.Sprintf("%s %s → %s", origin, minimum.Version, field)
+			origin = fmt.Sprintf("%s %s → %s", origin, minimum.Version, release)
 		}
-		m["minimumSupportedOperatingSystem"], origins["minimumSupportedOperatingSystem"] = object{field: true}, origin
+		m["minimum_os"], origins["minimum_os"] = release, origin
 	} else if req.Prepared || req.Artifact.Path != "" {
 		return nil, errors.New("no minimum macOS is known for this software; set minimum_os")
 	}
-	if declared, exists := m["includedApps"]; exists {
+	if declared, exists := m["included_apps"]; exists {
 		first := declared.([]any)[0].(object)
-		return mergeDerived(m, object{"primaryBundleId": first["bundleId"], "primaryBundleVersion": first["bundleVersion"]}, "included_apps", origins)
-	}
-	if declared, exists := m["childApps"]; exists {
-		first := declared.([]any)[0].(object)
-		return mergeDerived(m, object{"bundleId": first["bundleId"], "buildNumber": first["buildNumber"], "versionNumber": first["versionNumber"]}, "included_apps", origins)
+		primary := object{"primary_bundle_id": first["id"], "primary_bundle_version": first["version"]}
+		if lob {
+			primary["primary_bundle_build"] = first["version"]
+		}
+		return mergeDerived(m, primary, "included_apps", origins)
 	}
 	if !req.Prepared && req.Artifact.Path == "" && len(req.Artifact.Facts.Subjects) == 0 {
 		return m, nil
@@ -82,7 +75,7 @@ func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string
 			return nil, errors.New("macos.application evidence requires an application subject")
 		}
 	}
-	apps, origin, err := detectedApps(req.Artifact.Facts, selected, text(m["@odata.type"]))
+	apps, origin, err := detectedApps(req.Artifact.Facts, selected, text(m["type"]))
 	if err != nil {
 		return nil, err
 	}
@@ -90,15 +83,14 @@ func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string
 	first := apps[0]
 	list := make([]any, len(apps))
 	for i, app := range apps {
+		list[i] = object{"id": app.id, "version": app.version}
 		if lob {
-			list[i] = object{"bundleId": app.id, "buildNumber": app.version, "versionNumber": app.build}
-		} else {
-			list[i] = object{"bundleId": app.id, "bundleVersion": app.version}
+			list[i].(object)["build"] = app.build
 		}
 	}
-	detection := object{"includedApps": list, "primaryBundleId": first.id, "primaryBundleVersion": first.version}
+	detection := object{"included_apps": list, "primary_bundle_id": first.id, "primary_bundle_version": first.version}
 	if lob {
-		detection = object{"childApps": list, "bundleId": first.id, "buildNumber": first.version, "versionNumber": first.build}
+		detection["primary_bundle_build"] = first.build
 	}
 	return mergeDerived(m, detection, origin, origins)
 }
@@ -119,12 +111,12 @@ func detectedApps(facts plugin.Facts, selected *plugin.Subject, appType string) 
 			return nil, "", errors.New("the selected application has no CFBundleIdentifier; set included_apps")
 		case app.Version == "":
 			return nil, "", errors.New("the selected application has no CFBundleShortVersionString; set included_apps")
-		case (appType == dmgType || appType == lobType) && !strings.HasPrefix(path.Clean(selected.InstalledPath), "/Applications/"):
+		case (appType == "dmg" || appType == "lob") && !strings.HasPrefix(path.Clean(selected.InstalledPath), "/Applications/"):
 			return nil, "", errors.New("the selected application does not install under /Applications, as DMG and line-of-business apps require; select another application or set included_apps")
 		}
 		return []detectedApp{{id: app.BundleID, version: app.Version, build: cmp.Or(app.Build, app.Version)}}, "app.bundle_id", nil
 	}
-	if appType != pkgType {
+	if appType != "pkg" {
 		return nil, "", errors.New("the artifact has no selected application to detect it; set included_apps")
 	}
 	var detected []detectedApp
@@ -212,7 +204,7 @@ func validateLOB(artifact plugin.Artifact, declared []any, managed bool) error {
 		return errors.New("a line-of-business PKG requires an application under /Applications; publish it as a PKG app")
 	}
 	for _, item := range declared {
-		id := text(item.(object)["bundleId"])
+		id := text(item.(object)["id"])
 		under, app := applications[id]
 		switch {
 		case app && !under:
@@ -237,9 +229,6 @@ func validateLOB(artifact plugin.Artifact, declared []any, managed bool) error {
 // extend the derived install command, and declared version comparisons
 // without a value compare with the managed version.
 func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origins map[string]string) (object, error) {
-	if metadata["@odata.type"] != win32Type {
-		return metadata, nil
-	}
 	properties, _ := metadata["msi_properties"].(object)
 	delete(metadata, "msi_properties")
 	if err := deriveVersionRules(req, metadata, origins); err != nil {
@@ -262,18 +251,18 @@ func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origi
 	}
 	msi := selected.MSI
 	defaults := msiDefaults(msi)
-	if strings.ContainsAny(setup, "\"%\r\n") && metadata["installCommandLine"] == nil {
+	if strings.ContainsAny(setup, "\"%\r\n") && metadata["install_command"] == nil {
 		return nil, errors.New("MSI setup path cannot be represented safely in a standard command")
 	}
-	defaults["installCommandLine"] = `msiexec /i "` + strings.ReplaceAll(setup, "/", `\`) + `" /qn /norestart` + msiArguments(properties)
-	defaults["uninstallCommandLine"], defaults["rules"] = "", nil
+	defaults["install_command"] = `msiexec /i "` + strings.ReplaceAll(setup, "/", `\`) + `" /qn /norestart` + msiArguments(properties)
+	defaults["uninstall_command"], defaults["detection"] = "", nil
 	if msi.ProductCode != "" {
-		if strings.ContainsAny(msi.ProductCode, "\"%\r\n") && metadata["uninstallCommandLine"] == nil {
+		if strings.ContainsAny(msi.ProductCode, "\"%\r\n") && metadata["uninstall_command"] == nil {
 			return nil, errors.New("MSI ProductCode cannot be represented safely in a standard command")
 		}
-		defaults["uninstallCommandLine"] = `msiexec /x "` + msi.ProductCode + `" /qn /norestart`
+		defaults["uninstall_command"] = `msiexec /x "` + msi.ProductCode + `" /qn /norestart`
 		if msi.ProductVersion != "" {
-			defaults["rules"] = []any{object{"@odata.type": "#microsoft.graph.win32LobAppProductCodeRule", "ruleType": "detection", "productCode": msi.ProductCode, "productVersionOperator": "greaterThanOrEqual", "productVersion": msi.ProductVersion}}
+			defaults["detection"] = []any{object{"type": "msi", "product_code": msi.ProductCode, "operator": "greater_than_or_equal", "product_version": msi.ProductVersion}}
 		}
 	}
 	return mergeDerived(metadata, defaults, "windows.installer", origins)
@@ -286,10 +275,16 @@ var windowsVersion = regexp.MustCompile(`^[0-9]+(\.[0-9]+){0,3}$`)
 // declared version comparison that omits one. Detection itself is declared, so
 // each derived value reports its own origin.
 func deriveVersionRules(req plugin.ReconcileRequest[Config], metadata object, origins map[string]string) error {
-	rules, _ := metadata["rules"].([]any)
+	rules, _ := metadata["detection"].([]any)
 	for i, item := range rules {
 		rule := item.(object)
-		if _, compared := rule["comparisonValue"]; compared || rule["operationType"] != "version" {
+		if rule["property"] != "version" {
+			continue
+		}
+		if _, explicit := rule["operator"]; !explicit {
+			rule["operator"] = "greater_than_or_equal"
+		}
+		if _, compared := rule["value"]; compared {
 			continue
 		}
 		version := req.Artifact.Version
@@ -301,8 +296,8 @@ func deriveVersionRules(req plugin.ReconcileRequest[Config], metadata object, or
 		case !windowsVersion.MatchString(version):
 			return fmt.Errorf("managed version %q is not a Windows version; set the version rule's value", version)
 		}
-		rule["comparisonValue"] = version
-		origins[fmt.Sprintf("rules.%d.value", i)] = "artifact.version"
+		rule["value"] = version
+		origins[fmt.Sprintf("detection.%d.value", i)] = "artifact.version"
 	}
 	return nil
 }
@@ -327,13 +322,13 @@ func msiDefaults(msi *plugin.MSIFacts) object {
 		upgradeCode = msi.UpgradeCode
 	}
 	return object{
-		"msiInformation": object{"productCode": msi.ProductCode, "productVersion": msi.ProductVersion, "upgradeCode": upgradeCode, "productName": msi.ProductName, "publisher": msi.Manufacturer},
+		"msi": object{"product_code": msi.ProductCode, "product_version": msi.ProductVersion, "upgrade_code": upgradeCode, "product_name": msi.ProductName, "publisher": msi.Manufacturer},
 	}
 }
 
-// minimumOS maps a macOS version to the Graph setting for its release: the
+// minimumOS maps a macOS version to the supported release: the
 // major version, or the major and minor for 10.x. It reports whether the
-// setting drops precision, as v14_0 does for 14.2.
+// setting drops precision, as 14.0 does for 14.2.
 func minimumOS(version string) (string, bool, error) {
 	parts := strings.Split(version, ".")
 	release := parts[:1]
@@ -348,5 +343,5 @@ func minimumOS(version string) (string, bool, error) {
 		return "", false, fmt.Errorf("macOS %s has no Intune minimum OS setting", version)
 	}
 	lossy := slices.ContainsFunc(parts[len(release):], func(part string) bool { return strings.Trim(part, "0") != "" })
-	return field, lossy, nil
+	return strings.ReplaceAll(strings.TrimPrefix(field, "v"), "_", "."), lossy, nil
 }

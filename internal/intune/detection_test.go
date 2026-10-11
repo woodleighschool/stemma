@@ -54,7 +54,7 @@ func TestDetectionRules(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			metadata := raw(object{"type": "win32", "detection": tt.rules})
-			_, err := compile(plugin.ReconcileRequest[Config]{Metadata: metadata})
+			_, err := compileRequest(plugin.ReconcileRequest[Config]{Metadata: metadata})
 			if (err == nil) != tt.valid {
 				t.Fatalf("valid=%v: %v", tt.valid, err)
 			}
@@ -63,21 +63,21 @@ func TestDetectionRules(t *testing.T) {
 			}
 		})
 	}
-	m, err := compile(plugin.ReconcileRequest[Config]{Metadata: raw(object{"type": "win32", "detection": []any{file}})})
+	m, err := compileRequest(plugin.ReconcileRequest[Config]{Metadata: raw(object{"type": "win32", "detection": []any{file}})})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rule := m["rules"].([]any)[0].(object); rule["fileOrFolderName"] != "Example.exe" || rule["operationType"] != "version" || rule["operator"] != "greaterThanOrEqual" || rule["comparisonValue"] != "2.0.0" || rule["ruleType"] != "detection" {
 		t.Fatalf("file rule reached Graph as %+v", rule)
 	}
-	m, err = compile(plugin.ReconcileRequest[Config]{Metadata: raw(object{"type": "win32", "detection": []any{derivedComparison}})})
+	m, err = compileRequest(plugin.ReconcileRequest[Config]{Metadata: raw(object{"type": "win32", "detection": []any{derivedComparison}})})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rule := m["rules"].([]any)[0].(object); rule["operator"] != "greaterThanOrEqual" || rule["comparisonValue"] != nil {
 		t.Fatalf("derived comparison reached Graph as %+v", rule)
 	}
-	m, err = compile(plugin.ReconcileRequest[Config]{Metadata: raw(object{"type": "win32", "detection": []any{script}})})
+	m, err = compileRequest(plugin.ReconcileRequest[Config]{Metadata: raw(object{"type": "win32", "detection": []any{script}})})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,20 +95,19 @@ func TestVersionRulesCompareWithTheManagedVersion(t *testing.T) {
 	identity := plugin.Identity{Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "example"}}
 	artifact := plugin.Artifact{Path: "/leased/Example.msi", Filename: "Example.msi", Version: "2.0.1.300", Evidence: selectedMSI(msi)}
 	req := plugin.ReconcileRequest[Config]{Prepared: true, Identity: identity, Metadata: raw(object{"detection": []any{file, pinned, declared}}), Artifact: artifact}
-	derived, origins, err := Derive(req)
+	metadata, origins, err := derive(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata, _ := decodeObject(derived.Metadata)
-	rules := metadata["rules"].([]any)
-	want := [][2]string{{"greaterThanOrEqual", "2.0.1.300"}, {"equal", "2.0.1.300"}, {"greaterThanOrEqual", "1.0"}}
+	rules := metadata["detection"].([]any)
+	want := [][2]string{{"greater_than_or_equal", "2.0.1.300"}, {"equal", "2.0.1.300"}, {"greater_than_or_equal", "1.0"}}
 	for i, rule := range rules {
-		if rule := rule.(object); rule["operator"] != want[i][0] || rule["comparisonValue"] != want[i][1] {
+		if rule := rule.(object); rule["operator"] != want[i][0] || rule["value"] != want[i][1] {
 			t.Fatalf("rule %d reached Graph as %+v", i, rule)
 		}
 	}
-	if origins["detection.0.value"] != "artifact.version" || origins["detection.1.value"] != "artifact.version" || origins["detection.2.value"] != "" || metadata["msiInformation"].(object)["productVersion"] != "2.0.0" {
-		t.Fatalf("origins %v, MSI information %v", origins, metadata["msiInformation"])
+	if origins["detection.0.value"] != "artifact.version" || origins["detection.1.value"] != "artifact.version" || origins["detection.2.value"] != "" || metadata["msi"].(object)["product_version"] != "2.0.0" {
+		t.Fatalf("origins %v, MSI information %v", origins, metadata["msi"])
 	}
 	req.Metadata = raw(object{"detection": []any{file}})
 	for name, artifact := range map[string]plugin.Artifact{
@@ -116,12 +115,12 @@ func TestVersionRulesCompareWithTheManagedVersion(t *testing.T) {
 		"not a version":      {Path: "/leased/setup.exe", Filename: "setup.exe", Version: "v2.0"},
 	} {
 		req.Artifact = artifact
-		if _, _, err := Derive(req); err == nil {
+		if _, _, err := derive(req); err == nil {
 			t.Fatalf("%s accepted", name)
 		}
 	}
 	req.Prepared, req.Artifact = false, plugin.Artifact{}
-	if _, _, err := Derive(req); err != nil {
+	if _, _, err := derive(req); err != nil {
 		t.Fatalf("validation without an artifact: %v", err)
 	}
 }
@@ -129,16 +128,16 @@ func TestVersionRulesCompareWithTheManagedVersion(t *testing.T) {
 func TestChangedProductCodeUpdatesDetectionInSameApp(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, _ := compile(req)
+	desired, _ := compileRequest(req)
 	delete(desired, "assignments")
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	changePayload(t, &req, "new major MSI product")
 	rule := desired["rules"].([]any)[0].(object)
 	rule["productCode"] = "{22222222-2222-4222-8222-222222222222}"
 	rule["productVersionOperator"], rule["productVersion"] = "greaterThanOrEqual", "3.0.0"
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()

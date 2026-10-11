@@ -87,13 +87,9 @@ var experienceFields = map[string]string{"run_as": "runAsAccount", "restart": "d
 
 var appTypes = map[string]string{"win32": win32Type, "pkg": pkgType, "dmg": dmgType, "lob": lobType}
 
-// compile translates declared metadata into the Graph app object. Declarations
-// name concepts in snake_case, while Graph property names, OData types and enum
-// casing stay inside the destination. Omitted fields stay omitted and supported
-// nulls clear, so the object keeps the declaration's presence. app_id,
-// dependencies, supersedes and msi_properties belong to the destination and
-// pass through unchanged.
-func compile(req plugin.ReconcileRequest[Config]) (object, error) {
+// declaration validates metadata and resolves its app type without changing
+// its vocabulary or field presence.
+func declaration(req plugin.ReconcileRequest[Config]) (object, error) {
 	declared, err := decodeObject(req.Metadata)
 	if err != nil {
 		return nil, err
@@ -102,11 +98,6 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 	if err != nil {
 		return nil, err
 	}
-	platform := macFields
-	if appType == win32Type {
-		platform = win32Fields
-	}
-	m := object{"@odata.type": appType}
 	for key, value := range declared {
 		switch key {
 		case "type":
@@ -115,16 +106,14 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 			if text(value) == "" {
 				return nil, errors.New("app_id must be a nonempty adopted app ID")
 			}
-			m[key] = value
 			continue
 		case "dependencies", "supersedes":
-			if appType != win32Type {
+			if appType != "win32" {
 				return nil, fmt.Errorf("%s requires a Win32 app", key)
 			}
-			m[key] = value
 			continue
 		case "msi_properties":
-			if appType != win32Type {
+			if appType != "win32" {
 				return nil, errors.New("msi_properties requires a Win32 app")
 			}
 			if _, commanded := declared["install_command"]; commanded {
@@ -133,28 +122,109 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 			if err := validateMSIProperties(value); err != nil {
 				return nil, fmt.Errorf("msi_properties: %w", err)
 			}
-			m[key] = value
 			continue
 		}
-		spec, ok := commonFields[key]
-		if !ok {
-			spec, ok = platform[key]
-		}
-		if !ok && appType == lobType {
-			spec, ok = lobFields[key]
-		}
-		if script, scripted := pkgFields[key]; scripted {
-			switch {
-			case appType == pkgType:
-				spec, ok = script, true
-			case appType == dmgType && req.Identity.Resource.Kind == "MacSoftware":
+		spec, ok := metadataField(appType, key)
+		if _, scripted := pkgFields[key]; scripted && appType != "pkg" {
+			if appType == "dmg" && req.Identity.Resource.Kind == "MacSoftware" {
 				return nil, fmt.Errorf("%s requires a PKG app; set package to publish the application in a PKG", key)
-			default:
-				return nil, fmt.Errorf("%s requires a PKG app", key)
+			}
+			return nil, fmt.Errorf("%s requires a PKG app", key)
+		}
+		if !ok {
+			return nil, fmt.Errorf("unsupported Intune %s field %q", appType, key)
+		}
+		if _, err := spec.convert(value); err != nil {
+			return nil, fmt.Errorf("%s: %w", key, err)
+		}
+	}
+	if list, assigning := declared["assignments"].([]any); assigning && appType != "win32" {
+		for _, item := range list {
+			if _, set := item.(object)["notifications"]; set {
+				return nil, errors.New("assignment notifications require a Win32 app")
 			}
 		}
+	}
+	declared["type"] = appType
+	return declared, nil
+}
+
+func metadataField(appType, key string) (field, bool) {
+	if spec, ok := commonFields[key]; ok {
+		return spec, true
+	}
+	if appType == "win32" {
+		spec, ok := win32Fields[key]
+		return spec, ok
+	}
+	if spec, ok := macFields[key]; ok {
+		return spec, true
+	}
+	if appType == "lob" {
+		spec, ok := lobFields[key]
+		return spec, ok
+	}
+	if appType == "pkg" {
+		spec, ok := pkgFields[key]
+		return spec, ok
+	}
+	return field{}, false
+}
+
+// compile translates desired metadata at the Graph boundary. Derived-only
+// values are never accepted as declaration fields.
+func compile(desired object) (object, error) {
+	appType := text(desired["type"])
+	m := object{"@odata.type": appTypes[appType]}
+	for key, value := range desired {
+		switch key {
+		case "type", "msi_properties":
+			continue
+		case "app_id", "dependencies", "supersedes":
+			m[key] = value
+			continue
+		case "setup_file":
+			m["setupFilePath"] = value
+			continue
+		case "minimum_os":
+			m["minimumSupportedOperatingSystem"] = object{"v" + strings.ReplaceAll(text(value), ".", "_"): true}
+			continue
+		case "primary_bundle_id":
+			property := "primaryBundleId"
+			if appType == "lob" {
+				property = "bundleId"
+			}
+			m[property] = value
+			continue
+		case "primary_bundle_version":
+			property := "primaryBundleVersion"
+			if appType == "lob" {
+				property = "buildNumber"
+			}
+			m[property] = value
+			continue
+		case "primary_bundle_build":
+			m["versionNumber"] = value
+			continue
+		case "included_apps":
+			if appType == "lob" {
+				apps := value.([]any)
+				children := make([]any, len(apps))
+				for i, item := range apps {
+					app := item.(object)
+					build := app["build"]
+					if build == nil {
+						build = app["version"]
+					}
+					children[i] = object{"bundleId": app["id"], "buildNumber": app["version"], "versionNumber": build}
+				}
+				m["childApps"] = children
+				continue
+			}
+		}
+		spec, ok := metadataField(appType, key)
 		if !ok {
-			return nil, fmt.Errorf("unsupported Intune %s field %q", strings.TrimPrefix(appType, "#microsoft.graph."), key)
+			return nil, fmt.Errorf("unsupported Intune %s field %q", appType, key)
 		}
 		converted, err := spec.convert(value)
 		if err != nil {
@@ -162,28 +232,10 @@ func compile(req plugin.ReconcileRequest[Config]) (object, error) {
 		}
 		m[spec.graph] = converted
 	}
-	if list, declared := m["assignments"].([]any); declared && appType != win32Type {
-		for _, item := range list {
-			if _, set := item.(object)["settings"]; set {
-				return nil, errors.New("assignment notifications require a Win32 app")
-			}
-		}
-	}
-	// A line-of-business app lists its included apps as child apps, which
-	// record the version twice.
-	if apps, declared := m["includedApps"].([]any); declared && appType == lobType {
-		children := make([]any, len(apps))
-		for i, item := range apps {
-			app := item.(object)
-			children[i] = object{"bundleId": app["bundleId"], "buildNumber": app["bundleVersion"], "versionNumber": app["bundleVersion"]}
-		}
-		delete(m, "includedApps")
-		m["childApps"] = children
-	}
 	return m, nil
 }
 
-// resolveType selects the Graph app type. The software kind fixes the platform,
+// resolveType selects the app type. The software kind fixes the platform,
 // so only a Mac line-of-business app needs a declared type; otherwise a Mac PKG
 // or DMG follows the artifact's format and Windows software is a Win32 app.
 func resolveType(req plugin.ReconcileRequest[Config], m object) (string, error) {
@@ -200,11 +252,11 @@ func resolveType(req plugin.ReconcileRequest[Config], m object) (string, error) 
 		if !slices.Contains(allowed, name) {
 			return "", fmt.Errorf("intune type must be %s", strings.Join(allowed, " or "))
 		}
-		return appTypes[name], nil
+		return name, nil
 	}
 	switch req.Identity.Resource.Kind {
 	case "WindowsSoftware":
-		return win32Type, nil
+		return "win32", nil
 	case "MacSoftware":
 		format := req.Artifact.Format
 		if format == "" {
@@ -212,11 +264,11 @@ func resolveType(req plugin.ReconcileRequest[Config], m object) (string, error) 
 		}
 		switch {
 		case format == "pkg" || format == "dmg":
-			return appTypes[format], nil
+			return format, nil
 		case req.Artifact.Path == "":
 			// Without an artifact the format is unknown; a PKG app takes every
 			// field a DMG app does.
-			return pkgType, nil
+			return "pkg", nil
 		}
 		return "", fmt.Errorf("intune has no app type for a %q installer", format)
 	}
@@ -483,7 +535,7 @@ func returnCodes(value any) (any, error) {
 }
 
 // reportName names a Graph property path the way declarations do, so plans
-// and origins read in the catalog's terms.
+// read in the catalog's terms.
 func reportName(property string) string {
 	head, rest, nested := strings.Cut(property, ".")
 	name := head

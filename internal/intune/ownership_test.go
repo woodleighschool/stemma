@@ -66,13 +66,13 @@ func TestDerivedFieldWithoutArtifactValueIsClearedOrMustBeSet(t *testing.T) {
 	}{
 		{name: "setup MSI", metadata: object{"type": "win32"}, artifact: installer, missing: "msi.publisher"},
 		{name: "setup MSI declared", metadata: object{"type": "win32", "msi": object{"publisher": "Vendor"}}, artifact: installer, check: func(m object) bool {
-			info := m["msiInformation"].(object)
-			cleared, owned := info["upgradeCode"]
-			return owned && cleared == nil && info["publisher"] == "Vendor" && info["productVersion"] == "2.0"
+			info := m["msi"].(object)
+			cleared, owned := info["upgrade_code"]
+			return owned && cleared == nil && info["publisher"] == "Vendor" && info["product_version"] == "2.0"
 		}},
 		{name: "application", metadata: object{"type": "pkg"}, artifact: selected, check: func(m object) bool {
-			_, named := m["displayName"]
-			return !named && m["primaryBundleId"] == "org.example.app"
+			_, named := m["display_name"]
+			return !named && m["primary_bundle_id"] == "org.example.app"
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -90,12 +90,12 @@ func TestDerivedFieldWithoutArtifactValueIsClearedOrMustBeSet(t *testing.T) {
 					}
 					continue
 				}
-				derived, _, err := Derive(req)
+				derived, _, err := derive(req)
 				if err != nil {
 					t.Fatalf("%s: %v", method, err)
 				}
-				if m, err := decodeObject(derived.Metadata); err != nil || !test.check(m) {
-					t.Fatalf("%s derived %s: %v", method, derived.Metadata, err)
+				if !test.check(derived) {
+					t.Fatalf("%s derived %s", method, raw(derived))
 				}
 			}
 		})
@@ -120,19 +120,16 @@ func TestClearedDerivedFieldReplacesAnEarlierInstallersValue(t *testing.T) {
 func TestMacDerivationAllowsExplicitReplacement(t *testing.T) {
 	app := plugin.Subject{ID: "Payload/Example.app", Kind: "app", InstalledPath: "/Applications/Example.app", App: &plugin.AppFacts{BundleID: "org.example.app", Name: "Example", MinimumOS: "14.1"}}
 	req := macRequest(object{"included_apps": []any{object{"id": "org.example.app", "version": "explicit-version"}}}, &app, app)
-	derived, origins, err := Derive(req)
+	derived, origins, err := derive(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := decodeObject(derived.Metadata)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if m["primaryBundleVersion"] != "explicit-version" || origins["primary_bundle_version"] != "included_apps" {
+	m := derived
+	if m["primary_bundle_version"] != "explicit-version" || origins["primary_bundle_version"] != "included_apps" {
 		t.Fatalf("missing facts defeated explicit fields: %+v / %+v", m, origins)
 	}
 	req.Metadata = raw(object{})
-	if _, _, err := Derive(req); err == nil || !strings.Contains(err.Error(), "included_apps") {
+	if _, _, err := derive(req); err == nil || !strings.Contains(err.Error(), "included_apps") {
 		t.Fatalf("versionless application became detection: %v", err)
 	}
 }

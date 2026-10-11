@@ -13,44 +13,39 @@ func TestSelectedMSIDefaultsAndNativeOverrides(t *testing.T) {
 	for _, code := range []string{msi.ProductCode, "{22222222-2222-4222-8222-222222222222}"} {
 		msi.ProductCode = code
 		req.Artifact.Evidence = selectedMSI(msi)
-		derived, origins, err := Derive(req)
+		metadata, origins, err := derive(req)
 		if err != nil {
 			t.Fatal(err)
 		}
-		metadata, err := decodeObject(derived.Metadata)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rule := metadata["rules"].([]any)[0].(object)
-		if metadata["installCommandLine"] != `msiexec /i "Example.msi" /qn /norestart` || metadata["uninstallCommandLine"] != `msiexec /x "`+code+`" /qn /norestart` || rule["productCode"] != code || rule["productVersionOperator"] != "greaterThanOrEqual" || rule["productVersion"] != "2.0.0" || origins["detection"] != "windows.installer" {
+		rule := metadata["detection"].([]any)[0].(object)
+		if metadata["install_command"] != `msiexec /i "Example.msi" /qn /norestart` || metadata["uninstall_command"] != `msiexec /x "`+code+`" /qn /norestart` || rule["product_code"] != code || rule["operator"] != "greater_than_or_equal" || rule["product_version"] != "2.0.0" || origins["detection"] != "windows.installer" {
 			t.Fatalf("incorrect MSI defaults: %+v", metadata)
 		}
-		if metadata["installExperience"] != nil || metadata["returnCodes"] != nil || metadata["allowedArchitectures"] != nil {
+		if metadata["install_experience"] != nil || metadata["return_codes"] != nil || metadata["architectures"] != nil {
 			t.Fatal("MSI facts guessed device deployment policy")
 		}
-		if _, named := metadata["displayName"]; named || metadata["publisher"] != nil {
+		if _, named := metadata["display_name"]; named || metadata["publisher"] != nil {
 			t.Fatalf("MSI facts supplied descriptive fields: %+v", metadata)
 		}
 	}
 	req.Artifact.Evidence = nil
-	if derived, origins, err := Derive(req); err != nil || len(origins) != 0 {
-		t.Fatalf("destination selected an MSI itself: %s, %v", derived.Metadata, err)
+	if metadata, origins, err := derive(req); err != nil || len(origins) != 0 {
+		t.Fatalf("destination selected an MSI itself: %s, %v", raw(metadata), err)
 	}
 	req.Artifact.Evidence = selectedMSI(msi)
 	req.Metadata = raw(object{"type": "win32", "display_name": "Declared", "install_command": "custom install", "uninstall_command": "custom remove", "detection": []any{}})
-	derived, origins, err := Derive(req)
+	metadata, origins, err := derive(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata, _ := decodeObject(derived.Metadata)
-	if metadata["displayName"] != "Declared" || metadata["installCommandLine"] != "custom install" || len(metadata["rules"].([]any)) != 0 || origins["detection"] != "" {
+	if metadata["display_name"] != "Declared" || metadata["install_command"] != "custom install" || len(metadata["detection"].([]any)) != 0 || origins["detection"] != "" {
 		t.Fatal("MSI defaults overwrote declared native fields")
 	}
 	req.Artifact.Filename = "setup.exe"
 	req.Metadata = raw(object{"type": "win32"})
-	derived, origins, err = Derive(req)
+	metadata, origins, err = derive(req)
 	if err != nil || len(origins) != 0 {
-		t.Fatalf("EXE acquired guessed policy: %s, %v", derived.Metadata, err)
+		t.Fatalf("EXE acquired guessed policy: %s, %v", raw(metadata), err)
 	}
 }
 
@@ -58,17 +53,16 @@ func TestMSIPropertiesExtendTheDerivedInstallCommand(t *testing.T) {
 	msi := &plugin.MSIFacts{ProductName: "Example", Manufacturer: "Vendor", ProductCode: "{11111111-1111-4111-8111-111111111111}", ProductVersion: "2.0.0"}
 	properties := object{"PORTAL": "vpn.example.com", "zConfig": `AU2_EnableAutoUpdate=true;Title="Example"`, "CONNECTMETHOD": "", "INSTALLDIR": `C:\Program Files\Vendor`}
 	req := plugin.ReconcileRequest[Config]{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "WindowsSoftware", Name: "example"}}, Metadata: raw(object{"msi_properties": properties}), Artifact: plugin.Artifact{Path: "/leased/Example.msi", Filename: "Example.msi", Evidence: selectedMSI(msi)}}
-	derived, _, err := Derive(req)
+	metadata, _, err := derive(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	metadata, _ := decodeObject(derived.Metadata)
 	want := `msiexec /i "Example.msi" /qn /norestart CONNECTMETHOD="" INSTALLDIR="C:\Program Files\Vendor" PORTAL="vpn.example.com" zConfig="AU2_EnableAutoUpdate=true;Title=""Example"""`
-	if metadata["installCommandLine"] != want || metadata["msi_properties"] != nil {
-		t.Fatalf("install command: %v", metadata["installCommandLine"])
+	if metadata["install_command"] != want || metadata["msi_properties"] != nil {
+		t.Fatalf("install command: %v", metadata["install_command"])
 	}
 	req.Artifact = plugin.Artifact{Path: "/leased/setup.exe", Filename: "setup.exe"}
-	if _, _, err := Derive(req); err == nil {
+	if _, _, err := derive(req); err == nil {
 		t.Fatal("accepted msi_properties for an EXE setup file")
 	}
 	for name, metadata := range map[string]object{
@@ -82,7 +76,7 @@ func TestMSIPropertiesExtendTheDerivedInstallCommand(t *testing.T) {
 		"empty properties":       {"msi_properties": object{}},
 	} {
 		req.Metadata = raw(metadata)
-		if _, err := compile(req); err == nil {
+		if _, err := compileRequest(req); err == nil {
 			t.Fatalf("%s accepted", name)
 		}
 	}

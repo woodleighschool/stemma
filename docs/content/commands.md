@@ -296,9 +296,9 @@ reports. Preparation shows filenames for newly prepared artifacts; cached resour
 use one line unless explicitly selected or expanded with `--all`. Totals always
 describe the whole run. JSON includes all resources in the
 selected scope, regardless of `--all`. For each prepared resource, `publications`
-has an entry for every destination, made with no connection to it. Where the
-destination reports it, as `munki` and `jamf` do, `metadata` is the declared metadata with
-each value derived from the artifact, and null or an empty value for a field the
+has an entry for every destination, made with no connection to it. Built-in
+destinations return `metadata` with the declared settings and values derived from
+the artifact, and null or an empty value for a field the
 destination clears. It describes the fields this publication manages, not the
 complete remote item; `plan` compares them with the destination's current state.
 Artifact versions describe prepared files; destination versions remain in their managed
@@ -306,8 +306,10 @@ metadata, such as `pkginfo.version` or an included application's version.
 `origins` names where each field's value came from, such as `explicit`,
 `expression`, `artifact.version` or `installer.receipts`. An entry without
 `metadata` is not a preview of the publication, and its `deferred` says why: the
-metadata reads environment values, or the destination reports origins only, as
-`intune` does. Reconcile prints the reviewed commit's
+metadata reads environment values, or a plugin does not return derived metadata.
+Jamf previews retain category, policy and patch-title names; planning resolves
+their server IDs and checks whether the title defines the requested patch version.
+Reconcile prints the reviewed commit's
 publication followed by proposal outcomes, under separate applying and update-checking
 sections.
 

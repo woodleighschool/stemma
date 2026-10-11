@@ -31,11 +31,11 @@ import (
 func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, err := compile(req)
+	desired, err := compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	publication, err := c.handle(t.Context(), req, desired)
+	publication, err := reconcileFixture(t, c, req, desired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,11 +60,11 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	fake.app["installExperience"].(object)["deviceRestartBehavior"] = "suppress"
 	fake.mu.Unlock()
 	req.Metadata = raw(object{"display_name": "Renamed", "featured": false, "install_experience": object{"run_as": "user"}})
-	desired, err = compile(req)
+	desired, err = compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = c.handle(t.Context(), req, desired); err != nil {
+	if _, err = reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()
@@ -76,7 +76,7 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	}
 	writes := fake.writes
 	fake.mu.Unlock()
-	response, err := c.handle(t.Context(), req, desired)
+	response, err := reconcileFixture(t, c, req, desired)
 	if err != nil || len(response.Changes) != 0 {
 		t.Fatalf("unchanged reconciliation: %+v, %v", response.Changes, err)
 	}
@@ -86,11 +86,11 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	}
 	fake.mu.Unlock()
 	req.Metadata = raw(object{"architectures": nil, "assignments": []any{}})
-	desired, err = compile(req)
+	desired, err = compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = c.handle(t.Context(), req, desired)
+	_, err = reconcileFixture(t, c, req, desired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,11 +113,11 @@ func TestAssignmentFilterAndNotificationsBelongToTheAssignment(t *testing.T) {
 			"detection":          []any{object{"type": "msi", "product_code": "{AC01F3D3-C5D5-40DB-9E8C-ED53982E17ED}"}},
 			"assignments":        []any{assignment},
 		})
-		desired, err := compile(req)
+		desired, err := compileRequest(req)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := c.handle(t.Context(), req, desired); err != nil {
+		if _, err := reconcileFixture(t, c, req, desired); err != nil {
 			t.Fatal(err)
 		}
 		fake.mu.Lock()
@@ -160,7 +160,7 @@ func TestAssignmentSettingsNeedAnIncludedWin32Target(t *testing.T) {
 				kind = "MacSoftware"
 			}
 			req := plugin.ReconcileRequest[Config]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: kind, Name: "example"}}, Metadata: raw(metadata)}
-			if _, err := compile(req); err == nil {
+			if _, err := compileRequest(req); err == nil {
 				t.Fatal("accepted assignment settings")
 			}
 		})
@@ -180,23 +180,23 @@ func TestPublicationSurvivesLostReply(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
 			req := fixtureRequest(t)
-			desired, err := compile(req)
+			desired, err := compileRequest(req)
 			if err != nil {
 				t.Fatal(err)
 			}
 			want := 1
 			if test.update {
-				if _, err := c.handle(t.Context(), req, desired); err != nil {
+				if _, err := reconcileFixture(t, c, req, desired); err != nil {
 					t.Fatal(err)
 				}
 				changePayload(t, &req, "second release")
 				want++
 			}
 			fake.failCommit, fake.failActivation = !test.activate, test.activate
-			if _, err := c.handle(t.Context(), req, desired); err == nil {
+			if _, err := reconcileFixture(t, c, req, desired); err == nil {
 				t.Fatal("expected interrupted commit")
 			}
-			if _, err := c.handle(t.Context(), req, desired); err != nil {
+			if _, err := reconcileFixture(t, c, req, desired); err != nil {
 				t.Fatal(err)
 			}
 			fake.mu.Lock()
@@ -214,7 +214,7 @@ func TestFirstUploadRejectsDifferentPayloadOfSameSize(t *testing.T) {
 	req.Artifact.Filename = "test.pkg"
 	desired := object{"@odata.type": pkgType, "displayName": "Test", "description": "Test package", "publisher": "Test", "primaryBundleId": "org.example.test", "primaryBundleVersion": "1.0", "includedApps": []any{object{"bundleId": "org.example.test", "bundleVersion": "1.0"}}, "minimumSupportedOperatingSystem": object{"v12_0": true}}
 	fake.failCommit = true
-	if _, err := c.handle(t.Context(), req, desired); err == nil {
+	if _, err := reconcileFixture(t, c, req, desired); err == nil {
 		t.Fatal("expected interrupted commit")
 	}
 	if fake.commits != 1 {
@@ -225,7 +225,7 @@ func TestFirstUploadRejectsDifferentPayloadOfSameSize(t *testing.T) {
 	if req.Artifact.Size != size {
 		t.Fatal("fixture must keep the same size")
 	}
-	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), "recorded payload") {
+	if _, err := reconcileFixture(t, c, req, desired); err == nil || !strings.Contains(err.Error(), "recorded payload") {
 		t.Fatalf("different first payload: %v", err)
 	}
 	if fake.commits != 1 || text(fake.app["committedContentVersion"]) != "" {
@@ -237,14 +237,14 @@ func TestInterruptedFirstUploadIsRetriedIntoItsFile(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	fake.failBlob = true
 	req := fixtureRequest(t)
-	desired, err := compile(req)
+	desired, err := compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.handle(t.Context(), req, desired); err == nil {
+	if _, err := reconcileFixture(t, c, req, desired); err == nil {
 		t.Fatal("expected interrupted upload")
 	}
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	if published := publishedMarker(t, fake); published.content != "1" {
@@ -263,17 +263,17 @@ func TestExpiredFirstUploadNamesTheAppToDelete(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	fake.failBlob = true
 	req := fixtureRequest(t)
-	desired, err := compile(req)
+	desired, err := compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.handle(t.Context(), req, desired); err == nil {
+	if _, err := reconcileFixture(t, c, req, desired); err == nil {
 		t.Fatal("expected interrupted upload")
 	}
 	fake.mu.Lock()
 	fake.files["1"]["azureStorageUriExpirationDateTime"] = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
 	fake.mu.Unlock()
-	_, err = c.handle(t.Context(), req, desired)
+	_, err = reconcileFixture(t, c, req, desired)
 	if err == nil || !strings.Contains(err.Error(), "intune app app-1 cannot finish its first upload; delete the app") {
 		t.Fatalf("stuck first upload: %v", err)
 	}
@@ -288,19 +288,19 @@ func TestFirstUploadReadFailureDoesNotRequireDeletion(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	fake.failBlob = true
 	req := fixtureRequest(t)
-	desired, err := compile(req)
+	desired, err := compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.handle(t.Context(), req, desired); err == nil {
+	if _, err := reconcileFixture(t, c, req, desired); err == nil {
 		t.Fatal("expected interrupted upload")
 	}
 	fake.failFileRead = true
-	if _, err := c.handle(t.Context(), req, desired); err == nil || strings.Contains(err.Error(), "delete the app") {
+	if _, err := reconcileFixture(t, c, req, desired); err == nil || strings.Contains(err.Error(), "delete the app") {
 		t.Fatalf("read failure: %v", err)
 	}
 	fake.failFileRead = false
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	if fake.versions != 1 || fake.fileCreates != 1 {
@@ -311,11 +311,11 @@ func TestFirstUploadReadFailureDoesNotRequireDeletion(t *testing.T) {
 func TestUnchangedApplyWaitsForPendingPublication(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, err := compile(req)
+	desired, err := compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	fake.mu.Lock()
@@ -324,7 +324,7 @@ func TestUnchangedApplyWaitsForPendingPublication(t *testing.T) {
 	writes := fake.writes
 	fake.mu.Unlock()
 	req.Method = "plan"
-	if response, err := c.handle(t.Context(), req, desired); err != nil || len(response.Changes) != 0 {
+	if response, err := reconcileFixture(t, c, req, desired); err != nil || len(response.Changes) != 0 {
 		t.Fatalf("pending plan: %+v, %v", response, err)
 	}
 	fake.mu.Lock()
@@ -333,7 +333,7 @@ func TestUnchangedApplyWaitsForPendingPublication(t *testing.T) {
 	}
 	fake.mu.Unlock()
 	req.Method = "apply"
-	if response, err := c.handle(t.Context(), req, desired); err != nil || len(response.Changes) != 0 {
+	if response, err := reconcileFixture(t, c, req, desired); err != nil || len(response.Changes) != 0 {
 		t.Fatalf("pending apply: %+v, %v", response, err)
 	}
 	fake.mu.Lock()
@@ -351,11 +351,11 @@ func TestFreshRequestRediscoversPublishedApp(t *testing.T) {
 		t.Run(discovery, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
 			req := fixtureRequest(t)
-			desired, err := compile(req)
+			desired, err := compileRequest(req)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := c.handle(t.Context(), req, desired); err != nil {
+			if _, err := reconcileFixture(t, c, req, desired); err != nil {
 				t.Fatal(err)
 			}
 			fake.mu.Lock()
@@ -363,7 +363,7 @@ func TestFreshRequestRediscoversPublishedApp(t *testing.T) {
 			fake.mu.Unlock()
 			// A later invocation starts from the catalog and the tenant alone.
 			req = fixtureRequest(t)
-			desired, err = compile(req)
+			desired, err = compileRequest(req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -372,7 +372,7 @@ func TestFreshRequestRediscoversPublishedApp(t *testing.T) {
 			}
 			for _, method := range []string{"plan", "apply"} {
 				req.Method = method
-				response, err := c.handle(t.Context(), req, desired)
+				response, err := reconcileFixture(t, c, req, desired)
 				if err != nil || len(response.Changes) != 0 {
 					t.Fatalf("%s after rediscovery: %+v, %v", method, response.Changes, err)
 				}
@@ -397,11 +397,11 @@ func TestPlanAndValidationDoNotWrite(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
 	req.Method = "plan"
-	desired, err := compile(req)
+	desired, err := compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := c.handle(t.Context(), req, desired)
+	response, err := reconcileFixture(t, c, req, desired)
 	if err != nil || len(response.Changes) == 0 {
 		t.Fatalf("plan: %+v, %v", response, err)
 	}
@@ -420,7 +420,7 @@ func TestPlanAndValidationDoNotWrite(t *testing.T) {
 		`{"assignments":[{"intent":"required","target":{"@odata.type":"#microsoft.graph.groupAssignmentTarget","groupId":"group-1"}}]}`,
 	} {
 		req.Metadata = json.RawMessage(data)
-		if _, err := compile(req); err == nil {
+		if _, err := compileRequest(req); err == nil {
 			t.Fatalf("accepted unsupported metadata %s", data)
 		}
 	}
@@ -429,11 +429,11 @@ func TestPlanAndValidationDoNotWrite(t *testing.T) {
 func TestPayloadChangeActivatesFreshVersionWithItsMarker(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, err := compile(req)
+	desired, err := compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	first := publishedMarker(t, fake)
@@ -441,7 +441,7 @@ func TestPayloadChangeActivatesFreshVersionWithItsMarker(t *testing.T) {
 	fake.patches = nil
 	fake.mu.Unlock()
 	changePayload(t, &req, "second release")
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	second := publishedMarker(t, fake)
@@ -465,11 +465,11 @@ func TestMarkerDriftRestoresContent(t *testing.T) {
 		t.Run(drift, func(t *testing.T) {
 			fake, c := newGraphFixture(t)
 			req := fixtureRequest(t)
-			desired, err := compile(req)
+			desired, err := compileRequest(req)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := c.handle(t.Context(), req, desired); err != nil {
+			if _, err := reconcileFixture(t, c, req, desired); err != nil {
 				t.Fatal(err)
 			}
 			published := publishedMarker(t, fake)
@@ -490,7 +490,7 @@ func TestMarkerDriftRestoresContent(t *testing.T) {
 				fake.app["committedContentVersion"] = "7"
 			}
 			fake.mu.Unlock()
-			if _, err := c.handle(t.Context(), req, desired); err != nil {
+			if _, err := reconcileFixture(t, c, req, desired); err != nil {
 				t.Fatal(err)
 			}
 			want := "2"
@@ -506,7 +506,7 @@ func TestMarkerDriftRestoresContent(t *testing.T) {
 				t.Fatalf("drift was not repaired in place: %+v", fake.app["notes"])
 			}
 			fake.mu.Unlock()
-			response, err := c.handle(t.Context(), req, desired)
+			response, err := reconcileFixture(t, c, req, desired)
 			if err != nil || len(response.Changes) != 0 {
 				t.Fatalf("repaired drift did not settle: %+v, %v", response.Changes, err)
 			}
@@ -522,7 +522,7 @@ func TestMarkerDriftRestoresContent(t *testing.T) {
 func TestDuplicateMarkerAppsAreAmbiguous(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, err := compile(req)
+	desired, err := compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -532,7 +532,7 @@ func TestDuplicateMarkerAppsAreAmbiguous(t *testing.T) {
 	}
 	for _, method := range []string{"plan", "apply"} {
 		req.Method = method
-		_, err := c.handle(t.Context(), req, desired)
+		_, err := reconcileFixture(t, c, req, desired)
 		if err == nil || !strings.Contains(err.Error(), "multiple Intune apps carry this Stemma identity") || !strings.Contains(err.Error(), "first-copy, second-copy") {
 			t.Fatalf("%s: %v", method, err)
 		}
@@ -959,7 +959,7 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 				delete(update, "primaryBundleVersion")
 				update["buildNumber"] = "1.1"
 			}
-			if _, err := c.handle(t.Context(), req, desired); err != nil {
+			if _, err := reconcileFixture(t, c, req, desired); err != nil {
 				t.Fatal(err)
 			}
 			if !bytes.Equal(fake.plaintext, source) {
@@ -974,7 +974,7 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 			fake.app["owner"] = "Remote owner"
 			fake.app["ignoreVersionDetection"] = true
 			desired = update
-			_, err := c.handle(t.Context(), req, desired)
+			_, err := reconcileFixture(t, c, req, desired)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -986,7 +986,7 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 				t.Fatal("metadata update lost omission/false or uploaded unchanged bytes")
 			}
 			req.Method = "plan"
-			response, err := c.handle(t.Context(), req, desired)
+			response, err := reconcileFixture(t, c, req, desired)
 			if err != nil || len(response.Changes) != 0 {
 				t.Fatalf("settled plan: %v, %v", response.Changes, err)
 			}
@@ -1018,15 +1018,15 @@ func TestPKGInstallScripts(t *testing.T) {
 	run := func(method string) plugin.ReconcileResponse {
 		t.Helper()
 		req.Method, req.Metadata = method, raw(metadata)
-		derived, _, err := Derive(req)
+		derived, _, err := derive(req)
 		if err != nil {
 			t.Fatal(err)
 		}
-		desired, err := decodeObject(derived.Metadata)
+		desired, err := compile(derived)
 		if err != nil {
 			t.Fatal(err)
 		}
-		response, err := c.handle(t.Context(), derived, desired)
+		response, err := reconcileFixture(t, c, req, desired)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1107,7 +1107,7 @@ func TestPKGInstallScripts(t *testing.T) {
 			req.Artifact.Format, req.Artifact.Filename, metadata["type"] = "pkg", "app-1.0.pkg", "lob"
 		}
 		req.Metadata = raw(metadata)
-		if _, err := compile(req); err == nil || !strings.Contains(err.Error(), hint) || format == "lob" && strings.Contains(err.Error(), "set package") {
+		if _, err := compileRequest(req); err == nil || !strings.Contains(err.Error(), hint) || format == "lob" && strings.Contains(err.Error(), "set package") {
 			t.Fatalf("%s app accepted a script: %v", format, err)
 		}
 	}
@@ -1126,7 +1126,7 @@ func TestMacValidationAndAdoption(t *testing.T) {
 		{"pre_install_script": object{"script": "unsupported"}},
 	} {
 		mac.Metadata = raw(metadata)
-		if _, err := compile(mac); err == nil {
+		if _, err := compileRequest(mac); err == nil {
 			t.Fatalf("accepted unsupported native metadata: %s", raw(metadata))
 		}
 	}
@@ -1138,11 +1138,11 @@ func TestMacValidationAndAdoption(t *testing.T) {
 	req.Config = Config{GraphURL: fake.url, Token: "test-token"}
 	req.Identity.Resource.Kind = "MacSoftware"
 	req.Metadata = raw(object{"app_id": "app-1", "display_name": "Adopted", "included_apps": []any{object{"id": "org.example.app", "version": "1.0"}}})
-	desired, err := compile(req)
+	desired, err := compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	response, err := c.handle(t.Context(), req, desired)
+	response, err := reconcileFixture(t, c, req, desired)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1154,11 +1154,11 @@ func TestMacValidationAndAdoption(t *testing.T) {
 		t.Fatalf("adoption did not read explicit per-software ID: %v", fake.paths)
 	}
 	fake.app["notes"] = withMarker("", publication{identity: strings.Repeat("a", 64)})
-	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), "another Stemma identity") {
+	if _, err := reconcileFixture(t, c, req, desired); err == nil || !strings.Contains(err.Error(), "another Stemma identity") {
 		t.Fatalf("adopted an app that belongs to other software: %v", err)
 	}
 	desired["app_id"] = "absent"
-	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), `app_id "absent" does not exist`) {
+	if _, err := reconcileFixture(t, c, req, desired); err == nil || !strings.Contains(err.Error(), `app_id "absent" does not exist`) {
 		t.Fatalf("missing adopted app: %v", err)
 	}
 	if fake.writes != 0 || fake.appLists != 0 {
@@ -1183,19 +1183,19 @@ func TestMacLOBPreservesManagedInstallRequirements(t *testing.T) {
 	req := lobRequest(object{"type": "lob", "app_id": "app-1", "included_apps": []any{object{"id": "org.example.app", "version": "2.0"}}}, nil, receipt, app, other)
 	req.Method = "plan"
 	req.Artifact.SHA256 = strings.Repeat("a", 64)
-	derived, _, err := Derive(req)
+	derived, _, err := derive(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	desired, err := decodeObject(derived.Metadata)
+	desired, err := compile(derived)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), "install_as_managed") {
+	if _, err := reconcileFixture(t, c, req, desired); err == nil || !strings.Contains(err.Error(), "install_as_managed") {
 		t.Fatalf("omitting install_as_managed bypassed the existing app's requirements: %v", err)
 	}
 	desired["installAsManaged"] = false
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatalf("explicit unmanaged install kept managed restrictions: %v", err)
 	}
 }
@@ -1203,19 +1203,40 @@ func TestMacLOBPreservesManagedInstallRequirements(t *testing.T) {
 func TestAppSubtypeCannotBeChanged(t *testing.T) {
 	fake, c := newGraphFixture(t)
 	req := fixtureRequest(t)
-	desired, err := compile(req)
+	desired, err := compileRequest(req)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.handle(t.Context(), req, desired); err != nil {
+	if _, err := reconcileFixture(t, c, req, desired); err != nil {
 		t.Fatal(err)
 	}
 	req.Artifact.Filename = "vendor.dmg"
 	desired = object{"@odata.type": dmgType}
-	if _, err := c.handle(t.Context(), req, desired); err == nil || !strings.Contains(err.Error(), "app-1 is a win32LobApp and the installer publishes as a macOSDmgApp") {
+	if _, err := reconcileFixture(t, c, req, desired); err == nil || !strings.Contains(err.Error(), "app-1 is a win32LobApp and the installer publishes as a macOSDmgApp") {
 		t.Fatalf("identity moved to another subtype: %v", err)
 	}
 	if fake.creates != 1 {
 		t.Fatal("duplicated cross-subtype identity")
 	}
+}
+
+func compileRequest(req plugin.ReconcileRequest[Config]) (object, error) {
+	metadata, err := declaration(req)
+	if err != nil {
+		return nil, err
+	}
+	return compile(metadata)
+}
+
+func reconcileFixture(t *testing.T, c *client, req plugin.ReconcileRequest[Config], desired object) (plugin.ReconcileResponse, error) {
+	t.Helper()
+	artifact, err := identifyArtifact(t.Context(), req.Artifact, text(desired["@odata.type"]))
+	if err != nil {
+		return plugin.ReconcileResponse{}, err
+	}
+	desired = maps.Clone(desired)
+	if desired["@odata.type"] == win32Type {
+		desired["setupFilePath"] = artifact.setup
+	}
+	return c.handle(t.Context(), req, desired, artifact)
 }
