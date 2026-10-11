@@ -88,7 +88,8 @@ func iconOutcome(options IconOptions, root string, plan resourcePlan) string {
 
 // createIcon writes one resource's declared asset from its prepared installer,
 // a selected input or a local source, and reports the outcome in the words the
-// CLI prints: the presentation created, or why nothing could be.
+// CLI prints: the presentation created, or why nothing could be. A selection
+// path names the application to use within any of them.
 func createIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, installer Prepared, selection InputSelection, work string) (string, error) {
 	name := plan.Icon
 	if installer.Path == "" {
@@ -98,14 +99,23 @@ func createIcon(ctx context.Context, options IconOptions, root string, plan reso
 	done := plugin.Stage(ctx, "Extracting artwork", plugin.Detail(installer.Filename))
 	var subject icon.Subject
 	var err error
-	if selection.Name != "" || options.From != "" {
+	if selection.Name != "" || selection.Path != "" || options.From != "" {
 		subject, err = inputIconSubject(ctx, installer.artifact(), selection.Path, workspace, options.Presentation)
 	} else {
 		subject, err = iconSubject(ctx, plan.Resource.Kind, installer.artifact(), workspace, options.Presentation)
 	}
 	done(err)
 	if errors.Is(err, macsoftware.ErrNoApplication) && options.From == "" {
-		return "no application selected; choose an input with --input and --path", nil
+		var applications []string
+		for _, subject := range installer.Facts.Subjects {
+			if subject.App != nil {
+				applications = append(applications, subject.Path)
+			}
+		}
+		if len(applications) == 0 {
+			return "no application selected; choose an input with --input and --path", nil
+		}
+		return "no application selected; name one with --path: " + inspect.FormatSubjectIDs(applications), nil
 	}
 	// A local source that holds no application has no artwork to offer.
 	if errors.Is(err, icon.ErrNoArtwork) || errors.Is(err, macsoftware.ErrNoApplication) {
@@ -146,9 +156,12 @@ func inputIconSubject(ctx context.Context, input plugin.Artifact, selection, wor
 	defer func() { _ = source.Close() }()
 	if selection != "" && !source.Traversable() {
 		// A package is not a tree to walk; its inventory locates the application.
-		facts, err := inspect.Source(ctx, source)
-		if err != nil {
-			return icon.Subject{}, err
+		// A prepared installer brings its inventory with it.
+		facts := input.Facts
+		if len(facts.Subjects) == 0 {
+			if facts, err = inspect.Source(ctx, source); err != nil {
+				return icon.Subject{}, err
+			}
 		}
 		var names []string
 		for _, subject := range facts.Subjects {

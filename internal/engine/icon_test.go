@@ -420,6 +420,71 @@ spec:
 	}
 }
 
+// TestIconPathSelectsAnApplicationInThePreparedInstaller covers a vendor
+// package holding several applications with none selected for detection.
+func TestIconPathSelectsAnApplicationInThePreparedInstaller(t *testing.T) {
+	root, fixture := t.TempDir(), t.TempDir()
+	iconFixtures(t, fixture)
+	if err := os.Remove(filepath.Join(fixture, "icon.msi")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.CopyFS(filepath.Join(fixture, "Other.app"), os.DirFS(filepath.Join(fixture, "Example.app"))); err != nil {
+		t.Fatal(err)
+	}
+	want := iconPNG(t, 128, 77)
+	if err := os.WriteFile(filepath.Join(fixture, "Other.app/Contents/Resources/AppIcon.icns"), icnsWith(want), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := pkgbuild.Build(t.Context(), fixture, filepath.Join(root, "vendor.pkg"), pkgbuild.Options{Identifier: "org.example.vendor", Version: "1", InstallLocation: "/Applications", Payload: ".", Compression: pkgbuild.Gzip}); err != nil {
+		t.Fatal(err)
+	}
+	testproject.Write(t, filepath.Join(root, "stemma.yaml"), `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: icons}
+spec:
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: suite}
+spec:
+  icon: suite
+  source: {path: vendor.pkg}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: other}
+spec:
+  icon: other
+  source: {path: vendor.pkg}
+`)
+	opts := Options{ConfigPath: filepath.Join(root, "stemma.yaml"), CacheDir: t.TempDir(), Method: "update", Resources: []string{"MacSoftware/suite"}, Icons: IconOptions{Presentation: icon.Raw}}
+	if _, err := Run(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	opts.Method = "icon"
+	report, err := Run(t.Context(), opts)
+	if err != nil || !strings.HasPrefix(report.Resources[0].Icon, "no application selected; name one with --path") || !strings.Contains(report.Resources[0].Icon, "Payload/Other.app") {
+		t.Fatalf("unselected: %+v, %v", report.Resources, err)
+	}
+	opts.Input.Path = "Payload/Missing.app"
+	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "Payload/Other.app") {
+		t.Fatalf("missing application: %v", err)
+	}
+	opts.Input.Path = "Payload/Other.app"
+	report, err = Run(t.Context(), opts)
+	if err != nil || report.Resources[0].Icon != "created raw" {
+		t.Fatalf("selected application: %+v, %v", report.Resources, err)
+	}
+	if got, err := icon.Read(root, "suite"); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("selected artwork differs: %v", err)
+	}
+	opts.Resources = nil
+	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "path requires one resource selector") {
+		t.Fatalf("a path across resources: %v", err)
+	}
+}
+
 func TestIconFromLocalSourceNeedsNoLockOrCache(t *testing.T) {
 	root, fixture := t.TempDir(), t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")

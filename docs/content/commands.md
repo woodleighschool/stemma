@@ -98,6 +98,13 @@ stemma icon MacSoftware/example --input vendor --path Installer.app
 Input names inherited from build dependencies must be unambiguous. Only an input
 that references a resource output requires preparation.
 
+Without `--input`, `--path` names an application in one resource's prepared
+installer, for a package that holds several and selects none:
+
+```sh
+stemma icon MacSoftware/suite --path "Payload/Example.app"
+```
+
 Use `--from PATH` to take the artwork from a local application, installer or
 artwork file, for software that carries none of its own:
 

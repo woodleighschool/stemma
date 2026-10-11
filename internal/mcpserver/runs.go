@@ -53,7 +53,7 @@ type iconInput struct {
 	Force     bool     `json:"force,omitempty" jsonschema:"Replace icons that already exist."`
 	Input     string   `json:"input,omitempty" jsonschema:"Read a locked input of this resource or its build dependencies. The asset uses the selected resource's spec.icon."`
 	From      string   `json:"from,omitempty" jsonschema:"Read this application, installer or artwork file instead, for one resource that declares spec.icon. A relative path starts at the catalog root."`
-	Path      string   `json:"path,omitempty" jsonschema:"Application, installer or artwork path within the selected input or file."`
+	Path      string   `json:"path,omitempty" jsonschema:"Application, installer or artwork path within the selected input or file. Alone, it names an application in one resource's prepared installer."`
 }
 
 type checkInput struct {

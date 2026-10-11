@@ -194,8 +194,9 @@ func (e *execution) begin(ctx context.Context) (err error) {
 	if e.opts.Method == "inspect" && e.opts.Input.Name == "" {
 		return errors.New("inspect requires an input name")
 	}
-	if e.opts.Input.Path != "" && e.opts.Input.Name == "" {
-		return errors.New("path requires --input or --from")
+	// Without an input name, a path selects within one prepared installer.
+	if e.opts.Input.Path != "" && e.opts.Input.Name == "" && len(e.roots) != 1 {
+		return errors.New("path requires one resource selector")
 	}
 	if e.opts.Input.Name != "" {
 		if len(e.roots) != 1 {
@@ -339,7 +340,13 @@ func (e *execution) icons(ctx context.Context) error {
 		}
 		item := &e.report.Resources[prepared.report]
 		var err error
-		item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], prepared.outputs["installer"], InputSelection{}, prepared.work)
+		// A path names an application in the selected resource's installer,
+		// not in the builds it consumes.
+		var selection InputSelection
+		if key == e.roots[0] {
+			selection.Path = e.opts.Input.Path
+		}
+		item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], prepared.outputs["installer"], selection, prepared.work)
 		if err != nil {
 			item.Error = err.Error()
 			e.fail(ctx, ResourceError{Resource: key, Err: err})

@@ -410,6 +410,11 @@ For a script-only wrapper, declare `icon: example` on the software resource and 
 finds `vendor` through the build dependencies and writes `icons/example.png`.
 An input containing multiple applications requires `--path`.
 
+A vendor package that holds several applications and selects none reports them.
+Name one with `--path` alone, such as
+`stemma icon MacSoftware/suite --path "Payload/Example.app"`; the package is read
+where it is prepared, however deeply the source nests it.
+
 Software without artwork of its own, such as fonts or a configuration package,
 can take another application's icon from the machine:
 
