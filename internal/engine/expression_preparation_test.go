@@ -89,7 +89,7 @@ spec:
 	if !unchanged.Cached {
 		t.Fatal("unchanged build missed cache")
 	}
-	if err := os.Remove(lockfile.Filename(root)); err != nil {
+	if err := os.RemoveAll(lockfile.Path(root)); err != nil {
 		t.Fatal(err)
 	}
 	update()

@@ -116,7 +116,7 @@ type runner struct {
 	// project is the project directory relative to the checkout and config
 	// the Project file's name, so the same project is found in any worktree.
 	project, config string
-	// lockPath is the lockfile's repository path.
+	// lockPath is the lock directory's repository path.
 	lockPath string
 	stateDir string
 }
@@ -227,7 +227,7 @@ func newRunner(ctx context.Context, opts Options) (*runner, error) {
 		return nil, err
 	}
 	r := &runner{opts: opts, repo: repo, host: host, project: project, config: filepath.Base(configPath), stateDir: opts.StateDir}
-	r.lockPath = path.Join(filepath.ToSlash(project), filepath.Base(lockfile.Filename("")))
+	r.lockPath = path.Join(filepath.ToSlash(project), filepath.Base(lockfile.Path("")))
 	if r.stateDir == "" {
 		r.stateDir = filepath.Join(root, ".stemma", "state")
 	}
@@ -289,7 +289,7 @@ func (r *runner) load(reviewed *git.Worktree) error {
 	if _, err := config.Load(configPath); err != nil {
 		return err
 	}
-	_, err := lockfile.Load(lockfile.Filename(filepath.Dir(configPath)))
+	_, err := lockfile.Load(filepath.Dir(configPath))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

@@ -24,7 +24,7 @@ how to organise those files.
 ## How a run works
 
 1. The catalog declares an input and the installation settings for each destination.
-2. Stemma resolves the input and records its identity in `stemma.lock.yaml`.
+2. Stemma resolves the input and records its identity under `stemma.lock/`.
 3. It inspects or prepares an immutable artifact: a file or a directory tree.
 4. Each destination uses that artifact and its metadata to plan or apply native changes.
 

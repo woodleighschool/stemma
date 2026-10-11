@@ -86,15 +86,15 @@ Run from the catalog:
 ```sh
 stemma validate
 stemma update
-git diff -- stemma.lock.yaml
+git diff -- stemma.lock
 stemma prepare
 stemma plan
 ```
 
 `validate` checks the documents and operation contracts without credentials or
-downloads. `update` downloads the installer and writes the lockfile. On its first
-creation, the lockfile is untracked: open it directly as well as checking
-`git status`. `prepare` builds what the lockfile pins and inspects it.
+downloads. `update` downloads the installer and writes its lock document under
+`stemma.lock/`. A new document is untracked: open it directly as well as checking
+`git status`. `prepare` builds what the lock pins and inspects it.
 
 `plan` reads the destination and reports the changes it would make. It can fetch
 locked inputs into an empty cache, but does not write to the destination. It is the
@@ -103,7 +103,7 @@ dry run.
 The selected bundle supplies application metadata. You do not need to repeat its
 version and bundle identifier as separate extraction steps.
 
-Commit `stemma.yaml`, `software/` and `stemma.lock.yaml` when the inputs are right.
+Commit `stemma.yaml`, `software/` and `stemma.lock/` when the inputs are right.
 
 ## Publish
 
@@ -124,7 +124,7 @@ re-reads destination state; it does not replay a saved plan.
 ```sh
 stemma update MacSoftware/chrome
 stemma prepare MacSoftware/chrome
-git diff -- stemma.lock.yaml
+git diff -- stemma.lock
 stemma plan MacSoftware/chrome
 ```
 

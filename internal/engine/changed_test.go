@@ -256,8 +256,15 @@ func TestChangedSinceChecksTheLockfileWhereItReadsValues(t *testing.T) {
 		t.Fatal(err)
 	}
 	report, err := prepare()
-	if err == nil || !strings.Contains(err.Error(), "lockfile: stemma/v1alpha1/MacSoftware/other is no longer declared; run stemma update") || len(report.Resources) != 0 {
+	if err == nil || !strings.Contains(err.Error(), "lockfile: stemma.lock/MacSoftware/other.yaml locks a resource that is no longer declared; delete it or run stemma update") || len(report.Resources) != 0 {
 		t.Fatalf("leftover lock entries passed: %v %+v", err, report)
+	}
+	// The lock document goes with the declaration, and nothing else changes.
+	if err := os.Remove(filepath.Join(root, "stemma.lock", "MacSoftware", "other.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := prepare(); err != nil || len(report.Resources) != 0 {
+		t.Fatalf("a removed resource left work behind: %v %+v", err, report)
 	}
 	// A changed declaration is prepared, which compares it with its entry.
 	root, _, prepare = changedCatalog(t)
@@ -268,7 +275,7 @@ func TestChangedSinceChecksTheLockfileWhereItReadsValues(t *testing.T) {
 	}
 	writeFile(t, filename, []byte(strings.Replace(string(data), "other.pkg", "app.pkg", 1)))
 	report, err = prepare()
-	if err == nil || !strings.Contains(err.Error(), "input is missing or stale in the lockfile; run stemma update") || !slices.Equal(preparedKeys(report), []string{"MacSoftware/other"}) {
+	if err == nil || !strings.Contains(err.Error(), "local input declaration changed since it was locked, as a new path or a moved document does; run stemma update") || !slices.Equal(preparedKeys(report), []string{"MacSoftware/other"}) {
 		t.Fatalf("stale entry passed: %v %v", err, preparedKeys(report))
 	}
 }
@@ -385,7 +392,7 @@ spec:
 func TestChangedSinceRefusesWhatItCannotCompare(t *testing.T) {
 	t.Run("unreadable catalog", func(t *testing.T) {
 		root, _, prepare := changedCatalog(t)
-		filename := filepath.Join(root, "stemma.lock.yaml")
+		filename := filepath.Join(root, "stemma.lock", "MacSoftware", "app.yaml")
 		reviewed, err := os.ReadFile(filename)
 		if err != nil {
 			t.Fatal(err)

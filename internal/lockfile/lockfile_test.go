@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net/http"
@@ -22,9 +24,9 @@ import (
 	"time"
 
 	"github.com/woodleighschool/stemma/internal/cas"
+	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
-	"go.yaml.in/yaml/v4"
 )
 
 const resource = "stemma/v1alpha1/Software/app"
@@ -47,21 +49,36 @@ func prepare(t *testing.T, m *source.Manager, inputs map[string]map[string]plugi
 func entry(result Result) source.Entry { return result.File.Inputs[resource]["source"] }
 func save(t *testing.T, m *source.Manager, file File) {
 	t.Helper()
-	data, err := yaml.Marshal(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(m.Root, "stemma.lock.yaml"), data, 0o600); err != nil {
+	if err := Save(m.Root, file); err != nil {
 		t.Fatal(err)
 	}
 }
+
+// lockedBytes reads every lock document of the project, in path order.
 func lockedBytes(t *testing.T, m *source.Manager) []byte {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join(m.Root, "stemma.lock.yaml"))
+	var data []byte
+	err := documents(m.Root, func(name string, _ fs.DirEntry) error {
+		document, err := os.ReadFile(filepath.Join(m.Root, filepath.FromSlash(name)))
+		data = append(append(data, name...), document...)
+		return err
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return data
+}
+
+// writeDocument replaces one lock document with arbitrary bytes.
+func writeDocument(t *testing.T, m *source.Manager, name, data string) {
+	t.Helper()
+	filename := filepath.Join(m.Root, filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(filename), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filename, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
@@ -150,9 +167,7 @@ func TestLockedColdWarmOfflineAndRefresh(t *testing.T) {
 // "no lockfile": the file still has to load.
 func TestIgnoringInputLocksStillReadsTheLockfile(t *testing.T) {
 	m := manager(t)
-	if err := os.WriteFile(Filename(m.Root), []byte("inputs: [\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeDocument(t, m, "stemma.lock/Software/app.yaml", "inputs: [\n")
 	if _, err := prepare(t, m, inputset("file", map[string]any{"path": "app.pkg"}), Options{IgnoreInputs: true}); err == nil || !strings.HasPrefix(err.Error(), "lockfile: ") {
 		t.Fatalf("an unreadable lockfile was ignored: %v", err)
 	}
@@ -195,7 +210,7 @@ func TestReleaseObservationChangesKeepContentIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	inputs[resource]["source"].Config["asset"] = "App-*.pkg"
-	if _, err := prepare(t, m, inputs, Options{}); err == nil || !strings.Contains(err.Error(), "stale") {
+	if _, err := prepare(t, m, inputs, Options{}); err == nil || !strings.Contains(err.Error(), "input declaration changed since it was locked") {
 		t.Fatalf("frozen run accepted changed asset pattern: %v", err)
 	}
 	inputs[resource]["source"].Config["asset"] = "App*.pkg"
@@ -400,7 +415,7 @@ func TestInputRemovalAndSourceFreeProjects(t *testing.T) {
 	if result, err := prepare(t, m, nil, Options{Refresh: true}); err != nil || !result.Changed {
 		t.Fatalf("removed input retained obsolete lock: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(m.Root, "stemma.lock.yaml")); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(Path(m.Root)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("empty input lock persisted")
 	}
 	if _, err := prepare(t, m, nil, Options{Offline: true}); err != nil {
@@ -434,6 +449,55 @@ func TestSelectedInputsPreserveOtherReviewedResources(t *testing.T) {
 	}
 }
 
+type roundTrip func(*http.Request) (*http.Response, error)
+
+func (f roundTrip) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
+
+// TestFrozenRunsSayWhyAnEntryIsStale covers the ways a reviewed entry stops
+// answering its declaration, including a document moved with its local file.
+func TestFrozenRunsSayWhyAnEntryIsStale(t *testing.T) {
+	m := manager(t)
+	for _, dir := range []string{"software/first", "software/second"} {
+		if err := os.MkdirAll(filepath.Join(m.Root, dir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(m.Root, dir, "payload.pkg"), []byte("installer"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	local := func(base string) plugin.Input {
+		return plugin.Input{Resolver: "file", Base: base, Config: map[string]any{"path": "payload.pkg"}}
+	}
+	m.Client.Transport = roundTrip(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("installer")), Header: http.Header{}}, nil
+	})
+	remote := func(filename string) plugin.Input {
+		return plugin.Input{Resolver: "http", Config: map[string]any{"url": "https://vendor.example/App.pkg", "filename": filename}}
+	}
+	const other = "stemma/v1alpha1/Software/remote"
+	locked := map[string]map[string]plugin.Input{resource: {"source": local("software/first")}, other: {"source": remote("App.pkg")}}
+	if _, err := prepare(t, m, locked, Options{Refresh: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		inputs map[string]map[string]plugin.Input
+		want   string
+	}{
+		{"moved document", map[string]map[string]plugin.Input{resource: {"source": local("software/second")}, other: locked[other]}, "local input declaration changed since it was locked, as a new path or a moved document does; run stemma update Software/app"},
+		{"changed declaration", map[string]map[string]plugin.Input{resource: locked[resource], other: {"source": remote("Renamed.pkg")}}, "input declaration changed since it was locked; run stemma update Software/remote"},
+		{"renamed input", map[string]map[string]plugin.Input{resource: {"payload": local("software/first")}, other: locked[other]}, "input is missing from the lockfile; run stemma update Software/app"},
+		{"added input", map[string]map[string]plugin.Input{resource: {"source": local("software/first"), "extra": local("software/second")}, other: locked[other]}, "declared inputs changed since they were locked; run stemma update Software/app"},
+		{"new resource", map[string]map[string]plugin.Input{resource: locked[resource], other: locked[other], "stemma/v1alpha1/Software/new": {"source": local("software/second")}}, "inputs are missing from the lockfile; run stemma update Software/new"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := prepare(t, m, tc.inputs, Options{}); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %s", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestProjectLockReportsOnlyContention(t *testing.T) {
 	root := t.TempDir()
 	var logs bytes.Buffer
@@ -463,7 +527,7 @@ func TestIncrementalAcquisitionCommitsOnlyCompleteUncancelledUpdates(t *testing.
 		if err := os.WriteFile(filepath.Join(m.Root, name), []byte("original"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		inputs[name] = map[string]plugin.Input{"source": {Resolver: "file", Config: map[string]any{"path": name}}}
+		inputs["stemma/v1alpha1/Software/"+name] = map[string]plugin.Input{"source": {Resolver: "file", Config: map[string]any{"path": name}}}
 	}
 	if _, err := Prepare(t.Context(), m.Root, inputs, nil, m, Options{Refresh: true}); err != nil {
 		t.Fatal(err)
@@ -476,16 +540,16 @@ func TestIncrementalAcquisitionCommitsOnlyCompleteUncancelledUpdates(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if changes := update.Changes("b"); len(changes) != 0 {
+	if changes := update.Changes("stemma/v1alpha1/Software/b"); len(changes) != 0 {
 		t.Fatalf("unacquired input reported as changed: %+v", changes)
 	}
-	if _, _, err := update.Acquire(t.Context(), "a"); err != nil {
+	if _, _, err := update.Acquire(t.Context(), "stemma/v1alpha1/Software/a"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := update.Commit(t.Context()); err == nil || !bytes.Equal(before, lockedBytes(t, m)) {
 		t.Fatal("incomplete acquisition replaced the reviewed lockfile")
 	}
-	if _, _, err := update.Acquire(t.Context(), "b"); err != nil {
+	if _, _, err := update.Acquire(t.Context(), "stemma/v1alpha1/Software/b"); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
@@ -652,11 +716,12 @@ func TestRetainedResourcesKeepReviewedEntries(t *testing.T) {
 
 func TestCommitRetainsRejectedResourcesWithoutPartialInputs(t *testing.T) {
 	m := manager(t)
+	const acquisition, preparation, healthy, added = "stemma/v1alpha1/Software/acquisition", "stemma/v1alpha1/Software/preparation", "stemma/v1alpha1/Software/healthy", "stemma/v1alpha1/Software/new"
 	inputs := map[string]map[string]plugin.Input{}
-	for _, resource := range []string{"acquisition", "preparation", "healthy"} {
+	for _, resource := range []string{acquisition, preparation, healthy} {
 		inputs[resource] = map[string]plugin.Input{}
 		for _, name := range []string{"a", "b"} {
-			filename := resource + "-" + name
+			filename := path.Base(resource) + "-" + name
 			if err := os.WriteFile(filepath.Join(m.Root, filename), []byte("reviewed"), 0o644); err != nil {
 				t.Fatal(err)
 			}
@@ -668,7 +733,7 @@ func TestCommitRetainsRejectedResourcesWithoutPartialInputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for resource := range inputs {
-		if err := os.WriteFile(filepath.Join(m.Root, resource+"-a"), []byte("updated"), 0o644); err != nil {
+		if err := os.WriteFile(filepath.Join(m.Root, path.Base(resource)+"-a"), []byte("updated"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -677,101 +742,114 @@ func TestCommitRetainsRejectedResourcesWithoutPartialInputs(t *testing.T) {
 	}
 	// Rejected resources keep old inputs even when their declarations removed
 	// them, and new failed resources do not gain partial lock entries.
-	delete(inputs["preparation"], "b")
-	inputs["new"] = inputs["acquisition"]
+	delete(inputs[preparation], "b")
+	inputs[added] = inputs[acquisition]
 	update, err := Begin(t.Context(), m.Root, inputs, nil, m, Options{Refresh: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, resource := range []string{"acquisition", "new", "preparation", "healthy"} {
+	for _, resource := range []string{acquisition, added, preparation, healthy} {
 		_, _, err := update.Acquire(t.Context(), resource)
-		wantError := resource == "acquisition" || resource == "new"
+		wantError := resource == acquisition || resource == added
 		if (err != nil) != wantError {
 			t.Fatalf("acquire %s: %v", resource, err)
 		}
 	}
 	// Each acquired resource's changes are known before the commit, so a run
 	// can report them as resources finish.
-	healthy := update.Changes("healthy")
-	if prepared := update.Changes("preparation"); len(prepared) != 2 || prepared[0].Input != "a" || !prepared[0].ContentChanged || prepared[1].Input != "b" || prepared[1].After != nil {
+	acquired := update.Changes(healthy)
+	if prepared := update.Changes(preparation); len(prepared) != 2 || prepared[0].Input != "a" || !prepared[0].ContentChanged || prepared[1].Input != "b" || prepared[1].After != nil {
 		t.Fatalf("acquired resource changes: %+v", prepared)
 	}
-	result, err := update.Commit(t.Context(), "acquisition", "preparation", "new")
-	if !slices.EqualFunc(healthy, result.Changes, func(a, b InputChange) bool {
+	result, err := update.Commit(t.Context(), acquisition, preparation, added)
+	if !slices.EqualFunc(acquired, result.Changes, func(a, b InputChange) bool {
 		return a.Resource == b.Resource && a.Input == b.Input && a.After.Equal(*b.After)
 	}) {
-		t.Fatalf("changes before the commit %+v differ from the commit %+v", healthy, result.Changes)
+		t.Fatalf("changes before the commit %+v differ from the commit %+v", acquired, result.Changes)
 	}
 	if err != nil || !result.Changed {
 		t.Fatalf("successful resource could not update the lock: %+v, %v", result, err)
 	}
-	if len(result.Changes) != 1 || result.Changes[0].Resource != "healthy" || result.Changes[0].Input != "a" || result.Changes[0].Before == nil || result.Changes[0].After == nil {
+	if len(result.Changes) != 1 || result.Changes[0].Resource != healthy || result.Changes[0].Input != "a" || result.Changes[0].Before == nil || result.Changes[0].After == nil {
 		t.Fatalf("report included uncommitted inputs: %+v", result.Changes)
 	}
-	after, err := Load(Filename(m.Root))
+	after, err := Load(m.Root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, resource := range []string{"acquisition", "preparation"} {
+	for _, resource := range []string{acquisition, preparation} {
 		if !maps.EqualFunc(before.File.Inputs[resource], after.Inputs[resource], source.Entry.Equal) {
 			t.Fatalf("rejected %s changed its reviewed entries: %+v", resource, after.Inputs[resource])
 		}
 	}
-	if _, exists := after.Inputs["new"]; exists || before.File.Inputs["healthy"]["a"].Equal(after.Inputs["healthy"]["a"]) {
+	if _, exists := after.Inputs[added]; exists || before.File.Inputs[healthy]["a"].Equal(after.Inputs[healthy]["a"]) {
 		t.Fatalf("wrong resource inputs committed: %+v", after.Inputs)
 	}
-	if _, _, err := update.Acquire(t.Context(), "acquisition"); err == nil {
+	if _, _, err := update.Acquire(t.Context(), acquisition); err == nil {
 		t.Fatal("retaining reviewed entries turned failed acquisition into success")
 	}
 }
 
-func TestParseChecksTheVersionBeforeAnyEntry(t *testing.T) {
-	// Reject unsupported envelope versions before decoding their entries.
-	older := "version: 2\ninputs:\n  app:\n    source:\n      version: 1\n      resolved_at: \"2026-09-23T03:32:34Z\"\n"
-	const unsupported = "lockfile: version 2 is not supported; delete it and run stemma update"
+func TestDecodeChecksTheVersionBeforeAnyEntry(t *testing.T) {
+	const document = "stemma.lock/Software/app.yaml"
+	// Reject unsupported document versions before decoding their entries.
+	older := "version: 2\ninputs:\n  source:\n    version: 1\n    resolved_at: \"2026-09-23T03:32:34Z\"\n"
+	const unsupported = "lockfile: " + document + ": version 2 is not supported; delete it and run stemma update"
 	for data, want := range map[string]string{
 		older:                      unsupported,
-		"version: 5\ninputs: {}\n": "lockfile: version 5 needs a newer stemma",
-		"version: 4\n":             "lockfile: incomplete; run stemma update",
+		"version: 6\ninputs: {}\n": "lockfile: " + document + ": version 6 needs a newer stemma",
+		"version: 5\n":             "lockfile: " + document + " locks named inputs and nothing else",
 	} {
-		if _, err := Parse([]byte(data)); err == nil || err.Error() != want {
-			t.Errorf("Parse(%q) = %v, want %q", data, err, want)
+		if _, err := Decode(map[string][]byte{document: []byte(data)}); err == nil || err.Error() != want {
+			t.Errorf("Decode(%q) = %v, want %q", data, err, want)
 		}
 	}
-	if _, err := Parse([]byte("version: 4\ninputs: {}\n")); err != nil {
-		t.Fatal(err)
+	for name, want := range map[string]string{
+		"stemma.lock/app.yaml":                          "lockfile: stemma.lock/app.yaml is not a lock document",
+		"stemma.lock/stemma/v1alpha1/Software/app.yaml": "lockfile: stemma.lock/stemma/v1alpha1/Software/app.yaml is not a lock document",
+		"stemma.lock/Software/app.yml":                  "lockfile: stemma.lock/Software/app.yml is not a lock document",
+		"Software/app.yaml":                             "lockfile: Software/app.yaml is not a lock document",
+		"stemma.lock/v1/Software/app.yaml":              "lockfile: stemma.lock/v1/Software/app.yaml is not a lock document",
+		"stemma.lock/../Software/app.yaml":              "lockfile: stemma.lock/../Software/app.yaml is not a lock document",
+		"stemma.lock/Software//app.yaml":                "lockfile: stemma.lock/Software//app.yaml is not a lock document",
+	} {
+		if _, err := Decode(map[string][]byte{name: []byte("version: 5\n")}); err == nil || err.Error() != want {
+			t.Errorf("Decode(%s) = %v, want %q", name, err, want)
+		}
 	}
-	// A run names the lockfile once too.
+	if file, err := Decode(nil); err != nil || file.Version != 0 {
+		t.Fatalf("no documents = %+v: %v", file, err)
+	}
+	// A run names the document once too.
 	m := manager(t)
-	if err := os.WriteFile(Filename(m.Root), []byte(older), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeDocument(t, m, document, older)
 	if _, err := prepare(t, m, map[string]map[string]plugin.Input{}, Options{}); err == nil || err.Error() != unsupported {
-		t.Fatalf("run read the lockfile as %v", err)
+		t.Fatalf("run read the lock as %v", err)
 	}
 }
 
-func TestParseReportsMissingObservation(t *testing.T) {
-	data := []byte(`version: 4
+func TestDecodeReportsMissingObservation(t *testing.T) {
+	const document = "stemma.lock/example.test/v1/Fixture/app.yaml"
+	data := []byte(`version: 5
 inputs:
-  fixture:
-    source:
-      version: 1
-      resolver: file
-      resolver_version: "1"
-      declaration: ` + strings.Repeat("a", 64) + `
-      content:
-        sha256: ` + strings.Repeat("b", 64) + `
-        filename: input.pkg
-        mode: 420
+  source:
+    version: 1
+    resolver: file
+    resolver_version: "1"
+    declaration: ` + strings.Repeat("a", 64) + `
+    content:
+      sha256: ` + strings.Repeat("b", 64) + `
+      filename: input.pkg
+      mode: 420
 `)
-	want := "lockfile: fixture input source: missing resolver observation"
-	if _, err := Parse(data); err == nil || err.Error() != want {
+	want := "lockfile: " + document + " input source: missing resolver observation"
+	if _, err := Decode(map[string][]byte{document: data}); err == nil || err.Error() != want {
 		t.Fatalf("missing observation: %v, want %q", err, want)
 	}
-	data = append(data, []byte("      observation: {}\n")...)
-	if _, err := Parse(data); err != nil {
-		t.Fatalf("explicit empty observation: %v", err)
+	data = append(data, []byte("    observation: {}\n")...)
+	file, err := Decode(map[string][]byte{document: data})
+	if err != nil || len(file.Inputs["example.test/v1/Fixture/app"]) != 1 {
+		t.Fatalf("explicit empty observation: %+v: %v", file, err)
 	}
 }
 
@@ -801,12 +879,168 @@ func TestCheckComparesTheLockfileShapeWithoutReadingValues(t *testing.T) {
 	inputs[other] = map[string]plugin.Input{"script": {Resolver: "file", Config: map[string]any{"path": "first"}}}
 	err := Check(m.Root, inputs, nil)
 	for _, want := range []string{
-		"lockfile: " + paused + " is no longer declared; run stemma update",
+		"lockfile: stemma.lock/BuildMacPkg/paused.yaml locks a resource that is no longer declared; delete it or run stemma update",
 		"lockfile: " + other + " input payload is no longer declared; run stemma update",
 		"lockfile: " + other + " input script is missing; run stemma update",
 	} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Fatalf("check did not report %q: %v", want, err)
 		}
+	}
+}
+
+// A renamed resource is a new one to the lock. Moving its document to the new
+// name carries the reviewed entry along; otherwise an update of the new name
+// locks it afresh and the old document stays until a full update or its
+// deletion.
+func TestRenamedResourceMovesOrReplacesItsDocument(t *testing.T) {
+	m := manager(t)
+	requests := 0
+	m.Client.Transport = roundTrip(func(*http.Request) (*http.Response, error) {
+		requests++
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("installer")), Header: http.Header{}}, nil
+	})
+	declared := plugin.Input{Resolver: "http", Config: map[string]any{"url": "https://vendor.example/App.pkg"}}
+	first, err := prepare(t, m, map[string]map[string]plugin.Input{resource: {"source": declared}}, Options{Refresh: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := func(name string) string {
+		return filepath.Join(Path(m.Root), "Software", name+".yaml")
+	}
+	const renamed, again = "stemma/v1alpha1/Software/renamed", "stemma/v1alpha1/Software/again"
+	inputs := map[string]map[string]plugin.Input{renamed: {"source": declared}}
+	if _, err := prepare(t, m, inputs, Options{}); err == nil || !strings.Contains(err.Error(), "stemma.lock/Software/app.yaml locks a resource that is no longer declared; delete it or run stemma update") {
+		t.Fatalf("renamed resource: %v", err)
+	}
+	if err := os.Rename(document("app"), document("renamed")); err != nil {
+		t.Fatal(err)
+	}
+	fetched := requests
+	moved, err := prepare(t, m, inputs, Options{})
+	if err != nil || moved.Changed || requests != fetched || !moved.File.Inputs[renamed]["source"].Equal(entry(first)) {
+		t.Fatalf("moved document: changed=%t requests=%d: %v", moved.Changed, requests-fetched, err)
+	}
+
+	inputs = map[string]map[string]plugin.Input{again: {"source": declared}}
+	if _, err := prepare(t, m, inputs, Options{Refresh: true, PreserveUnselected: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepare(t, m, inputs, Options{}); err == nil || !strings.Contains(err.Error(), "stemma.lock/Software/renamed.yaml locks a resource that is no longer declared") {
+		t.Fatalf("a selective update removed or accepted the old document: %v", err)
+	}
+	if _, err := prepare(t, m, inputs, Options{Refresh: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(document("renamed")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a full update kept the old document: %v", err)
+	}
+	if result, err := prepare(t, m, inputs, Options{}); err != nil || result.Changed {
+		t.Fatalf("after the full update: changed=%t: %v", result.Changed, err)
+	}
+	for _, renamed := range []string{"stemma/v1alpha1/Software/AGAIN", "stemma/v1alpha1/software/AGAIN"} {
+		inputs = map[string]map[string]plugin.Input{renamed: {"source": declared}}
+		if _, err := prepare(t, m, inputs, Options{Refresh: true}); err != nil {
+			t.Fatal(err)
+		}
+		if loaded, err := Load(m.Root); err != nil || len(loaded.Inputs) != 1 || !loaded.Inputs[renamed]["source"].Equal(entry(first)) {
+			t.Fatalf("case-only rename %s lost the lock or kept its old identity: %+v: %v", renamed, loaded, err)
+		}
+	}
+}
+
+// Each resource's inputs are locked in a document of its own, so an update
+// rewrites only the documents of the resources it changed.
+func TestEachResourceHasItsOwnLockDocument(t *testing.T) {
+	m := manager(t)
+	const other, plugged = "stemma/v1alpha1/Software/other", "example.test/v1/Fixture/app"
+	inputs := map[string]map[string]plugin.Input{}
+	for resource, name := range map[string]string{resource: "first", other: "other", plugged: "plugged"} {
+		if err := os.WriteFile(filepath.Join(m.Root, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		inputs[resource] = map[string]plugin.Input{"source": {Resolver: "file", Config: map[string]any{"path": name}}}
+	}
+	pinned := map[string]plugins.Entry{"provider": {Declaration: "local-plugin", Digest: "sha256:0"}}
+	if _, err := Prepare(t.Context(), m.Root, inputs, pinned, m, Options{Refresh: true}); err != nil {
+		t.Fatal(err)
+	}
+	read := func() map[string]string {
+		t.Helper()
+		documents := map[string]string{}
+		err := filepath.WalkDir(Path(m.Root), func(name string, entry fs.DirEntry, err error) error {
+			if err != nil || entry.IsDir() {
+				return err
+			}
+			data, err := os.ReadFile(name)
+			relative, _ := filepath.Rel(m.Root, name)
+			documents[filepath.ToSlash(relative)] = string(data)
+			return err
+		})
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			t.Fatal(err)
+		}
+		return documents
+	}
+	first := read()
+	want := []string{"stemma.lock/Software/app.yaml", "stemma.lock/Software/other.yaml", "stemma.lock/example.test/v1/Fixture/app.yaml", "stemma.lock/plugins.yaml"}
+	if got := slices.Sorted(maps.Keys(first)); !slices.Equal(got, want) || !strings.HasPrefix(first[want[0]], "version: 5\ninputs:\n  source:\n") || !strings.HasPrefix(first[want[3]], "version: 5\nplugins:\n  provider:\n") {
+		t.Fatalf("lock documents = %v\n%s", got, first[want[0]])
+	}
+	if loaded, err := Load(m.Root); err != nil || len(loaded.Inputs) != 3 || len(loaded.Plugins) != 1 || loaded.Inputs[plugged]["source"].Content.Filename != "plugged" {
+		t.Fatalf("loaded = %+v: %v", loaded, err)
+	}
+	t.Run("conflicting paths", func(t *testing.T) {
+		loaded, err := Load(m.Root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, tc := range []struct{ resource, document, reason string }{
+			{"stemma/v1alpha1/Software/OTHER", "stemma.lock/Software/OTHER.yaml", "same case-insensitive path"},
+			{"stemma/v1alpha1/software/third", "stemma.lock/software/third.yaml", "same case-insensitive path"},
+			{"Software/app.yaml/Fixture/third", "stemma.lock/Software/app.yaml/Fixture/third.yaml", "both a document and a directory"},
+		} {
+			loaded.Inputs[tc.resource] = loaded.Inputs[other]
+			if _, err := Encode(loaded); err == nil || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("colliding resources would overwrite a lock: %v", err)
+			}
+			delete(loaded.Inputs, tc.resource)
+			collision := map[string][]byte{want[0]: []byte(first[want[0]]), want[1]: []byte(first[want[1]]), tc.document: []byte(first[want[1]])}
+			if _, err := Decode(collision); err == nil || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("colliding lock documents were accepted: %v", err)
+			}
+		}
+	})
+
+	// A file the host leaves in the directory is not a lock document.
+	stray := filepath.Join(Path(m.Root), "Software", ".DS_Store")
+	if err := os.WriteFile(stray, []byte("finder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(m.Root, "other"), []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	delete(inputs, plugged)
+	if _, err := Prepare(t.Context(), m.Root, inputs, pinned, m, Options{Refresh: true}); err != nil {
+		t.Fatal(err)
+	}
+	second := read()
+	if second[want[0]] != first[want[0]] || second[want[3]] != first[want[3]] || second[want[1]] == first[want[1]] {
+		t.Fatal("an update rewrote the documents of resources it did not change")
+	}
+	if _, kept := second[want[2]]; kept || len(second) != 4 {
+		t.Fatalf("documents after a resource was removed = %v", slices.Sorted(maps.Keys(second)))
+	}
+	if _, err := os.Stat(filepath.Join(Path(m.Root), "example.test")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("an emptied directory stayed: %v", err)
+	}
+	if err := os.Remove(stray); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Prepare(t.Context(), m.Root, nil, nil, m, Options{Refresh: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(Path(m.Root)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("a lock that holds nothing left its directory: %v", err)
 	}
 }

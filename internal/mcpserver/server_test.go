@@ -143,7 +143,7 @@ func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 	}
 
 	write(t, filepath.Join(root, "software", "app.yaml"), draft)
-	lockfile := filepath.Join(root, "stemma.lock.yaml")
+	lockPath := filepath.Join(root, "stemma.lock")
 	var trial preparation
 	call(t, session, "prepare", map[string]any{"resources": []string{"MacSoftware/app"}}, &trial)
 	if len(trial.Resources) != 1 || trial.Resources[0].Resource != "MacSoftware/app" || trial.Resources[0].Error != "" {
@@ -159,7 +159,7 @@ func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 	if published := app.Publications; len(published) != 1 || published[0].Destination != "repo" || published[0].Metadata["pkginfo"].(map[string]any)["version"] != "1.2.3" || published[0].Origins["pkginfo.version"] != "artifact.version" {
 		t.Fatalf("publications = %+v", app.Publications)
 	}
-	if _, err := os.Stat(lockfile); !os.IsNotExist(err) {
+	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
 		t.Fatalf("prepare wrote the lockfile: %v", err)
 	}
 

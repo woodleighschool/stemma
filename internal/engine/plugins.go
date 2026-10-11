@@ -70,7 +70,7 @@ func ListPlugins(ctx context.Context, configPath string) ([]PluginReport, error)
 	if err != nil {
 		return nil, err
 	}
-	locked, err := lockfile.Load(lockfile.Filename(filepath.Dir(configPath)))
+	locked, err := lockfile.Load(filepath.Dir(configPath))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func InspectPlugins(ctx context.Context, opts Options, verify bool) ([]PluginRep
 	if err != nil {
 		return nil, err
 	}
-	locked, err := lockfile.Load(lockfile.Filename(root))
+	locked, err := lockfile.Load(root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
@@ -152,7 +152,7 @@ func UpdatePlugins(ctx context.Context, opts Options, names []string) (update Pl
 		return update, err
 	}
 	defer func() { _ = unlock() }()
-	locked, err := lockfile.Load(lockfile.Filename(root))
+	locked, err := lockfile.Load(root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return update, err
 	}

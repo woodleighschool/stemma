@@ -81,7 +81,7 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 	if err := e.begin(ctx); err != nil {
 		return candidate, err
 	}
-	candidate.Lock, err = lockfile.Load(lockfile.Filename(s.root))
+	candidate.Lock, err = lockfile.Load(s.root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return candidate, err
 	}

@@ -116,7 +116,7 @@ spec:
 		}
 	}
 	update()
-	locked, err := lockfile.Load(lockfile.Filename(root))
+	locked, err := lockfile.Load(root)
 	if err != nil || locked.Inputs["stemma/v1alpha1/MacSoftware/fixture"]["source"].InputVersion != "1.2" {
 		t.Fatalf("resolver version was not reviewed: %+v %v", locked, err)
 	}

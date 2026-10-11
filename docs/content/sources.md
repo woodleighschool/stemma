@@ -252,9 +252,17 @@ selected. A build can [take it as an input](building-packages.md#wrap-a-selected
 
 | Command          | Input behaviour                                                                                   |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
-| `update`         | Discover current inputs and atomically update their locks; does not publish                       |
+| `update`         | Discover current inputs and update their lock documents; does not publish                         |
 | `prepare`        | Require matching locked declarations and local inputs; prepare artifacts                          |
 | `plan` / `apply` | Require matching locked declarations and local inputs; fetch only the recorded remote observation |
+
+The lock is the `stemma.lock/` directory beside the Project. Each resource's
+inputs are locked in a document of their own, `stemma.lock/<Kind>/<name>.yaml`,
+and the plugins in `stemma.lock/plugins.yaml`; a kind of another API group keeps
+its `apiVersion` in the path. A run rewrites only the documents of the resources
+it changed, so a commit can take one software's declaration with its lock
+document, and changes to different resources never edit the same file. Delete a
+resource's lock document with its declaration.
 
 A lock records the resolver and its version, the relevant declaration, a
 resolver-owned observation and content identity. It is not merely a version
@@ -299,7 +307,7 @@ If a vendor replaces bytes at a stable URL, a cold locked run fails the content
 check. It does not silently accept today's download. Run `update` and review the
 change, or restore the locked bytes to the cache from a trusted copy.
 
-Keep `stemma.lock.yaml` in Git. Destination descriptions, categories and other
+Keep `stemma.lock/` in Git. Destination descriptions, categories and other
 metadata edits do not invalidate source acquisition or rebuild unchanged content.
 
 ## Cache and offline runs

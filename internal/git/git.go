@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -312,6 +313,36 @@ func (r *Repository) Show(commit, path string) ([]byte, error) {
 		return nil, fmt.Errorf("git: %s: %w", path, err)
 	}
 	return []byte(contents), nil
+}
+
+// Files returns the files below dir at a commit, keyed by their repository
+// path. A commit without the directory has none.
+func (r *Repository) Files(commit, dir string) (map[string][]byte, error) {
+	c, err := r.commit(commit)
+	if err != nil {
+		return nil, err
+	}
+	root, err := c.Tree()
+	if err != nil {
+		return nil, fmt.Errorf("git: %s: %w", dir, err)
+	}
+	tree, err := root.Tree(dir)
+	if errors.Is(err, object.ErrDirectoryNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("git: %s: %w", dir, err)
+	}
+	files := map[string][]byte{}
+	err = tree.Files().ForEach(func(file *object.File) error {
+		contents, err := file.Contents()
+		files[path.Join(dir, file.Name)] = []byte(contents)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("git: %s: %w", dir, err)
+	}
+	return files, nil
 }
 
 // ChangedPaths returns paths changed since commit, including working-tree edits.

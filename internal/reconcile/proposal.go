@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"maps"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -163,14 +164,14 @@ func (r *runner) propose(ctx context.Context, head string, set changeset, candid
 			file.Inputs[key] = c.after
 		}
 	}
-	var published []byte
+	var published map[string][]byte
 	if tip != "" {
-		published, err = r.repo.Show(tip, r.lockPath)
+		published, err = r.locked(tip)
 		if err != nil {
 			return proposal, err
 		}
 	}
-	data, err := encode(file)
+	data, err := lockfile.Encode(file)
 	if err != nil {
 		return proposal, err
 	}
@@ -192,7 +193,7 @@ func (r *runner) propose(ctx context.Context, head string, set changeset, candid
 				return proposal, nil
 			}
 		}
-		if commit.Parent == head && bytes.Equal(published, data) {
+		if commit.Parent == head && maps.EqualFunc(published, data, bytes.Equal) {
 			state, err := r.host.CommitStatus(ctx, tip, planContext)
 			if err != nil {
 				return proposal, err
@@ -217,11 +218,27 @@ func (r *runner) propose(ctx context.Context, head string, set changeset, candid
 		return proposal, err
 	}
 	defer func() { _ = worktree.Remove() }()
-	if err := lockfile.Save(filepath.Join(worktree.Dir, r.project), file); err != nil {
+	reviewed, err := r.locked(head)
+	if err == nil {
+		err = lockfile.Save(filepath.Join(worktree.Dir, r.project), file)
+	}
+	if err != nil {
 		done(err)
 		return proposal, err
 	}
-	commit, err := worktree.Commit(commitMessage(set)+"\n\n"+trailer, r.lockPath)
+	// The commit holds the documents that differ, removed ones among them.
+	var changed []string
+	for _, name := range slices.Sorted(maps.Keys(reviewed)) {
+		if !bytes.Equal(reviewed[name], data[name]) {
+			changed = append(changed, path.Join(path.Dir(r.lockPath), name))
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(data)) {
+		if _, held := reviewed[name]; !held {
+			changed = append(changed, path.Join(path.Dir(r.lockPath), name))
+		}
+	}
+	commit, err := worktree.Commit(commitMessage(set)+"\n\n"+trailer, changed...)
 	done(err)
 	if err != nil {
 		return proposal, err
@@ -269,13 +286,21 @@ func (r *runner) merged(ctx context.Context, branch, tip string) (bool, error) {
 	return pull != nil && pull.Merged, err
 }
 
-// encode renders the bytes Save would leave in the worktree: nothing at all
-// once no input or plugin remains locked.
-func encode(file lockfile.File) ([]byte, error) {
-	if len(file.Inputs) == 0 && len(file.Plugins) == 0 {
-		return nil, nil
+// locked reads the lock documents of a commit, keyed by their path below the
+// project root.
+func (r *runner) locked(commit string) (map[string][]byte, error) {
+	files, err := r.repo.Files(commit, r.lockPath)
+	if err != nil {
+		return nil, err
 	}
-	return lockfile.Encode(file)
+	documents := make(map[string][]byte, len(files))
+	for name, data := range files {
+		name = strings.TrimPrefix(name, strings.TrimSuffix(r.lockPath, path.Base(r.lockPath)))
+		if !strings.Contains("/"+name, "/.") {
+			documents[name] = data
+		}
+	}
+	return documents, nil
 }
 
 // publish plans the proposal commit the worktree has checked out, pushes it

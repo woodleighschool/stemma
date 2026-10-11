@@ -91,7 +91,7 @@ func TestChangedSinceUsesEachCatalogsPluginOperations(t *testing.T) {
 				}
 				writeFileText(t, opts.ConfigPath, strings.Replace(manifest, "  imports:", "  plugins:\n    provider: {"+declaration+"}\n  imports:", 1))
 				if test.transport == "tag" {
-					locked, err := lockfile.Load(lockfile.Filename(root))
+					locked, err := lockfile.Load(root)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -168,21 +168,20 @@ spec:
 			if test.transport == "path" {
 				// A missing historical plugin lock cannot be interpreted using
 				// current code or silently treated as a preparation change.
-				path := lockfile.Filename(root)
-				current, err := os.ReadFile(path)
+				locked, err := lockfile.Load(root)
 				if err != nil {
 					t.Fatal(err)
 				}
-				locked, err := lockfile.Load(path)
-				if err != nil {
-					t.Fatal(err)
-				}
+				current := locked.Plugins
 				locked.Plugins = nil
 				if err := lockfile.Save(root, locked); err != nil {
 					t.Fatal(err)
 				}
 				commit(t, root)
-				writeFile(t, path, current)
+				locked.Plugins = current
+				if err := lockfile.Save(root, locked); err != nil {
+					t.Fatal(err)
+				}
 				if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "at HEAD") || !strings.Contains(err.Error(), "local files are not locked") {
 					t.Fatalf("missing base plugin lock: %v", err)
 				}

@@ -19,7 +19,9 @@ Keep related definitions and their assets together. For example:
 
 ```text
 stemma.yaml
-stemma.lock.yaml
+stemma.lock/
+  MacSoftware/
+    chrome.yaml
 icons/
   chrome.png
 software/

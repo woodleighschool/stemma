@@ -47,7 +47,6 @@ spec:
 		t.Fatal(err)
 	}
 	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "prepare"}
-	lockPath := lockfile.Filename(root)
 
 	reports, err := InspectPlugins(t.Context(), opts, false)
 	if !errors.Is(err, ErrPluginsFailed) || len(reports) != 1 || !strings.Contains(reports[0].Error, "not locked") {
@@ -56,7 +55,7 @@ spec:
 	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "plugin provider did not load") {
 		t.Fatalf("prepare with an unlocked plugin: %v", err)
 	}
-	if locked, err := lockfile.Load(lockPath); err == nil && len(locked.Plugins) != 0 {
+	if locked, err := lockfile.Load(root); err == nil && len(locked.Plugins) != 0 {
 		t.Fatalf("prepare locked a plugin: %+v", locked.Plugins)
 	}
 
@@ -98,14 +97,14 @@ spec:
 	if err := os.WriteFile(filepath.Join(root, "local-plugin", "notes.txt"), []byte("rebuilt"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	reviewed, err := os.ReadFile(lockPath)
+	reviewed, err := testproject.ReadLock(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "changed since they were locked") {
 		t.Fatalf("prepare with changed plugin files: %v", err)
 	}
-	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
+	if current, err := testproject.ReadLock(root); err != nil || !bytes.Equal(current, reviewed) {
 		t.Fatalf("prepare changed the lockfile: %v", err)
 	}
 	opts.Method = "update"
@@ -114,7 +113,7 @@ spec:
 		t.Fatalf("stemma update did not relock changed plugin files: %+v %v", report.Plugins, err)
 	}
 
-	file, err := lockfile.Load(lockPath)
+	file, err := lockfile.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

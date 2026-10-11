@@ -79,7 +79,7 @@ func (s *session) catalogAt(ctx context.Context, opts Options) (_ catalog, err e
 		err = nil
 	}
 	if err == nil {
-		result.lock, err = lockfile.Load(lockfile.Filename(base))
+		result.lock, err = lockfile.Load(base)
 		if errors.Is(err, fs.ErrNotExist) {
 			err = nil
 		}
@@ -99,7 +99,7 @@ func (s *session) catalogAt(ctx context.Context, opts Options) (_ catalog, err e
 func changedSince(ctx context.Context, s *session, rev string, roots, profiles []string) (_ []string, err error) {
 	done := plugin.Stage(ctx, "Comparing with catalog", plugin.Detail(rev))
 	defer func() { done(err) }()
-	locked, err := lockfile.Load(lockfile.Filename(s.root))
+	locked, err := lockfile.Load(s.root)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}

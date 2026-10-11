@@ -85,7 +85,7 @@ spec:
 	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), `available subject IDs: ["." "Example.app" "Installers/Example.pkg"]`) {
 		t.Fatalf("missing subject: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "stemma.lock.yaml")); !os.IsNotExist(err) {
+	if _, err := os.Stat(lockfile.Path(root)); !os.IsNotExist(err) {
 		t.Fatalf("inspection wrote lock: %v", err)
 	}
 }

@@ -155,15 +155,12 @@ func branchName(kind, name string) string {
 	return prefix + kind + "/" + name
 }
 
-// proposes reports whether a published lockfile already records every change
-// of the set; an absent lockfile records no entries.
-func proposes(published []byte, set changeset) bool {
-	var file lockfile.File
-	if len(published) > 0 {
-		var err error
-		if file, err = lockfile.Parse(published); err != nil {
-			return false
-		}
+// proposes reports whether published lock documents already record every
+// change of the set; an absent lock records no entries.
+func proposes(published map[string][]byte, set changeset) bool {
+	file, err := lockfile.Decode(published)
+	if err != nil {
+		return false
 	}
 	for key, c := range set.changes {
 		if !equalEntries(file.Inputs[key], c.after) {

@@ -14,7 +14,6 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/icon"
-	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
@@ -215,14 +214,25 @@ kind: MacSoftware
 metadata: {name: vendor}
 spec:
   source: {url: %s/vendor.pkg}
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: reviewed}
+spec:
+  source: {path: reviewed.pkg}
 `, server.URL))
-	if err := os.WriteFile(lockfile.Filename(root), fmt.Appendf(nil, "version: %d\ninputs: {}\nplugins: {}\n", lockfile.Version), 0o600); err != nil {
+	// The project has a lock, which holds nothing for the vendor resource.
+	if err := os.WriteFile(filepath.Join(root, "reviewed.pkg"), installer, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	options := Options{ConfigPath: filepath.Join(root, "stemma.yaml"), CacheDir: t.TempDir(), Resources: []string{"MacSoftware/vendor"}, Icons: IconOptions{Presentation: icon.Raw}}
+	options := Options{ConfigPath: filepath.Join(root, "stemma.yaml"), CacheDir: t.TempDir(), Method: "update", Resources: []string{"MacSoftware/reviewed"}, Icons: IconOptions{Presentation: icon.Raw}}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	options.Resources = []string{"MacSoftware/vendor"}
 	for _, test := range []struct{ method, failure string }{
 		{"icon", ""},
-		{"signature", "inputs are missing or stale in the lockfile; run stemma update MacSoftware/vendor"},
+		{"signature", "inputs are missing from the lockfile; run stemma update MacSoftware/vendor"},
 		{"update", "HTTP 403"},
 	} {
 		t.Run(test.method, func(t *testing.T) {

@@ -138,7 +138,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(lockfile.Filename(root)); !os.IsNotExist(err) {
+	if _, err := os.Stat(lockfile.Path(root)); !os.IsNotExist(err) {
 		t.Fatal("candidate resolution wrote the lockfile")
 	}
 	if candidate.Lock.Version != 0 || len(candidate.Resources) != 6 {
@@ -180,7 +180,7 @@ spec:
 	if _, err := Run(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}
-	reviewed, err := lockfile.Load(lockfile.Filename(root))
+	reviewed, err := lockfile.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}

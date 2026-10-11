@@ -185,7 +185,7 @@ func TestOpenReleasesAPartialSessionOnFailure(t *testing.T) {
 	filename := filepath.Join(root, "stemma.yaml")
 	manifest := strings.Replace(policyProject, "  imports:\n", "  plugins:\n    missing:\n      path: plugins/missing\n  imports:\n", 1)
 	testproject.Write(t, filename, manifest)
-	if err := os.WriteFile(filepath.Join(root, "stemma.lock.yaml"), []byte("version: [\n"), 0o644); err != nil {
+	if err := errors.Join(os.Mkdir(lockfile.Path(root), 0o755), os.WriteFile(filepath.Join(lockfile.Path(root), "plugins.yaml"), []byte("version: [\n"), 0o644)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"})
@@ -351,7 +351,7 @@ spec:
 			if _, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}); err != nil {
 				t.Fatal(err)
 			}
-			locked, err := os.ReadFile(lockfile.Filename(root))
+			locked, err := testproject.ReadLock(root)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -386,7 +386,7 @@ spec:
 				if strings.Contains(logs.String(), "Preparation failed") || strings.Contains(logs.String(), "Destination failed") {
 					t.Fatalf("cancellation logged ordinary failures: %s", logs.String())
 				}
-				if after, err := os.ReadFile(lockfile.Filename(root)); err != nil || !bytes.Equal(after, locked) {
+				if after, err := testproject.ReadLock(root); err != nil || !bytes.Equal(after, locked) {
 					t.Fatalf("cancelled run changed the lockfile: %v", err)
 				}
 			} else {

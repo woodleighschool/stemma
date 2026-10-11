@@ -354,8 +354,7 @@ spec:
 		}
 	}
 	materialized = strings.TrimSpace(string(invoke(true, "artifact", "--offline", "MacSoftware/fixture")))
-	lockPath := filepath.Join(project, "stemma.lock.yaml")
-	reviewed, err := os.ReadFile(lockPath)
+	reviewed, err := testproject.ReadLock(project)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +362,7 @@ spec:
 	if unlocked := strings.TrimSpace(string(invoke(true, "artifact", "--no-input-lock", "MacSoftware/fixture"))); unlocked != materialized {
 		t.Fatalf("artifact --no-input-lock printed %s, want %s", unlocked, materialized)
 	}
-	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
+	if current, err := testproject.ReadLock(project); err != nil || !bytes.Equal(current, reviewed) {
 		t.Fatalf("artifact --no-input-lock changed the lockfile: %v", err)
 	}
 	invoke(false, "artifact", "--offline", "--no-input-lock", "MacSoftware/fixture")
@@ -385,7 +384,7 @@ spec:
 	if data, err := os.ReadFile(exported); err != nil || !bytes.Equal(data, beforeExport) {
 		t.Fatalf("prune changed export: %v", err)
 	}
-	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
+	if current, err := testproject.ReadLock(project); err != nil || !bytes.Equal(current, reviewed) {
 		t.Fatalf("prune changed lock: %v", err)
 	}
 	if _, err := os.Stat(materialized); !os.IsNotExist(err) {
@@ -403,7 +402,7 @@ spec:
 	if len(tried.Resources) != 1 || len(tried.Resources[0].Inputs) != 0 || len(tried.Resources[0].Artifacts) != 1 || !strings.Contains(tried.Resources[0].Artifacts[0].Signatures, "signer: apple:developer-id:SMLKBTR495") {
 		t.Fatalf("prepare: %+v", tried)
 	}
-	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
+	if current, err := testproject.ReadLock(project); err != nil || !bytes.Equal(current, reviewed) {
 		t.Fatalf("prepare changed the lockfile: %v", err)
 	}
 }
@@ -566,7 +565,7 @@ spec:
 			if _, err := engine.Run(t.Context(), engine.Options{ConfigPath: filename, CacheDir: cache, Method: "update"}); err != nil {
 				t.Fatal(err)
 			}
-			before, err := lockfile.Load(lockfile.Filename(project))
+			before, err := lockfile.Load(project)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -583,7 +582,7 @@ spec:
 			if err == nil || !strings.Contains(err.Error(), "HTTP 404") {
 				t.Fatalf("failed refresh silently reused its reviewed lock: %v", err)
 			}
-			after, err := lockfile.Load(lockfile.Filename(project))
+			after, err := lockfile.Load(project)
 			if err != nil {
 				t.Fatal(err)
 			}

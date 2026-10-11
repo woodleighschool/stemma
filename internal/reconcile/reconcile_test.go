@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -196,7 +197,7 @@ func (o origin) stage(t *testing.T, message string, files map[string]string) plu
 			if err := os.RemoveAll(path); err != nil {
 				t.Fatal(err)
 			}
-		} else if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		} else if err := errors.Join(os.MkdirAll(filepath.Dir(path), 0o755), os.WriteFile(path, []byte(content), 0o644)); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := tree.Add(name); err != nil {
@@ -246,22 +247,64 @@ func (o origin) commitBranch(t *testing.T, branch string, files map[string]strin
 	}
 }
 
-// lock reads the lockfile a branch holds.
+// lock reads the lock a branch holds.
 func (o origin) lock(t *testing.T, branch string) lockfile.File {
 	t.Helper()
-	file, err := o.commitObject(t, o.tip(branch)).File("stemma.lock.yaml")
+	return lockAt(t, o.commitObject(t, o.tip(branch)))
+}
+
+// lockDocuments reads the lock documents a commit holds, by repository path.
+func lockDocuments(t *testing.T, commit *object.Commit) map[string]string {
+	t.Helper()
+	documents := map[string]string{}
+	files, err := commit.Files()
 	if err != nil {
 		t.Fatal(err)
 	}
-	contents, err := file.Contents()
+	err = files.ForEach(func(file *object.File) error {
+		if !strings.HasPrefix(file.Name, "stemma.lock/") {
+			return nil
+		}
+		contents, err := file.Contents()
+		documents[file.Name] = contents
+		return err
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	locked, err := lockfile.Parse([]byte(contents))
+	return documents
+}
+
+// lockAt decodes the lock a commit holds.
+func lockAt(t *testing.T, commit *object.Commit) lockfile.File {
+	t.Helper()
+	documents := map[string][]byte{}
+	for name, contents := range lockDocuments(t, commit) {
+		documents[name] = []byte(contents)
+	}
+	locked, err := lockfile.Decode(documents)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return locked
+}
+
+// lockFiles reads a project's lock documents as files to commit.
+func lockFiles(t *testing.T, root string) map[string]string {
+	t.Helper()
+	locked, err := lockfile.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	documents, err := lockfile.Encode(locked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{}
+	for name, data := range documents {
+		files[name] = string(data)
+	}
+	return files
 }
 
 // commitObject reads a commit from the bare repository.
@@ -444,15 +487,12 @@ func (f *fakeGitHub) squash(t *testing.T, number int) {
 	f.mu.Lock()
 	pull := f.pulls[number-1]
 	f.mu.Unlock()
-	file, err := f.origin.commitObject(t, f.origin.tip(pull.Head.Ref)).File("stemma.lock.yaml")
-	if err != nil {
-		t.Fatal(err)
+	files := map[string]string{}
+	for name := range lockDocuments(t, f.origin.commitObject(t, f.origin.tip("main"))) {
+		files[name] = ""
 	}
-	contents, err := file.Contents()
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.origin.commit(t, pull.Title, map[string]string{"stemma.lock.yaml": contents})
+	maps.Copy(files, lockDocuments(t, f.origin.commitObject(t, f.origin.tip(pull.Head.Ref))))
+	f.origin.commit(t, pull.Title, files)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	merged := time.Now().UTC().Format(time.RFC3339)
@@ -590,17 +630,11 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	if proposal.Author.Name != "stemma-fixture[bot]" || proposal.Author.Email != botEmail || proposal.Committer.Email != botEmail || !strings.Contains(proposal.Message, trailer) {
 		t.Fatalf("proposal commit identity: %s", proposal)
 	}
-	file, err := proposal.File("stemma.lock.yaml")
-	if err != nil {
-		t.Fatal(err)
+	if documents := lockDocuments(t, proposal); len(documents) != 1 || documents["stemma.lock/MacSoftware/fixture.yaml"] == "" {
+		t.Fatalf("proposed lock documents: %v", documents)
 	}
-	contents, err := file.Contents()
-	if err != nil {
-		t.Fatal(err)
-	}
-	locked, err := lockfile.Parse([]byte(contents))
-	if err != nil || locked.Inputs["stemma/v1alpha1/MacSoftware/fixture"]["source"].Content.Filename != "fixture.pkg" {
-		t.Fatalf("proposed lock: %v %+v", err, locked)
+	if locked := lockAt(t, proposal); locked.Inputs["stemma/v1alpha1/MacSoftware/fixture"]["source"].Content.Filename != "fixture.pkg" {
+		t.Fatalf("proposed lock: %+v", locked)
 	}
 	pulls := gh.open()
 	if len(pulls) != 1 || pulls[0].Head.Ref != branch || pulls[0].Title != "Update MacSoftware/fixture to 1.0" || !strings.Contains(pulls[0].Body, "| Source | `source` added: `fixture.pkg` |") || !strings.Contains(pulls[0].Body, "| repo | Upload ") {
@@ -681,13 +715,13 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	// Removing a document leaves stale entries: apply fails and the lock
 	// refresh proposes dropping them.
 	o.commit(t, "retire fixture", map[string]string{"fixture.software.yaml": ""})
-	seventh := run("stale")
+	seventh := run("no longer declared")
 	if seventh.Apply.Error == "" || len(seventh.Update.Proposals) != 1 || seventh.Update.Proposals[0].Action != "created" || seventh.Update.Proposals[0].Name != refreshName {
 		t.Fatalf("cleanup proposal: %+v", seventh)
 	}
 	cleanup := o.tip(refreshBranch)
-	if _, err := o.commitObject(t, cleanup).File("stemma.lock.yaml"); !errors.Is(err, object.ErrFileNotFound) || gh.open()[0].Title != "Refresh locks" {
-		t.Fatalf("cleanup branch: %v %+v", err, gh.open())
+	if documents := lockDocuments(t, o.commitObject(t, cleanup)); len(documents) != 0 || gh.open()[0].Title != "Refresh locks" {
+		t.Fatalf("cleanup branch: %v %+v", documents, gh.open())
 	}
 	if pull := gh.open()[0]; !strings.Contains(pull.Body, "| `MacSoftware/fixture` | Removed |  |") || !strings.Contains(pull.Body, "The reviewed branch can't apply until this merges.") {
 		t.Fatalf("cleanup body: %s", pull.Body)
@@ -698,14 +732,14 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 
 	// Closing the proposal without merging declines it until it changes.
 	gh.closeAll()
-	eighth := run("stale")
+	eighth := run("no longer declared")
 	if eighth.Update.Proposals[0].Action != "declined" || len(gh.open()) != 0 || o.tip(refreshBranch) != cleanup {
 		t.Fatalf("declined proposal was reopened: %+v", eighth.Update.Proposals)
 	}
 
 	// An unrelated change to the reviewed branch does not revive it.
 	o.commit(t, "unrelated change", map[string]string{"README.md": "catalog\n"})
-	ninth := run("stale")
+	ninth := run("no longer declared")
 	if ninth.Update.Proposals[0].Action != "declined" || len(gh.open()) != 0 || o.tip(refreshBranch) != cleanup {
 		t.Fatalf("declined proposal was revived by a base move: %+v", ninth.Update.Proposals)
 	}
@@ -1066,11 +1100,7 @@ func TestRunLeavesSuspendedResourcesAlone(t *testing.T) {
 	if _, err := engine.Run(t.Context(), engine.Options{ConfigPath: filepath.Join(local, "stemma.yaml"), CacheDir: t.TempDir(), Method: "update", Resources: []string{"MacSoftware/private"}}); err != nil {
 		t.Fatal(err)
 	}
-	lock, err := os.ReadFile(lockfile.Filename(local))
-	if err != nil {
-		t.Fatal(err)
-	}
-	files["stemma.lock.yaml"] = string(lock)
+	maps.Copy(files, lockFiles(t, local))
 	o := newOrigin(t, files)
 	gh := newFakeGitHub(t, o)
 	checkout := filepath.Join(t.TempDir(), "checkout")
@@ -1170,11 +1200,7 @@ func TestRunRefreshesLocksInOneProposal(t *testing.T) {
 	if _, err := engine.Run(t.Context(), engine.Options{ConfigPath: filepath.Join(o.dir, "stemma.yaml"), CacheDir: t.TempDir(), Method: "update"}); err != nil {
 		t.Fatal(err)
 	}
-	lock, err := os.ReadFile(filepath.Join(o.dir, "stemma.lock.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	o.commit(t, "review inputs", map[string]string{"stemma.lock.yaml": string(lock)})
+	o.commit(t, "review inputs", lockFiles(t, o.dir))
 	reviewed := o.lock(t, "main")
 	gh := newFakeGitHub(t, o)
 	checkout := filepath.Join(t.TempDir(), "checkout")
@@ -1318,9 +1344,9 @@ func TestRunStopsOnceWhenTheReviewedProjectDoesNotLoad(t *testing.T) {
 	t.Setenv("GITHUB_APP_INSTALLATION_ID", "7")
 	t.Setenv("GITHUB_APP_PRIVATE_KEY", testKey(t))
 	o := newOrigin(t, map[string]string{
-		"stemma.yaml":           project(filepath.Join(t.TempDir(), "munki")),
-		"fixture.software.yaml": software("https://downloads.example"),
-		"stemma.lock.yaml":      "version: 2\ninputs: {}\n",
+		"stemma.yaml":                          project(filepath.Join(t.TempDir(), "munki")),
+		"fixture.software.yaml":                software("https://downloads.example"),
+		"stemma.lock/MacSoftware/fixture.yaml": "version: 2\ninputs: {}\n",
 	})
 	gh := newFakeGitHub(t, o)
 	checkout := filepath.Join(t.TempDir(), "checkout")
@@ -1329,7 +1355,7 @@ func TestRunStopsOnceWhenTheReviewedProjectDoesNotLoad(t *testing.T) {
 	}
 	head := o.tip("main")
 	report, err := Run(t.Context(), Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()})
-	want := "main@" + short(head) + ": lockfile: version 2 is not supported; delete it and run stemma update"
+	want := "main@" + short(head) + ": lockfile: stemma.lock/MacSoftware/fixture.yaml: version 2 is not supported; delete it and run stemma update"
 	if err == nil || errors.Is(err, ErrFailed) || err.Error() != want || report.Error != want {
 		t.Fatalf("run error %v, want %q", err, want)
 	}
@@ -1390,16 +1416,11 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	lockPath := filepath.Join(o.dir, "stemma.lock.yaml")
-	reviewedBytes, err := os.ReadFile(lockPath)
+	reviewed, err := lockfile.Load(o.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reviewed, err := lockfile.Parse(reviewedBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	o.commit(t, "review inputs", map[string]string{"stemma.lock.yaml": string(reviewedBytes)})
+	o.commit(t, "review inputs", lockFiles(t, o.dir))
 	gh := newFakeGitHub(t, o)
 	checkout := filepath.Join(t.TempDir(), "checkout")
 	if _, err := gogit.PlainCloneContext(t.Context(), checkout, &gogit.CloneOptions{URL: gh.remote(), ClientOptions: []client.Option{gh.auth()}}); err != nil {
@@ -1456,18 +1477,15 @@ spec:
 	}
 	for _, proposal := range report.Update.Proposals {
 		name := strings.TrimPrefix(proposal.Name, "MacSoftware/")
-		file, err := o.commitObject(t, o.tip(proposal.Branch)).File("stemma.lock.yaml")
-		if err != nil {
-			t.Fatal(err)
+		// A proposal changes its resource's lock document and no other, so
+		// proposals for different resources never touch the same file.
+		tip, main := lockDocuments(t, o.commitObject(t, o.tip(proposal.Branch))), lockDocuments(t, o.commitObject(t, o.tip("main")))
+		for document := range tip {
+			if changed := tip[document] != main[document]; changed != (document == "stemma.lock/MacSoftware/"+name+".yaml") {
+				t.Fatalf("proposal %s: %s changed=%t", proposal.Name, document, changed)
+			}
 		}
-		contents, err := file.Contents()
-		if err != nil {
-			t.Fatal(err)
-		}
-		locked, err := lockfile.Parse([]byte(contents))
-		if err != nil {
-			t.Fatal(err)
-		}
+		locked := o.lock(t, proposal.Branch)
 		for key, entries := range reviewed.Inputs {
 			if key == "stemma/v1alpha1/MacSoftware/"+name {
 				if equalEntries(entries, locked.Inputs[key]) {
@@ -1494,8 +1512,7 @@ spec:
 	if len(entries) != 1 {
 		t.Fatalf("proposal wrote destinations: %v", entries)
 	}
-	current, err := os.ReadFile(lockPath)
-	if err != nil || string(current) != string(reviewedBytes) {
+	if current, err := lockfile.Load(o.dir); err != nil || !reflect.DeepEqual(current, reviewed) {
 		t.Fatalf("reviewed lock changed: %v", err)
 	}
 

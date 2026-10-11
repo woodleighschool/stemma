@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/icon"
+	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
@@ -230,7 +231,7 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 		t.Fatalf("forced run: %v", got)
 	}
 	assetIs("example", bundleArtwork)
-	if _, err := os.Stat(filepath.Join(root, "stemma.lock.yaml")); err != nil {
+	if _, err := os.Stat(lockfile.Path(root)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -303,7 +304,7 @@ spec:
 	if _, err := Run(t.Context(), opts); err != nil {
 		t.Fatal(err)
 	}
-	lock, err := os.ReadFile(filepath.Join(root, "stemma.lock.yaml"))
+	lock, err := testproject.ReadLock(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +322,7 @@ spec:
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("input artwork differs: %v", err)
 	}
-	after, err := os.ReadFile(filepath.Join(root, "stemma.lock.yaml"))
+	after, err := testproject.ReadLock(root)
 	if err != nil || !bytes.Equal(lock, after) {
 		t.Fatalf("icon changed source lock: %v", err)
 	}
@@ -521,7 +522,7 @@ func TestIconFromLocalSourceNeedsNoLockOrCache(t *testing.T) {
 	outcome("unchanged", bundleArtwork)
 	options.Icons.Force = true
 	outcome("created raw", artwork)
-	for _, path := range []string{cache, filepath.Join(root, "stemma.lock.yaml")} {
+	for _, path := range []string{cache, lockfile.Path(root)} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("local icon touched %s: %v", path, err)
 		}

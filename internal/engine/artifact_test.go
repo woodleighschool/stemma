@@ -52,7 +52,7 @@ spec:
 		}
 		return plugin.ReconcileResponse{}, nil
 	}}}
-	lockPath := filepath.Join(root, "stemma.lock.yaml")
+	lockPath := lockfile.Path(root)
 	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "run stemma update") {
 		t.Fatalf("artifact prepared an unreviewed input: %v", err)
 	}
@@ -64,7 +64,7 @@ spec:
 	if _, err := Run(t.Context(), update); err != nil {
 		t.Fatal(err)
 	}
-	reviewed, err := os.ReadFile(lockPath)
+	reviewed, err := testproject.ReadLock(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ spec:
 			t.Fatal(err)
 		}
 	}
-	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
+	if current, err := testproject.ReadLock(root); err != nil || !bytes.Equal(current, reviewed) {
 		t.Fatalf("artifact changed the lockfile: %v", err)
 	}
 	options.Output = "uninstaller"
@@ -131,8 +131,7 @@ spec:
 	if _, err := Run(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}
-	lockPath := filepath.Join(root, "stemma.lock.yaml")
-	reviewed, err := os.ReadFile(lockPath)
+	reviewed, err := testproject.ReadLock(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +155,7 @@ spec:
 	if installer := report.Resources[0].Artifacts["installer"]; installer.Version != "2.0.0" || filepath.Base(report.Artifact) != installer.Filename {
 		t.Fatalf("artifact %s for %+v", report.Artifact, installer)
 	}
-	if current, err := os.ReadFile(lockPath); err != nil || !bytes.Equal(current, reviewed) {
+	if current, err := testproject.ReadLock(root); err != nil || !bytes.Equal(current, reviewed) {
 		t.Fatalf("--no-input-lock changed the lockfile: %v", err)
 	}
 }

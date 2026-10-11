@@ -367,7 +367,7 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 	if err != nil || len(p.Plugins) == 0 {
 		return ops, err
 	}
-	locked, err := lockfile.Load(lockfile.Filename(manager.Root))
+	locked, err := lockfile.Load(manager.Root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}

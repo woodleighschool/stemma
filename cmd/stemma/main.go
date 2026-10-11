@@ -217,7 +217,7 @@ func (c *cli) mcpCommand() *cobra.Command {
 }
 
 var runShort = map[string]string{
-	"update":    "Resolve current sources and atomically update the lockfile",
+	"update":    "Resolve current sources and update their lock documents",
 	"prepare":   "Prepare resources from the lockfile without publication",
 	"signature": "Derive signed or unsigned expectations for each signing subject",
 	"icon":      "Create declared icon assets from the artwork prepared software carries",

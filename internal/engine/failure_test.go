@@ -64,7 +64,7 @@ spec:
 			if _, err := Run(t.Context(), opts); err != nil {
 				t.Fatal(err)
 			}
-			before, err := os.ReadFile(lockfile.Filename(root))
+			before, err := testproject.ReadLock(root)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -103,7 +103,7 @@ spec:
 			if method == "apply" && !slices.Equal(published, []string{"z"}) {
 				t.Fatalf("independent resource was not published: %v", published)
 			}
-			after, err := os.ReadFile(lockfile.Filename(root))
+			after, err := testproject.ReadLock(root)
 			if err != nil || string(before) != string(after) || report.LockChanged != nil && *report.LockChanged {
 				t.Fatalf("failed run changed reviewed entries: %+v, %v", report, err)
 			}
@@ -155,7 +155,7 @@ spec:
 	if _, err := Run(t.Context(), opts); err != nil {
 		t.Fatal(err)
 	}
-	before, err := os.ReadFile(lockfile.Filename(root))
+	before, err := testproject.ReadLock(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ spec:
 	if err == nil || len(report.Resources) != 3 || !strings.Contains(report.Resources[0].Error, "run stemma update") || len(report.Resources[1].BlockedBy) != 1 || !strings.Contains(report.Resources[2].Error, "run stemma update") || report.LockChanged != nil {
 		t.Fatalf("preparation did not fail on unreviewed inputs: %+v, %v", report, err)
 	}
-	after, err := os.ReadFile(lockfile.Filename(root))
+	after, err := testproject.ReadLock(root)
 	if err != nil || string(before) != string(after) {
 		t.Fatalf("preparation wrote the lockfile: %v", err)
 	}
