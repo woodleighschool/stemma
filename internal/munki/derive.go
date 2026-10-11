@@ -235,7 +235,7 @@ func Derive[C any](request plugin.ReconcileRequest[C]) (Derived, error) {
 		}
 	}
 	if _, exists := values["version"]; !exists && (kind == "pkg" || kind == "copy_from_dmg") {
-		return Derived{}, errors.New("the prepared installer has no managed version; select an application or set pkginfo.version")
+		return Derived{}, fmt.Errorf("the prepared installer has no managed version%s; select an application or set pkginfo.version%s", componentVersions(facts), sourceVersion(request.Artifact))
 	}
 	// The method follows the installer, and an item with a method is
 	// uninstallable unless the declaration says otherwise.
@@ -262,6 +262,37 @@ func Derive[C any](request plugin.ReconcileRequest[C]) (Derived, error) {
 		}
 	}
 	return result, nil
+}
+
+// componentVersions lists the versions of a package's components, which leave
+// it without one of its own when they differ.
+func componentVersions(facts plugin.Facts) string {
+	var listed []string
+	for _, subject := range facts.Subjects {
+		if pkg := subject.Package; pkg != nil && pkg.Identifier != "" {
+			listed = append(listed, strings.TrimSpace(pkg.Identifier+" "+pkg.Version))
+		}
+	}
+	const shown = 6
+	switch {
+	case len(listed) < 2:
+		return ""
+	case len(listed) > shown:
+		return fmt.Sprintf(": its components carry %s and %d more", strings.Join(listed[:shown], ", "), len(listed)-shown)
+	}
+	return ": its components carry " + strings.Join(listed, ", ")
+}
+
+// sourceVersion names the version the source states for its input, which a
+// declaration can adopt.
+func sourceVersion(artifact plugin.Artifact) string {
+	var source struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(artifact.Evidence["source"], &source) != nil || source.Version == "" {
+		return ""
+	}
+	return fmt.Sprintf("; the source states %s as evidence.source.version", source.Version)
 }
 
 func hasEntries(value any) bool {

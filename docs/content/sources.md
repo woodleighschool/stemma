@@ -118,6 +118,13 @@ The group captures dotted numbers such as `6.3.5`, compared number by number, so
 betas out with the pattern. Two different URLs at the highest version fail too. The
 captured version becomes the input's version, as a GitHub release tag does.
 
+An input's version is evidence about the source. A build reads it as
+`inputs.<name>.version`, and destination metadata as `evidence.source.version`.
+Mac software takes its managed version from the installer or the selected
+application, never from the source, so the two can differ; a declaration that
+wants the source's version says so, as in
+`version: "{{ evidence.source.version }}"`.
+
 ## Follow Homebrew releases
 
 Homebrew casks and bottles provide download hashes, so `stemma update` checks for

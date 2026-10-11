@@ -471,7 +471,8 @@ func TestPackageApplicationDetectionIsExplicit(t *testing.T) {
 	if err := pkgbuild.Build(t.Context(), root, filename, pkgbuild.Options{Identifier: "org.example.installer", Version: "2.0", InstallLocation: "/Applications", Payload: ".", Compression: pkgbuild.Gzip}); err != nil {
 		t.Fatal(err)
 	}
-	input := plugin.Artifact{Path: filename, Filename: "Installer.pkg", Format: "pkg", Evidence: map[string]json.RawMessage{
+	input := plugin.Artifact{Path: filename, Filename: "Installer.pkg", Format: "pkg", Version: "1.8", Evidence: map[string]json.RawMessage{
+		"source":            json.RawMessage(`{"version":"2026.3"}`),
 		"macos.application": json.RawMessage(`{"id":"old","app":{"bundle_id":"org.example.stale"}}`),
 		"macos.version_key": json.RawMessage(`"CFBundleVersion"`),
 	}}
@@ -480,7 +481,7 @@ func TestPackageApplicationDetectionIsExplicit(t *testing.T) {
 		t.Fatal(err)
 	}
 	installer := outputs["installer"]
-	if installer.Version != "2.0" || installer.Evidence["macos.application"] != nil || installer.Evidence["macos.version_key"] != nil || len(topLevel(installer.Facts)) != 1 {
+	if installer.Version != "2.0" || string(installer.Evidence["source"]) != `{"version":"2026.3"}` || installer.Evidence["macos.application"] != nil || installer.Evidence["macos.version_key"] != nil || len(topLevel(installer.Facts)) != 1 {
 		t.Fatalf("installer evidence = %+v", installer)
 	}
 	derived, err := munki.Derive(plugin.ReconcileRequest[json.RawMessage]{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "Installer"}}, Artifact: installer})

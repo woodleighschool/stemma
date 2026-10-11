@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -512,7 +513,14 @@ func (e *execution) input(input plugin.Input, entry source.Entry) (Prepared, err
 		if err != nil {
 			return Prepared{}, err
 		}
-		return Prepared{Payload: ref, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, Version: entry.InputVersion, ContentRoot: entry.ContentRoot, InputsHash: entry.Content.SHA256, Evidence: entry.Evidence}, nil
+		evidence := maps.Clone(entry.Evidence)
+		if entry.InputVersion != "" {
+			if evidence == nil {
+				evidence = map[string]json.RawMessage{}
+			}
+			evidence["source"], _ = json.Marshal(map[string]string{"version": entry.InputVersion})
+		}
+		return Prepared{Payload: ref, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, Version: entry.InputVersion, ContentRoot: entry.ContentRoot, InputsHash: entry.Content.SHA256, Evidence: evidence}, nil
 	}
 	ref := input.Resource
 	producer := e.prepared[ref.Key()]

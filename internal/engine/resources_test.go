@@ -636,3 +636,36 @@ func TestProfiledResourcesRunOnlyWhenSelected(t *testing.T) {
 		t.Fatalf("update without a profile lost the profiled resource's lock: %v %v %+v", keys(report), err, locked())
 	}
 }
+
+func TestInputsKeepSourceAndResourceVersionsSeparate(t *testing.T) {
+	store, err := cas.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := store.Import(t.Context(), strings.NewReader("installer"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := source.Entry{Content: source.Content{SHA256: ref.SHA256}, InputVersion: "2026.3", Evidence: map[string]json.RawMessage{"publisher": json.RawMessage(`"vendor"`)}}
+	execution := execution{session: &session{store: store}}
+	input, err := execution.input(plugin.Input{}, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(input.Evidence["source"]) != `{"version":"2026.3"}` || string(input.Evidence["publisher"]) != `"vendor"` {
+		t.Fatalf("source evidence = %v", input.Evidence)
+	}
+	if entry.Evidence["source"] != nil {
+		t.Fatal("creating an input changed its reviewed source entry")
+	}
+	input.Version = "2.0"
+	resource := plugin.ResourceReference{APIVersion: "stemma/v1alpha1", Kind: "MacSoftware", Name: "vendor"}
+	execution.prepared = map[string]preparedResource{resource.Key(): {ready: true, outputs: map[string]Prepared{"installer": input}}}
+	output, err := execution.input(plugin.Input{Resource: &plugin.ResourceOutputReference{ResourceReference: resource}}, source.Entry{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output.Version != "2.0" || string(output.Evidence["source"]) != `{"version":"2026.3"}` {
+		t.Fatalf("resource replaced source evidence with its version: %+v", output)
+	}
+}

@@ -45,6 +45,10 @@ substitutions inside script text remain shell syntax.
 | `evidence` | Namespaced metadata supplied with the prepared artifact                                      | Destination metadata          |
 | `inputs`   | Named builder inputs: `version`, `filename`, `sha256`, `size`, `format`, `evidence`, `facts` | Builder preparation           |
 
+`evidence.source.version` is the version the source states for its input, when
+it states one: a Homebrew cask's, a release tag or a `match` pattern's `version`
+group.
+
 Names containing punctuation use brackets, such as
 `evidence['vendor.release'].version`. Builder inputs expose portable metadata,
 not runner paths. A downloaded input may have no declared version.

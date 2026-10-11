@@ -3,6 +3,7 @@ package munki_test
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/munki"
@@ -106,8 +107,13 @@ func TestDerivedPackageMetadata(t *testing.T) {
 		t.Fatal("derived removal overrode declared uninstallable")
 	}
 	request.Artifact.Version = ""
-	if _, err := munki.Derive(request); err == nil {
-		t.Fatal("a package without a managed version was accepted")
+	if _, err := munki.Derive(request); err == nil || !strings.Contains(err.Error(), "no managed version: its components carry example.alpha 4.5.6, example.beta 7.8.9, example.scripts 1.0; ") {
+		t.Fatalf("a package without a managed version: %v", err)
+	}
+	// The version the source states is offered, never taken.
+	request.Artifact.Evidence = map[string]json.RawMessage{"source": json.RawMessage(`{"version":"9.8.3"}`)}
+	if _, err := munki.Derive(request); err == nil || !strings.Contains(err.Error(), "set pkginfo.version; the source states 9.8.3 as evidence.source.version") {
+		t.Fatalf("missing version beside a source version: %v", err)
 	}
 }
 
