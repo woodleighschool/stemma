@@ -1,13 +1,16 @@
 package mcpserver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/woodleighschool/stemma/internal/engine"
@@ -26,13 +29,29 @@ type inspectInput struct {
 	Resource string `json:"resource" jsonschema:"Resource as Kind/name."`
 	Input    string `json:"input" jsonschema:"Declared input name, such as vendor."`
 	Path     string `json:"path,omitempty" jsonschema:"Optional path within the input; omitted inventories the source."`
+	Read     string `json:"read,omitempty" jsonschema:"Return this text file inside the input instead of its facts: a path in a disk image, archive or folder, continuing into a package as an entry such as Distribution or a file below a component's Scripts or Payload. A directory returns the names it holds, and . names the root."`
 }
 
 type inspection struct {
 	Resource string             `json:"resource"`
 	Input    string             `json:"input"`
 	Artifact *engine.Inspection `json:"artifact,omitempty"`
+	Content  *string            `json:"content,omitempty"`
 	Error    string             `json:"error,omitempty"`
+}
+
+// maxRead bounds the file a tool result carries.
+const maxRead = 256 << 10
+
+// textFile holds a file up to maxRead. Write is its only way in: a buffer's
+// own ReadFrom would let a copy pass the bound.
+type textFile struct{ data bytes.Buffer }
+
+func (f *textFile) Write(p []byte) (int, error) {
+	if f.data.Len()+len(p) > maxRead {
+		return 0, fmt.Errorf("the file exceeds the %d KiB a tool result carries", maxRead>>10)
+	}
+	return f.data.Write(p)
 }
 
 func (c catalog) inspect(ctx context.Context, _ *mcp.CallToolRequest, in inspectInput) (*mcp.CallToolResult, inspection, error) {
@@ -40,10 +59,20 @@ func (c catalog) inspect(ctx context.Context, _ *mcp.CallToolRequest, in inspect
 	opts.Resources = []string{in.Resource}
 	opts.Input = engine.InputSelection{Name: in.Input, Path: in.Path}
 	opts.Lock.IgnoreInputs = true
+	var file textFile
+	if in.Read != "" {
+		opts.Read, opts.ReadTo = in.Read, &file
+	}
 	report, err := engine.Run(ctx, opts)
+	if err == nil && !utf8.Valid(file.data.Bytes()) {
+		err = errors.New("the file is not UTF-8 text")
+	}
 	result := inspection{Resource: in.Resource, Input: in.Input, Artifact: report.Inspection}
 	if err != nil {
 		result.Error = err.Error()
+	} else if in.Read != "" {
+		content := file.data.String()
+		result.Content = &content
 	}
 	return outcome(err), result, nil
 }

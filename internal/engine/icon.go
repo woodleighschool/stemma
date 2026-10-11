@@ -246,7 +246,10 @@ func (e *execution) inputIcon(ctx context.Context) error {
 		return e.complete(ctx, &e.report.Resources[len(e.report.Resources)-1])
 	}
 	return e.withInput(ctx, func(ctx context.Context, input Prepared, work string, item *ResourceReport) error {
-		var err error
+		input, err := materialize(ctx, e.session.store, input, filepath.Join(work, "input"))
+		if err != nil {
+			return err
+		}
 		item.Icon, err = createIcon(ctx, e.opts.Icons, e.session.root, plan, input, e.opts.Input, work)
 		return err
 	})

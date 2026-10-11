@@ -17,12 +17,16 @@ type textStyle struct {
 	enabled bool
 }
 
-func terminalOutput(out io.Writer) bool {
+func isTerminal(out io.Writer) bool {
 	if writer, ok := out.(finalWriter); ok {
 		out = writer.Writer
 	}
 	file, ok := out.(*os.File)
-	return ok && term.IsTerminal(int(file.Fd())) && os.Getenv("TERM") != "dumb"
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+func terminalOutput(out io.Writer) bool {
+	return isTerminal(out) && os.Getenv("TERM") != "dumb"
 }
 
 func newTextStyle(out io.Writer) textStyle {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -44,7 +45,11 @@ type Options struct {
 	Output string
 	// OutputFile exports the selected artifact outside the disposable cache.
 	OutputFile string
-	Handlers   map[string]reconcileHandler
+	// Read names a file inside the selected artifact or input. The artifact
+	// and inspect methods write it to ReadTo in place of their own result.
+	Read     string
+	ReadTo   io.Writer
+	Handlers map[string]reconcileHandler
 	// ResourceDone receives each final resource result, including failures.
 	ResourceDone func(ResourceReport) error
 }
@@ -65,6 +70,16 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		}
 	default:
 		return report, fmt.Errorf("unsupported run method %q", opts.Method)
+	}
+	if opts.Read != "" {
+		switch {
+		case opts.Method != "artifact" && opts.Method != "inspect":
+			return report, fmt.Errorf("%s reads no file inside an artifact", opts.Method)
+		case opts.ReadTo == nil:
+			return report, errors.New("read requires a writer")
+		case opts.OutputFile != "" || opts.Input.Path != "":
+			return report, errors.New("read replaces the artifact export and the subject path")
+		}
 	}
 	if opts.ChangedSince != "" && (opts.Method != "prepare" || len(opts.Resources) > 0) {
 		return report, errors.New("changed-since selects the resources prepare runs; remove the selectors")
@@ -378,10 +393,13 @@ func (e *execution) materialize(ctx context.Context) error {
 	output := cmp.Or(e.opts.Output, "installer")
 	artifact, ok := prepared.outputs[output]
 	var err error
-	if ok {
-		e.report.Artifact, err = expose(resourceContext(ctx, e.plans[key].Resource), e.session.store, artifact, filepath.Join(prepared.work, "materialized"), e.opts.OutputFile)
-	} else {
+	switch {
+	case !ok:
 		err = fmt.Errorf("no %s output; the resource prepares %s", output, strings.Join(sortedKeys(prepared.outputs), ", "))
+	case e.opts.Read != "":
+		err = e.readStored(resourceContext(ctx, e.plans[key].Resource), artifact, filepath.Join(prepared.work, "read"))
+	default:
+		e.report.Artifact, err = expose(resourceContext(ctx, e.plans[key].Resource), e.session.store, artifact, filepath.Join(prepared.work, "materialized"), e.opts.OutputFile)
 	}
 	if err != nil {
 		item.Error = err.Error()

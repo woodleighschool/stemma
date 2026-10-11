@@ -149,6 +149,22 @@ pkgutil --check-signature "$(stemma artifact MacSoftware/foo)"
 stemma artifact MacSoftware/foo --output-file ./foo.pkg
 ```
 
+`--read PATH` prints one file inside the artifact instead of its path. The cached
+artifact is verified and read where it is; nothing is copied out. Inside a
+package, name an entry such as `Distribution`, or a file in a component's
+`Scripts` or `Payload` archive, which is decoded up to that file. Inside a disk
+image, archive or folder, name a path; it continues into a package found there. A
+directory prints the names it holds, and `.` names the root. The path stays inside
+the artifact: it takes no absolute or parent path and follows no symlink. A
+redirect or pipe receives the file's bytes as they are. Terminal output rejects
+NUL and escape bytes but does not require UTF-8:
+
+```sh
+stemma artifact MacSoftware/foo --read .
+stemma artifact MacSoftware/foo --read Distribution
+stemma artifact MacSoftware/foo --read Foo.pkg/Scripts/postinstall
+```
+
 `--offline` requires cached network inputs and plugins; destination calls
 are still allowed. Only `plan` is the publication dry run. See
 [sources](sources.md) for lock behaviour.
@@ -196,6 +212,7 @@ same registry and schema composition as project generation.
 `inspect` inventories a local file, directory or archive without executing it or
 loading a project. `--json` prints its facts; `--path` filters by subject path. Pass it
 the path `artifact` prints to inspect what Stemma prepares for a resource.
+`--read PATH` prints one file inside it instead, as `artifact --read` does.
 
 To inspect a named input before its build expressions can resolve, use:
 
@@ -207,7 +224,9 @@ This reads the locked input without building the selected resource. Omit `--path
 to inventory the source; add `--no-input-lock` to inspect current sources without
 writing the lockfile. MCP `inspect` takes `resource`, `input` and an optional `path`
 and uses current sources. Both return the subject IDs and static facts used by
-`inputs.<name>.facts` expressions. Selecting a package inside an archive returns
+`inputs.<name>.facts` expressions. `--read PATH`, or MCP `read`, returns one file
+inside the input instead; MCP returns UTF-8 text up to 256 KiB, including control
+characters escaped by JSON. Selecting a package inside an archive returns
 its inventory entry. Inspect the package itself to read its receipts and payload.
 `validate` needs no credentials. `validate --resolved` also evaluates every
 environment value, as runs do, and prints the merged configuration with connection

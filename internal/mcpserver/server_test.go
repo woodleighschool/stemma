@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/icon"
+	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 )
 
 const project = `apiVersion: stemma/v1alpha1
@@ -361,7 +363,84 @@ func TestInspectToolReadsCurrentInputWithoutLocking(t *testing.T) {
 	if inspected.Artifact == nil || len(inspected.Artifact.Facts.Subjects) < 2 {
 		t.Fatalf("input inspection: %+v", inspected)
 	}
-	if _, err := os.Stat(filepath.Join(root, "stemma.lock.yaml")); !os.IsNotExist(err) {
+	var read inspection
+	call(t, session, "inspect", map[string]any{"resource": "MacSoftware/app", "input": "source", "read": "PackageInfo"}, &read)
+	if read.Artifact != nil || read.Content == nil || !strings.Contains(*read.Content, "<pkg-info") {
+		t.Fatalf("input read: %+v", read)
+	}
+	if failed := callFailing(t, session, "inspect", map[string]any{"resource": "MacSoftware/app", "input": "source", "read": "Bom"}); !strings.Contains(failed.Content[0].(*mcp.TextContent).Text, "the file is not UTF-8 text") {
+		t.Fatalf("binary read: %+v", failed.Content[0])
+	}
+	if _, err := os.Stat(filepath.Join(root, "stemma.lock")); !os.IsNotExist(err) {
 		t.Fatalf("inspection wrote an input lock: %v", err)
+	}
+}
+
+func TestInspectToolReturnsOnlyBoundedText(t *testing.T) {
+	root := committedProject(t)
+	notes := t.TempDir()
+	write(t, filepath.Join(notes, "small.txt"), "kept\n")
+	write(t, filepath.Join(notes, "empty.txt"), "")
+	write(t, filepath.Join(notes, "large.txt"), strings.Repeat("line\n", maxRead/5+1))
+	write(t, filepath.Join(notes, "binary.dat"), "\xff\x00\x02")
+	const controls = "Licence\fpage two\n\x1b[2J\x00"
+	write(t, filepath.Join(notes, "controls.txt"), controls)
+	testarchive.Zip(t, filepath.Join(root, "software", "notes.zip"), notes)
+	write(t, filepath.Join(root, "software", "wrapper.yaml"), `apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata: {name: wrapper}
+spec:
+  inputs:
+    vendor: {path: notes.zip}
+  package:
+    identifier: org.example.wrapper
+    version: "1.0"
+  scripts:
+    postinstall: '#!/bin/sh'
+`)
+	session := connect(t, root)
+	for _, test := range []struct{ name, content string }{{"small.txt", "kept\n"}, {"empty.txt", ""}, {"controls.txt", controls}} {
+		var read inspection
+		call(t, session, "inspect", map[string]any{"resource": "BuildMacPkg/wrapper", "input": "vendor", "read": test.name}, &read)
+		if read.Content == nil || *read.Content != test.content {
+			t.Fatalf("%s: %+v", test.name, read)
+		}
+	}
+	failed := callFailing(t, session, "inspect", map[string]any{"resource": "BuildMacPkg/wrapper", "input": "vendor", "read": "large.txt"})
+	if text := failed.Content[0].(*mcp.TextContent).Text; !strings.Contains(text, "the file exceeds the 256 KiB a tool result carries") || strings.Contains(text, "line\nline") {
+		t.Fatalf("large file: %.200s", text)
+	}
+	failed = callFailing(t, session, "inspect", map[string]any{"resource": "BuildMacPkg/wrapper", "input": "vendor", "read": "binary.dat"})
+	if text := failed.Content[0].(*mcp.TextContent).Text; !strings.Contains(text, "the file is not UTF-8 text") {
+		t.Fatalf("binary file: %s", text)
+	}
+}
+
+// lines is an endless text file that counts what was read from it.
+type lines struct{ read int }
+
+func (l *lines) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = "line\n"[(l.read+i)%5]
+	}
+	l.read += len(p)
+	return len(p), nil
+}
+
+// A read fails once the file passes what a tool result carries, so a large
+// file stops being read there and none of it is returned.
+func TestReadStopsAtTheResultBound(t *testing.T) {
+	var whole textFile
+	if _, err := io.CopyN(&whole, &lines{}, maxRead); err != nil || whole.data.Len() != maxRead {
+		t.Fatalf("a file at the bound: %d bytes: %v", whole.data.Len(), err)
+	}
+	var file textFile
+	source := &lines{}
+	_, err := io.Copy(&file, source)
+	if err == nil || !strings.Contains(err.Error(), "exceeds the 256 KiB a tool result carries") {
+		t.Fatalf("a file past the bound: %v", err)
+	}
+	if file.data.Len() > maxRead || source.read > 2*maxRead {
+		t.Fatalf("kept %d bytes after reading %d", file.data.Len(), source.read)
 	}
 }

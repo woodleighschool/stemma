@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -278,18 +279,38 @@ func (c *cli) runCommand(method string) *cobra.Command {
 	return cmd
 }
 
+const readUsage = "Print one file inside it instead, or the names a directory holds; inside a package, an entry or a file below Scripts or Payload"
+
+// readOutput preserves file bytes in pipes and guards terminal output.
+func (c *cli) readOutput() io.Writer {
+	if isTerminal(c.out) {
+		return memberOutput{c.out}
+	}
+	return c.out
+}
+
+// memberOutput keeps NUL and escape bytes off the terminal.
+type memberOutput struct{ io.Writer }
+
+func (w memberOutput) Write(p []byte) (int, error) {
+	if bytes.ContainsAny(p, "\x00\x1b") {
+		return 0, errors.New("the file contains NUL or terminal escape bytes; redirect the output to save it")
+	}
+	return w.Writer.Write(p)
+}
+
 func (c *cli) artifactCommand() *cobra.Command {
-	var output, outputFile string
+	var output, outputFile, read string
 	var offline, noInputLock bool
 	cmd := &cobra.Command{Use: "artifact Kind/name", Short: "Prepare one resource from the lockfile and print the path of its artifact", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		path, err := c.project()
 		if err != nil {
 			return err
 		}
-		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, GitHubToken: c.githubToken, Method: "artifact", Resources: args, Output: output, OutputFile: outputFile, ResourceDone: func(resource engine.ResourceReport) error {
+		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, GitHubToken: c.githubToken, Method: "artifact", Resources: args, Output: output, OutputFile: outputFile, Read: read, ReadTo: c.readOutput(), ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone("artifact", resource)
 		}, Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
-		if err != nil {
+		if err != nil || read != "" {
 			return err
 		}
 		_, err = fmt.Fprintln(c.out, report.Artifact)
@@ -297,6 +318,8 @@ func (c *cli) artifactCommand() *cobra.Command {
 	}}
 	cmd.Flags().StringVar(&output, "output", "installer", "Resource output to materialize")
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Export to a new file or directory outside the disposable cache")
+	cmd.Flags().StringVar(&read, "read", "", readUsage)
+	cmd.MarkFlagsMutuallyExclusive("read", "output-file")
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
 	cmd.Flags().BoolVar(&noInputLock, "no-input-lock", false, "Resolve inputs from their sources now instead of their lock entries; plugins stay locked")
 	cmd.MarkFlagsMutuallyExclusive("offline", "no-input-lock")
@@ -324,23 +347,26 @@ func (c *cli) reconcileCommand() *cobra.Command {
 }
 
 func (c *cli) inspectCommand() *cobra.Command {
-	var input, selection string
+	var input, selection, read string
 	var offline, noInputLock bool
 	cmd := &cobra.Command{Use: "inspect PATH | Kind/name --input NAME", Short: "Describe a local artifact or resource input without executing it", Args: cobra.ExactArgs(1)}
 	cmd.Flags().StringVar(&input, "input", "", "Inspect this resource input without building the resource")
 	cmd.Flags().StringVar(&selection, "path", "", "Subject path within the artifact or resource input")
+	cmd.Flags().StringVar(&read, "read", "", readUsage)
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use verified cached locked inputs without source network access")
 	cmd.Flags().BoolVar(&noInputLock, "no-input-lock", false, "Resolve current inputs without changing their lock entries")
 	cmd.MarkFlagsMutuallyExclusive("offline", "no-input-lock")
 	asJSON := jsonFlag(cmd)
+	cmd.MarkFlagsMutuallyExclusive("read", "path")
+	cmd.MarkFlagsMutuallyExclusive("read", "json")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if input != "" {
 			path, err := c.project()
 			if err != nil {
 				return err
 			}
-			report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, GitHubToken: c.githubToken, Method: "inspect", Resources: args, Input: engine.InputSelection{Name: input, Path: selection}, Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
-			if err != nil {
+			report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, GitHubToken: c.githubToken, Method: "inspect", Resources: args, Input: engine.InputSelection{Name: input, Path: selection}, Read: read, ReadTo: c.readOutput(), Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
+			if err != nil || read != "" {
 				return err
 			}
 			if *asJSON {
@@ -351,6 +377,9 @@ func (c *cli) inspectCommand() *cobra.Command {
 		}
 		if offline || noInputLock {
 			return errors.New("input options require --input NAME")
+		}
+		if read != "" {
+			return engine.ReadMember(cmd.Context(), args[0], read, c.readOutput())
 		}
 		if strings.EqualFold(filepath.Ext(args[0]), ".intunewin") {
 			if selection != "" {

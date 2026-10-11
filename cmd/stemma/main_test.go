@@ -42,6 +42,30 @@ func TestEnvironmentPrefersTheGitHubCLIToken(t *testing.T) {
 	}
 }
 
+func TestReadPreservesBytesWithATerminalGuard(t *testing.T) {
+	for _, content := range []string{"\xca\xfe\xba\xbe\x00\x00\x00\x02", "\x1b[2J"} {
+		var redirected bytes.Buffer
+		if _, err := (&cli{out: &redirected}).readOutput().Write([]byte(content)); err != nil || redirected.String() != content {
+			t.Fatalf("redirected read wrote %q: %v", redirected.String(), err)
+		}
+		var terminal bytes.Buffer
+		if _, err := (memberOutput{&terminal}).Write([]byte(content)); err == nil || terminal.Len() != 0 {
+			t.Fatalf("terminal read wrote %q: %v", terminal.String(), err)
+		}
+	}
+	const text = "#!/bin/sh\n\t# café\r\nLicence\fpage two\nLatin-1: caf\xe9\n"
+	var out bytes.Buffer
+	shown := memberOutput{&out}
+	for i := range len(text) {
+		if n, err := shown.Write([]byte(text[i : i+1])); err != nil || n != 1 {
+			t.Fatalf("byte %d: wrote %d: %v", i, n, err)
+		}
+	}
+	if out.String() != text {
+		t.Fatalf("wrote %q, want %q", out.String(), text)
+	}
+}
+
 func TestReportRetainsIndependentDestinationResults(t *testing.T) {
 	report := engine.Report{Resources: []engine.ResourceReport{
 		{Name: "missing", Error: "source unavailable"},
@@ -343,6 +367,12 @@ spec:
 		t.Fatalf("artifact --no-input-lock changed the lockfile: %v", err)
 	}
 	invoke(false, "artifact", "--offline", "--no-input-lock", "MacSoftware/fixture")
+	// A read prints the file alone, from the artifact or from a local copy.
+	receipt := string(invoke(true, "artifact", "--offline", "--read", "PackageInfo", "MacSoftware/fixture"))
+	if !strings.HasPrefix(receipt, "<?xml") || receipt != string(invoke(true, "inspect", "--read", "PackageInfo", materialized)) {
+		t.Fatalf("artifact --read printed %q", receipt)
+	}
+	invoke(false, "artifact", "--read", "PackageInfo", "--output-file", filepath.Join(t.TempDir(), "export.pkg"), "MacSoftware/fixture")
 	exported := filepath.Join(t.TempDir(), "export.pkg")
 	if got := strings.TrimSpace(string(invoke(true, "artifact", "--offline", "--output-file", exported, "MacSoftware/fixture"))); got != exported {
 		t.Fatalf("export path=%s", got)

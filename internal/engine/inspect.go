@@ -2,7 +2,9 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,12 +17,71 @@ import (
 
 func (e *execution) inspectInput(ctx context.Context) error {
 	return e.withInput(ctx, func(ctx context.Context, input Prepared, work string, _ *ResourceReport) error {
+		if e.opts.Read != "" {
+			return e.readStored(ctx, input, filepath.Join(work, "read"))
+		}
+		input, err := materialize(ctx, e.session.store, input, filepath.Join(work, "input"))
+		if err != nil {
+			return err
+		}
 		result, err := inspectInput(ctx, input.artifact(), e.opts.Input.Path, filepath.Join(work, "inspection"))
 		if err == nil {
 			e.report.Inspection = &result
 		}
 		return err
 	})
+}
+
+// readStored writes the file the run names inside a stored artifact. The
+// object is verified and then read where it is, so nothing is materialized.
+func (e *execution) readStored(ctx context.Context, stored Prepared, work string) (err error) {
+	done := plugin.Stage(ctx, "Reading artifact", plugin.Detail(stored.Filename))
+	defer func() { done(err) }()
+	store := e.session.store
+	if err := store.Verify(ctx, stored.Payload); err != nil {
+		return err
+	}
+	artifact := stored.artifact()
+	if artifact.Path, err = store.Path(stored.Payload); err != nil {
+		return err
+	}
+	if stored.Tree {
+		artifact.Encoding = "tar"
+	}
+	return readMember(ctx, artifact, e.opts.Read, work, e.opts.ReadTo)
+}
+
+// ReadMember writes one file inside a local artifact to w, or the names a
+// directory inside it holds.
+func ReadMember(ctx context.Context, name, member string, w io.Writer) (err error) {
+	done := plugin.Stage(ctx, "Reading artifact", plugin.Detail(filepath.Base(name)))
+	defer func() { done(err) }()
+	name, err = filepath.Abs(name)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(name)
+	if err != nil {
+		return err
+	}
+	work, err := os.MkdirTemp("", "stemma-inspect-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.RemoveAll(work) }()
+	return readMember(ctx, plugin.Artifact{Path: name, Filename: filepath.Base(name), Tree: info.IsDir()}, member, work, w)
+}
+
+func readMember(ctx context.Context, artifact plugin.Artifact, member, work string, w io.Writer) (err error) {
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		return err
+	}
+	source, err := contents.Open(ctx, artifact, work)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, source.Close()) }()
+	return inspect.Member(ctx, source, member, w)
 }
 
 // Inspect inventories a local artifact using the same facts as input expressions.

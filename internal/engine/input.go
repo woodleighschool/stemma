@@ -45,8 +45,9 @@ func inputOwner(plans map[string]resourcePlan, root, name string) (string, error
 	}
 }
 
-// withInput leases an input for a read operation. Only a selected resource
-// output needs preparation; its consumer's build expressions remain unevaluated.
+// withInput resolves an input for a read operation and hands it over as
+// stored, with a workspace. Only a selected resource output needs preparation;
+// its consumer's build expressions remain unevaluated.
 func (e *execution) withInput(ctx context.Context, consume func(context.Context, Prepared, string, *ResourceReport) error) error {
 	key := e.roots[0]
 	plan := e.plans[key]
@@ -80,10 +81,6 @@ func (e *execution) withInput(ctx context.Context, consume func(context.Context,
 			return err
 		}
 		e.workdirs = append(e.workdirs, work)
-		input, err = materialize(ctx, e.session.store, input, filepath.Join(work, "input"))
-		if err != nil {
-			return err
-		}
 		return consume(ctx, input, work, &item)
 	}()
 	if err != nil {

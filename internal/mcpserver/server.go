@@ -57,7 +57,7 @@ func newServer(opts Options) *mcp.Server {
 	}, tools.describe)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "inspect",
-		Description: "Inspect a resource input from its current source without building that resource or changing the lockfile. Returns static subjects and their exact paths, app versions and builds, identifiers, and installer facts. Use these facts to write build expressions.",
+		Description: "Inspect a resource input from its current source without building that resource or changing the lockfile. Returns static subjects and their exact paths, app versions and builds, identifiers, and installer facts. Use these facts to write build expressions. Set read to return one text file inside the input instead, such as a package's Distribution or an installer script.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld},
 	}, tools.inspect)
 	mcp.AddTool(server, &mcp.Tool{
