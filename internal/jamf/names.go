@@ -61,16 +61,18 @@ func (c *categoryName) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, &c.name)
 }
 
+func (c categoryName) MarshalJSON() ([]byte, error) { return json.Marshal(c.name) }
+
 func (categoryName) JSONSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Type: "string", MinLength: new(uint64(1))}, {Type: "null"}}}
 }
 
 // category resolves a declared category: the one it names, none for null, or
-// fallback when the declaration omits it.
-func (c *client) category(ctx context.Context, declared categoryName, fallback *namedID) (*namedID, error) {
+// unmanaged when the declaration omits it.
+func (c *client) category(ctx context.Context, declared categoryName) (*namedID, error) {
 	switch {
 	case !declared.set:
-		return fallback, nil
+		return nil, nil
 	case declared.name == nil:
 		return &namedID{id: "-1"}, nil
 	}

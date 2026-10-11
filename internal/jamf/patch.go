@@ -29,9 +29,8 @@ type patchConfig struct {
 	Title  string       `json:"title" jsonschema:"minLength=1" jsonschema_description:"Display name of an existing patch software title. It must match exactly one title. Until the title defines the software's managed version, the package link, the policy's target version and a new policy wait for it."`
 	Policy *patchPolicy `json:"policy,omitempty" jsonschema_description:"Patch policy found by name within the title, where the name defaults to the software name. It is updated in place, or created disabled and unscoped before the declared settings are applied. The title's definitions supply the apps it quits and its minimum OS."`
 
-	// titleID, version and scope are the title, the prepared version and the
-	// scope object IDs, resolved against Jamf before planning. waiting reports
-	// that the title does not define the version.
+	// version is locally derived; titleID and scope resolve against Jamf before
+	// planning. waiting reports that the title does not define the version.
 	titleID string
 	version string
 	scope   map[string][]string
@@ -60,6 +59,8 @@ func (d *days) UnmarshalJSON(data []byte) error {
 	d.set = true
 	return json.Unmarshal(data, &d.count)
 }
+
+func (d days) MarshalJSON() ([]byte, error) { return json.Marshal(d.count) }
 
 func (days) JSONSchema() *jsonschema.Schema {
 	return &jsonschema.Schema{AnyOf: []*jsonschema.Schema{{Type: "integer", Minimum: "1"}, {Type: "null"}}}
@@ -113,17 +114,13 @@ func decodePatch(metadata map[string]json.RawMessage) (*patchConfig, error) {
 	return &patch, nil
 }
 
-// resolvePatch finds the title and scope objects the declaration names and
-// takes the version the prepared installer supplies.
-func (c *client) resolvePatch(ctx context.Context, patch *patchConfig, version string) error {
-	if version == "" {
-		return errors.New("jamf patch needs the prepared installer's managed version; select an application")
-	}
+// resolvePatch finds the title and scope objects the declaration names.
+func (c *client) resolvePatch(ctx context.Context, patch *patchConfig) error {
 	id, err := c.titleID(ctx, patch.Title)
 	if err != nil {
 		return err
 	}
-	patch.titleID, patch.version = id, version
+	patch.titleID = id
 	if patch.Policy == nil {
 		return nil
 	}
@@ -163,14 +160,6 @@ func titlePackage(title *titles.ResourcePatchSoftwareTitleConfiguration, version
 	return found, nil
 }
 
-// policyName identifies the patch policy within its title.
-func policyName(patch *patchConfig, software string) string {
-	if patch.Policy.Name != nil {
-		return *patch.Policy.Name
-	}
-	return software
-}
-
 // settings are the values Stemma owns in the patch policy: the target version,
 // the declared settings, and the Self Service notification and icon an update
 // offered there uses. The target waits while the title lacks the version.
@@ -200,13 +189,9 @@ func (patch *patchConfig) settings(c *client, icon *selfServiceIcon) []setting {
 		settings = append(settings, setting{field: "allow_downgrade", value: *p.AllowDowngrade, fragment: fragment(root, *p.AllowDowngrade, "general", "allow_downgrade"), current: flag("general", "allow_downgrade")})
 	}
 	if p.Distribution != nil && *p.Distribution == "self_service" {
-		reminders := new(1)
-		if p.ReminderDays.set {
-			reminders = p.ReminderDays.count
-		}
 		settings = append(settings,
 			setting{field: "notifications", value: true, fragment: fragment(root, true, "user_interaction", "notifications", "notification_enabled"), current: flag("user_interaction", "notifications", "notification_enabled")},
-			daysSetting(root, "reminder_days", reminders, []string{"user_interaction", "notifications", "reminders"}, "notification_reminders_enabled", "notification_reminder_frequency"),
+			daysSetting(root, "reminder_days", p.ReminderDays.count, []string{"user_interaction", "notifications", "reminders"}, "notification_reminders_enabled", "notification_reminder_frequency"),
 		)
 		if icon != nil {
 			settings = append(settings, icon.setting(c, root, "user_interaction"))
@@ -233,7 +218,7 @@ func daysSetting(root, field string, count *int, path []string, enabled, period 
 // planPatch checks the title defines the version and reports the association
 // and policy changes. packageID is empty while the package has yet to be
 // created.
-func (c *client) planPatch(ctx context.Context, patch *patchConfig, packageID, software string, icon *selfServiceIcon, response *plugin.ReconcileResponse) error {
+func (c *client) planPatch(ctx context.Context, patch *patchConfig, packageID string, icon *selfServiceIcon, response *plugin.ReconcileResponse) error {
 	title, err := c.getTitle(ctx, patch.titleID)
 	if err != nil {
 		return fmt.Errorf("jamf patch title: %w", err)
@@ -270,7 +255,7 @@ func (c *client) planPatch(ctx context.Context, patch *patchConfig, packageID, s
 	if patch.Policy == nil {
 		return nil
 	}
-	name := policyName(patch, software)
+	name := *patch.Policy.Name
 	_, policy, err := c.observePolicy(ctx, patch, name)
 	if err != nil {
 		return err
@@ -287,7 +272,7 @@ func (c *client) planPatch(ctx context.Context, patch *patchConfig, packageID, s
 	return nil
 }
 
-func (c *client) applyPatch(ctx context.Context, patch *patchConfig, packageID, software string, icon *selfServiceIcon) error {
+func (c *client) applyPatch(ctx context.Context, patch *patchConfig, packageID string, icon *selfServiceIcon) error {
 	if !patch.waiting {
 		title, err := c.getTitle(ctx, patch.titleID)
 		if err != nil {
@@ -308,7 +293,7 @@ func (c *client) applyPatch(ctx context.Context, patch *patchConfig, packageID, 
 	if patch.Policy == nil {
 		return nil
 	}
-	name := policyName(patch, software)
+	name := *patch.Policy.Name
 	id, policy, err := c.observePolicy(ctx, patch, name)
 	if err != nil {
 		return err

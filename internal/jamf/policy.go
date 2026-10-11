@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"path"
 	"slices"
 	"strconv"
 	"strings"
@@ -84,6 +83,13 @@ func (s *selfService) UnmarshalJSON(data []byte) error {
 	return strictDecode(data, &s.selfServiceSettings)
 }
 
+func (s selfService) MarshalJSON() ([]byte, error) {
+	if !s.enabled {
+		return json.Marshal(false)
+	}
+	return json.Marshal(s.selfServiceSettings)
+}
+
 func (selfService) JSONSchema() *jsonschema.Schema {
 	settings := (&jsonschema.Reflector{DoNotReference: true}).Reflect(selfServiceSettings{})
 	settings.ID, settings.Version = "", ""
@@ -151,18 +157,15 @@ func (p *installPolicy) validate() error {
 }
 
 // resolvePolicy finds the categories and scope objects the declaration names.
-// The package category is the default for both categories.
-func (c *client) resolvePolicy(ctx context.Context, policy *installPolicy, packageCategory *namedID) error {
+func (c *client) resolvePolicy(ctx context.Context, policy *installPolicy) error {
 	var err error
-	if policy.category, err = c.category(ctx, policy.Category, packageCategory); err != nil {
+	if policy.category, err = c.category(ctx, policy.Category); err != nil {
 		return err
 	}
-	var selfServiceCategory categoryName
-	if s := policy.SelfService; s != nil {
-		selfServiceCategory = s.Category
-	}
-	if policy.selfServiceCategory, err = c.category(ctx, selfServiceCategory, packageCategory); err != nil {
-		return err
+	if s := policy.SelfService; s != nil && s.enabled {
+		if policy.selfServiceCategory, err = c.category(ctx, s.Category); err != nil {
+			return err
+		}
 	}
 	policy.scope, err = c.resolveScope(ctx, policy.Scope)
 	return err
@@ -170,24 +173,9 @@ func (c *client) resolvePolicy(ctx context.Context, policy *installPolicy, packa
 
 // publication is what a policy installs and shows for one software.
 type publication struct {
-	software    string
-	application string
-	packageID   string
-	filename    string
-	icon        *selfServiceIcon
-}
-
-// applicationName is the selected application's name without its extension.
-func applicationName(artifact plugin.Artifact) string {
-	var selected plugin.Subject
-	if json.Unmarshal(artifact.Evidence["macos.application"], &selected) != nil || selected.App == nil {
-		return ""
-	}
-	location := selected.InstalledPath
-	if location == "" {
-		location = selected.Path
-	}
-	return strings.TrimSuffix(path.Base(location), ".app")
+	packageID string
+	filename  string
+	icon      *selfServiceIcon
 }
 
 // field names the policy in plans.
@@ -255,13 +243,7 @@ func (p *installPolicy) settings(c *client, pub publication) []setting {
 func (p *installPolicy) selfServiceSettings(c *client, pub publication) []setting {
 	const root = "policy"
 	s := p.SelfService
-	name := pub.application
-	if name == "" {
-		name = pub.software
-	}
-	if s.DisplayName != nil {
-		name = *s.DisplayName
-	}
+	name := *s.DisplayName
 	settings := []setting{{field: "self_service.display_name", value: name, fragment: fragment(root, name, "self_service", "self_service_display_name"), current: text("self_service", "self_service_display_name")}}
 	if s.Description != nil {
 		settings = append(settings, setting{field: "self_service.description", value: *s.Description, fragment: fragment(root, *s.Description, "self_service", "self_service_description"), current: text("self_service", "self_service_description")})

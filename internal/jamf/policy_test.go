@@ -34,10 +34,19 @@ func TestInstallPolicyInstallsTheCurrentPackage(t *testing.T) {
 	if writes := server.writes(); len(writes) != 0 {
 		t.Fatalf("plan wrote to Jamf: %v", writes)
 	}
-	request.Method = "apply"
-	if _, err := Handle(t.Context(), request); err != nil {
+	validation := request
+	validation.Method, validation.Config = "validate", Config{}
+	preview, err := Handle(t.Context(), validation)
+	if err != nil {
 		t.Fatal(err)
 	}
+	assertMetadata(t, plan.Metadata, preview.Metadata)
+	request.Method = "apply"
+	applied, err := Handle(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMetadata(t, applied.Metadata, preview.Metadata)
 	native := server.native.policies["100"]
 	for _, test := range []struct {
 		path []string

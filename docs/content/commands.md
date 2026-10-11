@@ -297,7 +297,7 @@ use one line unless explicitly selected or expanded with `--all`. Totals always
 describe the whole run. JSON includes all resources in the
 selected scope, regardless of `--all`. For each prepared resource, `publications`
 has an entry for every destination, made with no connection to it. Where the
-destination reports it, as `munki` does, `metadata` is the declared metadata with
+destination reports it, as `munki` and `jamf` do, `metadata` is the declared metadata with
 each value derived from the artifact, and null or an empty value for a field the
 destination clears. It describes the fields this publication manages, not the
 complete remote item; `plan` compares them with the destination's current state.
@@ -307,7 +307,7 @@ metadata, such as `pkginfo.version` or an included application's version.
 `expression`, `artifact.version` or `installer.receipts`. An entry without
 `metadata` is not a preview of the publication, and its `deferred` says why: the
 metadata reads environment values, or the destination reports origins only, as
-`intune` and `jamf` do. Reconcile prints the reviewed commit's
+`intune` does. Reconcile prints the reviewed commit's
 publication followed by proposal outcomes, under separate applying and update-checking
 sections.
 

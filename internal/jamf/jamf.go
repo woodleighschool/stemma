@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net"
 	"net/url"
 	"strings"
@@ -38,7 +37,7 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 		}
 	}
 	config.URL = strings.TrimRight(config.URL, "/")
-	metadata, err := decodeMetadata(request.Metadata)
+	metadata, response, err := deriveMetadata(request)
 	if err != nil {
 		return response, err
 	}
@@ -67,7 +66,7 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	}
 	// Names resolve before anything is written, so a missing or ambiguous one
 	// changes nothing.
-	packageCategory, err := c.category(ctx, metadata.category, nil)
+	packageCategory, err := c.category(ctx, metadata.category)
 	if err != nil {
 		return response, err
 	}
@@ -75,12 +74,12 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 		metadata.fields["categoryId"] = raw(packageCategory.id)
 	}
 	for _, policy := range metadata.policies {
-		if err := c.resolvePolicy(ctx, policy, packageCategory); err != nil {
+		if err := c.resolvePolicy(ctx, policy); err != nil {
 			return response, err
 		}
 	}
 	if metadata.patch != nil {
-		if err := c.resolvePatch(ctx, metadata.patch, request.Artifact.Version); err != nil {
+		if err := c.resolvePatch(ctx, metadata.patch); err != nil {
 			return response, err
 		}
 	}
@@ -93,11 +92,9 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	if err != nil {
 		return response, err
 	}
-	desired := maps.Clone(metadata.fields)
-	desired["fileName"] = raw(content.filename)
+	desired := metadata.fields
 	response.Changes = plan(current, desired, content, identity)
-	software := request.Identity.Resource.Name
-	pub := publication{software: software, application: applicationName(request.Artifact), filename: content.filename, icon: icon}
+	pub := publication{filename: content.filename, icon: icon}
 	if current != nil {
 		pub.packageID = stringField(current.Fields, "id")
 	}
@@ -107,7 +104,7 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 		}
 	}
 	if metadata.patch != nil {
-		if err := c.planPatch(ctx, metadata.patch, pub.packageID, software, icon, &response); err != nil {
+		if err := c.planPatch(ctx, metadata.patch, pub.packageID, icon, &response); err != nil {
 			return response, err
 		}
 	}
@@ -129,7 +126,7 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 		}
 	}
 	if metadata.patch != nil {
-		if err := c.applyPatch(ctx, metadata.patch, pub.packageID, software, icon); err != nil {
+		if err := c.applyPatch(ctx, metadata.patch, pub.packageID, icon); err != nil {
 			return response, err
 		}
 	}

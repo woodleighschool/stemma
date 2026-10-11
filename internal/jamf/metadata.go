@@ -24,11 +24,8 @@ type metadata struct {
 
 // decodeMetadata validates the declaration and translates package field names
 // at the transport boundary. Policies keep their declared settings until names resolve.
-func decodeMetadata(data json.RawMessage) (metadata, error) {
-	declared, err := decodeObject(data)
-	if err != nil {
-		return metadata{}, fmt.Errorf("jamf metadata: %w", err)
-	}
+func decodeMetadata(declared map[string]json.RawMessage) (metadata, error) {
+	var err error
 	result := metadata{fields: map[string]json.RawMessage{}}
 	for key, value := range declared {
 		switch key {
