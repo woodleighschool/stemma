@@ -189,7 +189,7 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 		return nil
 	}
 	done(nil)
-	report := DestinationReport{Name: destination, Origins: origins, Artifact: prepared.Filename, Version: prepared.Version}
+	report := DestinationReport{Name: destination, Origins: origins, Artifact: prepared.Filename}
 	done = plugin.Stage(ctx, "Planning destination")
 	request.Method = "plan"
 	request.Config = e.connections[destination]

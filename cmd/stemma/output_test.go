@@ -507,30 +507,23 @@ func TestExplicitSelectionAcknowledgesUnchangedResource(t *testing.T) {
 	}
 }
 
-func TestPublicationVersionsFollowSelectedOutputs(t *testing.T) {
-	for _, tt := range []struct {
-		name         string
-		destinations []engine.DestinationReport
-		want, absent []string
-	}{
-		{"alternate only", []engine.DestinationReport{{Name: "repo", Artifact: "alternate.pkg", Version: "2.0"}}, []string{"➤ MacSoftware/example (2.0)", "alternate.pkg → repo"}, []string{"(1.0)"}},
-		{"different outputs", []engine.DestinationReport{{Name: "first", Artifact: "default.pkg", Version: "1.0"}, {Name: "second", Artifact: "alternate.pkg", Version: "2.0"}}, []string{"➤ MacSoftware/example\n", "default.pkg (1.0) → first", "alternate.pkg (2.0) → second"}, []string{"➤ MacSoftware/example ("}},
-		{"unknown version", []engine.DestinationReport{{Name: "repo", Artifact: "alternate.pkg"}}, []string{"➤ MacSoftware/example\n", "alternate.pkg → repo"}, []string{"(1.0)"}},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			resource := engine.ResourceReport{Kind: "MacSoftware", Name: "example", Artifacts: map[string]engine.Prepared{"installer": {Version: "1.0"}}, Destinations: tt.destinations}
-			got := renderResourceDetail(textStyle{}, "plan", resource, false)
-			for _, want := range tt.want {
-				if !strings.Contains(got, want) {
-					t.Errorf("missing %q: %s", want, got)
-				}
-			}
-			for _, absent := range tt.absent {
-				if strings.Contains(got, absent) {
-					t.Errorf("unexpected %q: %s", absent, got)
-				}
-			}
-		})
+func TestPublicationDoesNotUseTheArtifactVersionAsItsHeading(t *testing.T) {
+	resource := engine.ResourceReport{
+		Kind: "MacSoftware", Name: "suite",
+		Artifacts: map[string]engine.Prepared{"installer": {Filename: "suite-1.0.pkg", Version: "1.0"}},
+		Destinations: []engine.DestinationReport{{
+			Name: "repo", Artifact: "suite-1.0.pkg",
+			Changes: []plugin.Change{{Action: "set", Field: "pkginfo.version", Before: json.RawMessage(`"25.04"`), After: json.RawMessage(`"25.10"`)}},
+		}, {Name: "archive", Artifact: "alternate.pkg"}},
+	}
+	got := renderResourceDetail(textStyle{}, "plan", resource, false)
+	for _, want := range []string{"➤ MacSoftware/suite\n", "suite-1.0.pkg → repo", "alternate.pkg → archive", "pkginfo.version", "25.04", "25.10"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q: %s", want, got)
+		}
+	}
+	if strings.Contains(got, "(1.0)") {
+		t.Fatalf("artifact version described the publication: %s", got)
 	}
 }
 

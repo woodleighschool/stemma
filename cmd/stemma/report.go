@@ -111,27 +111,13 @@ func destinationStatus(destination engine.DestinationReport) string {
 // resourceHeading names a resource and its outcome.
 func resourceHeading(style textStyle, method string, resource engine.ResourceReport) string {
 	heading := changes.Text(resourceName(resource))
-	if version := resourceVersion(resource); version != "" {
-		heading += " (" + changes.Text(version) + ")"
-	}
 	if len(resource.Destinations) == 0 {
+		if version := resource.Artifacts["installer"].Version; version != "" {
+			heading += " (" + changes.Text(version) + ")"
+		}
 		return style.outcomeLine(heading, resourceStatus(method, resource)) + "\n"
 	}
 	return style.heading(heading) + "\n"
-}
-
-// A shared heading version must describe every selected publication.
-func resourceVersion(resource engine.ResourceReport) string {
-	if len(resource.Destinations) == 0 {
-		return resource.Artifacts["installer"].Version
-	}
-	version := resource.Destinations[0].Version
-	for _, destination := range resource.Destinations[1:] {
-		if destination.Version != version {
-			return ""
-		}
-	}
-	return version
 }
 
 func renderResourceDetail(style textStyle, method string, resource engine.ResourceReport, detailed bool) string {
@@ -160,14 +146,8 @@ func renderResourceDetail(style textStyle, method string, resource engine.Resour
 	}
 	for _, destination := range resource.Destinations {
 		label := changes.Text(destination.Name)
-		version := ""
-		if destination.Version != "" && destination.Version != resourceVersion(resource) {
-			version = " (" + changes.Text(destination.Version) + ")"
-		}
 		if destination.Artifact != "" {
-			label = changes.Text(destination.Artifact) + version + " → " + label
-		} else {
-			label += version
+			label = changes.Text(destination.Artifact) + " → " + label
 		}
 		if destination.Error != "" {
 			label += ": " + destinationStatus(destination)
@@ -222,7 +202,7 @@ func renderResourceDetail(style textStyle, method string, resource engine.Resour
 			for _, name := range slices.Sorted(maps.Keys(resource.Artifacts)) {
 				artifact := resource.Artifacts[name]
 				fmt.Fprintf(&text, "  %s: %s", changes.Text(name), changes.Text(artifact.Filename))
-				if artifact.Version != "" && artifact.Version != resourceVersion(resource) {
+				if artifact.Version != "" && artifact.Version != resource.Artifacts["installer"].Version {
 					fmt.Fprintf(&text, " (%s)", changes.Text(artifact.Version))
 				}
 				text.WriteByte('\n')

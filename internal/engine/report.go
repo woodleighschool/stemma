@@ -75,7 +75,6 @@ type Publication struct {
 // DestinationReport describes semantic drift independently of cache hits.
 type DestinationReport struct {
 	Artifact string            `json:"artifact,omitempty"`
-	Version  string            `json:"version,omitempty"`
 	Name     string            `json:"name"`
 	Origins  map[string]string `json:"origins,omitempty"`
 	Changes  []plugin.Change   `json:"changes"`

@@ -301,6 +301,8 @@ destination reports it, as `munki` does, `metadata` is the declared metadata wit
 each value derived from the artifact, and null or an empty value for a field the
 destination clears. It describes the fields this publication manages, not the
 complete remote item; `plan` compares them with the destination's current state.
+Artifact versions describe prepared files; destination versions remain in their managed
+metadata, such as `pkginfo.version` or an included application's version.
 `origins` names where each field's value came from, such as `explicit`,
 `expression`, `artifact.version` or `installer.receipts`. An entry without
 `metadata` is not a preview of the publication, and its `deferred` says why: the
