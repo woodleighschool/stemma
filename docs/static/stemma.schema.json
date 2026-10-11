@@ -406,6 +406,18 @@
                                         ],
                                         "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
                                       },
+                                      "package_id": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Package identifier of a component receipt, as macOS records it."
+                                      },
                                       "path": {
                                         "anyOf": [
                                           {
@@ -857,6 +869,18 @@
                                               }
                                             ],
                                             "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
+                                          },
+                                          "package_id": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Package identifier of a component receipt, as macOS records it."
                                           },
                                           "path": {
                                             "anyOf": [
@@ -2081,6 +2105,18 @@
                                         ],
                                         "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
                                       },
+                                      "package_id": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Package identifier of a component receipt, as macOS records it."
+                                      },
                                       "path": {
                                         "anyOf": [
                                           {
@@ -2194,6 +2230,18 @@
                                   }
                                 ],
                                 "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
+                              },
+                              "package_id": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Package identifier of a component receipt, as macOS records it."
                               },
                               "path": {
                                 "anyOf": [
@@ -2543,6 +2591,18 @@
                                             ],
                                             "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
                                           },
+                                          "package_id": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Package identifier of a component receipt, as macOS records it."
+                                          },
                                           "path": {
                                             "anyOf": [
                                               {
@@ -2656,6 +2716,18 @@
                                       }
                                     ],
                                     "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
+                                  },
+                                  "package_id": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Package identifier of a component receipt, as macOS records it."
                                   },
                                   "path": {
                                     "anyOf": [
@@ -9263,6 +9335,18 @@
                                         ],
                                         "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
                                       },
+                                      "package_id": {
+                                        "anyOf": [
+                                          {
+                                            "type": "string"
+                                          },
+                                          {
+                                            "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                            "type": "string"
+                                          }
+                                        ],
+                                        "description": "Package identifier of a component receipt, as macOS records it."
+                                      },
                                       "path": {
                                         "anyOf": [
                                           {
@@ -9376,6 +9460,18 @@
                                   }
                                 ],
                                 "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
+                              },
+                              "package_id": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                    "type": "string"
+                                  }
+                                ],
+                                "description": "Package identifier of a component receipt, as macOS records it."
                               },
                               "path": {
                                 "anyOf": [
@@ -9609,6 +9705,18 @@
                                             ],
                                             "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
                                           },
+                                          "package_id": {
+                                            "anyOf": [
+                                              {
+                                                "type": "string"
+                                              },
+                                              {
+                                                "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                                "type": "string"
+                                              }
+                                            ],
+                                            "description": "Package identifier of a component receipt, as macOS records it."
+                                          },
                                           "path": {
                                             "anyOf": [
                                               {
@@ -9722,6 +9830,18 @@
                                       }
                                     ],
                                     "description": "Observed subject kind, such as app, container, file, package or msi. A package subject describes a receipt; the outer PKG is a container."
+                                  },
+                                  "package_id": {
+                                    "anyOf": [
+                                      {
+                                        "type": "string"
+                                      },
+                                      {
+                                        "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                        "type": "string"
+                                      }
+                                    ],
+                                    "description": "Package identifier of a component receipt, as macOS records it."
                                   },
                                   "path": {
                                     "anyOf": [

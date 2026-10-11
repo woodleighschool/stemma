@@ -54,6 +54,24 @@ metadata. Their fields retain the
 inspection model's meanings: for example, `app.version` is the application's
 short version and `app.build` is its separate build version.
 
+An inspected subject is addressed by its path, such as
+`facts['Core.pkg/PackageInfo']`. `subjects` names one by what identifies it instead:
+`kind`, `path`, `installed_path`, an application's `bundle_id` or a component
+package's `package_id`. Each selector must match exactly one subject.
+
+```yaml
+subjects:
+  core:
+    package_id: com.vendor.suite.core
+destinations:
+  repository:
+    pkginfo:
+      version: "{{ facts.core.package.version }}"
+```
+
+A package with no product version whose components carry different versions has
+no version of its own; this takes one component's.
+
 ## Missing and null values
 
 A required lookup fails if its key is absent. Use CEL optional selection when an
