@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.10.5](https://github.com/woodleighschool/stemma/compare/v0.10.4...v0.10.5) (2026-10-11)
+
+
+### Features
+
+* **cli:** group pipeline progress by phase ([b58d096](https://github.com/woodleighschool/stemma/commit/b58d096defdee4a1381e686249ad528a57bdda01))
+
+
+### Bug Fixes
+
+* **go:** update module github.com/modelcontextprotocol/go-sdk (3c08147 → 218aedd) ([#159](https://github.com/woodleighschool/stemma/issues/159)) ([c4327bf](https://github.com/woodleighschool/stemma/commit/c4327bf5d8568390e6dcbeff47aa8b46d74866d9))
+* **go:** update module golang.org/x/image (v0.46.0 → v0.47.0) ([#152](https://github.com/woodleighschool/stemma/issues/152)) ([5bd1215](https://github.com/woodleighschool/stemma/commit/5bd1215c72bbb42820ee54184f3fa6b781b7be1c))
+* **go:** update module golang.org/x/net (v0.60.0 → v0.61.0) ([#144](https://github.com/woodleighschool/stemma/issues/144)) ([176de2d](https://github.com/woodleighschool/stemma/commit/176de2df7bf741dd681040fc1ce05adc55fa18c0))
+* **go:** update module golang.org/x/sync (v0.23.0 → v0.24.0) ([#148](https://github.com/woodleighschool/stemma/issues/148)) ([36fc2fc](https://github.com/woodleighschool/stemma/commit/36fc2fcbd583025f9ea83e4680b5101b432b3d8d))
+* **go:** update module golang.org/x/term (v0.46.0 → v0.47.0) ([#153](https://github.com/woodleighschool/stemma/issues/153)) ([23ae862](https://github.com/woodleighschool/stemma/commit/23ae8627adb330d9791ebaeabea42d630b847414))
+* **go:** update module golang.org/x/text (v0.42.0 → v0.43.0) ([#154](https://github.com/woodleighschool/stemma/issues/154)) ([ca304be](https://github.com/woodleighschool/stemma/commit/ca304be043182259dbaf43ec26909beec7bfb0ae))
+
 ## [0.10.4](https://github.com/woodleighschool/stemma/compare/v0.10.3...v0.10.4) (2026-10-10)
 
 
