@@ -147,7 +147,7 @@ func (c *client) references(ctx context.Context, patch *patchConfig, installs []
 			// The declared association moves to the current record, whichever
 			// package holds it while planning, unless it waits for the title
 			// to define the version.
-			if patch != nil && !patch.waiting && title.ID == patch.titleID && pkg.Version == patch.version {
+			if patch != nil && !patch.waiting && title.ID == patch.titleID && pkg.Version == *patch.Version {
 				continue
 			}
 			referenced[pkg.PackageID] = true

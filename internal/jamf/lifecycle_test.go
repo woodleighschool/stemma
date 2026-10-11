@@ -127,8 +127,14 @@ func TestPatchPublicationAdvancesAssociationAndPolicy(t *testing.T) {
 	if len(server.writes()) != writes {
 		t.Fatalf("unchanged patch publication wrote to Jamf: %v", server.writes()[writes:])
 	}
-	request.Artifact = fixtureArtifactNamed(t, "vendor-2.0.pkg", "new payload")
-	request.Artifact.Version = "2.0"
+	request.Artifact = fixtureArtifactNamed(t, "vendor-2.0-build.7.pkg", "new payload")
+	request.Artifact.Version = "2.0-build.7"
+	var metadata map[string]any
+	if err := json.Unmarshal(request.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	metadata["patch"].(map[string]any)["version"] = "2.0"
+	request.Metadata = raw(metadata)
 	if _, err := Handle(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -137,6 +143,9 @@ func TestPatchPublicationAdvancesAssociationAndPolicy(t *testing.T) {
 	}
 	if native.patchPolicies["10"].value("general", "target_version") != "2.0" || server.count("POST "+policyPath+"/softwaretitleconfig/id/5") != 1 {
 		t.Fatal("new version did not advance the one policy")
+	}
+	if got := stringField(server.record("2"), "fileName"); got != request.Artifact.Filename {
+		t.Fatalf("patch version changed the package filename to %q", got)
 	}
 }
 
@@ -253,7 +262,7 @@ func TestOmittedPatchLeavesDeploymentAlone(t *testing.T) {
 
 func TestUndefinedPatchVersionPublishesThePackageAlone(t *testing.T) {
 	server, request := newPatchFixture(t)
-	request.Artifact.Version = "unpublished"
+	request.Metadata = json.RawMessage(`{"patch":{"title":"Test title","version":"unpublished","policy":{}}}`)
 	var log bytes.Buffer
 	ctx := plugin.WithLogger(t.Context(), slog.New(slog.NewTextHandler(&log, nil)))
 	if _, err := Handle(ctx, request); err != nil {
@@ -376,7 +385,7 @@ func TestNativePatchPresenceAndScopeCollections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	patch.titleID, patch.version, patch.scope = "5", "2.0", map[string][]string{"computer_groups": {}}
+	patch.titleID, patch.Version, patch.scope = "5", new("2.0"), map[string][]string{"computer_groups": {}}
 	settings := patch.settings(nil, nil)
 	for _, s := range pending(current, settings) {
 		mergeXML(current, s.fragment)
@@ -417,7 +426,10 @@ func TestNativePatchPresenceAndScopeCollections(t *testing.T) {
 		`{"title":"Test title","policy":{"allow_downgrade":null}}`,
 		`{"title":"Test title","policy":{"user_interaction":{"grace_period":{"duration":5}}}}`,
 		`{"title":"Test title","policy":{"patch_unknown":null}}`,
-		`{"title":"Test title","version":"1.0"}`,
+		`{"title":"Test title","version":""}`,
+		`{"title":"Test title","version":" "}`,
+		`{"title":"Test title","version":null}`,
+		`{"title":"Test title","version":3}`,
 		`{"title_configuration_id":"5"}`,
 		`{"title":""}`,
 	} {

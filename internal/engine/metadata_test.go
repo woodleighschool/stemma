@@ -414,6 +414,65 @@ spec:
 	published(document(read()), "installer_item_location", "notes")
 }
 
+func TestJamfPatchVersionExpressionKeepsTheArtifactVersion(t *testing.T) {
+	root := t.TempDir()
+	suitePackage(t, filepath.Join(root, "suite.pkg"), map[string]string{"Draw": "26.1"})
+	filename := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, filename, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: publication}
+spec:
+  imports: ['*.software.yaml']
+  destinations:
+    jamf:
+      operation: jamf
+      config:
+        url: "{{ env.STEMMA_TEST_UNSET_JAMF_URL }}"
+        client_id: "{{ env.STEMMA_TEST_UNSET_JAMF_CLIENT }}"
+        client_secret: "{{ env.STEMMA_TEST_UNSET_JAMF_SECRET }}"
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: suite}
+spec:
+  source: {path: suite.pkg}
+  subjects:
+    draw: {bundle_id: org.example.suite.draw}
+  destinations:
+    jamf:
+      patch:
+        title: Draw
+        version: "{{ facts.draw.app.version }}"
+`)
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	options.Method = "prepare"
+	report, err := Run(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := report.Resources[0]
+	artifact, publication := resource.Artifacts["installer"], resource.Publications[0]
+	if artifact.Version != "1.0" || artifact.Filename != "suite-1.0.pkg" {
+		t.Fatalf("patch version changed the artifact: %+v", artifact)
+	}
+	var metadata struct {
+		Filename string `json:"filename"`
+		Patch    struct {
+			Title   string `json:"title"`
+			Version string `json:"version"`
+		} `json:"patch"`
+	}
+	if err := json.Unmarshal(publication.Metadata, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if publication.Deferred != "" || metadata.Filename != artifact.Filename || metadata.Patch.Title != "Draw" || metadata.Patch.Version != "26.1" || publication.Origins["patch.version"] != "expression" {
+		t.Fatalf("patch publication = %+v", publication)
+	}
+}
+
 // suitePackage builds a vendor suite: one component package, always version
 // 1.0, that installs each named application at its own version.
 func suitePackage(t *testing.T, filename string, versions map[string]string) {

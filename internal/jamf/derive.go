@@ -55,12 +55,12 @@ func deriveMetadata(request plugin.ReconcileRequest[Config]) (metadata, plugin.R
 		declared["policies"] = raw(m.policies)
 	}
 	if patch := m.patch; patch != nil {
-		patch.version = request.Artifact.Version
-		if patch.version == "" && (request.Prepared || request.Artifact.Path != "" || request.Method != "validate") {
-			return m, response, errors.New("jamf patch needs the prepared installer's managed version; select an application")
-		}
-		if patch.version != "" {
+		if patch.Version == nil && request.Artifact.Version != "" {
+			patch.Version = new(request.Artifact.Version)
 			response.Origins["patch.version"] = "artifact.version"
+		}
+		if (patch.Version == nil || strings.TrimSpace(*patch.Version) == "") && (request.Prepared || request.Artifact.Path != "" || request.Method != "validate") {
+			return m, response, errors.New("jamf patch has no managed version; set patch.version")
 		}
 		if p := patch.Policy; p != nil {
 			if p.Name == nil && request.Identity.Resource.Name != "" {
@@ -72,11 +72,7 @@ func deriveMetadata(request plugin.ReconcileRequest[Config]) (metadata, plugin.R
 				response.Origins["patch.policy.reminder_days"] = "default"
 			}
 		}
-		declared["patch"] = raw(struct {
-			*patchConfig
-
-			Version string `json:"version,omitempty"`
-		}{patch, patch.version})
+		declared["patch"] = raw(patch)
 	}
 	response.Metadata = raw(declared)
 	return m, response, nil

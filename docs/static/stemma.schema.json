@@ -6392,7 +6392,20 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Display name of an existing patch software title. It must match exactly one title. Until the title defines the software's managed version, the package link, the policy's target version and a new policy wait for it."
+                  "description": "Display name of an existing patch software title. It must match exactly one title. Until the title defines the target version, the package link, the policy's target version and a new policy wait for it."
+                },
+                "version": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Version defined by the patch title. Defaults to the artifact's managed version. Set this when the title uses a different version or the artifact has no managed version. It only selects the patch title association and policy target; the artifact's version and filename stay unchanged."
                 }
               },
               "propertyNames": {

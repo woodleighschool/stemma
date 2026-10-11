@@ -21,7 +21,7 @@ func TestRetentionApplyHonorsObservedReferences(t *testing.T) {
 				installs = []*installPolicy{{id: "20"}}
 			case "patch_title":
 				server.native.titles["5"].Packages = []titles.SubsetPackage{{PackageID: "1", Version: "1.0"}}
-				patch = &patchConfig{titleID: "5", version: "1.0"}
+				patch = &patchConfig{titleID: "5", Version: new("1.0")}
 			}
 			c, err := newClient(t.Context(), request.Config)
 			if err != nil {

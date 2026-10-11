@@ -23,16 +23,15 @@ const (
 )
 
 // patchConfig declares patch deployment: an existing title, found by its
-// display name, and an optional patch policy. The version it deploys is the
-// software's managed version, which the title's definitions must contain.
+// display name, its target version, and an optional patch policy.
 type patchConfig struct {
-	Title  string       `json:"title" jsonschema:"minLength=1" jsonschema_description:"Display name of an existing patch software title. It must match exactly one title. Until the title defines the software's managed version, the package link, the policy's target version and a new policy wait for it."`
-	Policy *patchPolicy `json:"policy,omitempty" jsonschema_description:"Patch policy found by name within the title, where the name defaults to the software name. It is updated in place, or created disabled and unscoped before the declared settings are applied. The title's definitions supply the apps it quits and its minimum OS."`
+	Title   string       `json:"title" jsonschema:"minLength=1" jsonschema_description:"Display name of an existing patch software title. It must match exactly one title. Until the title defines the target version, the package link, the policy's target version and a new policy wait for it."`
+	Version *string      `json:"version,omitempty" jsonschema:"minLength=1" jsonschema_description:"Version defined by the patch title. Defaults to the artifact's managed version. Set this when the title uses a different version or the artifact has no managed version. It only selects the patch title association and policy target; the artifact's version and filename stay unchanged."`
+	Policy  *patchPolicy `json:"policy,omitempty" jsonschema_description:"Patch policy found by name within the title, where the name defaults to the software name. It is updated in place, or created disabled and unscoped before the declared settings are applied. The title's definitions supply the apps it quits and its minimum OS."`
 
-	// version is locally derived; titleID and scope resolve against Jamf before
-	// planning. waiting reports that the title does not define the version.
+	// titleID and scope resolve against Jamf before planning. waiting reports
+	// that the title does not define Version.
 	titleID string
-	version string
 	scope   map[string][]string
 	waiting bool
 }
@@ -84,6 +83,9 @@ func decodePatch(metadata map[string]json.RawMessage) (*patchConfig, error) {
 	}
 	if strings.TrimSpace(patch.Title) == "" {
 		return nil, errors.New("jamf patch requires the title's display name")
+	}
+	if patch.Version != nil && strings.TrimSpace(*patch.Version) == "" {
+		return nil, errors.New("jamf patch.version cannot be empty")
 	}
 	if p := patch.Policy; p != nil {
 		if p.Name != nil && strings.TrimSpace(*p.Name) == "" {
@@ -168,7 +170,7 @@ func (patch *patchConfig) settings(c *client, icon *selfServiceIcon) []setting {
 	p := patch.Policy
 	var settings []setting
 	if !patch.waiting {
-		settings = append(settings, setting{field: "target_version", value: patch.version, fragment: fragment(root, patch.version, "general", "target_version"), current: text("general", "target_version")})
+		settings = append(settings, setting{field: "target_version", value: *patch.Version, fragment: fragment(root, *patch.Version, "general", "target_version"), current: text("general", "target_version")})
 	}
 	if p.Enabled != nil {
 		settings = append(settings, setting{field: "enabled", value: *p.Enabled, fragment: fragment(root, *p.Enabled, "general", "enabled"), current: flag("general", "enabled")})
@@ -227,17 +229,17 @@ func (c *client) planPatch(ctx context.Context, patch *patchConfig, packageID st
 	if err := requestError(ctx, result, err); err != nil {
 		return err
 	}
-	if definitions == nil || !slices.ContainsFunc(definitions.Results, func(d titles.ResourceDefinition) bool { return d.Version == patch.version }) {
+	if definitions == nil || !slices.ContainsFunc(definitions.Results, func(d titles.ResourceDefinition) bool { return d.Version == *patch.Version }) {
 		var available []titles.ResourceDefinition
 		if definitions != nil {
 			available = definitions.Results
 		}
 		// Jamf defines new versions some time after vendors ship them, and a
 		// title can name versions differently. The package publishes meanwhile.
-		plugin.Logger(ctx).WarnContext(ctx, fmt.Sprintf("Jamf patch title %q does not define version %s, so its package link and patch policy target wait for it%s", patch.Title, patch.version, recentDefinitions(available)))
+		plugin.Logger(ctx).WarnContext(ctx, fmt.Sprintf("Jamf patch title %q does not define version %s, so its package link and patch policy target wait for it%s", patch.Title, *patch.Version, recentDefinitions(available)))
 		patch.waiting = true
 	} else {
-		linked, err := titlePackage(title, patch.version)
+		linked, err := titlePackage(title, *patch.Version)
 		if err != nil {
 			return err
 		}
@@ -278,13 +280,13 @@ func (c *client) applyPatch(ctx context.Context, patch *patchConfig, packageID s
 		if err != nil {
 			return err
 		}
-		linked, err := titlePackage(title, patch.version)
+		linked, err := titlePackage(title, *patch.Version)
 		if err != nil {
 			return err
 		}
 		if linked != packageID {
-			links := slices.DeleteFunc(slices.Clone(title.Packages), func(p titles.SubsetPackage) bool { return p.Version == patch.version })
-			links = append(links, titles.SubsetPackage{PackageID: packageID, Version: patch.version})
+			links := slices.DeleteFunc(slices.Clone(title.Packages), func(p titles.SubsetPackage) bool { return p.Version == *patch.Version })
+			links = append(links, titles.SubsetPackage{PackageID: packageID, Version: *patch.Version})
 			if err := c.setTitlePackages(ctx, title.ID, links); err != nil {
 				return err
 			}

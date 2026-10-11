@@ -81,12 +81,20 @@ func TestValidatePatchNeedsVersionOnlyAfterPreparation(t *testing.T) {
 	}
 	assertMetadata(t, response.Metadata, request.Metadata)
 	request.Prepared = true
-	if _, err := Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), "managed version") {
+	if _, err := Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), "set patch.version") {
 		t.Fatalf("prepared validation accepted a missing patch version: %v", err)
 	}
 	request.Metadata = json.RawMessage(`{"patch":{"title":"Vendor title","version":"3.0"}}`)
-	if _, err := Handle(t.Context(), request); err == nil {
-		t.Fatal("accepted a patch version override")
+	for _, artifactVersion := range []string{"", "3.0-build.7"} {
+		request.Artifact.Version = artifactVersion
+		response, err := Handle(t.Context(), request)
+		if err != nil {
+			t.Fatalf("patch version override with artifact version %q: %v", artifactVersion, err)
+		}
+		assertMetadata(t, response.Metadata, request.Metadata)
+		if origin := response.Origins["patch.version"]; origin != "" {
+			t.Fatalf("explicit patch version reported a derived origin %q", origin)
+		}
 	}
 }
 

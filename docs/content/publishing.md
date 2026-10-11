@@ -379,9 +379,20 @@ destinations:
           all_computers: true
 ```
 
-`patch` associates the package with the software's managed version in an existing
-patch title: the selected application's version under `version_key`, otherwise
-the installer's. Until the title defines that version, the package publishes
+`patch` associates the package with a version in an existing patch title.
+`patch.version` defaults to the prepared artifact's version: the selected
+application's version under `version_key`, otherwise the installer's. Set it
+explicitly when the title uses a different version, including with an expression:
+
+```yaml
+patch:
+  title: Draw
+  version: "{{ facts.draw.app.version }}"
+```
+
+This changes the patch association and policy target without changing the prepared
+file's version or filename. Preparation requires a nonempty effective patch version.
+Until the title defines that version, the package publishes
 alone and a warning lists the title's recent definitions, which also shows when
 a title writes versions differently. The link and the policy's target version
 follow once the title defines it. The policy's other settings apply meanwhile,
