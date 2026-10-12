@@ -29,7 +29,7 @@ require (
 	github.com/jackmordaunt/icns/v4 v4.2.0
 	github.com/jferrl/go-githubauth v1.9.1
 	github.com/kaptinlin/jsonschema v0.9.10
-	github.com/klauspost/compress v1.20.1
+	github.com/klauspost/compress v1.20.3
 	github.com/mattn/go-runewidth v0.0.31
 	github.com/mholt/archives v0.1.5
 	github.com/microsoft/kiota-abstractions-go v1.11.1
