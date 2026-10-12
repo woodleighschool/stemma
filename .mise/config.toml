@@ -52,7 +52,7 @@ run = "go run ./cmd/stemma schema --builtins --output-file docs/static/stemma.sc
 
 [tasks.generate-graph]
 description = "Regenerate scoped Microsoft Graph clients"
-tools = { "github:microsoft/kiota" = "1.35.0" }
+tools = { "github:microsoft/kiota" = "v1.36.0" }
 run = "go run ./internal/intune/generate.go"
 
 [tasks.test]
