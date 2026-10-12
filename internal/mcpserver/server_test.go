@@ -18,6 +18,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
+	"github.com/woodleighschool/stemma/internal/testutil/testgit"
 )
 
 const project = `apiVersion: stemma/v1alpha1
@@ -267,11 +268,7 @@ func committedProject(t *testing.T) string {
 		t.Fatal(err)
 	}
 	write(t, filepath.Join(root, "software", "app.pkg"), string(installer))
-	repo, err := gogit.PlainInit(root, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tree, err := repo.Worktree()
+	tree, err := testgit.Init(t, root).Worktree()
 	if err != nil {
 		t.Fatal(err)
 	}

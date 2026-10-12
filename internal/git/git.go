@@ -465,6 +465,8 @@ func (w *Worktree) checkout() error {
 		return err
 	}
 	cfg := config.NewConfig()
+	// Commits are unsigned regardless of the host's Git configuration.
+	cfg.Commit.GpgSign = config.OptBoolFalse
 	if w.repo.origin != nil {
 		cfg.Remotes[remoteName] = w.repo.origin.Config()
 	}

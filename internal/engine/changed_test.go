@@ -14,6 +14,7 @@ import (
 	"github.com/go-git/go-git/v6/plumbing/object"
 
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
+	"github.com/woodleighschool/stemma/internal/testutil/testgit"
 )
 
 const changedProject = `apiVersion: stemma/v1alpha1
@@ -91,9 +92,7 @@ func changedCatalog(t *testing.T) (root string, update, prepare func() (Report, 
 		writeFile(t, filepath.Join(root, "software", name+".pkg"), fixture)
 	}
 	writeFile(t, filepath.Join(root, ".gitignore"), []byte(".stemma/\n"))
-	if _, err := gogit.PlainInit(root, false); err != nil {
-		t.Fatal(err)
-	}
+	testgit.Init(t, root)
 	cache := t.TempDir()
 	run := func(method, changedSince string) (Report, error) {
 		return Run(t.Context(), Options{ConfigPath: filepath.Join(root, "stemma.yaml"), CacheDir: cache, Method: method, ChangedSince: changedSince})

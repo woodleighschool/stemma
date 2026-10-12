@@ -11,6 +11,7 @@ import (
 	"github.com/go-git/go-git/v6/config"
 	"github.com/go-git/go-git/v6/plumbing"
 	"github.com/go-git/go-git/v6/plumbing/object"
+	"github.com/woodleighschool/stemma/internal/testutil/testgit"
 )
 
 func human() *object.Signature {
@@ -29,10 +30,7 @@ func seed(t *testing.T) (bare, head string) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(t.TempDir(), "seed")
-	repo, err := gogit.PlainInit(dir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := testgit.Init(t, dir)
 	if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, "refs/heads/trunk")); err != nil {
 		t.Fatal(err)
 	}
@@ -60,6 +58,11 @@ func seed(t *testing.T) (bare, head string) {
 }
 
 func TestOpenBindsTheCheckoutToItsOrigin(t *testing.T) {
+	globalConfig := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(globalConfig, []byte("[commit]\n\tgpgSign = true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", globalConfig)
 	bare, head := seed(t)
 
 	// A clone records origin's HEAD; a bare init plus remote asks origin.
@@ -196,10 +199,7 @@ func TestOpenBindsTheCheckoutToItsOrigin(t *testing.T) {
 
 func TestMergeBaseFindsWhereTheBranchLeftRev(t *testing.T) {
 	dir := t.TempDir()
-	repo, err := gogit.PlainInit(dir, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo := testgit.Init(t, dir)
 	if err := repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, "refs/heads/trunk")); err != nil {
 		t.Fatal(err)
 	}

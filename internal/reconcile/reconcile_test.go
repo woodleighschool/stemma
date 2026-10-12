@@ -37,6 +37,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/source"
+	"github.com/woodleighschool/stemma/internal/testutil/testgit"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -122,9 +123,7 @@ func newOrigin(t *testing.T, files map[string]string) origin {
 	if err := bare.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, "refs/heads/main")); err != nil {
 		t.Fatal(err)
 	}
-	if o.work, err = gogit.PlainInit(o.dir, false); err != nil {
-		t.Fatal(err)
-	}
+	o.work = testgit.Init(t, o.dir)
 	if err := o.work.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, "refs/heads/main")); err != nil {
 		t.Fatal(err)
 	}
