@@ -50,12 +50,8 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	if request.Method != "plan" && request.Method != "apply" {
 		return response, fmt.Errorf("unsupported Jamf method %q", request.Method)
 	}
-	needed := plugin.ContentRequest{Artifact: request.Artifact.Path == ""}
-	if icon := request.Inputs["icon"]; request.Method == "apply" && icon.SHA256 != "" && icon.Path == "" {
-		needed.Inputs = []string{"icon"}
-	}
-	if needed.Artifact || len(needed.Inputs) != 0 {
-		return plugin.ReconcileResponse{Content: &needed}, nil
+	if request.Artifact.Path == "" {
+		return plugin.ReconcileResponse{Content: &plugin.ContentRequest{Artifact: true}}, nil
 	}
 	content, err := inspectPayload(ctx, request.Identity, request.Artifact)
 	if err != nil {

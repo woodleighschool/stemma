@@ -245,7 +245,9 @@ accepts Munki `nopkg` or an arbitrary script policy.
 A resource's committed PNG arrives as the `icon` artifact in reconciliation
 `inputs`. Destinations publish those bytes independently of installer uploads:
 create a missing icon, replace changed content and retain the published icon
-when no input is supplied.
+when no input is supplied. `apply` always receives the icon with its `Path`, so a
+destination can restore artwork its own writes displaced; `validate` and `plan`
+receive its identity.
 
 ## Resolvers
 
@@ -333,7 +335,8 @@ Artifact identity, size, format, facts and evidence are available without `Path`
 When a method needs bytes, return `ReconcileResponse.Content` selecting `Artifact`
 or named `Inputs`, before making any writes. The engine retries that method once
 with verified private copies of all requested content. These paths expire when
-the invocation returns. Request only the inputs the method actually needs.
+the invocation returns. Request only the inputs the method actually needs;
+`apply` already holds the icon.
 
 Keep metadata-only plans and updates independent of installer bytes. Apply must
 re-observe remote state and request content if an upload becomes necessary after

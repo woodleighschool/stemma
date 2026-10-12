@@ -69,9 +69,6 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 		t.Fatal("plan wrote icon")
 	}
 	req.Method = "apply"
-	if result := run(); result.Content == nil || result.Content.Artifact || len(result.Content.Inputs) != 1 || result.Content.Inputs[0] != "icon" {
-		t.Fatalf("icon upload did not request just its bytes: %+v", result)
-	}
 	req.Inputs["icon"] = second
 	run()
 	replaced := text(fake.app["largeIcon"].(object)["value"])

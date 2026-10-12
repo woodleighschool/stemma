@@ -96,14 +96,14 @@ func TestDestinationContentRequestsMustBeSatisfiable(t *testing.T) {
 		{"empty", plugin.ContentRequest{}, "requested no content"},
 		{"absent artifact", plugin.ContentRequest{Artifact: true}, "unavailable content"},
 		{"unknown input", plugin.ContentRequest{Inputs: []string{"unknown"}}, "unknown input"},
-		{"repeated", plugin.ContentRequest{Inputs: []string{"icon"}}, "requested content again"},
+		{"repeated", plugin.ContentRequest{Inputs: []string{"installer"}}, "requested content again"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, err := cas.Open(t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
-			ref, err := store.Import(t.Context(), strings.NewReader("icon"), "")
+			ref, err := store.Import(t.Context(), strings.NewReader("installer"), "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -115,7 +115,7 @@ func TestDestinationContentRequestsMustBeSatisfiable(t *testing.T) {
 				t.Fatal(err)
 			}
 			e := execution{session: &session{store: store, ops: &operations{registry: registry}}}
-			req := plugin.ReconcileRequest[json.RawMessage]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "Fixture", Name: "example"}}, Method: "apply", Inputs: map[string]plugin.Artifact{"icon": {SHA256: ref.SHA256, Size: ref.Size, Filename: "icon.png", Mode: 0644}}}
+			req := plugin.ReconcileRequest[json.RawMessage]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "Fixture", Name: "example"}}, Method: "apply", Inputs: map[string]plugin.Artifact{"installer": {SHA256: ref.SHA256, Size: ref.Size, Filename: "installer.pkg", Mode: 0644}}}
 			_, err = e.callDestination(t.Context(), "fixture", req, t.TempDir())
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error=%v", err)

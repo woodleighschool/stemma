@@ -28,15 +28,11 @@ import (
 // Handle implements read-only planning and content-first publication to a local repository.
 // Apply serializes writers sharing this repository; external writers must use the same lock.
 func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, error) {
-	_, document := request.Inputs["installer"]
+	installer, document := request.Inputs["installer"]
 	if (document || request.Artifact.Format == "json") && request.Artifact.Path == "" {
 		needed := &plugin.ContentRequest{Artifact: true}
-		if request.Method == "apply" {
-			for _, name := range []string{"installer", "icon"} {
-				if input := request.Inputs[name]; input.SHA256 != "" && input.Path == "" {
-					needed.Inputs = append(needed.Inputs, name)
-				}
-			}
+		if request.Method == "apply" && installer.SHA256 != "" && installer.Path == "" {
+			needed.Inputs = []string{"installer"}
 		}
 		return plugin.ReconcileResponse{Content: needed}, nil
 	}
@@ -423,12 +419,8 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		}
 		return response, err
 	}
-	needed := plugin.ContentRequest{Artifact: contentNeeded && request.Artifact.Path == ""}
-	if iconNeeded && request.Inputs["icon"].Path == "" {
-		needed.Inputs = []string{"icon"}
-	}
-	if needed.Artifact || len(needed.Inputs) != 0 {
-		response.Content = &needed
+	if contentNeeded && request.Artifact.Path == "" {
+		response.Content = &plugin.ContentRequest{Artifact: true}
 		return response, nil
 	}
 	// No catalog references an installer before its complete bytes are available.

@@ -115,6 +115,7 @@ type MinimumOS struct {
 // writes. The engine retries the method once with verified private copies of
 // all requested artifacts; paths expire when that invocation returns. Apply
 // must observe remote state again and request content if it now needs an upload.
+// Apply always holds the icon input, so it is never requested.
 // Consumers verify the bytes they publish against the artifact identity and
 // the destination's transfer integrity contract.
 //

@@ -99,11 +99,7 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest[Config]) (response 
 	}
 	// Trees and existing envelopes need inspection to establish their identity.
 	if desired["type"] == "win32" && (req.Artifact.Tree || strings.HasSuffix(strings.ToLower(req.Artifact.Filename), ".intunewin")) && req.Artifact.Path == "" {
-		needed := &plugin.ContentRequest{Artifact: true}
-		if icon := req.Inputs["icon"]; req.Method == "apply" && icon.SHA256 != "" && icon.Path == "" {
-			needed.Inputs = []string{"icon"}
-		}
-		return plugin.ReconcileResponse{Content: needed}, nil
+		return plugin.ReconcileResponse{Content: &plugin.ContentRequest{Artifact: true}}, nil
 	}
 	var artifact artifactIdentity
 	if req.Artifact.SHA256 != "" || req.Method != "validate" {
@@ -226,12 +222,8 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 	if len(response.Changes) == 0 && current["publishingState"] == "published" {
 		return response, nil
 	}
-	needed := plugin.ContentRequest{Artifact: contentChanged && req.Artifact.Path == ""}
-	if len(iconChanges) != 0 && req.Inputs["icon"].Path == "" {
-		needed.Inputs = []string{"icon"}
-	}
-	if needed.Artifact || len(needed.Inputs) != 0 {
-		response.Content = &needed
+	if contentChanged && req.Artifact.Path == "" {
+		response.Content = &plugin.ContentRequest{Artifact: true}
 		return response, nil
 	}
 	var prepared *preparedArtifact
@@ -270,6 +262,8 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 	if err := c.applyMetadata(ctx, appID, activated, &current, desired, published); err != nil {
 		return response, err
 	}
+	// Graph can clear largeIcon while an update publishes, so the icon converges
+	// on the app as it stands afterwards.
 	if _, err := c.reconcileIcon(ctx, req, current, true); err != nil {
 		return response, err
 	}

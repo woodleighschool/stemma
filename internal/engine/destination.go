@@ -219,17 +219,12 @@ func (e *execution) request(ref destinationRef, prepared Prepared, metadata map[
 	}, nil
 }
 
-// callDestination keeps byte leases private to one method. A consumer requests
-// all needed content before writes; the retry must finish or fail clearly.
+// callDestination keeps byte leases private to one method. Apply holds the icon
+// from the start: a destination's own writes can displace published artwork
+// after its one chance to ask. A consumer requests all other content before
+// writes; the retry must finish or fail clearly.
 func (e *execution) callDestination(ctx context.Context, operation string, request plugin.ReconcileRequest[json.RawMessage], work string) (plugin.ReconcileResponse, error) {
 	var response plugin.ReconcileResponse
-	if err := e.session.ops.call(ctx, operation, request.Method, request, &response); err != nil || response.Content == nil {
-		return response, err
-	}
-	needed := response.Content
-	if !needed.Artifact && len(needed.Inputs) == 0 {
-		return response, errors.New("destination requested no content")
-	}
 	work = filepath.Join(work, request.Method)
 	defer func() { cleanupError(ctx, os.RemoveAll(work)) }()
 	lease := func(artifact plugin.Artifact, name, directory string) (plugin.Artifact, error) {
@@ -243,14 +238,27 @@ func (e *execution) callDestination(ctx context.Context, operation string, reque
 		artifact.Path = leased.Path
 		return artifact, err
 	}
+	request.Inputs = maps.Clone(request.Inputs)
 	var err error
+	if icon, declared := request.Inputs["icon"]; declared && request.Method == "apply" {
+		request.Inputs["icon"], err = lease(icon, "icon", "input-"+config.Fingerprint("icon"))
+		if err != nil {
+			return response, err
+		}
+	}
+	if err = e.session.ops.call(ctx, operation, request.Method, request, &response); err != nil || response.Content == nil {
+		return response, err
+	}
+	needed := response.Content
+	if !needed.Artifact && len(needed.Inputs) == 0 {
+		return response, errors.New("destination requested no content")
+	}
 	if needed.Artifact {
 		request.Artifact, err = lease(request.Artifact, "artifact", "artifact")
 		if err != nil {
 			return response, err
 		}
 	}
-	request.Inputs = maps.Clone(request.Inputs)
 	for _, name := range needed.Inputs {
 		artifact, ok := request.Inputs[name]
 		if !ok {
