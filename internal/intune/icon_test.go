@@ -50,15 +50,13 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 	if original == "" {
 		t.Fatal("existing app did not acquire missing icon")
 	}
+	installerPath := req.Artifact.Path
 	req.Artifact.Path = ""
-	unleased := first
-	unleased.Path = ""
-	req.Inputs["icon"] = unleased
 	if result := run(); len(result.Changes) != 0 || result.Content != nil {
 		t.Fatalf("unchanged icon planned writes: %+v", result.Changes)
 	}
 	// Changed bytes are ordinary drift: planning reports them, applying replaces them.
-	unleased = second
+	unleased := second
 	unleased.Path = ""
 	req.Inputs["icon"] = unleased
 	req.Method = "plan"
@@ -88,5 +86,25 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 	}
 	if fake.creates != 1 || fake.versions != 1 || fake.commits != 1 {
 		t.Fatal("icon writes recreated app or reuploaded installer")
+	}
+
+	data := []byte("updated installer")
+	if err := os.WriteFile(installerPath, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	req.Artifact.Path = installerPath
+	req.Artifact.SHA256 = hex.EncodeToString(digest[:])
+	req.Artifact.Size = int64(len(data))
+	run()
+	if restored, _ := fake.app["largeIcon"].(object); text(restored["value"]) != replaced {
+		t.Fatal("publication did not restore matching artwork")
+	}
+	if fake.creates != 1 || fake.versions != 2 || fake.commits != 2 {
+		t.Fatal("installer update did not publish exactly once")
+	}
+	writes := fake.writes
+	if result := run(); len(result.Changes) != 0 || fake.writes != writes {
+		t.Fatalf("settled publication wrote again: %+v", result.Changes)
 	}
 }

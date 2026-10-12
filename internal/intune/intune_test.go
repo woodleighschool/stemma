@@ -843,6 +843,8 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 			maps.Copy(f.app, body)
 		}
 		if body["committedContentVersion"] != nil {
+			// Publishing can discard existing artwork.
+			f.app["largeIcon"] = nil
 			f.app["publishingState"] = "published"
 			if f.failActivation {
 				f.failActivation = false

@@ -37,8 +37,22 @@ func TestDestinationContentIsVerifiedAndScopedToInvocation(t *testing.T) {
 			}
 			artifact := plugin.Artifact{SHA256: ref.SHA256, Size: ref.Size, Filename: "installer", Mode: 0750, Tree: tree}
 			registry := plugin.New("fixture", "1")
+			iconRef, err := store.Import(t.Context(), strings.NewReader("artwork"), "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			inputs := map[string]plugin.Artifact{"icon": {SHA256: iconRef.SHA256, Size: iconRef.Size, Filename: "icon.png", Mode: 0600}}
+			var iconPath string
 			var paths []string
 			handler := func(ctx context.Context, req plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
+				iconPath = req.Inputs["icon"].Path
+				if req.Method == "apply" {
+					if data, err := os.ReadFile(iconPath); err != nil || string(data) != "artwork" {
+						t.Fatalf("apply icon=%q err=%v", data, err)
+					}
+				} else if iconPath != "" {
+					t.Fatalf("%s received unsolicited icon bytes", req.Method)
+				}
 				if req.Artifact.Path == "" {
 					return plugin.ReconcileResponse{Content: &plugin.ContentRequest{Artifact: true}}, nil
 				}
@@ -61,9 +75,17 @@ func TestDestinationContentIsVerifiedAndScopedToInvocation(t *testing.T) {
 			e := execution{session: &session{store: store, ops: &operations{registry: registry}}}
 			work := t.TempDir()
 			for _, method := range []string{"validate", "plan", "apply"} {
-				_, err = e.callDestination(t.Context(), "fixture", plugin.ReconcileRequest[json.RawMessage]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "Fixture", Name: "example"}}, Method: method, Artifact: artifact}, work)
+				_, err = e.callDestination(t.Context(), "fixture", plugin.ReconcileRequest[json.RawMessage]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "Fixture", Name: "example"}}, Method: method, Artifact: artifact, Inputs: inputs}, work)
 				if err != nil {
 					t.Fatal(err)
+				}
+				if iconPath != "" {
+					if _, err := os.Stat(iconPath); !os.IsNotExist(err) {
+						t.Fatalf("icon lease survives invocation: %v", err)
+					}
+				}
+				if inputs["icon"].Path != "" {
+					t.Fatal("icon lease escaped into the caller's inputs")
 				}
 				if _, err := os.Stat(paths[len(paths)-1]); !os.IsNotExist(err) {
 					t.Fatalf("lease survives invocation: %v", err)
@@ -79,7 +101,7 @@ func TestDestinationContentIsVerifiedAndScopedToInvocation(t *testing.T) {
 			if err := os.WriteFile(object, []byte("corrupt"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			_, err = e.callDestination(t.Context(), "fixture", plugin.ReconcileRequest[json.RawMessage]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "Fixture", Name: "example"}}, Method: "apply", Artifact: artifact}, work)
+			_, err = e.callDestination(t.Context(), "fixture", plugin.ReconcileRequest[json.RawMessage]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "Fixture", Name: "example"}}, Method: "apply", Artifact: artifact, Inputs: inputs}, work)
 			if err == nil || len(paths) != 3 {
 				t.Fatalf("corrupt content reached consumer: calls=%d err=%v", len(paths), err)
 			}
