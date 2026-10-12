@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.11.1](https://github.com/woodleighschool/stemma/compare/v0.11.0...v0.11.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **git:** disable signing for managed commits ([71aaaa0](https://github.com/woodleighschool/stemma/commit/71aaaa06b8b2a697c1efe2833bf09c8cbf7692cb))
+* **go:** update module github.com/bmatcuk/doublestar/v4 (v4.10.2 → v4.10.3) ([#166](https://github.com/woodleighschool/stemma/issues/166)) ([c287ba7](https://github.com/woodleighschool/stemma/commit/c287ba76075338bcf166d38c25ee18640ddb3db9))
+* **go:** update module github.com/klauspost/compress (v1.20.1 → v1.20.3) ([#169](https://github.com/woodleighschool/stemma/issues/169)) ([2d02722](https://github.com/woodleighschool/stemma/commit/2d027221f66d4c141574d998df5fee21ea00c489))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (944ac19 → 452ac5a) ([#168](https://github.com/woodleighschool/stemma/issues/168)) ([6f86395](https://github.com/woodleighschool/stemma/commit/6f863953b58d61e2b3009bdc2d52032ee576e771))
+* **plugin:** lease the icon for every apply ([9f9fe1f](https://github.com/woodleighschool/stemma/commit/9f9fe1f05ebc467cf29afd6c9d6400fa7278509e))
+
 ## [0.11.0](https://github.com/woodleighschool/stemma/compare/v0.10.4...v0.11.0) (2026-10-11)
 
 
