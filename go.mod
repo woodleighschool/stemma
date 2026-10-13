@@ -27,7 +27,7 @@ require (
 	github.com/google/go-github/v92 v92.0.1-0.20261012193837-e754d2c70ded
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jackmordaunt/icns/v4 v4.2.0
-	github.com/jferrl/go-githubauth v1.9.1
+	github.com/jferrl/go-githubauth/v2 v2.0.1
 	github.com/kaptinlin/jsonschema v0.9.10
 	github.com/klauspost/compress v1.20.3
 	github.com/mattn/go-runewidth v0.0.31
