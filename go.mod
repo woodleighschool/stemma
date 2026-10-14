@@ -45,7 +45,7 @@ require (
 	github.com/ncruces/go-sqlite3 v0.35.6
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
-	github.com/oras-project/oras-go/v3 v3.0.0-rc.1.0.20260925203640-cb6d6dc79f83
+	github.com/oras-project/oras-go/v3 v3.0.0-rc.2
 	github.com/pb33f/ordered-map/v2 v2.3.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sassoftware/relic/v8 v8.2.0
