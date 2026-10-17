@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.11.2](https://github.com/woodleighschool/stemma/compare/v0.11.1...v0.11.2) (2026-10-17)
+
+
+### Bug Fixes
+
+* **go:** update module github.com/azure/azure-sdk-for-go/sdk/azidentity (v1.14.1 → v1.15.0) ([#188](https://github.com/woodleighschool/stemma/issues/188)) ([8c328a2](https://github.com/woodleighschool/stemma/commit/8c328a2efc55d8b95982041c9cf21e120364a7e9))
+* **go:** update module github.com/google/go-github/v92 (40091e2 → e754d2c) ([#175](https://github.com/woodleighschool/stemma/issues/175)) ([0266fdc](https://github.com/woodleighschool/stemma/commit/0266fdc1d840cd57cc9a35c14265ca3938a7e0c0))
+* **go:** update module github.com/google/go-github/v92 (70b9759 → c273cd8) ([#184](https://github.com/woodleighschool/stemma/issues/184)) ([14df5da](https://github.com/woodleighschool/stemma/commit/14df5da302b7b67e8da1325543e7641c03769e39))
+* **go:** update module github.com/google/go-github/v92 (e754d2c → 70b9759) ([#182](https://github.com/woodleighschool/stemma/issues/182)) ([3f47caa](https://github.com/woodleighschool/stemma/commit/3f47caa5c7cc000fdab17254a68820cfaed06935))
+* **go:** update module github.com/microsoft/kiota-abstractions-go (v1.11.1 → v1.11.2) ([#190](https://github.com/woodleighschool/stemma/issues/190)) ([9d8c057](https://github.com/woodleighschool/stemma/commit/9d8c0577cf7df3e692299d23165689232eaedbd7))
+* **go:** update module github.com/microsoft/kiota-http-go (v1.5.7 → v1.5.8) ([#191](https://github.com/woodleighschool/stemma/issues/191)) ([b16a8e3](https://github.com/woodleighschool/stemma/commit/b16a8e3c5e19ae4b1f95e9e481fe48fb2acc153d))
+* **go:** update module github.com/microsoft/kiota-serialization-form-go (v1.1.3 → v1.1.4) ([#187](https://github.com/woodleighschool/stemma/issues/187)) ([5e5e83d](https://github.com/woodleighschool/stemma/commit/5e5e83de5a1eb8a2f2aae74e67f087ea1da74561))
+* **go:** update module github.com/microsoft/kiota-serialization-json-go (v1.1.4 → v1.1.5) ([#192](https://github.com/woodleighschool/stemma/issues/192)) ([34e800d](https://github.com/woodleighschool/stemma/commit/34e800dc915c45ee95bac0a9845389472106112f))
+* **go:** update module github.com/microsoft/kiota-serialization-text-go (v1.1.3 → v1.1.4) ([#193](https://github.com/woodleighschool/stemma/issues/193)) ([a6f1908](https://github.com/woodleighschool/stemma/commit/a6f19086ac68d5feff19ab15a755d2adb181bb5a))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (12c67a6 → d1a225e) ([#172](https://github.com/woodleighschool/stemma/issues/172)) ([50ba1a9](https://github.com/woodleighschool/stemma/commit/50ba1a9bd0f03ca6ab86ddfaac39c220e2c525d0))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (452ac5a → 12c67a6) ([#170](https://github.com/woodleighschool/stemma/issues/170)) ([0dfab75](https://github.com/woodleighschool/stemma/commit/0dfab7558f5e70737fc560992f597999fa198501))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (8c761a2 → d1a225e) ([#173](https://github.com/woodleighschool/stemma/issues/173)) ([0152570](https://github.com/woodleighschool/stemma/commit/0152570ba7788b577ae39270eea886c27f603257))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (b04b49e → 7cdd99f) ([#178](https://github.com/woodleighschool/stemma/issues/178)) ([2acf644](https://github.com/woodleighschool/stemma/commit/2acf644cd8f7b58c66cd2a2ed7bfdd4eb5256ec6))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (b5d319b → b04b49e) ([#177](https://github.com/woodleighschool/stemma/issues/177)) ([eadeaef](https://github.com/woodleighschool/stemma/commit/eadeaef100d643fc699b5956807ee5257dd671b3))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (d1a225e → b5d319b) ([#174](https://github.com/woodleighschool/stemma/issues/174)) ([7952523](https://github.com/woodleighschool/stemma/commit/795252380d3831bfb6a779532ad57215535b348d))
+* **go:** update module github.com/oras-project/oras-go/v3 (v3.0.0-rc.1.0.20260925203640-cb6d6dc79f83 → v3.0.0-rc.2) ([#186](https://github.com/woodleighschool/stemma/issues/186)) ([293ab4f](https://github.com/woodleighschool/stemma/commit/293ab4f5e7f66dce3c1247198690832b18569c8b))
+* **npm:** update react runtime (19.3.0 → 19.3.1) ([#194](https://github.com/woodleighschool/stemma/issues/194)) ([b26c82c](https://github.com/woodleighschool/stemma/commit/b26c82cf2d8aea23b25192f584cbb55bed5d62da))
+
 ## [0.11.1](https://github.com/woodleighschool/stemma/compare/v0.11.0...v0.11.1) (2026-10-12)
 
 
