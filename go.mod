@@ -33,7 +33,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.31
 	github.com/mholt/archives v0.1.5
 	github.com/microsoft/kiota-abstractions-go v1.11.2
-	github.com/microsoft/kiota-http-go v1.5.7
+	github.com/microsoft/kiota-http-go v1.5.8
 	github.com/microsoft/kiota-serialization-form-go v1.1.3
 	github.com/microsoft/kiota-serialization-json-go v1.1.5
 	github.com/microsoft/kiota-serialization-multipart-go v1.1.2
