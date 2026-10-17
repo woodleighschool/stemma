@@ -5,7 +5,7 @@ go = "1.27.2"
 "go:github.com/google/go-licenses/v2" = "v2.0.1"
 "go:golang.org/x/vuln/cmd/govulncheck" = "v1.9.0"
 golangci-lint = "2.14.0"
-lefthook = "2.2.1"
+lefthook = "2.2.2"
 actionlint = "1.7.12"
 zizmor = "1.30.1"
 oxfmt = "0.72.0"
@@ -52,7 +52,7 @@ run = "go run ./cmd/stemma schema --builtins --output-file docs/static/stemma.sc
 
 [tasks.generate-graph]
 description = "Regenerate scoped Microsoft Graph clients"
-tools = { "github:microsoft/kiota" = "v1.36.0" }
+tools = { "github:microsoft/kiota" = "v1.36.1" }
 run = "go run ./internal/intune/generate.go"
 
 [tasks.test]
