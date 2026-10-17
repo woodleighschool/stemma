@@ -32,7 +32,7 @@ require (
 	github.com/klauspost/compress v1.20.3
 	github.com/mattn/go-runewidth v0.0.31
 	github.com/mholt/archives v0.1.5
-	github.com/microsoft/kiota-abstractions-go v1.11.1
+	github.com/microsoft/kiota-abstractions-go v1.11.2
 	github.com/microsoft/kiota-http-go v1.5.7
 	github.com/microsoft/kiota-serialization-form-go v1.1.3
 	github.com/microsoft/kiota-serialization-json-go v1.1.4
@@ -125,9 +125,10 @@ require (
 	github.com/zalando/go-keyring v0.2.8 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0 // indirect
-	go.opentelemetry.io/otel v1.46.0 // indirect
-	go.opentelemetry.io/otel/metric v1.46.0 // indirect
-	go.opentelemetry.io/otel/trace v1.46.0 // indirect
+	go.opentelemetry.io/otel v1.47.0 // indirect
+	go.opentelemetry.io/otel/log v1.47.0 // indirect
+	go.opentelemetry.io/otel/metric v1.47.0 // indirect
+	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	go4.org v0.0.0-20260112195520-a5071408f32f // indirect
