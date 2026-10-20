@@ -237,8 +237,7 @@ func TestConcurrentWalkWaitsForBorrowers(t *testing.T) {
 		case parent = <-started:
 		case <-time.After(5 * time.Second):
 			close(release)
-			<-result
-			t.Fatal("local callbacks did not run concurrently")
+			t.Fatalf("local callbacks did not run concurrently: %v", <-result)
 		}
 	}
 	if _, err := parent.Lstat("."); err != nil {

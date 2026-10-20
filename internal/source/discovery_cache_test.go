@@ -93,7 +93,12 @@ func TestDiscoveryCacheWaiterCanCancel(t *testing.T) {
 		}
 		first <- err
 	}()
-	defer func() { close(release); <-first }()
+	defer func() {
+		close(release)
+		if err := <-first; err != nil {
+			t.Errorf("leader request: %v", err)
+		}
+	}()
 	<-started
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
