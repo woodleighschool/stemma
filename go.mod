@@ -40,7 +40,7 @@ require (
 	github.com/microsoft/kiota-serialization-text-go v1.1.4
 	github.com/microsoftgraph/msgraph-sdk-go-core v1.4.1
 	github.com/mikelolasagasti/xz v1.0.1
-	github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261020095904-25f488030dbf
+	github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261020103116-3ebc6d1eb720
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12
 	github.com/ncruces/go-sqlite3 v0.35.6
 	github.com/opencontainers/go-digest v1.0.0
