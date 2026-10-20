@@ -74,7 +74,7 @@ func (c catalog) inspect(ctx context.Context, _ *mcp.CallToolRequest, in inspect
 		content := file.data.String()
 		result.Content = &content
 	}
-	return outcome(err), result, nil
+	return outcome(err, result)
 }
 
 type iconInput struct {
@@ -224,7 +224,7 @@ func (c catalog) prepare(ctx context.Context, _ *mcp.CallToolRequest, in resourc
 		}
 		result.Resources = append(result.Resources, item)
 	}
-	return outcome(err), result, nil
+	return outcome(err, result)
 }
 
 func (c catalog) update(ctx context.Context, _ *mcp.CallToolRequest, in resourcesInput) (*mcp.CallToolResult, lockUpdate, error) {
@@ -241,7 +241,7 @@ func (c catalog) update(ctx context.Context, _ *mcp.CallToolRequest, in resource
 	for _, change := range report.Plugins {
 		result.Plugins = append(result.Plugins, change.Name+": "+pluginChange(change))
 	}
-	return outcome(err), result, nil
+	return outcome(err, result)
 }
 
 func (c catalog) icon(ctx context.Context, _ *mcp.CallToolRequest, in iconInput) (*mcp.CallToolResult, icons, error) {
@@ -261,7 +261,7 @@ func (c catalog) icon(ctx context.Context, _ *mcp.CallToolRequest, in iconInput)
 	for _, resource := range report.Resources {
 		result.Resources = append(result.Resources, iconOutcome{Resource: resourceName(resource), Icon: resource.Icon, Error: resource.Error})
 	}
-	return outcome(err), result, nil
+	return outcome(err, result)
 }
 
 func (c catalog) check(ctx context.Context, _ *mcp.CallToolRequest, in checkInput) (*mcp.CallToolResult, checkResult, error) {
@@ -286,13 +286,25 @@ func (c catalog) check(ctx context.Context, _ *mcp.CallToolRequest, in checkInpu
 	for _, resource := range report.Resources {
 		result.Resources = append(result.Resources, checked{Resource: resourceName(resource), Status: status(resource), Error: resource.Error, BlockedBy: keyNames(resource.BlockedBy)})
 	}
-	return outcome(err), result, nil
+	return outcome(err, result)
 }
 
 // outcome marks a run that failed as a tool error. Its report still answers
-// with every resource's result.
-func outcome(err error) *mcp.CallToolResult {
-	return &mcp.CallToolResult{IsError: err != nil}
+// with every resource's result; the SDK omits typed output from error
+// results, so the report is attached here.
+func outcome[Out any](err error, report Out) (*mcp.CallToolResult, Out, error) {
+	if err == nil {
+		return nil, report, nil
+	}
+	data, marshalErr := json.Marshal(report)
+	if marshalErr != nil {
+		return nil, report, errors.Join(err, marshalErr)
+	}
+	return &mcp.CallToolResult{
+		IsError:           true,
+		StructuredContent: json.RawMessage(data),
+		Content:           []mcp.Content{&mcp.TextContent{Text: string(data)}},
+	}, report, nil
 }
 
 func unreported(err error) string {
