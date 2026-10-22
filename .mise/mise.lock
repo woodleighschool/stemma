@@ -187,10 +187,10 @@ checksum = "sha256:50efaf01a08c520b4bbe499c09a8c5a5c370002c419c0d9da2c6815d3066a
 url = "https://nodejs.org/dist/v26.12.0/node-v26.12.0-win-x64.zip"
 
 [[tools."npm:@commitlint/cli"]]
-version = "21.2.3"
-aube = { path = "locks/npm-commitlint-cli/21.2.3", digest = "sha256:8c7adee094a8c509826c562f8bc9904e358c16c06a22c4709c70e21224c763e4" }
+version = "21.2.4"
+aube = { path = "locks/npm-commitlint-cli/21.2.4", digest = "sha256:48fedb46245a75b8595bdadc68ea61f818257ad573d593ea24ba36cc5ec719e9" }
 backend = "npm:@commitlint/cli"
-specifiers = ["21.2.3"]
+specifiers = ["21.2.4"]
 
 [[tools.oxfmt]]
 version = "0.73.0"
