@@ -37,7 +37,7 @@ require (
 	github.com/microsoft/kiota-serialization-form-go v1.1.5
 	github.com/microsoft/kiota-serialization-json-go v1.1.5
 	github.com/microsoft/kiota-serialization-multipart-go v1.1.4
-	github.com/microsoft/kiota-serialization-text-go v1.1.4
+	github.com/microsoft/kiota-serialization-text-go v1.1.5
 	github.com/microsoftgraph/msgraph-sdk-go-core v1.4.1
 	github.com/mikelolasagasti/xz v1.0.1
 	github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261022085357-12e768b461fd
