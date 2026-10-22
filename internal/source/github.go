@@ -12,7 +12,7 @@ import (
 	"unicode"
 
 	"github.com/bmatcuk/doublestar/v4"
-	"github.com/google/go-github/v92/github"
+	"github.com/google/go-github/v93/github"
 	"github.com/invopop/jsonschema"
 	"github.com/woodleighschool/stemma/plugin"
 )

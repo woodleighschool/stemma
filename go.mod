@@ -24,7 +24,7 @@ require (
 	github.com/gofrs/flock v0.13.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-containerregistry v0.22.1
-	github.com/google/go-github/v92 v92.0.1-0.20261013233148-c273cd8137bd
+	github.com/google/go-github/v93 v93.0.0
 	github.com/invopop/jsonschema v0.14.0
 	github.com/jackmordaunt/icns/v4 v4.2.0
 	github.com/jferrl/go-githubauth v1.9.1
