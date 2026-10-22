@@ -214,8 +214,8 @@ github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/opencontainers/image-spec v1.1.1 h1:y0fUlFfIZhPF1W537XOLg0/fcx6zcHCJwooC2xJA040=
 github.com/opencontainers/image-spec v1.1.1/go.mod h1:qpqAh3Dmcf36wStyyWU+kCeDgrGnAve2nCC8+7h8Q0M=
-github.com/oras-project/oras-go/v3 v3.0.0-rc.2 h1:TsUUnNTHhHKNdpU24Xpbun/6V9qg6B03MzEkA5mDLew=
-github.com/oras-project/oras-go/v3 v3.0.0-rc.2/go.mod h1:eB1bXrY/DmcqR5p1E+t7gd0qZGD9mZLlTm7hEU2js/0=
+github.com/oras-project/oras-go/v3 v3.0.0-rc.3 h1:A/vWUa9nRqg/NdyN4+4tqI8AaUUZW9wofYrhLmyrtm0=
+github.com/oras-project/oras-go/v3 v3.0.0-rc.3/go.mod h1:jt0+rBVbpB3LeazooQx4raSrZ8evpnNLDlrSoJZvbh4=
 github.com/pb33f/go-yaml v0.1.0 h1:zZ6Gg+ATbumXlXZNLMHIe7+zTkVqe20lx+TSYRrXEuY=
 github.com/pb33f/go-yaml v0.1.0/go.mod h1:QvWdkHP5VjFYAeHMQUkaPQqREaQnBNOXmWzAjNrnSdo=
 github.com/pb33f/ordered-map/v2 v2.3.2 h1:wDyaZ2Pv9QLh64X4utCeD5Zoi9nIv2aW3lwv172O5PQ=
