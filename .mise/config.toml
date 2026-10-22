@@ -11,7 +11,7 @@ zizmor = "1.31.1"
 oxfmt = "0.73.0"
 node = "26.12.0"
 pnpm = "12.14.0"
-"npm:@commitlint/cli" = "21.2.3"
+"npm:@commitlint/cli" = "21.2.4"
 
 [settings]
 experimental = true
