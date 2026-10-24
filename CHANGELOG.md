@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.11.3](https://github.com/woodleighschool/stemma/compare/v0.11.2...v0.11.3) (2026-10-24)
+
+
+### Bug Fixes
+
+* **go:** update module github.com/bmatcuk/doublestar/v4 (v4.10.3 → v4.10.4) ([#229](https://github.com/woodleighschool/stemma/issues/229)) ([4d05cf7](https://github.com/woodleighschool/stemma/commit/4d05cf7215bb4872b7af3142b4ecf249f4ce51c8))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (12e768b → 7899792) ([#225](https://github.com/woodleighschool/stemma/issues/225)) ([fb93fc7](https://github.com/woodleighschool/stemma/commit/fb93fc72027ae0f6bb9e21ae3104e0cbb44bdf32))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (7899792 → 2e00768) ([#226](https://github.com/woodleighschool/stemma/issues/226)) ([b513989](https://github.com/woodleighschool/stemma/commit/b513989400f571ca8eb159ac7b1e6fbea8f1c144))
+* **go:** update module github.com/oras-project/oras-go/v3 (v3.0.0-rc.2 → v3.0.0-rc.3) ([#221](https://github.com/woodleighschool/stemma/issues/221)) ([d48b08e](https://github.com/woodleighschool/stemma/commit/d48b08ed4dd745abec59c7a54b6a1819f43fbfc8))
+
 ## [0.11.2](https://github.com/woodleighschool/stemma/compare/v0.11.1...v0.11.2) (2026-10-22)
 
 
