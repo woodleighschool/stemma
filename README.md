@@ -39,10 +39,10 @@ Use `stemma apply` to publish after reviewing the result.
 
 ## 📖 Documentation
 
-- [Getting started](docs/content/getting-started.md)
-- [Starting a catalog](docs/content/catalogs.md)
-- [Mac software](docs/content/mac-software.md) and [Windows software](docs/content/windows-software.md)
-- [Creating plugins](docs/content/writing-plugins.md)
+- [Getting started](https://woodleighschool.github.io/stemma/getting-started)
+- [Starting a catalog](https://woodleighschool.github.io/stemma/catalogs)
+- [Mac software](https://woodleighschool.github.io/stemma/mac-software) and [Windows software](https://woodleighschool.github.io/stemma/windows-software)
+- [Creating plugins](https://woodleighschool.github.io/stemma/writing-plugins)
 
 ## 🧑‍💻 Development
 
@@ -52,7 +52,7 @@ mise run deps
 mise run build
 ```
 
-See [development](docs/content/development.md) for checks, generation and the docs preview.
+See [development](https://woodleighschool.github.io/stemma/development) for checks, generation and the docs preview.
 
 ## 📄 License
 
