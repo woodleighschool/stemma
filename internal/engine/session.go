@@ -60,6 +60,7 @@ func open(ctx context.Context, opts Options, resolvePlugins bool) (_ *session, e
 	s.closers = append(s.closers, release)
 	s.manager = source.New(s.store, s.root, opts.Lock.Offline)
 	s.manager.GitHubToken = opts.GitHubToken
+	s.manager.GitHubAppToken = opts.GitHubAppToken
 	s.work, err = os.MkdirTemp(filepath.Join(s.store.Dir, "work"), "operations-*")
 	if err != nil {
 		return nil, err

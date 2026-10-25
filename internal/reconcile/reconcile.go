@@ -20,6 +20,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/reconcile/sourcecontrol"
 	"github.com/woodleighschool/stemma/internal/reconcile/sourcecontrol/github"
 	"github.com/woodleighschool/stemma/plugin"
+	"golang.org/x/oauth2"
 )
 
 const (
@@ -37,7 +38,7 @@ type Options struct {
 	ConfigPath         string
 	CacheDir, StateDir string
 	// GitHubToken authenticates release lookups of GitHub sources that declare
-	// no token. Source control keeps its own credentials.
+	// no token, ahead of the configured github.com App.
 	GitHubToken string
 	// PhaseStarted announces apply or update before its work begins.
 	PhaseStarted func(method string) error
@@ -108,9 +109,10 @@ type Proposal struct {
 }
 
 type runner struct {
-	opts Options
-	repo *git.Repository
-	host sourcecontrol.Provider
+	opts           Options
+	repo           *git.Repository
+	host           sourcecontrol.Provider
+	githubAppToken oauth2.TokenSource
 	// base is the reviewed branch: the one origin's HEAD points at.
 	base string
 	// project is the project directory relative to the checkout and config
@@ -226,7 +228,7 @@ func newRunner(ctx context.Context, opts Options) (*runner, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &runner{opts: opts, repo: repo, host: host, project: project, config: filepath.Base(configPath), stateDir: opts.StateDir}
+	r := &runner{opts: opts, repo: repo, host: host, githubAppToken: host.PublicReleaseTokenSource(), project: project, config: filepath.Base(configPath), stateDir: opts.StateDir}
 	r.lockPath = path.Join(filepath.ToSlash(project), filepath.Base(lockfile.Path("")))
 	if r.stateDir == "" {
 		r.stateDir = filepath.Join(root, ".stemma", "state")
@@ -234,7 +236,7 @@ func newRunner(ctx context.Context, opts Options) (*runner, error) {
 	return r, nil
 }
 
-func openSourceControl(ctx context.Context, spec config.SourceControl, remote string) (sourcecontrol.Provider, error) {
+func openSourceControl(ctx context.Context, spec config.SourceControl, remote string) (*github.Client, error) {
 	if spec.Type != "github" {
 		return nil, fmt.Errorf("reconcile: unsupported source_control type %q", spec.Type)
 	}
@@ -275,7 +277,7 @@ func (r *runner) configIn(worktree *git.Worktree) string {
 }
 
 func (r *runner) engineOptions(method, configPath string, resources []string) engine.Options {
-	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, GitHubToken: r.opts.GitHubToken, Method: method, Resources: resources}
+	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, GitHubToken: r.opts.GitHubToken, GitHubAppToken: r.githubAppToken, Method: method, Resources: resources}
 	if r.opts.ResourceDone != nil {
 		opts.ResourceDone = func(resource engine.ResourceReport) error { return r.opts.ResourceDone(method, resource) }
 	}

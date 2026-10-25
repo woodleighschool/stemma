@@ -88,6 +88,16 @@ func New(ctx context.Context, remote string, settings map[string]any) (*Client, 
 	return c, nil
 }
 
+// PublicReleaseTokenSource shares the renewing App credential with github.com
+// release discovery. Enterprise and personal credentials remain source-control
+// credentials only.
+func (c *Client) PublicReleaseTokenSource() oauth2.TokenSource {
+	if c.app == nil || c.server != "" {
+		return nil
+	}
+	return c.token
+}
+
 func decode(settings map[string]any) (Config, error) {
 	data, err := json.Marshal(settings)
 	if err != nil {

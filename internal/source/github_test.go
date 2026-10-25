@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
+	"golang.org/x/oauth2"
 )
 
 func TestGitHubObservationValidationOnDiscoveryAndReplay(t *testing.T) {
@@ -228,13 +230,26 @@ func TestGitHubLookupReportsHTTPStatus(t *testing.T) {
 // for sources that declare none: it raises the API quota and stays off
 // downloads, which a declared token still accompanies.
 func TestGitHubRunTokenAuthenticatesLookupsOnly(t *testing.T) {
-	for _, tc := range []struct{ name, declared, lookup, download string }{
-		{name: "run token", lookup: "Bearer run-token"},
-		{name: "declared token", declared: "declared-token", lookup: "Bearer declared-token", download: "Bearer declared-token"},
+	for _, tc := range []struct {
+		name, run, declared, lookup, download string
+		app                                   bool
+	}{
+		{name: "anonymous"},
+		{name: "app token", app: true, lookup: "Bearer app-token"},
+		{name: "run token", run: "run-token", app: true, lookup: "Bearer run-token"},
+		{name: "declared token", run: "run-token", app: true, declared: "declared-token", lookup: "Bearer declared-token", download: "Bearer declared-token"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := manager(t)
-			m.GitHubToken = "run-token"
+			m.GitHubToken = tc.run
+			if tc.app {
+				m.GitHubAppToken = githubTokenSourceFunc(func() (*oauth2.Token, error) {
+					if tc.run != "" || tc.declared != "" {
+						t.Error("requested App token despite an explicit credential")
+					}
+					return &oauth2.Token{AccessToken: "app-token"}, nil
+				})
+			}
 			lookups, downloads := 0, 0
 			m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				body, want := "installer", tc.download
@@ -263,10 +278,47 @@ func TestGitHubRunTokenAuthenticatesLookupsOnly(t *testing.T) {
 	}
 }
 
+type githubTokenSourceFunc func() (*oauth2.Token, error)
+
+func (f githubTokenSourceFunc) Token() (*oauth2.Token, error) { return f() }
+
+func TestGitHubAppAuthenticationFailureIsNotAnonymous(t *testing.T) {
+	for _, tc := range []struct {
+		name, token, failure string
+		err                  error
+		status, requests     int
+	}{
+		{name: "mint failure", err: errors.New("installation revoked"), failure: "installation revoked"},
+		{name: "empty token", failure: "no access token"},
+		{name: "rejected token", token: "revoked", status: http.StatusUnauthorized, requests: 1, failure: "HTTP 401"},
+		{name: "forbidden", token: "restricted", status: http.StatusForbidden, requests: 1, failure: "HTTP 403"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := manager(t)
+			m.GitHubAppToken = githubTokenSourceFunc(func() (*oauth2.Token, error) {
+				return &oauth2.Token{AccessToken: tc.token}, tc.err
+			})
+			requests := 0
+			m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				requests++
+				if got := r.Header.Get("Authorization"); got != "Bearer "+tc.token {
+					t.Errorf("Authorization = %q", got)
+				}
+				return &http.Response{StatusCode: tc.status, Body: io.NopCloser(strings.NewReader(`{"message":"Denied"}`)), Header: http.Header{}, Request: r}, nil
+			})
+			_, err := m.Resolve(t.Context(), plugin.Input{Resolver: "github", Config: map[string]any{"repository": "upstream/app", "asset": "App.pkg"}})
+			if err == nil || !strings.Contains(err.Error(), tc.failure) || strings.Contains(err.Error(), "set GH_TOKEN") || requests != tc.requests {
+				t.Fatalf("requests=%d, err=%v", requests, err)
+			}
+		})
+	}
+}
+
 func TestGitHubDiscoveryKeepsTokenAtAPIOrigin(t *testing.T) {
 	for _, target := range []string{"https://elsewhere.example/release", "http://api.github.com/release", "https://api.github.com/repositories/1/releases/latest"} {
 		t.Run(target, func(t *testing.T) {
 			m := manager(t)
+			m.GitHubAppToken = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "synthetic-token"})
 			requests := 0
 			m.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
 				requests++
@@ -283,7 +335,7 @@ func TestGitHubDiscoveryKeepsTokenAtAPIOrigin(t *testing.T) {
 				return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"message":"Not Found"}`)), Request: r}, nil
 			})
 			var observed githubObservation
-			err := m.github(t.Context(), githubConfig{Repository: "example/app", Asset: "App.pkg", Token: "synthetic-token"}, &observed)
+			err := m.github(t.Context(), githubConfig{Repository: "example/app", Asset: "App.pkg"}, &observed)
 			wantRequests, failure := 2, "HTTP 404"
 			if strings.HasPrefix(target, "http:") {
 				wantRequests, failure = 1, "HTTPS downgrade blocked"

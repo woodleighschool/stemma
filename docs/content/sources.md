@@ -86,10 +86,16 @@ source:
   include_prereleases: true
 ```
 
-GitHub allows 60 unauthenticated release lookups an hour from one address. When
-`GH_TOKEN`, or else `GITHUB_TOKEN`, is set, lookups for sources without a `token`
-use it and get the authenticated limit. That token goes to the GitHub API only;
-downloads never carry it. A source's own `token` is used for both.
+GitHub allows 60 unauthenticated release lookups an hour from one address.
+Release discovery uses the source's `token`, then `GH_TOKEN`, then `GITHUB_TOKEN`.
+During [reconcile](reconcile.md#source-control), the configured GitHub App is the
+fallback when the catalog's origin is github.com. Its installation token is
+renewed as needed and can read public releases outside its installation.
+Without a credential, discovery is anonymous; authentication failures are
+reported without retrying anonymously.
+
+Environment and App tokens go to the GitHub API only; downloads never carry
+them. A source's own `token` is used for both discovery and acquisition.
 
 For an HTTP page containing a download link, use `resolver: http` with `url` and a
 `match` regular expression. HTML pages match on element attribute values, so links

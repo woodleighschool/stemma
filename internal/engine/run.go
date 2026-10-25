@@ -20,6 +20,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
+	"golang.org/x/oauth2"
 )
 
 // Options configures one finite execution of the CLI.
@@ -28,8 +29,11 @@ type Options struct {
 	// GitHubToken authenticates release lookups of GitHub sources that declare
 	// no token.
 	GitHubToken string
-	Method      string
-	Resources   []string
+	// GitHubAppToken supplies reconcile's github.com App credential as the
+	// release discovery fallback, renewing it at lookup time.
+	GitHubAppToken oauth2.TokenSource
+	Method         string
+	Resources      []string
 	// Profiles selects the resources declaring any of these profiles, in place
 	// of the resources that declare none. A run names profiles or Resources.
 	Profiles []string

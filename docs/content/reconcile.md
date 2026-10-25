@@ -120,15 +120,23 @@ spec:
         private_key: "{{ env.GITHUB_APP_PRIVATE_KEY }}"
 ```
 
-| Setting                                       | Purpose                                                                                                                                                         |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `client_id`, `installation_id`, `private_key` | A GitHub App: its client ID, the numeric ID of its installation on the repository's owner and the PEM key GitHub issued. Installation tokens are minted per run |
-| `token`                                       | A personal access token used instead of an App                                                                                                                  |
+| Setting                                       | Purpose                                                                                                                                                                       |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `client_id`, `installation_id`, `private_key` | A GitHub App: its client ID, the numeric ID of its installation on the repository's owner and the PEM key GitHub issued. Installation tokens are reused and renewed as needed |
+| `token`                                       | A personal access token used instead of an App                                                                                                                                |
 
 The App or token needs contents and pull request write access and commit status
 write access. An HTTPS origin is fetched and pushed with the same token; an SSH
 origin uses the SSH agent. Locally, a personal token and your usual remote are
 enough.
+
+For a github.com origin, release discovery also uses the App's installation
+token when the source has no `token` and neither `GH_TOKEN` nor `GITHUB_TOKEN` is
+set. This includes public upstream repositories outside the App's installation.
+The same token source serves the whole run and renews expired tokens before
+lookups. Authentication failures are reported without retrying anonymously.
+App tokens never accompany artifact downloads. GitHub Enterprise App tokens
+and source-control personal tokens are not used for github.com release discovery.
 
 ## Cache and state
 
@@ -168,5 +176,5 @@ The shape is the same everywhere:
 - a small state volume for `STEMMA_STATE_DIR`, which keeps a run from applying
   an unchanged commit again;
 - the variables `stemma.yaml` references, from the scheduler's secret store;
-- `GH_TOKEN` or `GITHUB_TOKEN` when the catalog follows more GitHub releases than
-  the [unauthenticated limit](sources.md#discover-a-release) allows.
+- `GH_TOKEN` or `GITHUB_TOKEN` for authenticated release discovery when no
+  github.com App is configured, or to override its credential.

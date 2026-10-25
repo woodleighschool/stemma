@@ -24,7 +24,7 @@ type githubConfig struct {
 	Asset              string `json:"asset" jsonschema_description:"GitHub asset-name glob using doublestar semantics. Must match exactly one release asset; exact names also work."`
 	Filename           string `json:"filename,omitempty" jsonschema_description:"Optional input basename override. Defaults to the selected asset name. Independent of publication naming."`
 	SHA256             string `json:"sha256,omitempty" jsonschema_description:"Optional expected SHA-256 content digest, as 64 lowercase hexadecimal characters."`
-	Token              string `json:"token,omitempty" jsonschema_description:"Optional bearer token for release discovery and acquisition. Without one, discovery uses GH_TOKEN, then GITHUB_TOKEN, from the environment."`
+	Token              string `json:"token,omitempty" jsonschema_description:"Optional bearer token for release discovery and acquisition. Without one, discovery uses GH_TOKEN, then GITHUB_TOKEN, then reconcile's GitHub App when its origin is github.com. Fallback tokens are used only for API discovery."`
 }
 
 type githubObservation struct {
@@ -148,6 +148,16 @@ func (m *Manager) github(ctx context.Context, s githubConfig, observed *githubOb
 	defer func() { done(err, plugin.Detail(observed.Release)) }()
 	if s.Token == "" {
 		s.Token = m.GitHubToken
+	}
+	if s.Token == "" && m.GitHubAppToken != nil {
+		token, err := m.GitHubAppToken.Token()
+		if err != nil {
+			return fmt.Errorf("GitHub release authentication: %w", err)
+		}
+		if token == nil || token.AccessToken == "" {
+			return errors.New("GitHub release authentication: App returned no access token")
+		}
+		s.Token = token.AccessToken
 	}
 	options := []github.ClientOptionsFunc{github.WithHTTPClient(m.metadataClient()), github.WithUserAgent(userAgent)}
 	if s.Token != "" {

@@ -1256,7 +1256,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional bearer token for release discovery and acquisition. Without one, discovery uses GH_TOKEN, then GITHUB_TOKEN, from the environment.",
+              "description": "Optional bearer token for release discovery and acquisition. Without one, discovery uses GH_TOKEN, then GITHUB_TOKEN, then reconcile's GitHub App when its origin is github.com. Fallback tokens are used only for API discovery.",
               "writeOnly": true
             }
           },
@@ -8454,7 +8454,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Optional bearer token for release discovery and acquisition. Without one, discovery uses GH_TOKEN, then GITHUB_TOKEN, from the environment.",
+              "description": "Optional bearer token for release discovery and acquisition. Without one, discovery uses GH_TOKEN, then GITHUB_TOKEN, then reconcile's GitHub App when its origin is github.com. Fallback tokens are used only for API discovery.",
               "writeOnly": true
             }
           },

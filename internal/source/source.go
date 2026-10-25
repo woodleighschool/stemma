@@ -18,6 +18,7 @@ import (
 	"github.com/invopop/jsonschema"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/plugin"
+	"golang.org/x/oauth2"
 )
 
 // Discovery is a resolver's current observation. Immutable promises that the
@@ -66,7 +67,10 @@ type Manager struct {
 	// GitHubToken authenticates the release lookups of GitHub sources that
 	// declare no token. Downloads never carry it.
 	GitHubToken string
-	resolvers   map[string]Resolver
+	// GitHubAppToken is the renewing github.com App credential used for
+	// release lookups when neither the source nor the run supplies a token.
+	GitHubAppToken oauth2.TokenSource
+	resolvers      map[string]Resolver
 }
 
 // New creates a manager with bounded HTTP lifetimes and credential-safe redirects.
