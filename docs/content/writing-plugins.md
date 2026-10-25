@@ -493,6 +493,4 @@ nothing, and changes need a new tag. Registry credentials come from `docker logi
 The index carries the version and commit GoReleaser recorded as
 `org.opencontainers.image.version` and `org.opencontainers.image.revision`. Add
 other annotations with `--annotation KEY=VALUE`, such as
-`org.opencontainers.image.source` for the repository URL. In GitHub Actions, the
-[publish-plugin action](https://github.com/woodleighschool/stemma/tree/main/actions/publish-plugin)
-runs this step after GoReleaser.
+`org.opencontainers.image.source` for the repository URL.
