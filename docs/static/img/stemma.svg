@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <style>
+    .logo { color: #225241; }
+    @media (prefers-color-scheme: dark) {
+      .logo { color: #ffffff; }
+    }
+  </style>
+  <g class="logo">
+    <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+      <path stroke-width="64" d="M512 180 L800 346 V678 L512 844 L224 678 V346 Z" />
+      <path stroke-width="56" d="M360 424 L512 512 L664 424 M512 512 V688" />
+    </g>
+    <g fill="currentColor">
+      <circle cx="360" cy="424" r="52" />
+      <circle cx="664" cy="424" r="52" />
+      <circle cx="512" cy="688" r="52" />
+      <circle cx="512" cy="512" r="40" />
+    </g>
+  </g>
+</svg>

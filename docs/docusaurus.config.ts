@@ -46,6 +46,7 @@ const darkCodeTheme: PrismTheme = {
 const config: Config = {
   title: "Stemma",
   tagline: "Cross-platform software artifact pipeline.",
+  favicon: "img/stemma.svg",
   future: { v4: true },
   url: process.env.DOCS_URL || "https://woodleighschool.github.io",
   baseUrl: process.env.DOCS_BASE_URL || "/stemma/",
@@ -99,6 +100,7 @@ const config: Config = {
     colorMode: { defaultMode: "dark", respectPrefersColorScheme: true },
     navbar: {
       title: "Stemma",
+      logo: { alt: "Stemma", src: "img/stemma.svg" },
       items: [
         { type: "docSidebar", sidebarId: "docsSidebar", position: "left", label: "Docs" },
         { href: "https://github.com/woodleighschool/stemma", position: "right", label: "GitHub" },
