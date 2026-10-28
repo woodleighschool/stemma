@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.12.0](https://github.com/woodleighschool/stemma/compare/v0.11.2...v0.12.0) (2026-10-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **munki:** declare no restart action with None
+
+### Features
+
+* **munki:** support Munki 7.4 package keys ([85a4b90](https://github.com/woodleighschool/stemma/commit/85a4b90e02a5daec97e36dc3c2d5fcaaf00d216b))
+* **reconcile:** reuse app tokens for release discovery ([5118257](https://github.com/woodleighschool/stemma/commit/5118257adc8b3cbb41c398c2458830c07a13453e))
+
+
+### Bug Fixes
+
+* **go:** update module cel.dev/cel-go (v0.32.0 → v0.33.0) ([#236](https://github.com/woodleighschool/stemma/issues/236)) ([dedfa3d](https://github.com/woodleighschool/stemma/commit/dedfa3d8b9bd0a25d1b4f70d9503057f898ae23f))
+* **go:** update module cel.dev/cel-go (v0.33.0 → v0.33.1) ([#243](https://github.com/woodleighschool/stemma/issues/243)) ([04665df](https://github.com/woodleighschool/stemma/commit/04665df98ff22f4a4713765d84ab6a2eda240949))
+* **go:** update module github.com/bmatcuk/doublestar/v4 (v4.10.3 → v4.10.4) ([#229](https://github.com/woodleighschool/stemma/issues/229)) ([4d05cf7](https://github.com/woodleighschool/stemma/commit/4d05cf7215bb4872b7af3142b4ecf249f4ce51c8))
+* **go:** update module github.com/microsoft/kiota-http-go (v1.5.9 → v1.6.0) ([#241](https://github.com/woodleighschool/stemma/issues/241)) ([b05082a](https://github.com/woodleighschool/stemma/commit/b05082a1c62362f90656a8e3fa6b3da64d21275f))
+* **go:** update module github.com/microsoft/kiota-serialization-form-go (v1.1.5 → v1.1.6) ([#239](https://github.com/woodleighschool/stemma/issues/239)) ([aff6480](https://github.com/woodleighschool/stemma/commit/aff648058dbbcc8e34e579cfed253bc1c17ee77b))
+* **go:** update module github.com/microsoft/kiota-serialization-text-go (v1.1.5 → v1.1.6) ([#235](https://github.com/woodleighschool/stemma/issues/235)) ([7e0469e](https://github.com/woodleighschool/stemma/commit/7e0469e7a3fa439eb51c4c2f853fe3fbcdc79064))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (0f33af1 → fa799c5) ([#234](https://github.com/woodleighschool/stemma/issues/234)) ([d4db00a](https://github.com/woodleighschool/stemma/commit/d4db00a187fce11847583a419a282f8497f40d84))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (12e768b → 7899792) ([#225](https://github.com/woodleighschool/stemma/issues/225)) ([fb93fc7](https://github.com/woodleighschool/stemma/commit/fb93fc72027ae0f6bb9e21ae3104e0cbb44bdf32))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (2e00768 → b42403f) ([#232](https://github.com/woodleighschool/stemma/issues/232)) ([6180868](https://github.com/woodleighschool/stemma/commit/61808685c3a8e659b3867daa6f289512bf1f3f52))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (43d2126 → 3a46369) ([#240](https://github.com/woodleighschool/stemma/issues/240)) ([6df3059](https://github.com/woodleighschool/stemma/commit/6df3059e7610c5585aa896fb7eaae949e350f203))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (7899792 → 2e00768) ([#226](https://github.com/woodleighschool/stemma/issues/226)) ([b513989](https://github.com/woodleighschool/stemma/commit/b513989400f571ca8eb159ac7b1e6fbea8f1c144))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (b42403f → 0f33af1) ([#233](https://github.com/woodleighschool/stemma/issues/233)) ([bc95e96](https://github.com/woodleighschool/stemma/commit/bc95e96baf99cf797ea3b002edbe07702f5de963))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (fa799c5 → 43d2126) ([#237](https://github.com/woodleighschool/stemma/issues/237)) ([119d676](https://github.com/woodleighschool/stemma/commit/119d67659d8c3b47c93b50c327b7fd4ba830edd4))
+* **go:** update module github.com/oras-project/oras-go/v3 (v3.0.0-rc.2 → v3.0.0-rc.3) ([#221](https://github.com/woodleighschool/stemma/issues/221)) ([d48b08e](https://github.com/woodleighschool/stemma/commit/d48b08ed4dd745abec59c7a54b6a1819f43fbfc8))
+* **go:** update module github.com/oras-project/oras-go/v3 (v3.0.0-rc.3 → v3.0.0-rc.4) ([#230](https://github.com/woodleighschool/stemma/issues/230)) ([b5c603d](https://github.com/woodleighschool/stemma/commit/b5c603dc1f2e977b5467f323709ac200d6957189))
+* **go:** update module golang.org/x/net (v0.61.0 → v0.62.0) ([#242](https://github.com/woodleighschool/stemma/issues/242)) ([117c363](https://github.com/woodleighschool/stemma/commit/117c36316beb51690f70639f4d7844223cb5f5b5))
+* **munki:** declare no restart action with None ([76074fb](https://github.com/woodleighschool/stemma/commit/76074fba0a5a649c089bd204707e0792a5393f2e))
+* **munki:** truncate pkginfo document sizes to whole KiB ([b5e4507](https://github.com/woodleighschool/stemma/commit/b5e450783a94d59b4c785c3bcc8617640b969f56))
+
 ## [0.11.2](https://github.com/woodleighschool/stemma/compare/v0.11.1...v0.11.2) (2026-10-22)
 
 
