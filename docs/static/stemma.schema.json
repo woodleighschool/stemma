@@ -7109,6 +7109,13 @@
                 "RestartAction": {
                   "anyOf": [
                     {
+                      "enum": [
+                        "None",
+                        "RequireLogout",
+                        "RecommendRestart",
+                        "RequireRestart",
+                        "RequireShutdown"
+                      ],
                       "type": "string"
                     },
                     {
@@ -7116,7 +7123,7 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Munki restart or logout requirement after installation."
+                  "description": "Munki restart or logout requirement after installation. None declares that there is none."
                 },
                 "autoremove": {
                   "anyOf": [

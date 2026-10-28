@@ -85,7 +85,7 @@ type Metadata struct {
 	UnattendedUninstall    *bool                      `json:"unattended_uninstall,omitempty" jsonschema:"description=Permit removal without interaction. Explicit false disables it."`
 	Uninstallable          *bool                      `json:"uninstallable,omitempty" jsonschema:"description=Expose supported removal using uninstall_method."`
 	UninstallMethod        *string                    `json:"uninstall_method,omitempty" jsonschema:"description=Supported native removal method; requires its corresponding receipts or copy entries or script."`
-	RestartAction          *string                    `json:"RestartAction,omitempty" jsonschema:"description=Munki restart or logout requirement after installation."`
+	RestartAction          *string                    `json:"RestartAction,omitempty" jsonschema:"enum=None,enum=RequireLogout,enum=RecommendRestart,enum=RequireRestart,enum=RequireShutdown,description=Munki restart or logout requirement after installation. None declares that there is none."`
 	MinimumOSVersion       *string                    `json:"minimum_os_version,omitempty" jsonschema:"description=Lowest macOS version eligible for this package."`
 	MaximumOSVersion       *string                    `json:"maximum_os_version,omitempty" jsonschema:"description=Highest macOS version eligible for this package."`
 	MinimumMunkiVersion    *string                    `json:"minimum_munki_version,omitempty" jsonschema:"description=Lowest Munki client version eligible for this package."`
@@ -201,7 +201,7 @@ func DecodeMetadata(raw json.RawMessage) (Metadata, error) {
 	}
 	if metadata.RestartAction != nil {
 		switch *metadata.RestartAction {
-		case "", "RequireLogout", "RecommendRestart", "RequireRestart", "RequireShutdown":
+		case "None", "RequireLogout", "RecommendRestart", "RequireRestart", "RequireShutdown":
 		default:
 			return Metadata{}, errors.New("unsupported RestartAction")
 		}
