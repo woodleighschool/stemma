@@ -34,6 +34,7 @@ jobs:
       && github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Workflow Lint
     runs-on: ubuntu-26.04
+    timeout-minutes: 50
     permissions:
       contents: read
     steps:
@@ -193,6 +194,7 @@ jobs:
       - go-vulncheck
       - goreleaser
     runs-on: ubuntu-26.04
+    timeout-minutes: 50
     permissions: {}
     steps:
       - name: Any jobs failed?
