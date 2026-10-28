@@ -77,7 +77,7 @@ jobs:
       sbom: true
       set-meta-annotations: true
       set-meta-labels: true
-      sign: true
+      sign: "true"
     secrets:
       registry-auths: |
         - registry: ghcr.io
