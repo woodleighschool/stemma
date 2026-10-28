@@ -24,6 +24,10 @@ env:
   GOMAXPROCS: "4"
   GOFLAGS: "-p=1"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   benchmarks:
     name: Portable operations
