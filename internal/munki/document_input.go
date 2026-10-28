@@ -61,7 +61,7 @@ func DocumentInput[C any](ctx context.Context, request plugin.ReconcileRequest[C
 			return request, errors.New("pkginfo installer hash does not match installer input")
 		}
 		size, ok := document["installer_item_size"].(float64)
-		if !ok || size != float64((installer.Size+1023)/1024) {
+		if !ok || size != float64(installer.Size/1024) {
 			return request, errors.New("pkginfo installer size does not match installer input")
 		}
 	}
