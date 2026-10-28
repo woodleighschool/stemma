@@ -72,44 +72,60 @@ func Compose(input Input, data json.RawMessage) (Input, map[string]any, error) {
 // including explicit null, alongside the typed values. Null is accepted only for
 // nullable display strings; lists use [] and booleans use false to clear values.
 type Metadata struct {
-	IconName               *string                    `json:"icon_name,omitempty" jsonschema:"description=Relative image path in the repository icons directory. Null clears it."`
-	IconHash               *string                    `json:"icon_hash,omitempty" jsonschema:"description=SHA-256 of the selected repository icon. Null clears it."`
-	DisplayName            *string                    `json:"display_name,omitempty" jsonschema:"description=Optional display title. Omission preserves the remote title; null clears it."`
-	Description            *string                    `json:"description,omitempty" jsonschema:"description=Application description. Omission preserves the remote value; null clears it."`
-	Category               *string                    `json:"category,omitempty" jsonschema:"description=Managed Software Center category. Null clears the category."`
-	Developer              *string                    `json:"developer,omitempty" jsonschema:"description=Software publisher display name. Null clears the publisher."`
-	Catalogs               *[]string                  `json:"catalogs,omitempty" jsonschema:"description=Complete catalog membership. An empty list removes all memberships."`
-	Requires               *[]string                  `json:"requires,omitempty" jsonschema_description:"Complete list of Munki item dependencies. Entries are native item names, optionally with version requirements; [] clears the list."`
-	UpdateFor              *[]string                  `json:"update_for,omitempty" jsonschema_description:"Complete list of Munki items this item updates. Entries are native item names, optionally with version requirements; [] clears the list."`
-	UnattendedInstall      *bool                      `json:"unattended_install,omitempty" jsonschema:"description=Permit installation without interaction. Explicit false disables it."`
-	UnattendedUninstall    *bool                      `json:"unattended_uninstall,omitempty" jsonschema:"description=Permit removal without interaction. Explicit false disables it."`
-	Uninstallable          *bool                      `json:"uninstallable,omitempty" jsonschema:"description=Expose supported removal using uninstall_method."`
-	UninstallMethod        *string                    `json:"uninstall_method,omitempty" jsonschema:"description=Supported native removal method; requires its corresponding receipts or copy entries or script."`
-	RestartAction          *string                    `json:"RestartAction,omitempty" jsonschema:"enum=None,enum=RequireLogout,enum=RecommendRestart,enum=RequireRestart,enum=RequireShutdown,description=Munki restart or logout requirement after installation. None declares that there is none."`
-	MinimumOSVersion       *string                    `json:"minimum_os_version,omitempty" jsonschema:"description=Lowest macOS version eligible for this package."`
-	MaximumOSVersion       *string                    `json:"maximum_os_version,omitempty" jsonschema:"description=Highest macOS version eligible for this package."`
-	MinimumMunkiVersion    *string                    `json:"minimum_munki_version,omitempty" jsonschema:"description=Lowest Munki client version eligible for this package."`
-	SupportedArchitectures *[]string                  `json:"supported_architectures,omitempty" jsonschema:"description=Complete architecture list using arm64 or x86_64."`
-	BlockingApplications   *[]string                  `json:"blocking_applications,omitempty" jsonschema:"description=Applications that block installation or removal while they run. Munki uses the applications in installs when this is absent; an empty list blocks nothing."`
-	InstallableCondition   *string                    `json:"installable_condition,omitempty" jsonschema:"description=Munki predicate controlling installation eligibility."`
-	InstalledSize          *int64                     `json:"installed_size,omitempty" jsonschema:"description=Installed size in KiB; independent of downloaded installer size."`
-	OnDemand               *bool                      `json:"OnDemand,omitempty" jsonschema:"description=Allow repeated optional installation even when the item is already installed."`
-	Precache               *bool                      `json:"precache,omitempty" jsonschema:"description=Cache the installer before it is requested for installation."`
-	Autoremove             *bool                      `json:"autoremove,omitempty" jsonschema:"description=Remove installed software when no applicable manifest requests it."`
-	Installs               *[]InstallItem             `json:"installs,omitempty" jsonschema:"description=Complete native detection list using application or bundle or plist or file entries."`
-	Receipts               *[]Receipt                 `json:"receipts,omitempty" jsonschema:"description=Complete Apple package receipt list used for detection and removal."`
-	ItemsToCopy            *[]CopyItem                `json:"items_to_copy,omitempty" jsonschema:"description=Payload selections and destination paths for copy_from_dmg."`
-	PackagePath            *string                    `json:"package_path,omitempty" jsonschema:"description=Relative package path within the original installer image."`
-	Notes                  *string                    `json:"notes,omitempty" jsonschema:"description=Administrator notes retained in pkginfo."`
-	InstallcheckScript     *string                    `json:"installcheck_script,omitempty" jsonschema:"description=Deployment-time installation check script. Never executed by Stemma."`
-	UninstallcheckScript   *string                    `json:"uninstallcheck_script,omitempty" jsonschema:"description=Deployment-time removal check script. Never executed by Stemma."`
-	PreinstallScript       *string                    `json:"preinstall_script,omitempty" jsonschema:"description=Deployment-time script before installation. Never executed by Stemma."`
-	PostinstallScript      *string                    `json:"postinstall_script,omitempty" jsonschema:"description=Deployment-time script after installation. Never executed by Stemma."`
-	PreuninstallScript     *string                    `json:"preuninstall_script,omitempty" jsonschema:"description=Deployment-time script before removal. Never executed by Stemma."`
-	PostuninstallScript    *string                    `json:"postuninstall_script,omitempty" jsonschema:"description=Deployment-time script after removal. Never executed by Stemma."`
-	UninstallScript        *string                    `json:"uninstall_script,omitempty" jsonschema:"description=Deployment-time removal script. Never executed by Stemma."`
-	VersionScript          *string                    `json:"version_script,omitempty" jsonschema:"description=Deployment-time installed-version script. Never executed by Stemma."`
-	Fields                 map[string]json.RawMessage `json:"-"`
+	IconName                           *string                    `json:"icon_name,omitempty" jsonschema:"description=Relative image path in the repository icons directory. Null clears it."`
+	IconHash                           *string                    `json:"icon_hash,omitempty" jsonschema:"description=SHA-256 of the selected repository icon. Null clears it."`
+	DisplayName                        *string                    `json:"display_name,omitempty" jsonschema:"description=Optional display title. Omission preserves the remote title; null clears it."`
+	Description                        *string                    `json:"description,omitempty" jsonschema:"description=Application description. Omission preserves the remote value; null clears it."`
+	Category                           *string                    `json:"category,omitempty" jsonschema:"description=Managed Software Center category. Null clears the category."`
+	Developer                          *string                    `json:"developer,omitempty" jsonschema:"description=Software publisher display name. Null clears the publisher."`
+	Catalogs                           *[]string                  `json:"catalogs,omitempty" jsonschema:"description=Complete catalog membership. An empty list removes all memberships."`
+	Requires                           *[]string                  `json:"requires,omitempty" jsonschema_description:"Complete list of Munki item dependencies. Entries are native item names, optionally with version requirements; [] clears the list."`
+	UpdateFor                          *[]string                  `json:"update_for,omitempty" jsonschema_description:"Complete list of Munki items this item updates. Entries are native item names, optionally with version requirements; [] clears the list."`
+	UnattendedInstall                  *bool                      `json:"unattended_install,omitempty" jsonschema:"description=Permit installation without interaction. Explicit false disables it."`
+	UnattendedUninstall                *bool                      `json:"unattended_uninstall,omitempty" jsonschema:"description=Permit removal without interaction. Explicit false disables it."`
+	Uninstallable                      *bool                      `json:"uninstallable,omitempty" jsonschema:"description=Expose supported removal using uninstall_method."`
+	UninstallMethod                    *string                    `json:"uninstall_method,omitempty" jsonschema:"description=Supported native removal method; requires its corresponding receipts or copy entries or script."`
+	RestartAction                      *string                    `json:"RestartAction,omitempty" jsonschema:"enum=None,enum=RequireLogout,enum=RecommendRestart,enum=RequireRestart,enum=RequireShutdown,description=Munki restart or logout requirement after installation. None declares that there is none."`
+	RestartActionForUninstall          *string                    `json:"RestartActionForUninstall,omitempty" jsonschema:"enum=None,enum=RequireLogout,enum=RecommendRestart,enum=RequireRestart,enum=RequireShutdown,description=Munki restart or logout requirement after removal. Munki uses RestartAction when this is absent."`
+	MinimumOSVersion                   *string                    `json:"minimum_os_version,omitempty" jsonschema:"description=Lowest macOS version eligible for this package."`
+	MaximumOSVersion                   *string                    `json:"maximum_os_version,omitempty" jsonschema:"description=Highest macOS version eligible for this package."`
+	MinimumMunkiVersion                *string                    `json:"minimum_munki_version,omitempty" jsonschema:"description=Lowest Munki client version eligible for this package."`
+	SupportedArchitectures             *[]string                  `json:"supported_architectures,omitempty" jsonschema:"description=Complete architecture list using arm64 or x86_64."`
+	BlockingApplications               *[]string                  `json:"blocking_applications,omitempty" jsonschema:"description=Applications that block installation or removal while they run. Munki uses the applications in installs when this and blocking_applications_with_launch_args are absent; an empty list blocks nothing."`
+	BlockingApplicationsWithLaunchArgs *map[string][]string       `json:"blocking_applications_with_launch_args,omitempty" jsonschema_description:"Further blocking applications by name or executable path, each with the arguments Managed Software Center passes when it reopens the application after an assisted quit."`
+	BlockingApplicationsManualQuitOnly *bool                      `json:"blocking_applications_manual_quit_only,omitempty" jsonschema:"description=Require the user to quit blocking applications instead of offering an assisted quit."`
+	BlockingApplicationsQuitScript     *string                    `json:"blocking_applications_quit_script,omitempty" jsonschema:"description=Script Managed Software Center runs as the console user to quit blocking applications. Never executed by Stemma."`
+	DownloadOnLowData                  *string                    `json:"download_on_low_data,omitempty" jsonschema:"enum=auto,enum=always,enum=never,description=Whether to download on a low-data connection: always or never; auto follows the client's MaxSizeOverLowDataConnection threshold."`
+	CustomActionLabels                 *ActionLabels              `json:"custom_action_labels,omitempty" jsonschema:"description=Managed Software Center button and progress labels for this item. Absent labels use the defaults."`
+	InstallableCondition               *string                    `json:"installable_condition,omitempty" jsonschema:"description=Munki predicate controlling installation eligibility."`
+	InstalledSize                      *int64                     `json:"installed_size,omitempty" jsonschema:"description=Installed size in KiB; independent of downloaded installer size."`
+	OnDemand                           *bool                      `json:"OnDemand,omitempty" jsonschema:"description=Allow repeated optional installation even when the item is already installed."`
+	Precache                           *bool                      `json:"precache,omitempty" jsonschema:"description=Cache the installer before it is requested for installation."`
+	Autoremove                         *bool                      `json:"autoremove,omitempty" jsonschema:"description=Remove installed software when no applicable manifest requests it."`
+	Installs                           *[]InstallItem             `json:"installs,omitempty" jsonschema:"description=Complete native detection list using application or bundle or plist or file entries."`
+	Receipts                           *[]Receipt                 `json:"receipts,omitempty" jsonschema:"description=Complete Apple package receipt list used for detection and removal."`
+	ItemsToCopy                        *[]CopyItem                `json:"items_to_copy,omitempty" jsonschema:"description=Payload selections and destination paths for copy_from_dmg."`
+	PackagePath                        *string                    `json:"package_path,omitempty" jsonschema:"description=Relative package path within the original installer image."`
+	Notes                              *string                    `json:"notes,omitempty" jsonschema:"description=Administrator notes retained in pkginfo."`
+	InstallcheckScript                 *string                    `json:"installcheck_script,omitempty" jsonschema:"description=Deployment-time installation check script. Never executed by Stemma."`
+	UninstallcheckScript               *string                    `json:"uninstallcheck_script,omitempty" jsonschema:"description=Deployment-time removal check script. Never executed by Stemma."`
+	PreinstallScript                   *string                    `json:"preinstall_script,omitempty" jsonschema:"description=Deployment-time script before installation. Never executed by Stemma."`
+	PostinstallScript                  *string                    `json:"postinstall_script,omitempty" jsonschema:"description=Deployment-time script after installation. Never executed by Stemma."`
+	PreuninstallScript                 *string                    `json:"preuninstall_script,omitempty" jsonschema:"description=Deployment-time script before removal. Never executed by Stemma."`
+	PostuninstallScript                *string                    `json:"postuninstall_script,omitempty" jsonschema:"description=Deployment-time script after removal. Never executed by Stemma."`
+	UninstallScript                    *string                    `json:"uninstall_script,omitempty" jsonschema:"description=Deployment-time removal script. Never executed by Stemma."`
+	VersionScript                      *string                    `json:"version_script,omitempty" jsonschema:"description=Deployment-time installed-version script. Never executed by Stemma."`
+	Fields                             map[string]json.RawMessage `json:"-"`
+}
+
+// ActionLabels replaces Managed Software Center's labels for one item.
+type ActionLabels struct {
+	Install    string `json:"install,omitempty" plist:"install,omitempty"`
+	Installing string `json:"installing,omitempty" plist:"installing,omitempty"`
+	Installed  string `json:"installed,omitempty" plist:"installed,omitempty"`
+	Remove     string `json:"remove,omitempty" plist:"remove,omitempty"`
+	Removing   string `json:"removing,omitempty" plist:"removing,omitempty"`
+	Update     string `json:"update,omitempty" plist:"update,omitempty"`
 }
 
 // InstallItem is a native Munki application, bundle, plist or file matcher.
@@ -199,11 +215,27 @@ func DecodeMetadata(raw json.RawMessage) (Metadata, error) {
 	if metadata.InstalledSize != nil && *metadata.InstalledSize < 0 {
 		return Metadata{}, errors.New("installed_size must not be negative")
 	}
-	if metadata.RestartAction != nil {
-		switch *metadata.RestartAction {
-		case "None", "RequireLogout", "RecommendRestart", "RequireRestart", "RequireShutdown":
+	for _, action := range []*string{metadata.RestartAction, metadata.RestartActionForUninstall} {
+		if action != nil {
+			switch *action {
+			case "None", "RequireLogout", "RecommendRestart", "RequireRestart", "RequireShutdown":
+			default:
+				return Metadata{}, fmt.Errorf("unsupported restart action %q", *action)
+			}
+		}
+	}
+	if metadata.DownloadOnLowData != nil {
+		switch *metadata.DownloadOnLowData {
+		case "auto", "always", "never":
 		default:
-			return Metadata{}, errors.New("unsupported RestartAction")
+			return Metadata{}, errors.New("download_on_low_data must be auto, always or never")
+		}
+	}
+	if metadata.BlockingApplicationsWithLaunchArgs != nil {
+		for application, arguments := range *metadata.BlockingApplicationsWithLaunchArgs {
+			if strings.TrimSpace(application) == "" || arguments == nil {
+				return Metadata{}, errors.New("blocking_applications_with_launch_args requires application names with argument lists")
+			}
 		}
 	}
 	if metadata.UninstallMethod != nil {

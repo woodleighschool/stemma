@@ -19,9 +19,9 @@ func reviewCreation(document map[string]any) []string {
 			group = 0
 		case "installer_item_location", "installer_item_size", "installer_item_hash", "installer_type", "installed_size":
 			group = 1
-		case "installs", "receipts", "installcheck_script", "uninstallcheck_script", "version_comparison_key":
+		case "installs", "receipts", "installcheck_script", "uninstallcheck_script", "version_script", "version_comparison_key":
 			group = 2
-		case "minimum_os_version", "maximum_os_version", "supported_architectures", "RestartAction", "unattended_install", "unattended_uninstall", "uninstallable", "uninstall_method", "blocking_applications", "requires", "update_for", "preinstall_script", "postinstall_script", "preuninstall_script", "postuninstall_script":
+		case "minimum_os_version", "maximum_os_version", "supported_architectures", "RestartAction", "RestartActionForUninstall", "unattended_install", "unattended_uninstall", "uninstallable", "uninstall_method", "blocking_applications", "blocking_applications_with_launch_args", "blocking_applications_manual_quit_only", "blocking_applications_quit_script", "download_on_low_data", "requires", "update_for", "preinstall_script", "postinstall_script", "preuninstall_script", "postuninstall_script":
 			group = 3
 		}
 		value := document[key]

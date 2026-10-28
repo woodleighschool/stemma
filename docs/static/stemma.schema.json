@@ -7125,6 +7125,25 @@
                   ],
                   "description": "Munki restart or logout requirement after installation. None declares that there is none."
                 },
+                "RestartActionForUninstall": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "None",
+                        "RequireLogout",
+                        "RecommendRestart",
+                        "RequireRestart",
+                        "RequireShutdown"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Munki restart or logout requirement after removal. Munki uses RestartAction when this is absent."
+                },
                 "autoremove": {
                   "anyOf": [
                     {
@@ -7158,7 +7177,70 @@
                       "type": "string"
                     }
                   ],
-                  "description": "Applications that block installation or removal while they run. Munki uses the applications in installs when this is absent; an empty list blocks nothing."
+                  "description": "Applications that block installation or removal while they run. Munki uses the applications in installs when this and blocking_applications_with_launch_args are absent; an empty list blocks nothing."
+                },
+                "blocking_applications_manual_quit_only": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Require the user to quit blocking applications instead of offering an assisted quit."
+                },
+                "blocking_applications_quit_script": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Script Managed Software Center runs as the console user to quit blocking applications. Never executed by Stemma."
+                },
+                "blocking_applications_with_launch_args": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": {
+                        "anyOf": [
+                          {
+                            "items": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                                  "type": "string"
+                                }
+                              ]
+                            },
+                            "type": "array"
+                          },
+                          {
+                            "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "propertyNames": {
+                        "not": {
+                          "pattern": "\\{\\{"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Further blocking applications by name or executable path, each with the arguments Managed Software Center passes when it reopens the application after an assisted quit."
                 },
                 "catalogs": {
                   "anyOf": [
@@ -7202,6 +7284,92 @@
                     }
                   ],
                   "description": "Managed Software Center category. Null clears the category."
+                },
+                "custom_action_labels": {
+                  "anyOf": [
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "install": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "installed": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "installing": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "remove": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "removing": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                              "type": "string"
+                            }
+                          ]
+                        },
+                        "update": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "propertyNames": {
+                        "not": {
+                          "pattern": "\\{\\{"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    {
+                      "pattern": "^\\{\\{[\\s\\S]+\\}\\}$",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Managed Software Center button and progress labels for this item. Absent labels use the defaults."
                 },
                 "description": {
                   "anyOf": [
@@ -7262,6 +7430,23 @@
                     }
                   ],
                   "description": "Optional display title. Omission preserves the remote title; null clears it."
+                },
+                "download_on_low_data": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "auto",
+                        "always",
+                        "never"
+                      ],
+                      "type": "string"
+                    },
+                    {
+                      "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                      "type": "string"
+                    }
+                  ],
+                  "description": "Whether to download on a low-data connection: always or never; auto follows the client's MaxSizeOverLowDataConnection threshold."
                 },
                 "icon_hash": {
                   "anyOf": [
