@@ -108,6 +108,19 @@ func TestPublishedGoReleaserReleaseRunsOnEachPlatform(t *testing.T) {
 	if index.Annotations[ocispec.AnnotationSource] != "https://example.org/tools" {
 		t.Fatalf("index annotations = %v", index.Annotations)
 	}
+	for _, descriptor := range index.Manifests {
+		data, err := content.FetchAll(t.Context(), repo, descriptor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var manifest ocispec.Manifest
+		if err := json.Unmarshal(data, &manifest); err != nil {
+			t.Fatal(err)
+		}
+		if manifest.Annotations[ocispec.AnnotationSource] != "https://example.org/tools" {
+			t.Fatalf("manifest annotations = %v", manifest.Annotations)
+		}
+	}
 	// GoReleaser lists targets in the order its builds finish.
 	slices.Reverse(bundles)
 	before := writes.Load()

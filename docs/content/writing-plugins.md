@@ -490,7 +490,8 @@ bundles by OS and architecture without detecting CPU extensions.
 platform and tags their index last, so a failed run tags nothing. A published tag
 keeps its release: publishing the same bundles and annotations again changes
 nothing, and changes need a new tag. Registry credentials come from `docker login`.
-The index carries the version and commit GoReleaser recorded as
+Each platform manifest and the index carry the version and commit GoReleaser recorded as
 `org.opencontainers.image.version` and `org.opencontainers.image.revision`. Add
 other annotations with `--annotation KEY=VALUE`, such as
-`org.opencontainers.image.source` for the repository URL.
+`org.opencontainers.image.source` for the repository URL. Including it on each
+manifest lets registries link the package to its repository when it is first created.

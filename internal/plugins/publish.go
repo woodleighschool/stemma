@@ -28,8 +28,8 @@ type PlatformBundle struct {
 }
 
 // Publish pushes a manifest for each bundle and tags their platform index as
-// image, which must name a tag; annotations apply to the index. It checks
-// every bundle against the loader's rules before pushing and tags the index
+// image, which must name a tag. Annotations apply to each manifest and the index.
+// It checks every bundle against the loader's rules before pushing and tags the index
 // last, so a failed publication names no partial release. A published tag
 // keeps its release: publishing the same bundles and annotations again changes
 // nothing, and changes need a new tag. Registry credentials come from the Docker
@@ -96,6 +96,7 @@ func publish(ctx context.Context, target oras.Target, tag string, bundles []Plat
 			ArtifactType:  ArtifactType,
 			Config:        ocispec.DescriptorEmptyJSON,
 			Layers:        []ocispec.Descriptor{layer},
+			Annotations:   annotations,
 		})
 		if err != nil {
 			return ocispec.Descriptor{}, err
