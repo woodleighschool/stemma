@@ -1,8 +1,8 @@
 {
-  "descriptionHash": "151A7600BDC71980B9E82677B2CD8B75125EE468AAC2ECFE3256B1BBE6A16DF2EA867B32B7EC08721B28C7D066B1E540DE46B8504B381EC3CF21FD3B85A4AB6F",
-  "descriptionLocation": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/b8cbef9/openapi/beta/openapi.yaml",
+  "descriptionHash": "CA269DA44B86B56A63CB130CEA456FC93EDCBB131D5ACD2BFDECA6D310958FF8F4931277947609F972F6FA39FC7DE233F0BDDB010B7138B2430732140DCD954D",
+  "descriptionLocation": "https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/1fd0ef510f79f3dadb3e083bdebc9496f939a11c/openapi/beta/openapi.yaml",
   "lockFileVersion": "1.0.0",
-  "kiotaVersion": "1.35.0",
+  "kiotaVersion": "1.36.1",
   "clientClassName": "ApiClient",
   "typeAccessModifier": "Public",
   "clientNamespaceName": "github.com/woodleighschool/stemma/internal/intune/graph/beta",

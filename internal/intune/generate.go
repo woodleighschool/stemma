@@ -10,7 +10,7 @@ import (
 )
 
 // Keep the OpenAPI input immutable so regeneration is reproducible.
-const metadataRevision = "b8cbef9"
+const metadataRevision = "1fd0ef510f79f3dadb3e083bdebc9496f939a11c"
 
 func main() {
 	if err := generate(); err != nil {

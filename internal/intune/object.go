@@ -37,7 +37,7 @@ func decodeObject(data []byte) (object, error) {
 
 func minimumOSFields() []string {
 	fields := []string{"v10_7", "v10_8", "v10_9", "v10_10", "v10_11", "v10_12", "v10_13", "v10_14", "v10_15", "v11_0", "v12_0", "v13_0"}
-	fields = append(fields, "v14_0", "v15_0", "v26_0")
+	fields = append(fields, "v14_0", "v15_0", "v26_0", "v27_0")
 	return fields
 }
 

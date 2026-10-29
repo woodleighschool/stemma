@@ -30,6 +30,7 @@ func TestMacMinimumOSMapsToItsRelease(t *testing.T) {
 		{"10.13", "10.13", "app.minimum_os"},
 		{"10.13.6", "10.13", "app.minimum_os 10.13.6 → 10.13"},
 		{"26.1", "26.0", "app.minimum_os 26.1 → 26.0"},
+		{"27.1", "27.0", "app.minimum_os 27.1 → 27.0"},
 	} {
 		req.MinimumOS = &plugin.MinimumOS{Version: test.version, Origin: "app.minimum_os"}
 		m, origins, err := derive(req)
@@ -41,7 +42,7 @@ func TestMacMinimumOSMapsToItsRelease(t *testing.T) {
 		}
 	}
 	// A release without its own setting fails rather than moving to another release.
-	for _, version := range []string{"10.6", "16.0", "27.0"} {
+	for _, version := range []string{"10.6", "16.0", "28.0"} {
 		req.MinimumOS = &plugin.MinimumOS{Version: version, Origin: "software.minimum_os"}
 		if _, _, err := derive(req); err == nil {
 			t.Fatalf("macOS %s was mapped to another release", version)
