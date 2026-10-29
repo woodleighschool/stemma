@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.12.1](https://github.com/woodleighschool/stemma/compare/v0.12.0...v0.12.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* generate schema from operation contracts ([ee8d711](https://github.com/woodleighschool/stemma/commit/ee8d7119695d688f02b25fdc528617bec74e892c))
+* **go:** update module github.com/microsoft/kiota-abstractions-go (v1.11.4 → v1.12.0) ([#247](https://github.com/woodleighschool/stemma/issues/247)) ([0d27a47](https://github.com/woodleighschool/stemma/commit/0d27a47e68672895e42581ab359c2e4763852781))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (2b2c53b → c15e86b) ([#248](https://github.com/woodleighschool/stemma/issues/248)) ([062c067](https://github.com/woodleighschool/stemma/commit/062c0671d45fec5de1e1b9463d1f59ca66c9384b))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (3a46369 → 2b2c53b) ([#244](https://github.com/woodleighschool/stemma/issues/244)) ([852d38e](https://github.com/woodleighschool/stemma/commit/852d38e66bb20efe289a42c894b6d9f38721a257))
+* **intune:** support macOS 27 ([d52ad57](https://github.com/woodleighschool/stemma/commit/d52ad577de3ac88274487b5d01620451831bf57e))
+
 ## [0.12.0](https://github.com/woodleighschool/stemma/compare/v0.11.2...v0.12.0) (2026-10-28)
 
 
