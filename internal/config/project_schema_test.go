@@ -12,7 +12,7 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func TestProjectSchemaUsesExternalContractsAndReferenceScopes(t *testing.T) {
+func TestSchemaUsesExternalContractsAndReferenceScopes(t *testing.T) {
 	metadata := json.RawMessage(`{
 		"$id":"https://fixture.invalid/shared", "$ref":"#/$defs/document",
 		"$defs":{
@@ -25,7 +25,6 @@ func TestProjectSchemaUsesExternalContractsAndReferenceScopes(t *testing.T) {
 		}
 	}`)
 	settings := json.RawMessage(`{"$id":"https://fixture.invalid/shared","$ref":"#/$defs/config","$defs":{"config":{"type":"object","additionalProperties":false,"required":["url"],"properties":{"url":{"type":"string"},"token":{"type":"string","writeOnly":true}}}}}`)
-	project := Project{Destinations: map[string]Destination{"external": {Operation: "fixture.publish"}, "second": {Operation: "fixture.other"}}}
 	reflector := jsonschema.Reflector{DoNotReference: true}
 	spec, err := json.Marshal(reflector.Reflect(macsoftware.Spec{}))
 	if err != nil {
@@ -36,11 +35,11 @@ func TestProjectSchemaUsesExternalContractsAndReferenceScopes(t *testing.T) {
 		{Name: "fixture.publish", Kind: "reconcile", MetadataSchema: metadata, ConfigSchema: settings},
 		{Name: "fixture.other", Kind: "reconcile", MetadataSchema: json.RawMessage(`{"$id":"https://fixture.invalid/shared","type":"object","properties":{"label":{"type":"integer"}},"additionalProperties":false}`)},
 	}}
-	schema, err := ProjectSchema(project, descriptor)
+	schema, err := Schema(descriptor)
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := ProjectSchema(project, descriptor)
+	again, err := Schema(descriptor)
 	if err != nil || !bytes.Equal(schema, again) {
 		t.Fatalf("project schema generation changed with identical descriptors: %v", err)
 	}
@@ -56,8 +55,6 @@ func TestProjectSchemaUsesExternalContractsAndReferenceScopes(t *testing.T) {
 		"invalid literal type":    {`"external":{"enabled":"yes"}`, false},
 		"invalid core expression": {`"external":{"installer":"{{ facts.path }}"}`, false},
 		"other operation":         {`"second":{"label":2}`, true},
-		"cross operation field":   {`"second":{"title":"Wrong contract"}`, false},
-		"unknown connection":      {`"missing":{"title":"Wrong connection"}`, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			document := json.RawMessage(`{"apiVersion":"stemma/v1alpha1","kind":"MacSoftware","metadata":{"name":"fixture"},"spec":{"destinations":{` + test.metadata + `}}}`)
@@ -116,14 +113,14 @@ spec:
 	}
 }
 
-func TestProjectSchemaRegistersExternalKindsByGroupVersionAndKind(t *testing.T) {
+func TestSchemaRegistersExternalKindsByGroupVersionAndKind(t *testing.T) {
 	first := json.RawMessage(`{"$id":"https://fixture.invalid/spec","$ref":"#/$defs/spec","$defs":{"spec":{"type":"object","additionalProperties":false,"required":["message"],"properties":{"message":{"type":"string"},"settings":{"type":"object","additionalProperties":false,"required":["enabled","count"],"properties":{"enabled":{"type":"boolean"},"count":{"type":"integer"}}}}}}}`)
 	second := json.RawMessage(`{"$id":"https://fixture.invalid/spec","type":"object","additionalProperties":false,"required":["count"],"properties":{"count":{"type":"integer"}}}`)
 	descriptor := plugin.Descriptor{Operations: []plugin.Operation{
 		{Name: "fixture.transform", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "example.test/v2", Kind: "Transform"}, ConfigSchema: first},
 		{Name: "fixture.other", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "other.test/v1", Kind: "Transform"}, ConfigSchema: second},
 	}}
-	schema, err := ProjectSchema(Project{}, descriptor)
+	schema, err := Schema(descriptor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +153,7 @@ type releaseSettings struct {
 	Channel string `json:"channel,omitempty" jsonschema:"enum=production,enum=preview,default=production" jsonschema_description:"Release channel."`
 }
 
-func TestProjectSchemaComposesTypedResolvers(t *testing.T) {
+func TestSchemaComposesTypedResolvers(t *testing.T) {
 	registry := plugin.New("fixture", "1")
 	if err := plugin.Register(registry, plugin.Operation{Name: "fixture.release", Kind: "resolve", Resolver: &plugin.ResolverKind{Version: "1"}, SideEffects: "none", Methods: []string{"validate", "discover", "run"}}, func(context.Context, plugin.ResolveRequest[releaseSettings]) (plugin.ResolveResponse, error) {
 		t.Fatal("schema generation invoked a resolver")
@@ -171,7 +168,7 @@ func TestProjectSchemaComposesTypedResolvers(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	schema, err := ProjectSchema(Project{}, registry.Descriptor())
+	schema, err := Schema(registry.Descriptor())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1898,7 +1898,6 @@
                     ]
                   },
                   "description": "Native metadata for each named Project destination. Explicit values override derived values.",
-                  "properties": {},
                   "propertyNames": {
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
                   },
@@ -2384,7 +2383,6 @@
                         ]
                       },
                       "description": "Native metadata for each named Project destination. Explicit values override derived values.",
-                      "properties": {},
                       "propertyNames": {
                         "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
                       },
@@ -9481,7 +9479,6 @@
                     ]
                   },
                   "description": "Native metadata for each named Project destination. Explicit values override derived values.",
-                  "properties": {},
                   "propertyNames": {
                     "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
                   },
@@ -9851,7 +9848,6 @@
                         ]
                       },
                       "description": "Native metadata for each named Project destination. Explicit values override derived values.",
-                      "properties": {},
                       "propertyNames": {
                         "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
                       },

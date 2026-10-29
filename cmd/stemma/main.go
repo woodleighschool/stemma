@@ -163,7 +163,7 @@ func (c *cli) schemaCommand() *cobra.Command {
 			if resolveErr != nil {
 				return resolveErr
 			}
-			data, err = engine.ProjectSchema(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}})
+			data, err = engine.Schema(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}})
 		}
 		if err != nil {
 			return err

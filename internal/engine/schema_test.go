@@ -39,7 +39,7 @@ func TestBuiltinSchemaDescribesUnboundDestinations(t *testing.T) {
 	}
 }
 
-func TestProjectSchemaOnlyDescribesOperations(t *testing.T) {
+func TestSchemaOnlyDescribesOperations(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "stemma.yaml")
 	if err := os.WriteFile(filename, []byte(`apiVersion: stemma/v1alpha1
 kind: Project
@@ -56,7 +56,7 @@ spec:
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	data, err := ProjectSchema(t.Context(), Options{ConfigPath: filename, Lock: lockfile.Options{Offline: true}, Handlers: map[string]reconcileHandler{"intune": func(context.Context, plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
+	data, err := Schema(t.Context(), Options{ConfigPath: filename, Lock: lockfile.Options{Offline: true}, Handlers: map[string]reconcileHandler{"intune": func(context.Context, plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 		t.Fatal("schema generation invoked a destination")
 		return plugin.ReconcileResponse{}, nil
 	}}})

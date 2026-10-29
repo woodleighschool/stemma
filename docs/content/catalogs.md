@@ -215,8 +215,7 @@ remain literal.
 
 The [default schema](https://woodleighschool.github.io/stemma/stemma.schema.json)
 describes built-in operations and accepts arbitrary destination names. Generate a
-catalog-specific schema from the local registry, including installed plugins
-and the Project's named destinations:
+schema from the local registry to include installed plugin contracts:
 
 ```sh
 stemma schema --offline --output-file stemma.schema.json
@@ -245,7 +244,10 @@ before it.
 For agents, [`stemma mcp`](commands.md#agents) exposes the same contracts through
 its `describe` tool, including field descriptions from built-ins and plugins.
 
-Regenerate the editor schema when plugin declarations or destination names change.
+Regenerate the editor schema when operation or plugin contracts change. Destination
+connection names and settings do not shape the schema. `stemma validate` checks
+that each referenced destination exists and its metadata matches the configured
+operation.
 `--output-file` is required; use `--output-file -` to print JSON to stdout. Schema generation does not need destination
 credentials or acquire software, but OCI plugin bundles must already be cached
 when using `--offline`. Go validation also checks semantic rules that are broader

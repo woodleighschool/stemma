@@ -207,7 +207,9 @@ stemma version
 ```
 
 `validate --resolved` and `schema --output-file -` print JSON documents.
-`schema` requires an explicit output file and includes the locally loaded plugins.
+`schema` requires an explicit output file and describes built-in and loaded plugin
+contracts independently of configured destination connections. `validate` checks
+destination references and metadata against the configured operations.
 `--builtins` generates the default schema without loading a catalog; it uses the
 same registry and schema composition as project generation.
 `inspect` inventories a local file, directory or archive without executing it or

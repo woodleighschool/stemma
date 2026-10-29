@@ -65,18 +65,8 @@ func LoadProjectDocument(filename string) (Project, error) {
 	return p, nil
 }
 
-// ProjectSchema binds named connections to their advertised operation contracts.
-// Plugin schemas remain independent resources, including their local references.
-func ProjectSchema(project Project, descriptor plugin.Descriptor) ([]byte, error) {
-	return catalogSchema(&project, descriptor)
-}
-
-// Schema describes registered operations without binding destination names to a project.
+// Schema describes registered operation contracts independently of project connections.
 func Schema(descriptor plugin.Descriptor) ([]byte, error) {
-	return catalogSchema(nil, descriptor)
-}
-
-func catalogSchema(project *Project, descriptor plugin.Descriptor) ([]byte, error) {
 	data, err := baseSchema()
 	if err != nil {
 		return nil, err
@@ -87,10 +77,6 @@ func catalogSchema(project *Project, descriptor plugin.Descriptor) ([]byte, erro
 	}
 	definitions := schema["$defs"].(map[string]any)
 	rootID := schema["$id"].(string)
-	operations := map[string]plugin.Operation{}
-	for _, operation := range descriptor.Operations {
-		operations[operation.Name] = operation
-	}
 	input, err := catalogInputSchema(descriptor)
 	if err != nil {
 		return nil, err
@@ -114,7 +100,6 @@ func catalogSchema(project *Project, descriptor plugin.Descriptor) ([]byte, erro
 	definitions["PartialInput"] = partialInput
 	var connections []any
 	var nativeMetadata []any
-	metadata := map[string]any{}
 	installer := map[string]any{"type": "string", "pattern": namePattern.String(), "description": "Named output from this resource. Defaults to installer."}
 	inputs := map[string]any{"type": "object", "propertyNames": map[string]any{"pattern": namePattern.String()}, "additionalProperties": installer}
 	for _, operation := range descriptor.Operations {
@@ -149,20 +134,9 @@ func catalogSchema(project *Project, descriptor plugin.Descriptor) ([]byte, erro
 			"config":    map[string]any{"$ref": settingsID, "description": "Connection settings for this destination. Credentials may reference environment variables."},
 		}})
 	}
-	destinations := map[string]any{"type": "object", "description": "Native metadata for each named Project destination. Explicit values override derived values.", "properties": metadata, "additionalProperties": false}
-	if project == nil {
-		destinations["propertyNames"] = map[string]any{"pattern": namePattern.String()}
-		if len(nativeMetadata) > 0 {
-			destinations["additionalProperties"] = map[string]any{"anyOf": nativeMetadata}
-		}
-	} else {
-		for name, connection := range project.Destinations {
-			operation, ok := operations[connection.Operation]
-			if !ok || operation.Kind != "reconcile" {
-				return nil, fmt.Errorf("destination %s: unknown reconcile operation %q", name, connection.Operation)
-			}
-			metadata[name] = map[string]any{"$ref": "https://stemma.invalid/editor/" + url.PathEscape(operation.Name) + "/metadata"}
-		}
+	destinations := map[string]any{"type": "object", "description": "Native metadata for each named Project destination. Explicit values override derived values.", "propertyNames": map[string]any{"pattern": namePattern.String()}, "additionalProperties": false}
+	if len(nativeMetadata) > 0 {
+		destinations["additionalProperties"] = map[string]any{"anyOf": nativeMetadata}
 	}
 	for _, operation := range descriptor.Operations {
 		if operation.Resource == nil {

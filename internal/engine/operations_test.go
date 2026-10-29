@@ -463,7 +463,7 @@ spec:
 	if _, err := ValidateProject(t.Context(), opts, false); err == nil || !strings.Contains(err.Error(), reason) {
 		t.Fatalf("validation of the stale destination: %v", err)
 	}
-	if _, err := ProjectSchema(t.Context(), opts); err == nil || !strings.Contains(err.Error(), reason) {
+	if _, err := Schema(t.Context(), opts); err == nil || !strings.Contains(err.Error(), reason) {
 		t.Fatalf("schema without the stale destination: %v", err)
 	}
 }

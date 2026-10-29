@@ -16,14 +16,14 @@ func BuiltinSchema() ([]byte, error) {
 	return config.Schema(operations.registry.Descriptor())
 }
 
-// ProjectSchema describes operations without acquiring software inputs
+// Schema describes built-in and declared plugin contracts without acquiring software inputs
 // or contacting destinations. Offline requires plugins the cache already holds.
-func ProjectSchema(ctx context.Context, opts Options) (result []byte, err error) {
+func Schema(ctx context.Context, opts Options) (result []byte, err error) {
 	project, err := config.LoadProjectDocument(opts.ConfigPath)
 	if err != nil {
 		return nil, err
 	}
-	done := plugin.Stage(ctx, "Generating project schema")
+	done := plugin.Stage(ctx, "Generating editor schema")
 	defer func() { done(err) }()
 	operations, cleanup, err := projectOperations(ctx, project, opts)
 	if err != nil {
@@ -34,5 +34,5 @@ func ProjectSchema(ctx context.Context, opts Options) (result []byte, err error)
 	if err := operations.complete(); err != nil {
 		return nil, err
 	}
-	return config.ProjectSchema(project, operations.registry.Descriptor())
+	return config.Schema(operations.registry.Descriptor())
 }

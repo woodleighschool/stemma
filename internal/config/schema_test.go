@@ -85,7 +85,7 @@ func TestProjectEnvelopeSchema(t *testing.T) {
 
 func testCatalogSchema() ([]byte, error) {
 	encode := func(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
-	return ProjectSchema(Project{Destinations: map[string]Destination{"external": {Operation: "fixture.publish"}}}, plugin.Descriptor{Operations: []plugin.Operation{
+	return Schema(plugin.Descriptor{Operations: []plugin.Operation{
 		{Name: "fixture.publish", Kind: "reconcile"},
 		{Name: "example.release", Resolver: &plugin.ResolverKind{Version: "1"}, ConfigSchema: encode(plugin.SchemaFor[struct {
 			Channel string `json:"channel"`
