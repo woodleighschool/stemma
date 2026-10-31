@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.12.2](https://github.com/woodleighschool/stemma/compare/v0.12.1...v0.12.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* **go:** update module github.com/modelcontextprotocol/go-sdk (468d072 → eafb671) ([#255](https://github.com/woodleighschool/stemma/issues/255)) ([4a89dd1](https://github.com/woodleighschool/stemma/commit/4a89dd1219397d29aae88f7e0d931483b1d389cd))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (46a62b3 → 468d072) ([#253](https://github.com/woodleighschool/stemma/issues/253)) ([da27aec](https://github.com/woodleighschool/stemma/commit/da27aec0e7875de856508b6ea0afcf6f8d859619))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (51e4f98 → 46a62b3) ([#252](https://github.com/woodleighschool/stemma/issues/252)) ([ea6c814](https://github.com/woodleighschool/stemma/commit/ea6c8145f9a9109217b42ceb3b7326903da90500))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (c15e86b → 51e4f98) ([#250](https://github.com/woodleighschool/stemma/issues/250)) ([0e86379](https://github.com/woodleighschool/stemma/commit/0e863794c2547c0f2173566d1b9d4f5a11c5acc7))
+
 ## [0.12.1](https://github.com/woodleighschool/stemma/compare/v0.12.0...v0.12.1) (2026-10-29)
 
 
