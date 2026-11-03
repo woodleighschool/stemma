@@ -42,7 +42,7 @@ require (
 	github.com/mikelolasagasti/xz v1.0.1
 	github.com/modelcontextprotocol/go-sdk v1.8.1-0.20261102164434-7c39fb175aae
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12
-	github.com/ncruces/go-sqlite3 v0.35.6
+	github.com/ncruces/go-sqlite3 v0.36.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/oras-project/oras-go/v3 v3.0.0-rc.4
@@ -107,7 +107,7 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/microsoft/kiota-authentication-azure-go v1.3.1 // indirect
 	github.com/minio/minlz v1.2.0 // indirect
-	github.com/ncruces/go-sqlite3-wasm/v6 v6.3.35304 // indirect
+	github.com/ncruces/go-sqlite3-wasm/v6 v6.4.35401 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/nwaples/rardecode/v2 v2.4.1 // indirect
 	github.com/pb33f/go-yaml v0.1.0 // indirect
