@@ -20,6 +20,7 @@ import (
 
 	sdkclient "github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/client"
 	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/constants"
+	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/jamf_pro_api/cloud_distribution_point"
 	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/jamf_pro_api/packages"
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/plugin"
@@ -361,16 +362,30 @@ func (c *client) upload(ctx context.Context, id, file string, content payload) (
 	return requestError(ctx, response, err)
 }
 
+// Package reads can lag completed uploads until cloud inventory is refreshed.
+func (c *client) refreshContent(ctx context.Context, id, filename string) (*observed, error) {
+	response, err := cloud_distribution_point.NewCloudDistributionPoint(c.transport).RefreshInventoryV1(ctx, filename)
+	if err := requestError(ctx, response, err); err != nil {
+		return nil, fmt.Errorf("jamf refresh cloud inventory: %w", err)
+	}
+	current, err := c.get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, errors.New("jamf package disappeared during inventory refresh")
+	}
+	return current, nil
+}
+
 func (c *client) awaitContent(ctx context.Context, id string, content payload) (result *observed, err error) {
 	done := plugin.Stage(ctx, "Waiting for Jamf processing")
 	defer func() { done(err) }()
+	var current *observed
 	for attempt := range 31 {
-		current, err := c.get(ctx, id)
+		current, err = c.refreshContent(ctx, id, content.filename)
 		if err != nil {
 			return nil, err
-		}
-		if current == nil {
-			return nil, errors.New("jamf package disappeared during upload verification")
 		}
 		if contentMatches(current, content) {
 			return current, nil
@@ -390,7 +405,7 @@ func (c *client) awaitContent(ctx context.Context, id string, content payload) (
 		case <-timer.C:
 		}
 	}
-	return nil, errors.New("jamf content is not READY with a matching SHA-256 or SHA3-512 after 60 seconds")
+	return nil, fmt.Errorf("jamf package %s content is not READY with a matching SHA-256 or SHA3-512 after 60 seconds (cloudTransferStatus=%q, hashType=%q)", id, stringField(current.Fields, "cloudTransferStatus"), stringField(current.Fields, "hashType"))
 }
 
 // publishPackage converges the package record on the artifact and declared
@@ -408,6 +423,12 @@ func (c *client) publishPackage(ctx context.Context, current *observed, desired 
 	claim := map[string]json.RawMessage{"fileName": desired["fileName"]}
 	if current, err = c.merge(ctx, current, claim, identity); err != nil {
 		return "", err
+	}
+	if !contentDigestMatches(current, content) {
+		// A previous run may have uploaded successfully without refreshing inventory.
+		if current, err = c.refreshContent(ctx, id, content.filename); err != nil {
+			return "", err
+		}
 	}
 	if !contentDigestMatches(current, content) {
 		if err := c.upload(ctx, id, file, content); err != nil {

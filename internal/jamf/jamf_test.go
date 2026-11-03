@@ -347,6 +347,7 @@ func TestLostResponsesConvergeFromJamfAlone(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			server, request := newFixture(t)
 			server.failAfter = phase
+			server.deferInventory = true
 			request.Metadata = raw(map[string]any{"priority": 5})
 			if _, err := Handle(t.Context(), request); (err != nil) != interrupted {
 				t.Fatalf("committed %s: %v", phase, err)
@@ -383,6 +384,58 @@ func TestUnfinishedContentIsUploadedAgain(t *testing.T) {
 				t.Fatalf("interrupted record was not finished in place: %v", server.writes())
 			}
 		})
+	}
+}
+
+func TestPublicationRefreshesCloudInventory(t *testing.T) {
+	server, request := newFixture(t)
+	server.deferInventory = true
+	server.inventoryWaits = 1
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if _, err := Handle(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	if stringField(server.record("1"), "sha256") != request.Artifact.SHA256 {
+		t.Fatal("uploaded content was not confirmed from cloud inventory")
+	}
+}
+
+func TestPublicationRecoversUnrefreshedUpload(t *testing.T) {
+	for _, status := range []string{"PENDING", "READY"} {
+		t.Run(status, func(t *testing.T) {
+			server, request := newFixture(t)
+			fields := contentFields("previous package bytes")
+			fields["fileName"], fields["packageName"], fields["notes"], fields["cloudTransferStatus"] = "vendor.pkg", "vendor.pkg", fixtureMarker, status
+			server.seed(fields)
+			server.cloudContent["vendor.pkg"] = "immutable package bytes"
+			request.Method = "plan"
+			if _, err := Handle(t.Context(), request); err != nil {
+				t.Fatal(err)
+			}
+			if len(server.writes()) != 0 {
+				t.Fatal("plan refreshed cloud inventory")
+			}
+			request.Method = "apply"
+			if _, err := Handle(t.Context(), request); err != nil {
+				t.Fatal(err)
+			}
+			if server.count("POST "+packagePath+"/1/upload") != 0 || server.count("POST "+packagePath) != 0 {
+				t.Fatalf("completed upload was repeated: %v", server.writes())
+			}
+		})
+	}
+}
+
+func TestInventoryRefreshFailureStopsPublication(t *testing.T) {
+	server, request := newFixture(t)
+	server.failRefresh = true
+	request.Metadata = raw(map[string]any{"priority": 5})
+	if _, err := Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), "refresh cloud inventory: jamf HTTP 403") {
+		t.Fatalf("inventory refresh failure: %v", err)
+	}
+	if server.count("POST "+packagePath+"/1/upload") != 0 || server.count("PUT "+packagePath+"/1") != 0 {
+		t.Fatalf("publication continued without inventory: %v", server.writes())
 	}
 }
 
@@ -603,6 +656,10 @@ type fakeServer struct {
 	version          int
 	failAfter        string
 	failUpload       bool
+	deferInventory   bool
+	inventoryWaits   int
+	failRefresh      bool
+	cloudContent     map[string]string
 	tokenLifetime    int
 	tokens           int
 	failReads        int
@@ -613,7 +670,7 @@ type fakeServer struct {
 
 func newFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest[Config]) {
 	t.Helper()
-	fake := &fakeServer{t: t, packages: make(map[string]map[string]json.RawMessage), version: 1, tokenLifetime: 1800}
+	fake := &fakeServer{t: t, packages: make(map[string]map[string]json.RawMessage), cloudContent: make(map[string]string), version: 1, tokenLifetime: 1800}
 	server := httptest.NewServer(http.HandlerFunc(fake.handle))
 	t.Cleanup(server.Close)
 	request := plugin.ReconcileRequest[Config]{Method: "apply", Identity: plugin.Identity{Project: "school", Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "vendor"}, Destination: "jamf"}, Config: Config{URL: server.URL, ClientID: "test-client-id", ClientSecret: "test-client-secret"}, Metadata: raw(map[string]any{}), Artifact: fixtureArtifact(t, "immutable package bytes")}
@@ -676,6 +733,32 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != "Bearer test-token-"+strconv.Itoa(s.tokens) {
 		s.t.Error("missing bearer token")
 		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if r.URL.Path == "/api/v1/cloud-distribution-point/refresh-inventory" && r.Method == http.MethodPost {
+		if s.failRefresh {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		filename := r.URL.Query().Get("file-name")
+		if filename == "" {
+			s.t.Error("inventory refresh must name one package")
+		}
+		if content, ok := s.cloudContent[filename]; ok {
+			if s.inventoryWaits > 0 {
+				s.inventoryWaits--
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			for _, pkg := range s.packages {
+				if stringField(pkg, "fileName") == filename {
+					for key, value := range contentFields(content) {
+						pkg[key] = raw(value)
+					}
+				}
+			}
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	if s.native != nil && s.native.handle(s, w, r) {
@@ -767,8 +850,13 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 			writeJSON(s.t, w, map[string]any{"error": "test-client-secret"})
 			return
 		}
-		for key, value := range contentFields(string(data)) {
-			pkg[key] = raw(value)
+		if s.deferInventory {
+			s.cloudContent[part.FileName()] = string(data)
+			pkg["cloudTransferStatus"] = raw("PENDING")
+		} else {
+			for key, value := range contentFields(string(data)) {
+				pkg[key] = raw(value)
+			}
 		}
 		if s.notesAfterUpload != "" {
 			pkg["notes"] = raw(s.notesAfterUpload)

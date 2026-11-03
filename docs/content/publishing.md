@@ -441,13 +441,12 @@ name must match exactly one object, or publication fails before anything is
 written. Scope privileges follow the kind of object named, whether it is a
 target, a limitation or an exclusion.
 
-The API client's role needs these privileges for the features a catalog uses.
-Planning needs only the read privileges; applying needs both columns. Uploading
-Self Service icons needs none.
+The API client's role requires the package privileges and those for any configured
+features. Uploading Self Service icons requires no privileges.
 
 | Feature                       | Read                                                                                           | Write                                            |
 | ----------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| Packages                      | `Read Packages`                                                                                | `Create Packages`, `Update Packages`             |
+| Packages                      | `Read Packages`, `Read Cloud Distribution Point`                                               | `Create Packages`, `Update Packages`             |
 | Category by name (`category`) | `Read Categories`                                                                              |                                                  |
 | Install policies (`policies`) | `Read Policies`                                                                                | `Create Policies`, `Update Policies`             |
 | Patch title link (`patch`)    | `Read Patch Management Software Titles`                                                        | `Update Patch Management Software Titles`        |
