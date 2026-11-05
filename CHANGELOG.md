@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.12.3](https://github.com/woodleighschool/stemma/compare/v0.12.2...v0.12.3) (2026-11-05)
+
+
+### Bug Fixes
+
+* **go:** update module cel.dev/cel-go (v0.33.1 → v0.33.2) ([#260](https://github.com/woodleighschool/stemma/issues/260)) ([7e8892a](https://github.com/woodleighschool/stemma/commit/7e8892aa639bf35e0ba87dcdead604c630d7f5ad))
+* **go:** update module github.com/jferrl/go-githubauth (v1.9.1 → v1.11.0) ([#262](https://github.com/woodleighschool/stemma/issues/262)) ([ff25bf8](https://github.com/woodleighschool/stemma/commit/ff25bf8ff10624b6cb2ae4999d250a10445a6a73))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (5f942ea → f91620f) ([#270](https://github.com/woodleighschool/stemma/issues/270)) ([665b64b](https://github.com/woodleighschool/stemma/commit/665b64b7551cf1628fd994aa1081763d39ecd2d1))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (7c39fb1 → ef18c16) ([#266](https://github.com/woodleighschool/stemma/issues/266)) ([5831cfb](https://github.com/woodleighschool/stemma/commit/5831cfb10398a9b604d40fa38b65657069b0aa70))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (eafb671 → 7c39fb1) ([#258](https://github.com/woodleighschool/stemma/issues/258)) ([1220508](https://github.com/woodleighschool/stemma/commit/1220508b75d744b28bc3f9fe3e5314d98854bf98))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (ef18c16 → 5f942ea) ([#268](https://github.com/woodleighschool/stemma/issues/268)) ([cc73dd0](https://github.com/woodleighschool/stemma/commit/cc73dd0c50bafe567dcef69c6df73ac489b231e9))
+* **go:** update module github.com/ncruces/go-sqlite3 (v0.35.6 → v0.36.0) ([#263](https://github.com/woodleighschool/stemma/issues/263)) ([68f9ddb](https://github.com/woodleighschool/stemma/commit/68f9ddbb52d464e526f726f8513df7411faa9a84))
+* **go:** update module github.com/oras-project/oras-go/v3 (v3.0.0-rc.4 → v3.0.0) ([#271](https://github.com/woodleighschool/stemma/issues/271)) ([61e40c3](https://github.com/woodleighschool/stemma/commit/61e40c3f25987bfef9a64b5c0f60587fa43ea3e4))
+* **go:** update module go.yaml.in/yaml/v4 (v4.0.0-rc.6 → v4.0.0-rc.7) ([#269](https://github.com/woodleighschool/stemma/issues/269)) ([2bade4a](https://github.com/woodleighschool/stemma/commit/2bade4a79909850bf7f112d4e9fd68d93d581395))
+* **jamf:** bound processing and recover uploads ([3be3bde](https://github.com/woodleighschool/stemma/commit/3be3bde586a061f0ff7a383d08d7f06dfaa678e6))
+
 ## [0.12.2](https://github.com/woodleighschool/stemma/compare/v0.12.1...v0.12.2) (2026-11-03)
 
 
