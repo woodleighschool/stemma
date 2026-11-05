@@ -362,40 +362,41 @@ func (c *client) upload(ctx context.Context, id, file string, content payload) (
 	return requestError(ctx, response, err)
 }
 
-// Package reads can lag completed uploads until cloud inventory is refreshed.
-func (c *client) refreshContent(ctx context.Context, id, filename string) (*observed, error) {
-	response, err := cloud_distribution_point.NewCloudDistributionPoint(c.transport).RefreshInventoryV1(ctx, filename)
-	if err := requestError(ctx, response, err); err != nil {
-		return nil, fmt.Errorf("jamf refresh cloud inventory: %w", err)
+// A file-specific refresh waits for availability, so it is only safe once
+// an upload has started. Package reads alone do not refresh cloud inventory.
+func (c *client) awaitContent(ctx context.Context, id, filename string) (_ *observed, err error) {
+	if filename == "" {
+		return nil, fmt.Errorf("jamf package %s has no file name", id)
 	}
-	current, err := c.get(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if current == nil {
-		return nil, errors.New("jamf package disappeared during inventory refresh")
-	}
-	return current, nil
-}
-
-func (c *client) awaitContent(ctx context.Context, id string, content payload) (result *observed, err error) {
-	done := plugin.Stage(ctx, "Waiting for Jamf processing")
-	defer func() { done(err) }()
-	var current *observed
-	for attempt := range 31 {
-		current, err = c.refreshContent(ctx, id, content.filename)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+	done := plugin.Stage(ctx, "Waiting for Jamf processing", plugin.Detail(filename))
+	defer func() {
 		if err != nil {
-			return nil, err
+			err = fmt.Errorf("jamf package %s processing: %w", id, err)
 		}
-		if contentMatches(current, content) {
-			return current, nil
-		}
-		status := stringField(current.Fields, "cloudTransferStatus")
-		if status == "FAILED" || status == "ERROR" {
-			return nil, fmt.Errorf("jamf package cloud transfer %s", status)
-		}
-		if attempt == 30 {
-			break
+		done(err)
+	}()
+	for {
+		response, refreshErr := cloud_distribution_point.NewCloudDistributionPoint(c.transport).RefreshInventoryV1(ctx, filename)
+		// Jamf can continue processing after its gateway times out the refresh.
+		if response == nil || response.StatusCode() != http.StatusGatewayTimeout {
+			if err := requestError(ctx, response, refreshErr); err != nil {
+				return nil, fmt.Errorf("refresh cloud inventory: %w", err)
+			}
+			current, err := c.get(ctx, id)
+			if err != nil {
+				return nil, err
+			}
+			if current == nil {
+				return nil, errors.New("package disappeared during inventory refresh")
+			}
+			switch status := stringField(current.Fields, "cloudTransferStatus"); status {
+			case "READY":
+				return current, nil
+			case "FAILED", "ERROR":
+				return nil, fmt.Errorf("cloud transfer %s", status)
+			}
 		}
 		timer := time.NewTimer(2 * time.Second)
 		select {
@@ -405,7 +406,6 @@ func (c *client) awaitContent(ctx context.Context, id string, content payload) (
 		case <-timer.C:
 		}
 	}
-	return nil, fmt.Errorf("jamf package %s content is not READY with a matching SHA-256 or SHA3-512 after 60 seconds (cloudTransferStatus=%q, hashType=%q)", id, stringField(current.Fields, "cloudTransferStatus"), stringField(current.Fields, "hashType"))
 }
 
 // publishPackage converges the package record on the artifact and declared
@@ -416,6 +416,15 @@ func (c *client) publishPackage(ctx context.Context, current *observed, desired 
 		if current, err = c.create(ctx, identity, content.filename); err != nil {
 			return "", err
 		}
+	} else if stringField(current.Fields, "fileName") == content.filename && !contentDigestMatches(current, content) {
+		// Only an existing record for this filename can hold an earlier upload.
+		// A failed transfer must be uploaded again.
+		switch stringField(current.Fields, "cloudTransferStatus") {
+		case "PENDING", "READY":
+			if current, err = c.awaitContent(ctx, stringField(current.Fields, "id"), content.filename); err != nil {
+				return "", err
+			}
+		}
 	}
 	id := stringField(current.Fields, "id")
 	// An adopted package takes the file name and marker before any content, so an
@@ -425,18 +434,15 @@ func (c *client) publishPackage(ctx context.Context, current *observed, desired 
 		return "", err
 	}
 	if !contentDigestMatches(current, content) {
-		// A previous run may have uploaded successfully without refreshing inventory.
-		if current, err = c.refreshContent(ctx, id, content.filename); err != nil {
-			return "", err
-		}
-	}
-	if !contentDigestMatches(current, content) {
 		if err := c.upload(ctx, id, file, content); err != nil {
 			return "", err
 		}
-		if current, err = c.awaitContent(ctx, id, content); err != nil {
+		if current, err = c.awaitContent(ctx, id, content.filename); err != nil {
 			return "", err
 		}
+	}
+	if !contentMatches(current, content) {
+		return "", errors.New("jamf uploaded content does not match the artifact")
 	}
 	// Declared metadata follows verified content, so a failed upload never leaves
 	// new settings over old bytes.

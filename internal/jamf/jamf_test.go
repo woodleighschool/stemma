@@ -1,6 +1,7 @@
 package jamf
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"crypto/sha3"
@@ -8,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/woodleighschool/stemma/plugin"
@@ -367,7 +370,7 @@ func TestLostResponsesConvergeFromJamfAlone(t *testing.T) {
 }
 
 func TestUnfinishedContentIsUploadedAgain(t *testing.T) {
-	for _, status := range []string{"AWAITING_UPLOAD", "PENDING", "FAILED"} {
+	for _, status := range []string{"AWAITING_UPLOAD", "FAILED", "ERROR"} {
 		t.Run(status, func(t *testing.T) {
 			server, request := newFixture(t)
 			server.seed(map[string]any{"fileName": "vendor.pkg", "packageName": "vendor.pkg", "notes": fixtureMarker, "cloudTransferStatus": status})
@@ -388,16 +391,39 @@ func TestUnfinishedContentIsUploadedAgain(t *testing.T) {
 }
 
 func TestPublicationRefreshesCloudInventory(t *testing.T) {
-	server, request := newFixture(t)
-	server.deferInventory = true
-	server.inventoryWaits = 1
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	if _, err := Handle(ctx, request); err != nil {
-		t.Fatal(err)
+	for name, gatewayTimeout := range map[string]bool{"inventory lag": false, "gateway timeout": true} {
+		t.Run(name, func(t *testing.T) {
+			server, request := newFixture(t)
+			server.createdStatus = "PENDING"
+			server.deferInventory = true
+			server.inventoryWaits = 1
+			server.refreshTimeout = gatewayTimeout
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			var logs bytes.Buffer
+			ctx = plugin.WithLogger(ctx, slog.New(slog.NewJSONHandler(&logs, nil)))
+			if _, err := Handle(ctx, request); err != nil {
+				t.Fatal(err)
+			}
+			if stringField(server.record("1"), "sha256") != request.Artifact.SHA256 || server.count("POST "+packagePath+"/1/upload") != 1 {
+				t.Fatal("uploaded content was not confirmed without repeating the upload")
+			}
+			if !strings.Contains(logs.String(), `"msg":"Waiting for Jamf processing","stage":true,"detail":"vendor.pkg"`) {
+				t.Fatal("inventory refresh was invisible in publication progress")
+			}
+		})
 	}
-	if stringField(server.record("1"), "sha256") != request.Artifact.SHA256 {
-		t.Fatal("uploaded content was not confirmed from cloud inventory")
+}
+
+func TestMismatchedUploadDoesNotActivateMetadata(t *testing.T) {
+	server, request := newFixture(t)
+	server.corruptUpload = true
+	request.Metadata = raw(map[string]any{"priority": 5})
+	if _, err := Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), "does not match the artifact") {
+		t.Fatalf("mismatched upload: %v", err)
+	}
+	if server.count("PUT "+packagePath+"/1") != 0 {
+		t.Fatal("metadata changed before the uploaded checksum was verified")
 	}
 }
 
@@ -409,6 +435,9 @@ func TestPublicationRecoversUnrefreshedUpload(t *testing.T) {
 			fields["fileName"], fields["packageName"], fields["notes"], fields["cloudTransferStatus"] = "vendor.pkg", "vendor.pkg", fixtureMarker, status
 			server.seed(fields)
 			server.cloudContent["vendor.pkg"] = "immutable package bytes"
+			if status == "PENDING" {
+				server.inventoryWaits = 1
+			}
 			request.Method = "plan"
 			if _, err := Handle(t.Context(), request); err != nil {
 				t.Fatal(err)
@@ -429,6 +458,7 @@ func TestPublicationRecoversUnrefreshedUpload(t *testing.T) {
 
 func TestInventoryRefreshFailureStopsPublication(t *testing.T) {
 	server, request := newFixture(t)
+	server.seed(map[string]any{"fileName": "vendor.pkg", "notes": fixtureMarker, "cloudTransferStatus": "PENDING"})
 	server.failRefresh = true
 	request.Metadata = raw(map[string]any{"priority": 5})
 	if _, err := Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), "refresh cloud inventory: jamf HTTP 403") {
@@ -438,6 +468,73 @@ func TestInventoryRefreshFailureStopsPublication(t *testing.T) {
 		t.Fatalf("publication continued without inventory: %v", server.writes())
 	}
 }
+
+func TestProcessingDeadlineIncludesRequestsAndPolling(t *testing.T) {
+	for _, blocked := range []string{"refresh", "read", "pending", "gateway"} {
+		t.Run(blocked, func(t *testing.T) {
+			_, request := newFixture(t)
+			c, err := newClient(t.Context(), request.Config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			synctest.Test(t, func(t *testing.T) {
+				c.transport.GetHTTPClient().SetTransport(jamfRoundTripper(func(r *http.Request) (*http.Response, error) {
+					refresh := r.Method == http.MethodPost
+					if (refresh && blocked == "refresh") || (!refresh && blocked == "read") {
+						<-r.Context().Done()
+						return nil, r.Context().Err()
+					}
+					status, body := http.StatusOK, `{"id":"1","cloudTransferStatus":"PENDING"}`
+					if refresh {
+						status, body = http.StatusNoContent, ""
+						if blocked == "gateway" {
+							status = http.StatusGatewayTimeout
+						}
+					}
+					return &http.Response{StatusCode: status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+				}))
+				start := time.Now()
+				_, err := c.awaitContent(t.Context(), "1", "vendor.pkg")
+				if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != 5*time.Minute {
+					t.Fatalf("processing deadline: elapsed=%s, err=%v", time.Since(start), err)
+				}
+			})
+		})
+	}
+}
+
+func TestPendingUploadIsNotRepeatedWhenProcessingTimesOut(t *testing.T) {
+	server, request := newFixture(t)
+	server.seed(map[string]any{"fileName": "vendor.pkg", "notes": fixtureMarker, "cloudTransferStatus": "PENDING"})
+	c, err := newClient(t.Context(), request.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := inspectPayload(t.Context(), request.Identity, request.Artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		c.transport.GetHTTPClient().SetTransport(jamfRoundTripper(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != "/api/v1/cloud-distribution-point/refresh-inventory" || r.URL.Query().Get("file-name") != "vendor.pkg" {
+				t.Errorf("pending upload repeated or modified: %s %s", r.Method, r.URL)
+			}
+			<-r.Context().Done()
+			return nil, r.Context().Err()
+		}))
+		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+		defer cancel()
+		start := time.Now()
+		_, err := c.publishPackage(ctx, &observed{Fields: server.record("1")}, map[string]json.RawMessage{"fileName": raw("vendor.pkg")}, request.Identity.Digest(), request.Artifact.Path, content)
+		if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != time.Second {
+			t.Fatalf("publication did not honor its shorter deadline: elapsed=%s, err=%v", time.Since(start), err)
+		}
+	})
+}
+
+type jamfRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f jamfRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestFailedUploadLeavesRecordForNextRun(t *testing.T) {
 	server, request := newFixture(t)
@@ -655,9 +752,12 @@ type fakeServer struct {
 	requests         []string
 	version          int
 	failAfter        string
+	createdStatus    string
 	failUpload       bool
+	corruptUpload    bool
 	deferInventory   bool
 	inventoryWaits   int
+	refreshTimeout   bool
 	failRefresh      bool
 	cloudContent     map[string]string
 	tokenLifetime    int
@@ -742,12 +842,29 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		filename := r.URL.Query().Get("file-name")
 		if filename == "" {
-			s.t.Error("inventory refresh must name one package")
+			s.t.Error("publication must not refresh global inventory")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_, available := s.cloudContent[filename]
+		for _, pkg := range s.packages {
+			if stringField(pkg, "fileName") == filename && stringField(pkg, "cloudTransferStatus") == "READY" {
+				available = true
+			}
+		}
+		if !available {
+			s.t.Error("file-specific inventory refresh waits for a file that has not been uploaded")
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 		if content, ok := s.cloudContent[filename]; ok {
 			if s.inventoryWaits > 0 {
 				s.inventoryWaits--
-				w.WriteHeader(http.StatusNoContent)
+				status := http.StatusNoContent
+				if s.refreshTimeout {
+					status = http.StatusGatewayTimeout
+				}
+				w.WriteHeader(status)
 				return
 			}
 			for _, pkg := range s.packages {
@@ -802,6 +919,9 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 			id := strconv.Itoa(s.nextPackage)
 			fields["id"] = raw(id)
 			fields["cloudTransferStatus"] = raw("AWAITING_UPLOAD")
+			if s.createdStatus != "" {
+				fields["cloudTransferStatus"] = raw(s.createdStatus)
+			}
 			s.packages[id] = fields
 			if s.failAfter == "create" {
 				w.WriteHeader(http.StatusInternalServerError)
@@ -850,8 +970,11 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 			writeJSON(s.t, w, map[string]any{"error": "test-client-secret"})
 			return
 		}
+		if s.corruptUpload {
+			data = []byte("unexpected package bytes")
+		}
+		s.cloudContent[part.FileName()] = string(data)
 		if s.deferInventory {
-			s.cloudContent[part.FileName()] = string(data)
 			pkg["cloudTransferStatus"] = raw("PENDING")
 		} else {
 			for key, value := range contentFields(string(data)) {
