@@ -18,6 +18,8 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/opencontainers/go-digest"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/woodleighschool/stemma/internal/config"
+	"github.com/woodleighschool/stemma/internal/macpkg"
 	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 
@@ -26,6 +28,88 @@ import (
 	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/plugin"
 )
+
+func TestBuiltinPreparationUsesOperationVersion(t *testing.T) {
+	store, err := cas.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := store.Import(t.Context(), strings.NewReader("managed settings\n"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := macpkg.Spec{
+		Package: macpkg.Package{Identifier: "org.example.settings", Version: "1.0"},
+		Payload: map[string]macpkg.Entry{"/Library/Example/settings.txt": {Input: "settings"}},
+	}
+	plan := resourcePlan{
+		Resource:  config.Resource{APIVersion: "stemma/v1alpha1", Kind: "BuildMacPkg", Metadata: config.Metadata{Name: "settings"}},
+		Operation: "build.mac.pkg",
+		Config:    schemaJSON(spec),
+	}
+	inputs := map[string]Prepared{"settings": {Payload: input, Filename: "settings.txt", Mode: 0o644}}
+	// Seed the cache with the resource owner's version, independently of the
+	// executable and the other operations composed into it.
+	previous := &operations{registry: plugin.New("stemma", "fixture"), identity: map[string]string{}}
+	if err := registerKinds(previous); err != nil {
+		t.Fatal(err)
+	}
+	first, cached, err := prepareResource(t.Context(), store, previous, plan, inputs, t.TempDir(), "")
+	if err != nil || cached {
+		t.Fatalf("initial preparation cached=%v: %v", cached, err)
+	}
+	for _, test := range []struct {
+		name, operation string
+		input, config   bool
+		cached          bool
+	}{
+		{name: "same operation version", cached: true},
+		{name: "unrelated resource version", operation: "software.windows", cached: true},
+		{name: "destination version", operation: "munki", cached: true},
+		{name: "package implementation", operation: "build.mac.pkg"},
+		{name: "input content", input: true},
+		{name: "package config", config: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ops, err := builtins(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.operation != "" {
+				ops.identity[test.operation] += "/next"
+			}
+			plan, spec := plan, spec
+			inputs := map[string]Prepared{"settings": inputs["settings"]}
+			if test.input {
+				ref, err := store.Import(t.Context(), strings.NewReader("updated managed settings\n"), "")
+				if err != nil {
+					t.Fatal(err)
+				}
+				input := inputs["settings"]
+				input.Payload = ref
+				inputs["settings"] = input
+			}
+			if test.config {
+				spec.Package.Version = "2.0"
+				plan.Config = schemaJSON(spec)
+			}
+			outputs, cached, err := prepareResource(t.Context(), store, ops, plan, inputs, t.TempDir(), "")
+			if err != nil || cached != test.cached {
+				t.Fatalf("preparation cached=%v, want %v: %v", cached, test.cached, err)
+			}
+			installer := outputs["installer"]
+			if installer.Version != spec.Package.Version {
+				t.Fatalf("package version=%q, want %q", installer.Version, spec.Package.Version)
+			}
+			if test.cached && installer.Payload != first["installer"].Payload {
+				t.Fatal("cached preparation changed package content")
+			}
+			if (test.input || test.config) && installer.Payload == first["installer"].Payload {
+				t.Fatal("changed inputs or config reused old package content")
+			}
+		})
+	}
+}
 
 func TestExternalResolverEvidenceFeedsNativeMetadata(t *testing.T) {
 	root := t.TempDir()

@@ -2,12 +2,9 @@ package engine
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"os"
 	"path/filepath"
@@ -267,6 +264,8 @@ type reconcileHandler func(context.Context, plugin.ReconcileRequest[json.RawMess
 
 type operations struct {
 	registry *plugin.Registry
+	// Built-in versions change when their outputs or evidence change, including
+	// through shared dependencies. External plugins use their bundle identity.
 	identity map[string]string
 	plugins  map[string]plugins.Entry
 	// unavailable explains each operation a plugin offers at another interface
@@ -331,27 +330,6 @@ func builtins(handlers map[string]reconcileHandler) (*operations, error) {
 			}
 		}
 		ops.registry = registry
-	}
-	// A built-in operation is whatever this executable does, so the executable's
-	// digest is part of its identity: an output and its evidence are reused only
-	// by the executable that prepared them.
-	executable, err := os.Executable()
-	if err != nil {
-		return nil, err
-	}
-	file, err := os.Open(executable)
-	if err != nil {
-		return nil, err
-	}
-	hash := sha256.New()
-	_, err = io.Copy(hash, file)
-	err = errors.Join(err, file.Close())
-	if err != nil {
-		return nil, err
-	}
-	implementation := hex.EncodeToString(hash.Sum(nil))
-	for name, version := range ops.identity {
-		ops.identity[name] = version + "/" + implementation
 	}
 	return ops, nil
 }
