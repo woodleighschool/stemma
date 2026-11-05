@@ -241,6 +241,66 @@ func TestExecutableProtocol(t *testing.T) {
 			t.Fatalf("silent exit error = %v", err)
 		}
 	})
+	t.Run("inherited output descriptors", func(t *testing.T) {
+		const output = `{"changes":[{"kind":"content","field":"installer","action":"upload"}]}`
+		const response = `{"output":` + output + `}`
+		for _, test := range []struct {
+			name, stream, response, output, wantErr string
+			fail, cancel                            bool
+		}{
+			{name: "stdout", stream: "stdout", response: response, output: output},
+			{name: "stderr", stream: "stderr", response: response, output: output},
+			{name: "missing response", stream: "stdout", response: `{"log":{"time":"2026-01-01T00:00:00Z","msg":"note"}}`, wantErr: "exited without a response"},
+			{name: "malformed response", stream: "stdout", response: `{"output":`, wantErr: "plugin response:"},
+			{name: "trailing message", stream: "stdout", response: response + "\n{}", output: output, wantErr: "message received after final response"},
+			{name: "handler error", stream: "stdout", response: `{"output":` + output + `,"error":"later upload failed"}`, output: output, wantErr: "plugin: later upload failed"},
+			{name: "process error", stream: "stdout", response: response, output: output, fail: true, wantErr: "exit status 1"},
+			{name: "cancellation", stream: "stdout", response: response, cancel: true},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+				defer cancel()
+				started := make(chan struct{})
+				release := make(chan struct{})
+				server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+					close(started)
+					if test.cancel {
+						cancel()
+					}
+					select {
+					case <-release:
+					case <-r.Context().Done():
+					}
+				}))
+				defer server.Close()
+				defer close(release)
+				t.Setenv("STEMMA_ECHO_INHERIT", test.stream)
+				t.Setenv("STEMMA_ECHO_HOLD_URL", server.URL)
+				t.Setenv("STEMMA_ECHO_RESPONSE", test.response)
+				if test.fail {
+					t.Setenv("STEMMA_ECHO_FAIL", "1")
+				}
+				got, err := plugin.Run(ctx, binary, plugin.Request{Method: "describe"})
+				if test.cancel {
+					if !errors.Is(err, context.Canceled) {
+						t.Fatalf("cancellation error = %v", err)
+					}
+					return
+				}
+				select {
+				case <-started:
+				case <-ctx.Done():
+					t.Fatal("descendant did not hold its inherited descriptor")
+				}
+				if test.wantErr == "" && err != nil || test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+					t.Fatalf("error = %v, want %q", err, test.wantErr)
+				}
+				if string(got.Output) != test.output {
+					t.Fatalf("output = %s, want %s", got.Output, test.output)
+				}
+			})
+		}
+	})
 	t.Run("operations of another interface version are unavailable, not fatal", func(t *testing.T) {
 		// A plugin built against another SDK: fields this SDK does not know,
 		// a newer reconcile interface, an unknown kind, and a resolver this SDK can use.

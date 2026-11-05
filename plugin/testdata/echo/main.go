@@ -10,12 +10,34 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/woodleighschool/stemma/plugin"
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "hold-output" {
+		if err := waitForResponse(context.Background(), os.Args[2]); err != nil {
+			os.Exit(1)
+		}
+		return
+	}
+	if stream := os.Getenv("STEMMA_ECHO_INHERIT"); stream != "" {
+		child := exec.CommandContext(context.Background(), os.Args[0], "hold-output", os.Getenv("STEMMA_ECHO_HOLD_URL"))
+		switch stream {
+		case "stdout":
+			child.Stdout = os.Stdout
+		case "stderr":
+			child.Stderr = os.Stderr
+		}
+		if err := child.Start(); err != nil {
+			panic(err)
+		}
+		if err := child.Process.Release(); err != nil {
+			panic(err)
+		}
+	}
 	if os.Getenv("STEMMA_ECHO_SILENT") != "" {
 		// A plugin that cannot read the request exits before responding.
 		fmt.Fprint(os.Stderr, "synthetic diagnostic credential")

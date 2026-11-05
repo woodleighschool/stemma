@@ -59,8 +59,9 @@ func Serve(ctx context.Context, in io.Reader, out io.Writer, registry *Registry)
 
 // Run invokes an explicitly selected executable without a shell or a
 // sandbox, inheriting the caller's environment, including HTTPS trust overrides.
-// Cancellation ends the process. Partial output survives
-// operation/process errors.
+// A complete response and successful process exit finish the operation even if
+// descendants retain output descriptors. Cancellation ends the process. Partial
+// output survives operation/process errors.
 func Run(ctx context.Context, executable string, request Request) (Response, error) {
 	if err := validateRequest(request); err != nil {
 		return Response{}, err
@@ -86,8 +87,7 @@ func Run(ctx context.Context, executable string, request Request) (Response, err
 	command.WaitDelay = time.Second
 	stdout := &responseReader{ctx: ctx, cancel: cancel}
 	command.Stdout = stdout
-	// Connection diagnostics can contain credentials and must not enter errors or state.
-	command.Stderr = io.Discard
+	// A nil Stderr discards potentially sensitive diagnostics without a pipe.
 	processErr := command.Run()
 	if stdout.pending.Len() > 0 && stdout.err == nil {
 		stdout.err = stdout.accept(stdout.pending.Bytes())
@@ -111,7 +111,9 @@ func Run(ctx context.Context, executable string, request Request) (Response, err
 	if response.Error != "" {
 		return response, fmt.Errorf("plugin: %s", response.Error)
 	}
-	if processErr != nil {
+	// ErrWaitDelay only reports unclosed pipes after a successful process exit.
+	// The complete response remains valid when descendants hold stdout open.
+	if processErr != nil && !errors.Is(processErr, exec.ErrWaitDelay) {
 		return response, fmt.Errorf("plugin process: %w", processErr)
 	}
 	return response, nil
