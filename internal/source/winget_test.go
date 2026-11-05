@@ -284,7 +284,7 @@ func wingetTestCompress(t *testing.T, data []byte) []byte {
 func wingetTestSource(t *testing.T, manifest []byte) map[string][]byte {
 	t.Helper()
 	manifestHash := fmt.Sprintf("%x", sha256.Sum256(manifest))
-	versions := wingetTestCompress(t, []byte("sV: '1.0'\nvD:\n- v: '2.0'\n  rP: manifests/e/Example/Tool/2.0/test\n  s256H: "+manifestHash+"\n"))
+	versions := wingetTestCompress(t, []byte("sV: '1.1'\nvD:\n- v: '2.0'\n  rP: manifests/e/Example/Tool/2.0/test\n  s256H: "+manifestHash+"\n"))
 	digest := sha256.Sum256(versions)
 	versionHash := hex.EncodeToString(digest[:])
 	filename := filepath.Join(t.TempDir(), "index.db")
@@ -292,7 +292,7 @@ func wingetTestSource(t *testing.T, manifest []byte) map[string][]byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.ExecContext(t.Context(), `CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT); INSERT INTO metadata VALUES ('majorVersion','2'),('minorVersion','0'); CREATE TABLE packages (id TEXT, latest_version TEXT, hash BLOB);`); err != nil {
+	if _, err := db.ExecContext(t.Context(), `CREATE TABLE metadata (name TEXT PRIMARY KEY, value TEXT); INSERT INTO metadata VALUES ('majorVersion','2'),('minorVersion','1'); CREATE TABLE packages (id TEXT, latest_version TEXT, hash BLOB);`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(t.Context(), "INSERT INTO packages VALUES (?,?,?)", "Example.Tool", "2.0", digest[:]); err != nil {

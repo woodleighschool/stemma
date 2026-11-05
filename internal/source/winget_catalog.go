@@ -98,15 +98,12 @@ func readWingetCatalog(ctx context.Context, data []byte) (map[string]wingetPacka
 	}
 	defer func() { _ = db.Close() }()
 	db.SetMaxOpenConns(1)
-	var major, minor string
+	var major string
 	if err := db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE name = 'majorVersion'`).Scan(&major); err != nil {
 		return nil, err
 	}
-	if err := db.QueryRowContext(ctx, `SELECT value FROM metadata WHERE name = 'minorVersion'`).Scan(&minor); err != nil {
-		return nil, err
-	}
-	if major != "2" || minor != "0" {
-		return nil, fmt.Errorf("unsupported source index version %s.%s", major, minor)
+	if major != "2" {
+		return nil, fmt.Errorf("unsupported source index major version %s", major)
 	}
 	rows, err := db.QueryContext(ctx, "SELECT id, latest_version, hash FROM packages")
 	if err != nil {

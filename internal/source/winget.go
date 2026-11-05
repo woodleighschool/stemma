@@ -149,7 +149,7 @@ func (s *wingetSource) discoverWinget(ctx context.Context, config wingetConfig) 
 	if err := yaml.Unmarshal(data, &versions); err != nil {
 		return Discovery{}, fmt.Errorf("winget versions: %w", err)
 	}
-	if versions.Schema != "1.0" {
+	if !strings.HasPrefix(versions.Schema, "1.") {
 		return Discovery{}, fmt.Errorf("unsupported winget version data schema %q", versions.Schema)
 	}
 	version := config.Version
