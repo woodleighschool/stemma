@@ -57,9 +57,9 @@ separate from CI's fixed workload. Cold preparation means an empty Stemma cache;
 warm preparation still reads the complete source to enforce its content lock.
 Neither benchmark flushes the operating-system cache.
 
-The Benchmarks workflow reports PR and main-branch measurements through the
+The Benchmarks workflow compares pull requests with main-branch measurements through the
 [CodSpeed GitHub integration](https://codspeed.io/docs/integrations/providers/github).
-PR comparisons use the main-branch baseline.
+It runs for Go library, dependency, toolchain and benchmark workflow changes, with manual dispatch available for other comparisons.
 Renovate updates the action pin and the Go integration's Mise pin;
 CI reads the latter from the local benchmark task.
 CI measures walltime on CodSpeed ARM64 Macro Runners, including I/O. Compare runs
