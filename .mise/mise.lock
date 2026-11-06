@@ -26,33 +26,33 @@ url = "https://github.com/CodSpeedHQ/codspeed-go/releases/download/v1.4.0/codspe
 url_api = "https://api.github.com/repos/CodSpeedHQ/codspeed-go/releases/assets/705064479"
 
 [[tools."github:microsoft/kiota"]]
-version = "1.37.0"
+version = "1.38.0"
 backend = "github:microsoft/kiota"
-specifiers = ["v1.37.0"]
+specifiers = ["v1.38.0"]
 
 [tools."github:microsoft/kiota"."platforms.linux-arm64"]
-checksum = "sha256:ed0c45643296113aae23811defa881b90acd4ef911949f0206a08a01bfcdb92f"
+checksum = "sha256:c517a102b5203eee62aacf58f0baeefa6a828be62e7261a112e1d3c9b7dcaff1"
 checksum_source = "mise-versions"
-url = "https://github.com/microsoft/kiota/releases/download/v1.37.0/linux-arm64.zip"
-url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/690490442"
+url = "https://github.com/microsoft/kiota/releases/download/v1.38.0/linux-arm64.zip"
+url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/703344915"
 
 [tools."github:microsoft/kiota"."platforms.linux-x64"]
-checksum = "sha256:220b5a606060ca581944310aa903c9a480826c2cf27c2072a8f384032595dd6f"
+checksum = "sha256:aca484531cd4aaeec1aa751f3cad6a0e1b5709260035c7955f1ee8e6b7615f5a"
 checksum_source = "mise-versions"
-url = "https://github.com/microsoft/kiota/releases/download/v1.37.0/linux-x64.zip"
-url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/690490574"
+url = "https://github.com/microsoft/kiota/releases/download/v1.38.0/linux-x64.zip"
+url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/703345011"
 
 [tools."github:microsoft/kiota"."platforms.macos-arm64"]
-checksum = "sha256:19203acb561a85129d54d41f59fdc69e5975d58e5534879b9709fe5ce2f79e64"
+checksum = "sha256:d56a9dbd959e12748a19fc3b22352e4c1dfabdbd3a5149e44a605fc40ef78514"
 checksum_source = "mise-versions"
-url = "https://github.com/microsoft/kiota/releases/download/v1.37.0/osx-arm64.zip"
-url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/690490707"
+url = "https://github.com/microsoft/kiota/releases/download/v1.38.0/osx-arm64.zip"
+url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/703345080"
 
 [tools."github:microsoft/kiota"."platforms.windows-x64"]
-checksum = "sha256:b3202635c2d0845b4f69cfcfc4237414b3afa02ef08b1fbd351b6b83e8a9c1fa"
+checksum = "sha256:7ff7f9a20ffe9e330e9dca1e10f1920c5a53e4af660eb89f5f027e9dff33a9d6"
 checksum_source = "mise-versions"
-url = "https://github.com/microsoft/kiota/releases/download/v1.37.0/win-x64.zip"
-url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/690491051"
+url = "https://github.com/microsoft/kiota/releases/download/v1.38.0/win-x64.zip"
+url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/703345354"
 
 [[tools.go]]
 version = "1.27.3"
@@ -115,31 +115,31 @@ url_api = "https://api.github.com/repos/golangci/golangci-lint/releases/assets/6
 provenance = "github-attestations"
 
 [[tools.jactionlint]]
-version = "2.4.0"
+version = "2.5.0"
 backend = "packslip:github.com/jdx/jactionlint"
-specifiers = ["2.4.0"]
+specifiers = ["v2.5.0"]
 
 [tools.jactionlint."platforms.linux-arm64"]
-checksum = "sha256:42413391c248f99ff4550d6c866ee717d5ea4ca2b966d9d54ad1503af955e22f"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.4.0/jactionlint_2.4.0_linux_arm64.tar.gz"
+checksum = "sha256:ad7e33b6264cea16b7e83ad2bb004824d5b1c15aedb35ba0dc84917f791c5525"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_arm64.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/jactionlint/.github/workflows/release.yaml"
 repository_ids = { repository = "1404951382" }
 
 [tools.jactionlint."platforms.linux-x64"]
-checksum = "sha256:26ddba81db28fffc51163175c070ee1a9d1150260de4b5232f01d9b749f32d8e"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.4.0/jactionlint_2.4.0_linux_amd64.tar.gz"
+checksum = "sha256:5ac307b0499bb0eab45ae99c23e8e0790874fbc667c75224410954e0e3c6e0f5"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_linux_amd64.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/jactionlint/.github/workflows/release.yaml"
 repository_ids = { repository = "1404951382" }
 
 [tools.jactionlint."platforms.macos-arm64"]
-checksum = "sha256:349a13dbffdd25376898a256d195806afda08ba97ccc6378cbf2dd11a77ef8e7"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.4.0/jactionlint_2.4.0_darwin_arm64.tar.gz"
+checksum = "sha256:15b47d53e3b1aafbd674cca0e8fff0d5952f3cf2a7d7501a8f67576ef76397b4"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_darwin_arm64.tar.gz"
 signer = "sigstore-oidc:https://github.com/jdx/jactionlint/.github/workflows/release.yaml"
 repository_ids = { repository = "1404951382" }
 
 [tools.jactionlint."platforms.windows-x64"]
-checksum = "sha256:4e0c7b428a4faa35bb3b86af6fa65a0ac9797edcd4c64e4f7e16ca886437e172"
-url = "https://github.com/jdx/jactionlint/releases/download/v2.4.0/jactionlint_2.4.0_windows_amd64.zip"
+checksum = "sha256:6f6202d6fc476cbe3978c7dd2349c881cfcfa98257593cb2f1bde87004f054c6"
+url = "https://github.com/jdx/jactionlint/releases/download/v2.5.0/jactionlint_2.5.0_windows_amd64.zip"
 signer = "sigstore-oidc:https://github.com/jdx/jactionlint/.github/workflows/release.yaml"
 repository_ids = { repository = "1404951382" }
 
