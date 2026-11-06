@@ -26,9 +26,9 @@ COPY cmd/ cmd/
 COPY internal/ internal/
 COPY plugin/ plugin/
 
-# go-sqlite3-wasm/v6 is MIT-0, which google/licenseclassifier does not currently recognize: https://github.com/google/licenseclassifier/issues/75
+# The classifier does not recognize MIT-0: https://github.com/google/licenseclassifier/issues/75
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go-licenses save ./cmd/stemma --save_path third_party_licenses --ignore github.com/woodleighschool/stemma,github.com/ncruces/go-sqlite3-wasm/v6 --force
+    go-licenses save ./cmd/stemma --save_path third_party_licenses --ignore github.com/woodleighschool/stemma,github.com/ncruces/go-sqlite3-wasm/v6,github.com/segmentio/asm --force
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
     go build -trimpath \

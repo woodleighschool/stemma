@@ -30,8 +30,8 @@ run = "go build -o stemma ./cmd/stemma"
 
 [tasks.notices]
 description = "Collect dependency licenses and notices"
-# go-sqlite3-wasm/v6 is MIT-0, which google/licenseclassifier does not currently recognize: https://github.com/google/licenseclassifier/issues/75
-run = "go-licenses save ./cmd/stemma --save_path third_party_licenses --ignore github.com/woodleighschool/stemma,github.com/ncruces/go-sqlite3-wasm/v6 --force"
+# The classifier does not recognize MIT-0: https://github.com/google/licenseclassifier/issues/75
+run = "go-licenses save ./cmd/stemma --save_path third_party_licenses --ignore github.com/woodleighschool/stemma,github.com/ncruces/go-sqlite3-wasm/v6,github.com/segmentio/asm --force"
 
 [tasks.tidy]
 description = "Tidy the Go module"
