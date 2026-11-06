@@ -22,16 +22,18 @@ RUN go mod download
 ARG GO_LICENSES_VERSION
 RUN go install github.com/google/go-licenses/v2@${GO_LICENSES_VERSION}
 
+ENV CGO_ENABLED=0 \
+    GOOS=${TARGETOS} \
+    GOARCH=${TARGETARCH}
+
 COPY cmd/ cmd/
 COPY internal/ internal/
 COPY plugin/ plugin/
 
-# The classifier does not recognize MIT-0: https://github.com/google/licenseclassifier/issues/75
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go-licenses save ./cmd/stemma --save_path third_party_licenses --ignore github.com/woodleighschool/stemma,github.com/ncruces/go-sqlite3-wasm/v6,github.com/segmentio/asm --force
+COPY .mise/tasks/notices .mise/tasks/notices
+RUN ./.mise/tasks/notices
 
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} \
-    go build -trimpath \
+RUN go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION#v} -X main.commit=${COMMIT} -X main.date=${DATE}" \
     -o stemma ./cmd/stemma
 RUN upx --best --lzma stemma

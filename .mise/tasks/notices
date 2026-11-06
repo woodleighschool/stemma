@@ -1,0 +1,8 @@
+#!/bin/sh
+#MISE description="Collect dependency licenses and notices"
+
+# The classifier does not recognize MIT-0: https://github.com/google/licenseclassifier/issues/75
+exec go-licenses save ./cmd/stemma --save_path third_party_licenses --force \
+    --ignore github.com/woodleighschool/stemma \
+    --ignore github.com/ncruces/go-sqlite3-wasm/v6 \
+    --ignore github.com/segmentio/asm

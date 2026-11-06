@@ -28,11 +28,6 @@ run = "go mod download"
 description = "Build application"
 run = "go build -o stemma ./cmd/stemma"
 
-[tasks.notices]
-description = "Collect dependency licenses and notices"
-# The classifier does not recognize MIT-0: https://github.com/google/licenseclassifier/issues/75
-run = "go-licenses save ./cmd/stemma --save_path third_party_licenses --ignore github.com/woodleighschool/stemma,github.com/ncruces/go-sqlite3-wasm/v6,github.com/segmentio/asm --force"
-
 [tasks.tidy]
 description = "Tidy the Go module"
 run = "go mod tidy"
