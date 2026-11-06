@@ -6,9 +6,6 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - "**.md"
-      - ".release-please-manifest.json"
   pull_request:
     branches:
       - main
@@ -26,38 +23,12 @@ env:
   MISE_NO_HOOKS: "1"
   MISE_TASK_RUN_AUTO_INSTALL: "false"
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  workflow-lint:
-    if: >-
-      ${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(release):'))
-      && !(startsWith(github.head_ref, 'release-please--')
-      && github.event.pull_request.head.repo.full_name == github.repository) }}
-    name: Workflow Lint
-    runs-on: ubuntu-26.04
-    timeout-minutes: 50
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
-        with:
-          install_args: --locked jactionlint
-
-      - name: Lint workflows
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: jactionlint --online --shellcheck= --format github
-
   go-checks:
-    if: >-
-      ${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(release):'))
-      && !(startsWith(github.head_ref, 'release-please--')
-      && github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Go Checks
     runs-on: ubuntu-26.04
     timeout-minutes: 20
@@ -70,22 +41,34 @@ jobs:
       - name: Setup Mise
         uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          install_args: --locked go golangci-lint
+          install_args: --locked go golangci-lint go:golang.org/x/vuln/cmd/govulncheck jactionlint
+
+      - name: Resolve Go cache
+        id: go-cache
+        run: |
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "version=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Go modules and build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('go.sum') }}
-          restore-keys: ${{ runner.os }}-go-
+            ${{ steps.go-cache.outputs.build }}
+            ${{ steps.go-cache.outputs.modules }}
+          key: ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go-cache.outputs.version }}-${{ hashFiles('go.sum') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-go-
 
       - name: Cache golangci-lint
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/golangci-lint
-          key: ${{ runner.os }}-golangci-lint-${{ hashFiles('go.sum', '.golangci.yml', '.mise/mise.lock') }}
+          key: ${{ runner.os }}-${{ runner.arch }}-golangci-lint-${{ steps.go-cache.outputs.version }}-${{ hashFiles('go.sum', '.golangci.yml', '.mise/mise.lock') }}
+
+      - name: Lint workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: jactionlint --online --shellcheck= --format github
 
       - name: Check Go formatting
         run: mise run fmt-check
@@ -95,6 +78,9 @@ jobs:
 
       - name: Run Go lint
         run: mise run lint
+
+      - name: Run govulncheck
+        run: mise run vulncheck
 
       - name: Regenerate committed artifacts
         run: mise run generate
@@ -112,10 +98,6 @@ jobs:
         run: mise run build
 
   go-test:
-    if: >-
-      ${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(release):'))
-      && !(startsWith(github.head_ref, 'release-please--')
-      && github.event.pull_request.head.repo.full_name == github.repository) }}
     name: Go Test (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -137,59 +119,41 @@ jobs:
         with:
           install_args: --locked go
 
+      - name: Resolve Go cache
+        id: go-cache
+        run: |
+          echo "build=$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+          echo "modules=$(go env GOMODCACHE)" >> "$GITHUB_OUTPUT"
+          echo "version=$(go env GOVERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Go modules and build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ steps.go-cache.outputs.build }}
+            ${{ steps.go-cache.outputs.modules }}
+          key: ${{ runner.os }}-${{ runner.arch }}-go-${{ steps.go-cache.outputs.version }}-${{ hashFiles('go.sum') }}
+          restore-keys: ${{ runner.os }}-${{ runner.arch }}-go-
+
       - name: Run Go tests
         run: mise run test
 
-  go-vulncheck:
-    if: >-
-      ${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(release):'))
-      && !(startsWith(github.head_ref, 'release-please--')
-      && github.event.pull_request.head.repo.full_name == github.repository) }}
-    name: Go Vulncheck
-    runs-on: ubuntu-26.04
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Setup Mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
-        with:
-          install_args: --locked go go:golang.org/x/vuln/cmd/govulncheck
-
-      - name: Run govulncheck
-        run: mise run vulncheck
-
-  goreleaser:
-    if: >-
-      ${{ !(github.event_name == 'push' && startsWith(github.event.head_commit.message, 'chore(release):'))
-      && !(startsWith(github.head_ref, 'release-please--')
-      && github.event.pull_request.head.repo.full_name == github.repository) }}
-    name: GoReleaser
-    uses: $/.github/workflows/goreleaser.yaml
-    permissions:
-      contents: read
-    with:
-      snapshot: true
+  docs:
+    name: Docs
+    uses: $/.github/workflows/docs.yaml
 
   status:
     if: ${{ !cancelled() }}
     name: Build Success
     needs:
-      - workflow-lint
       - go-checks
       - go-test
-      - go-vulncheck
-      - goreleaser
+      - docs
     runs-on: ubuntu-26.04
-    timeout-minutes: 50
+    timeout-minutes: 5
     permissions: {}
     steps:
-      - name: Any jobs failed?
-        if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
-        run: exit 1
-      - name: All jobs passed or skipped?
-        if: ${{ !(contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
-        run: echo "All jobs passed or skipped" && echo "${{ toJSON(needs.*.result) }}"
+      - name: Check results
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: jq -e 'all(.[]; .result == "success")' <<<"$RESULTS"

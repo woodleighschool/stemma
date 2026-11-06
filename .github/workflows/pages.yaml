@@ -1,0 +1,45 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Pages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - docs/**
+      - .mise/**
+      - .github/workflows/**
+  workflow_dispatch:
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    name: Docs
+    if: ${{ github.ref == 'refs/heads/main' }}
+    uses: $/.github/workflows/docs.yaml
+    with:
+      upload: true
+
+  publish:
+    name: Publish to GitHub Pages
+    needs:
+      - docs
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

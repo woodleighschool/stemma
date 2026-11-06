@@ -82,4 +82,4 @@ The site uses Docusaurus with pnpm, local search and the same theme as Woodstar'
 docs. Dependencies are pinned in `docs/pnpm-lock.yaml`. Run `mise run //docs:deps`
 to install them, or `mise run //docs:format` to format the site sources.
 
-Pull requests build the site; main-branch docs changes publish through GitHub Pages.
+CI validates the site on main-branch pushes, pull requests and merge groups; main-branch changes to the site or its build configuration publish through GitHub Pages.
