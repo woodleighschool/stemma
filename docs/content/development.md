@@ -70,7 +70,7 @@ Regressions are visible only in the operations and workloads exercised by the su
 ## Work on the docs
 
 ```sh
-mise run docs-serve
+mise run //docs:dev
 mise run docs
 ```
 

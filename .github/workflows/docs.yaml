@@ -25,6 +25,7 @@ permissions:
   contents: read
 
 env:
+  MISE_TASK_RUN_AUTO_INSTALL: "false"
   MISE_NO_HOOKS: "1"
 
 jobs:
@@ -41,8 +42,7 @@ jobs:
       - name: Setup Mise
         uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
-          experimental: true
-          install_args: --locked
+          install_args: --locked node pnpm oxfmt
 
       - name: Configure Pages
         if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}

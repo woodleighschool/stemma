@@ -30,7 +30,6 @@ jobs:
         uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
           cache: false
-          experimental: true
           install_args: --locked go go:github.com/google/go-licenses/v2
 
       - name: Setup GoReleaser
