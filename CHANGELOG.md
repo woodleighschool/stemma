@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.12.4](https://github.com/woodleighschool/stemma/compare/v0.12.3...v0.12.4) (2026-11-06)
+
+
+### Bug Fixes
+
+* **build:** exclude MIT-0 asm from license collection ([1d574b1](https://github.com/woodleighschool/stemma/commit/1d574b18aa30da9cecff716b7d643d356cb04d8f))
+* **cache:** use operation versions for preparation ([20bfcec](https://github.com/woodleighschool/stemma/commit/20bfcec0ba7d840b13f3af6bfa1b6aa11cb7a260))
+* **go:** update module github.com/azure/azure-sdk-for-go/sdk/storage/azblob (v1.8.2 → v1.8.3) ([#277](https://github.com/woodleighschool/stemma/issues/277)) ([8c235a1](https://github.com/woodleighschool/stemma/commit/8c235a11e5406360038c0d36881ef4dcafe9ff77))
+* **go:** update module github.com/jferrl/go-githubauth (v1.11.0 → v1.12.0) ([#276](https://github.com/woodleighschool/stemma/issues/276)) ([09aeb48](https://github.com/woodleighschool/stemma/commit/09aeb485fe040f04241e3dfecb258c965858512c))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (449d945 → df0f295) ([#288](https://github.com/woodleighschool/stemma/issues/288)) ([7f3d935](https://github.com/woodleighschool/stemma/commit/7f3d9357485cc761b314db84cb29ca5a92ed6fa9))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (caa354d → 449d945) ([#285](https://github.com/woodleighschool/stemma/issues/285)) ([4fc3f95](https://github.com/woodleighschool/stemma/commit/4fc3f951fcf12a8282da212ff68bcbca8ad1355d))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (f91620f → caa354d) ([#274](https://github.com/woodleighschool/stemma/issues/274)) ([96dcfc9](https://github.com/woodleighschool/stemma/commit/96dcfc9285c7ee66994fbc53ba42c2f3b1e20fc8))
+* **go:** update module go.yaml.in/yaml/v4 (v4.0.0-rc.7 → v4.0.0-rc.8) ([#272](https://github.com/woodleighschool/stemma/issues/272)) ([6fa1b63](https://github.com/woodleighschool/stemma/commit/6fa1b63e0bbffd5013c582942aad8f431011006f))
+* **go:** update module go.yaml.in/yaml/v4 (v4.0.0-rc.8 → v4.0.0-rc.9) ([#275](https://github.com/woodleighschool/stemma/issues/275)) ([28485e4](https://github.com/woodleighschool/stemma/commit/28485e4be09dc15aa0ba1232f695b3fc63406d9a))
+* **plugin:** accept responses after pipe drain timeout ([eb50fc6](https://github.com/woodleighschool/stemma/commit/eb50fc6ede03bfa1c1118437bca326e5eb10012c))
+* **source:** accept newer winget minor schemas ([67f0c26](https://github.com/woodleighschool/stemma/commit/67f0c262595829ccc1a88ea72e70184085b8d1ee))
+
 ## [0.12.3](https://github.com/woodleighschool/stemma/compare/v0.12.2...v0.12.3) (2026-11-05)
 
 
