@@ -181,15 +181,15 @@ func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 		t.Fatalf("icon = %+v", outcome)
 	}
 
-	// The check prepares from the lockfile what the trial prepared from the
-	// same source, so it finds that preparation cached.
+	// The trial observes signatures. The check enforces declarations before
+	// its preparation can be reused.
 	var check checkResult
 	call(t, session, "check", map[string]any{"since": "HEAD"}, &check)
-	if !check.Valid || check.Locked != nil || len(check.Resources) != 1 || check.Resources[0].Resource != "MacSoftware/app" || check.Resources[0].Status != "cached" {
+	if !check.Valid || check.Locked != nil || len(check.Resources) != 1 || check.Resources[0].Resource != "MacSoftware/app" || check.Resources[0].Status != "prepared" {
 		t.Fatalf("check = %+v", check)
 	}
 	call(t, session, "check", map[string]any{"since": "HEAD", "locked": true}, &check)
-	if !check.Valid || check.Locked == nil || check.Locked.Compared != 1 || len(check.Locked.Unresolved) != 0 {
+	if !check.Valid || check.Locked == nil || check.Locked.Compared != 1 || len(check.Locked.Unresolved) != 0 || len(check.Resources) != 1 || check.Resources[0].Status != "cached" {
 		t.Fatalf("locked check = %+v", check)
 	}
 }
