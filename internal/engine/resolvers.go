@@ -23,9 +23,6 @@ func registerResolvers(manager *source.Manager, ops *operations, work string) er
 				return plugin.ResolveResponse{}, err
 			}
 			request := plugin.ResolveRequest[json.RawMessage]{Config: settings, Base: input.Base, Root: manager.Root, Workspace: workspace, Observation: observation}
-			if err := ops.call(ctx, operation.Name, "validate", request, nil); err != nil {
-				return plugin.ResolveResponse{}, err
-			}
 			var response plugin.ResolveResponse
 			err = ops.call(ctx, operation.Name, method, request, &response)
 			return response, err

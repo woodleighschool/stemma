@@ -230,6 +230,7 @@ type ResolverKind struct {
 // ResolveRequest asks discover for the declaration's current observation,
 // without downloading it, and run for the artifact Observation names,
 // reproducing that observation rather than looking up the latest release.
+// Each method validates its configuration; discover and run need no prior validate call.
 type ResolveRequest[C any] struct {
 	Method      string          `json:"-"`
 	Config      C               `json:"config,omitempty"`

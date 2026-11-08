@@ -259,6 +259,10 @@ Register an operation with `kind: resolve`, methods `validate`, `discover` and
 `run`, and a `ResolverKind` containing the observation contract's version. Set
 `local: true` when consuming a lock must also check current local files.
 
+Every method validates its configuration. `discover` and `run` are independent
+requests; the host does not call `validate` before them. Typed registration owns
+these checks, including the config's `Validate` method.
+
 `ResolveRequest[Config]` supplies declaration `config`, resource-relative `base`
 and project `root`. `discover` returns the current `observation` without
 downloading anything. `run` receives an `observation` and a workspace and
