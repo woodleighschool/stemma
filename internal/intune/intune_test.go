@@ -593,7 +593,7 @@ func publishedMarker(t *testing.T, fake *graphFixture) publication {
 	return publication{identity: match[1], payload: match[2], content: match[3]}
 }
 
-func fixtureRequest(t *testing.T) plugin.ReconcileRequest[Config] {
+func fixtureRequest(t testing.TB) plugin.ReconcileRequest[Config] {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "setup.cmd")
 	data := []byte("@echo off\r\necho fixture\r\n")
@@ -637,7 +637,7 @@ type graphFixture struct {
 	appCategories      []string       // category IDs the app references
 }
 
-func newGraphFixture(t *testing.T) (*graphFixture, *client) {
+func newGraphFixture(t testing.TB) (*graphFixture, *client) {
 	t.Helper()
 	fake := &graphFixture{blocks: map[string][]byte{}, files: map[string]object{}, relations: map[string][]object{}, relatedApps: map[string]object{}, abandonedFiles: map[string]int{}}
 	server := httptest.NewTLSServer(http.HandlerFunc(fake.serve))
@@ -1267,7 +1267,7 @@ func compileRequest(req plugin.ReconcileRequest[Config]) (object, error) {
 	return compile(metadata)
 }
 
-func reconcileFixture(t *testing.T, c *client, req plugin.ReconcileRequest[Config], desired object) (plugin.ReconcileResponse, error) {
+func reconcileFixture(t testing.TB, c *client, req plugin.ReconcileRequest[Config], desired object) (plugin.ReconcileResponse, error) {
 	t.Helper()
 	artifact, err := identifyArtifact(t.Context(), req.Artifact, text(desired["@odata.type"]))
 	if err != nil {

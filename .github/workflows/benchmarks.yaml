@@ -65,4 +65,4 @@ jobs:
         with:
           mode: walltime
           go-runner-version: ${{ steps.tools.outputs.go-runner-version }}
-          run: go test -bench=. -benchtime=1s ./internal/archive ./internal/apple ./internal/cas ./internal/diskimage ./internal/pkgbuild ./internal/engine
+          run: go test -bench=. -benchtime=1s ./internal/archive ./internal/apple ./internal/cas ./internal/diskimage ./internal/pkgbuild ./internal/engine ./internal/intunewin ./internal/intune ./internal/jamf

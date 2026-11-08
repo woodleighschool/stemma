@@ -744,7 +744,7 @@ func TestPublicationHonorsCancellation(t *testing.T) {
 }
 
 type fakeServer struct {
-	t                *testing.T
+	t                testing.TB
 	mu               sync.Mutex
 	packages         map[string]map[string]json.RawMessage
 	nextPackage      int
@@ -768,7 +768,7 @@ type fakeServer struct {
 	categories map[string]string
 }
 
-func newFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest[Config]) {
+func newFixture(t testing.TB) (*fakeServer, plugin.ReconcileRequest[Config]) {
 	t.Helper()
 	fake := &fakeServer{t: t, packages: make(map[string]map[string]json.RawMessage), cloudContent: make(map[string]string), version: 1, tokenLifetime: 1800}
 	server := httptest.NewServer(http.HandlerFunc(fake.handle))
@@ -791,14 +791,14 @@ func TestValidationNeedsNoPackageLease(t *testing.T) {
 	}
 }
 
-func fixtureArtifact(t *testing.T, content string) plugin.Artifact {
+func fixtureArtifact(t testing.TB, content string) plugin.Artifact {
 	t.Helper()
 	return fixtureArtifactNamed(t, "vendor.pkg", content)
 }
 
 // fixtureArtifactNamed materializes content away from its artifact filename, as
 // a leased workspace may.
-func fixtureArtifactNamed(t *testing.T, filename, content string) plugin.Artifact {
+func fixtureArtifactNamed(t testing.TB, filename, content string) plugin.Artifact {
 	t.Helper()
 	file := filepath.Join(t.TempDir(), "payload")
 	if err := os.WriteFile(file, []byte(content), 0600); err != nil {
@@ -1111,7 +1111,7 @@ func (s *fakeServer) record(id string) map[string]json.RawMessage {
 	}
 	return record
 }
-func writeJSON(t *testing.T, w http.ResponseWriter, value any) {
+func writeJSON(t testing.TB, w http.ResponseWriter, value any) {
 	t.Helper()
 	if err := json.NewEncoder(w).Encode(value); err != nil {
 		t.Error(err)

@@ -904,7 +904,7 @@ func (n *nativeServer) handle(s *fakeServer, w http.ResponseWriter, r *http.Requ
 func testPolicy(id, name, title, version string) *xmlNode {
 	return jsonXML("patch_policy", raw(map[string]any{"general": map[string]any{"id": id, "name": name, "target_version": version, "enabled": false}, "scope": map[string]bool{"all_computers": false}, "software_title_configuration_id": title}))
 }
-func writeXML(t *testing.T, w http.ResponseWriter, value *xmlNode) {
+func writeXML(t testing.TB, w http.ResponseWriter, value *xmlNode) {
 	t.Helper()
 	w.Header().Set("Content-Type", "application/xml")
 	data, err := xml.Marshal(value)

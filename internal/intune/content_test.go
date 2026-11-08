@@ -15,7 +15,7 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-func treeArtifact(t *testing.T) plugin.Artifact {
+func treeArtifact(t testing.TB) plugin.Artifact {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "bin"), 0o755); err != nil {
