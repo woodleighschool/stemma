@@ -17,14 +17,14 @@ import (
 	"strings"
 )
 
-// ValidateSource checks the setup entrypoint and every payload member using the
-// same bounded Windows archive rules as Write, without creating an envelope.
+// ValidateSource checks paths, file types, sizes and the setup entry point
+// without reading file contents. Write also bounds the compressed output.
 func ValidateSource(ctx context.Context, sourceDir, setupFile string) error {
 	setup, err := payloadPath(setupFile, true)
 	if err != nil {
 		return err
 	}
-	return zipSource(ctx, sourceDir, setup, io.Discard)
+	return walkSource(ctx, sourceDir, setup, nil)
 }
 
 // Write packages regular files and directories with portable Windows paths.

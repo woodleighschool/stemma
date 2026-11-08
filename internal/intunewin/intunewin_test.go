@@ -141,6 +141,40 @@ func TestWriteRefusesUnsafeSourceAndExistingOutput(t *testing.T) {
 	}
 }
 
+func TestValidateSourceChecksSetupAndTree(t *testing.T) {
+	for _, kind := range []string{"valid", "missing", "directory", "symlink", "oversize"} {
+		t.Run(kind, func(t *testing.T) {
+			source := sourceFixture(t)
+			setup := "setup.cmd"
+			switch kind {
+			case "missing":
+				setup = "missing.cmd"
+			case "directory":
+				setup = "directory"
+				if err := os.Mkdir(filepath.Join(source, setup), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				if err := os.Symlink("setup.cmd", filepath.Join(source, "link")); err != nil {
+					t.Skipf("cannot create symlink: %v", err)
+				}
+			case "oversize":
+				if err := os.Truncate(filepath.Join(source, setup), maxContent+1); err != nil {
+					t.Fatal(err)
+				}
+			}
+			err := ValidateSource(t.Context(), source, setup)
+			if (err == nil) != (kind == "valid") {
+				t.Fatalf("validation: %v", err)
+			}
+			_, err = Write(t.Context(), source, setup, filepath.Join(t.TempDir(), "out.intunewin"))
+			if (err == nil) != (kind == "valid") {
+				t.Fatalf("packaging: %v", err)
+			}
+		})
+	}
+}
+
 func TestCanceledWritePublishesNothing(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()

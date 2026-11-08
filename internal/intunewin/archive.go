@@ -51,13 +51,12 @@ func payloadPath(name string, windows bool) (string, error) {
 	return name, nil
 }
 
-func zipSource(ctx context.Context, sourceDir, setup string, target io.Writer) error {
+func walkSource(ctx context.Context, sourceDir, setup string, visit func(*os.Root, string, fs.FileInfo) error) error {
 	root, err := os.OpenRoot(sourceDir)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	zw := zip.NewWriter(&limitedWriter{writer: target, remaining: maxContent})
 	var total int64
 	seen := map[string]bool{}
 	foundSetup := false
@@ -89,6 +88,31 @@ func zipSource(ctx context.Context, sourceDir, setup string, target io.Writer) e
 		if !info.Mode().IsRegular() && !info.IsDir() {
 			return fmt.Errorf("unsupported payload file type %q", name)
 		}
+		if !info.IsDir() {
+			if info.Size() > maxContent-total {
+				return errors.New("payload exceeds size limit")
+			}
+			total += info.Size()
+			foundSetup = foundSetup || name == setup
+		}
+		if visit != nil {
+			return visit(root, name, info)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !foundSetup {
+		return errors.New("setup file is not a regular file in the source tree")
+	}
+	return nil
+}
+
+func zipSource(ctx context.Context, sourceDir, setup string, target io.Writer) error {
+	zw := zip.NewWriter(&limitedWriter{writer: target, remaining: maxContent})
+	var total int64
+	err := walkSource(ctx, sourceDir, setup, func(root *os.Root, name string, info fs.FileInfo) error {
 		header := &zip.FileHeader{Name: name, Method: zip.Deflate, Modified: zipTime}
 		if info.IsDir() {
 			header.Name += "/"
@@ -117,18 +141,11 @@ func zipSource(ctx context.Context, sourceDir, setup string, target io.Writer) e
 			return closeErr
 		}
 		total += n
-		if name == setup {
-			foundSetup = true
-		}
 		return nil
 	})
 	if err != nil {
 		_ = zw.Close()
 		return err
-	}
-	if !foundSetup {
-		_ = zw.Close()
-		return errors.New("setup file is not a regular file in the source tree")
 	}
 	return zw.Close()
 }
