@@ -179,11 +179,9 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	}
 	done(nil)
 	report := DestinationReport{Name: destination, Origins: origins, Artifact: prepared.Filename}
-	action := "Planning destination"
-	if e.opts.Method == "apply" {
-		action = "Applying destination"
+	if e.opts.Method == "plan" {
+		done = plugin.Stage(ctx, "Planning destination")
 	}
-	done = plugin.Stage(ctx, action)
 	request.Method = e.opts.Method
 	request.Config = e.connections[destination]
 	response, err := e.callDestination(ctx, d.Operation, request, work)
