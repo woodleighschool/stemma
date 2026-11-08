@@ -127,8 +127,6 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		prepared: map[string]preparedResource{}, pending: map[string]int{},
 		reconciled: map[destinationRef]bool{}, failed: map[destinationRef]bool{},
 	}
-	// Workspaces go before the session releases its cache lease.
-	defer e.removeWorkspaces(ctx)
 	if err := e.begin(ctx); err != nil {
 		return report, err
 	}
@@ -175,7 +173,6 @@ type execution struct {
 	// resource completes when none remain.
 	pending            map[string]int
 	reconciled, failed map[destinationRef]bool
-	workdirs           []string
 	// failures are the resource failures the run returns.
 	failures []error
 }
@@ -389,6 +386,7 @@ func (e *execution) icons(ctx context.Context) error {
 			item.Error = err.Error()
 			e.fail(ctx, ResourceError{Resource: key, Err: err})
 		}
+		cleanupError(ctx, os.RemoveAll(prepared.work))
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -412,6 +410,7 @@ func (e *execution) materialize(ctx context.Context) error {
 	if !prepared.ready {
 		return nil
 	}
+	defer func() { cleanupError(ctx, os.RemoveAll(prepared.work)) }()
 	item := &e.report.Resources[prepared.report]
 	output := cmp.Or(e.opts.Output, "installer")
 	artifact, ok := prepared.outputs[output]
@@ -471,11 +470,7 @@ func (e *execution) prepare(ctx context.Context, key string) error {
 	}
 	result := preparedResource{report: len(e.report.Resources)}
 	if failure == nil && e.opts.Method != "update" {
-		work, err := os.MkdirTemp(filepath.Join(e.session.store.Dir, "work"), "resource-*")
-		if err != nil {
-			return err
-		}
-		e.workdirs = append(e.workdirs, work)
+		work := filepath.Join(e.session.work, "resource-"+config.Fingerprint(key))
 		result.work = work
 		var inputs map[string]Prepared
 		if inputs, failure = e.inputs(plan, entries); failure == nil {
@@ -585,19 +580,6 @@ func (e *execution) fail(ctx context.Context, err ResourceError) {
 	if ctx.Err() == nil {
 		e.failures = append(e.failures, err)
 	}
-}
-
-func (e *execution) removeWorkspaces(ctx context.Context) {
-	if len(e.workdirs) == 0 {
-		return
-	}
-	done := plugin.Stage(ctx, "Removing workspaces")
-	var err error
-	for _, work := range e.workdirs {
-		err = errors.Join(err, os.RemoveAll(work))
-	}
-	done(err)
-	cleanupError(ctx, err)
 }
 
 // resourceContext scopes logs and terminal progress to one resource tree.

@@ -160,19 +160,33 @@ func TestPreparationKeepsInputsImmutable(t *testing.T) {
 				case "mode":
 					err = os.Chmod(request.Inputs["source"].Path, 0o444)
 				}
-				return plugin.Response{Output: json.RawMessage(`{}`)}, err
+				if err != nil {
+					return plugin.Response{}, err
+				}
+				output := request.Inputs["source"]
+				output.Filename, output.Version = "renamed.bin", "1.2.3"
+				data, err := json.Marshal(plugin.ResourceResult{Artifacts: map[string]plugin.Artifact{"installer": output}})
+				return plugin.Response{Output: data}, err
 			})
 			if err != nil {
 				t.Fatal(err)
 			}
 			inputs := map[string]Prepared{"source": {Payload: ref, Filename: "input.bin", Mode: 0o640}}
-			_, _, err = prepareResource(t.Context(), store, ops, resourcePlan{Operation: "fixture"}, inputs, t.TempDir(), "")
+			work := filepath.Join(t.TempDir(), "work")
+			outputs, _, err := prepareResource(t.Context(), store, ops, resourcePlan{Operation: "fixture"}, inputs, work, "")
 			if change == "none" {
 				if err != nil {
 					t.Fatal(err)
 				}
+				output := outputs["installer"]
+				if output.Payload != ref || output.Filename != "renamed.bin" || output.Version != "1.2.3" || output.Path != "" {
+					t.Fatalf("stored output: %+v", output)
+				}
 			} else if err == nil || !strings.Contains(err.Error(), "modified immutable input source") {
 				t.Fatalf("input %s change: %v", change, err)
+			}
+			if _, err := os.Stat(work); !os.IsNotExist(err) {
+				t.Fatalf("preparation retained its workspace: %v", err)
 			}
 		})
 	}

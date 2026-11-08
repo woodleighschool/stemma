@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/source"
@@ -76,11 +75,11 @@ func (e *execution) withInput(ctx context.Context, consume func(context.Context,
 		if err != nil {
 			return err
 		}
-		work, err := os.MkdirTemp(filepath.Join(e.session.store.Dir, "work"), "input-*")
+		work, err := os.MkdirTemp(e.session.work, "input-*")
 		if err != nil {
 			return err
 		}
-		e.workdirs = append(e.workdirs, work)
+		defer func() { cleanupError(ctx, os.RemoveAll(work)) }()
 		return consume(ctx, input, work, &item)
 	}()
 	if err != nil {

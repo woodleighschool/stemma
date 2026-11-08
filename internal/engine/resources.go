@@ -369,6 +369,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	}
 
 	done(nil, plugin.Detail("not cached"))
+	defer func() { cleanupError(ctx, os.RemoveAll(work)) }()
 	done = plugin.Stage(ctx, "Materializing inputs")
 	workspace := filepath.Join(work, "output")
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
@@ -444,9 +445,13 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			return nil, false, err
 		}
 		allowed := within(workspace, resolved)
-		for _, input := range request.Inputs {
+		var reused cas.Ref
+		for name, input := range request.Inputs {
 			if resolved == input.Path {
 				allowed = true
+				if input.Encoding == "" && input.Tree == artifact.Tree {
+					reused = inputs[name].Payload
+				}
 			}
 		}
 		if !allowed {
@@ -459,7 +464,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		if info.IsDir() != artifact.Tree || !info.IsDir() && !info.Mode().IsRegular() {
 			return nil, false, fmt.Errorf("output %s has incorrect file-or-tree representation", name)
 		}
-		observed := Prepared{Filename: artifact.Filename, Path: resolved, Tree: artifact.Tree, Mode: uint32(info.Mode().Perm()), Format: artifact.Format, Version: artifact.Version}
+		observed := Prepared{Payload: reused, Filename: artifact.Filename, Tree: artifact.Tree, Mode: uint32(info.Mode().Perm()), Format: artifact.Format, Version: artifact.Version}
 		if observed.Format == "" {
 			observed.Format = "file"
 			if observed.Tree {
@@ -470,9 +475,11 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			return nil, false, errors.New("invalid artifact format")
 		}
 
-		observed.Payload, err = importPath(ctx, store, resolved, observed.Tree)
-		if err != nil {
-			return nil, false, err
+		if observed.Payload.SHA256 == "" {
+			observed.Payload, err = importPath(ctx, store, resolved, observed.Tree)
+			if err != nil {
+				return nil, false, err
+			}
 		}
 		if artifact.SHA256 != "" && (artifact.SHA256 != observed.Payload.SHA256 || artifact.Size != observed.Payload.Size) {
 			return nil, false, fmt.Errorf("output %s digest differs from its bytes", name)

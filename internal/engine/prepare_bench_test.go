@@ -1,15 +1,49 @@
 package engine
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/apple"
+	"github.com/woodleighschool/stemma/internal/cas"
+	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
+	"github.com/woodleighschool/stemma/plugin"
 )
+
+func BenchmarkPrepareUnchangedInput(b *testing.B) {
+	store, err := cas.Open(b.TempDir())
+	if err != nil {
+		b.Fatal(err)
+	}
+	ref, err := store.Import(b.Context(), bytes.NewReader(make([]byte, 16<<20)), "")
+	if err != nil {
+		b.Fatal(err)
+	}
+	ops := &operations{registry: plugin.New("fixture", "1")}
+	if err := plugin.Register(ops.registry, resourceOperation("fixture", "Fixture"), func(_ context.Context, request plugin.ResourceRequest[struct{}]) (plugin.ResourceResult, error) {
+		return plugin.ResourceResult{Artifacts: request.Inputs}, nil
+	}); err != nil {
+		b.Fatal(err)
+	}
+	inputs := map[string]Prepared{"installer": {Payload: ref, Filename: "installer.pkg", Mode: 0o644}}
+	plan := resourcePlan{Operation: "fixture", Resource: config.Resource{APIVersion: "example.test/v1", Kind: "Fixture", Metadata: config.Metadata{Name: "installer"}}}
+	work := filepath.Join(b.TempDir(), "work")
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, _, err := prepareResource(b.Context(), store, ops, plan, inputs, work, "signature"); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.RemoveAll(work); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
 
 // STEMMA_BENCH_APP selects a read-only installed bundle. Each benchmark owns
 // its project and caches and has no destinations. Cold means an empty Stemma
