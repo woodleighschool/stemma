@@ -179,20 +179,18 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	}
 	done(nil)
 	report := DestinationReport{Name: destination, Origins: origins, Artifact: prepared.Filename}
-	done = plugin.Stage(ctx, "Planning destination")
-	request.Method = "plan"
+	action := "Planning destination"
+	if e.opts.Method == "apply" {
+		action = "Applying destination"
+	}
+	done = plugin.Stage(ctx, action)
+	request.Method = e.opts.Method
 	request.Config = e.connections[destination]
 	response, err := e.callDestination(ctx, d.Operation, request, work)
 	report.Changes = response.Changes
 	report.Origins = mergeOrigins(report.Origins, response.Origins)
+	report.Applied = err == nil && e.opts.Method == "apply"
 	done(err, plugin.Detail(changeCount(len(response.Changes))))
-	if err == nil && e.opts.Method == "apply" {
-		request.Method = "apply"
-		response, err = e.callDestination(ctx, d.Operation, request, work)
-		report.Changes = response.Changes
-		report.Origins = mergeOrigins(report.Origins, response.Origins)
-		report.Applied = err == nil
-	}
 	if err != nil {
 		report.Error = err.Error()
 	}

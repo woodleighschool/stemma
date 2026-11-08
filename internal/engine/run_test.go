@@ -66,6 +66,35 @@ spec:
           exit 1
 `
 
+func TestPublicationInvokesRequestedMethod(t *testing.T) {
+	for _, method := range []string{"plan", "apply"} {
+		t.Run(method, func(t *testing.T) {
+			filename := filepath.Join(t.TempDir(), "stemma.yaml")
+			testproject.Write(t, filename, policyProject)
+			var calls []string
+			change := plugin.Change{Kind: "metadata", Field: "description", Action: "set"}
+			handler := func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
+				if request.Method != "validate" {
+					calls = append(calls, request.Method+"/"+request.Identity.Destination)
+				}
+				return plugin.ReconcileResponse{Changes: []plugin.Change{change}, Origins: map[string]string{"description": "explicit"}}, nil
+			}
+			report, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: method, Handlers: map[string]reconcileHandler{"munki": handler}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(calls, []string{method + "/first", method + "/second"}) {
+				t.Fatalf("publication calls: %v", calls)
+			}
+			for _, destination := range report.Resources[0].Destinations {
+				if !reflect.DeepEqual(destination.Changes, []plugin.Change{change}) || destination.Origins["description"] != "explicit" || destination.Applied != (method == "apply") {
+					t.Fatalf("publication report: %+v", destination)
+				}
+			}
+		})
+	}
+}
+
 func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
@@ -96,7 +125,7 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 	}
 	applied := []string{}
 	options.Handlers = map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
-		if request.Method == "plan" && request.Identity.Destination == "first" {
+		if request.Method == "apply" && request.Identity.Destination == "first" {
 			return plugin.ReconcileResponse{}, errors.New("unavailable")
 		}
 		if request.Method == "apply" {
