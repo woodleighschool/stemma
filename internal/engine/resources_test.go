@@ -306,6 +306,49 @@ spec:
 	}
 }
 
+func TestSignatureDerivationDoesNotSatisfyPreparation(t *testing.T) {
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	installer, err := os.ReadFile("../apple/testdata/fixture.pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "vendor.pkg"), installer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testproject.Write(t, filename, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: signatures}
+spec:
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: MacSoftware
+metadata: {name: vendor}
+spec:
+  source: {path: vendor.pkg}
+  signatures: [{signer: 'apple:developer-id:AAAAAAAAAA'}]
+`)
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"prepare", "signature", "prepare"} {
+		options.Method = method
+		report, err := Run(t.Context(), options)
+		if method == "signature" {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if report.Summary.Derived != 1 {
+				t.Fatalf("derived %d signatures", report.Summary.Derived)
+			}
+		} else if err == nil || !strings.Contains(err.Error(), "unexpected signer") {
+			t.Fatalf("preparation must reject the mismatched signer: %v", err)
+		}
+	}
+}
+
 func TestBuiltPackageNeedsNoSigningExpectation(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")

@@ -356,7 +356,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		Inputs                   map[string]plugin.Artifact
 		Modes                    map[string]uint32
 		Environment              map[string]string
-	}{"resource/2", ops.identity[plan.Operation], plan.Resource.Reference(), plan.Config, identityInputs, modes, plan.Environment})
+	}{"resource/3", ops.identity[plan.Operation], plan.Resource.Reference(), plan.Config, identityInputs, modes, plan.Environment})
 	if derive == "" {
 		cached, complete, err := recallOutputs(ctx, store, key)
 		if err != nil {
@@ -494,6 +494,9 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		outputs[name] = observed
 	}
 	detail = outputs["installer"].Filename
+	if derive != "" {
+		return outputs, false, nil
+	}
 	return outputs, false, rememberOutputs(ctx, store, key, outputs)
 }
 
