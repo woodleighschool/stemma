@@ -36,8 +36,8 @@ spec:
 `stemma update WindowsSoftware/chrome` locks the source;
 `stemma prepare WindowsSoftware/chrome` prepares the installer. Use
 `stemma artifact WindowsSoftware/chrome` to obtain a local copy for inspection.
-The kind requires destination settings; their fields and publication behaviour
-belong to the [destination](publishing.md).
+Omit `destinations` to prepare, inspect or export the installer without publishing
+it. Publication settings belong to the [destination](publishing.md).
 
 ## Select the setup file
 

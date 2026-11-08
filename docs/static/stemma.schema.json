@@ -9782,8 +9782,7 @@
                 }
               },
               "required": [
-                "source",
-                "destinations"
+                "source"
               ],
               "type": "object"
             },

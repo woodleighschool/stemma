@@ -306,6 +306,58 @@ spec:
 	}
 }
 
+func TestWindowsSoftwareWithoutPublication(t *testing.T) {
+	schema, err := BuiltinSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := plugin.ValidateSchema(schema, []byte(`{"apiVersion":"stemma/v1alpha1","kind":"WindowsSoftware","metadata":{"name":"vendor"},"spec":{"source":{"path":"vendor.msi"}}}`)); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	filename := filepath.Join(root, "stemma.yaml")
+	installer, err := os.ReadFile("../msi/testdata/test.msi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "vendor.msi"), installer, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testproject.Write(t, filename, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: installers}
+spec:
+  imports: ['*.software.yaml']
+---
+apiVersion: stemma/v1alpha1
+kind: WindowsSoftware
+metadata: {name: vendor}
+spec:
+  source: {path: vendor.msi}
+`)
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	options.Method = "prepare"
+	report, err := Run(t.Context(), options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource := report.Resources[0]
+	if resource.Artifacts["installer"].Version != "1.2.3" || len(resource.Destinations) != 0 {
+		t.Fatalf("prepared resource: %+v", resource)
+	}
+	options.Method, options.Resources = "artifact", []string{"WindowsSoftware/vendor"}
+	options.OutputFile = filepath.Join(t.TempDir(), "export.msi")
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	if exported, err := os.ReadFile(options.OutputFile); err != nil || !bytes.Equal(exported, installer) {
+		t.Fatalf("exported installer differs: %v", err)
+	}
+}
+
 func TestSignatureDerivationDoesNotSatisfyPreparation(t *testing.T) {
 	root := t.TempDir()
 	filename := filepath.Join(root, "stemma.yaml")
