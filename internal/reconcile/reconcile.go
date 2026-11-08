@@ -37,6 +37,7 @@ const (
 type Options struct {
 	ConfigPath         string
 	CacheDir, StateDir string
+	Jobs               int
 	// GitHubToken authenticates release lookups of GitHub sources that declare
 	// no token, ahead of the configured github.com App.
 	GitHubToken string
@@ -277,7 +278,7 @@ func (r *runner) configIn(worktree *git.Worktree) string {
 }
 
 func (r *runner) engineOptions(method, configPath string, resources []string) engine.Options {
-	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, GitHubToken: r.opts.GitHubToken, GitHubAppToken: r.githubAppToken, Method: method, Resources: resources}
+	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Jobs: r.opts.Jobs, GitHubToken: r.opts.GitHubToken, GitHubAppToken: r.githubAppToken, Method: method, Resources: resources}
 	if r.opts.ResourceDone != nil {
 		opts.ResourceDone = func(resource engine.ResourceReport) error { return r.opts.ResourceDone(method, resource) }
 	}

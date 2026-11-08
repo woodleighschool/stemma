@@ -285,6 +285,13 @@ and never removes published packages, reconciliation state or user exports.
 See [cache and offline runs](sources.md#cache-and-offline-runs) for lifecycle and
 accounting details.
 
+`--jobs` / `STEMMA_JOBS` limits concurrent preparations (default `2`, `1` runs
+serially). Independent resources can prepare together once their producers
+finish. Input acquisition and destination operations remain serial. Workers
+release their workspaces after storing outputs, and cancellation waits for
+workers before releasing the cache lease. Artifact, inspection and icon commands
+prepare only the outputs they need, serially.
+
 ## Reports and diagnostics
 
 Outcome commands name their work, write each resource's report to stdout as it

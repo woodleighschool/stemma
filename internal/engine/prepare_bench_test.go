@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/apple"
@@ -15,6 +17,71 @@ import (
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
+
+// BenchmarkPrepareCatalog builds independent packages from one shared input.
+// Cold clears Stemma's cache between runs, not the OS filesystem cache.
+func BenchmarkPrepareCatalog(b *testing.B) {
+	root := b.TempDir()
+	data := make([]byte, 8<<20)
+	random := rand.NewChaCha8([32]byte{})
+	if _, err := random.Read(data); err != nil {
+		b.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "payload"), data, 0o644); err != nil {
+		b.Fatal(err)
+	}
+	var manifest strings.Builder
+	manifest.WriteString("apiVersion: stemma/v1alpha1\nkind: Project\nmetadata: {name: benchmark}\nspec:\n  imports: ['*.software.yaml']\n")
+	for i := range 6 {
+		fmt.Fprintf(&manifest, `---
+apiVersion: stemma/v1alpha1
+kind: BuildMacPkg
+metadata: {name: package-%d}
+spec:
+  inputs:
+    data: {path: payload}
+  payload:
+    /Library/Example/data:
+      $input: data
+  package:
+    identifier: org.example.package-%d
+    version: '1.0'
+`, i, i)
+	}
+	project := filepath.Join(root, "stemma.yaml")
+	testproject.Write(b, project, manifest.String())
+	options := Options{ConfigPath: project, CacheDir: b.TempDir(), Method: "update"}
+	if _, err := Run(b.Context(), options); err != nil {
+		b.Fatal(err)
+	}
+	for _, jobs := range []int{1, 2, 4} {
+		for _, warm := range []bool{false, true} {
+			b.Run(fmt.Sprintf("jobs=%d/warm=%t", jobs, warm), func(b *testing.B) {
+				options := options
+				options.Method, options.Jobs = "prepare", jobs
+				options.CacheDir = filepath.Join(b.TempDir(), "cache")
+				if warm {
+					if _, err := Run(b.Context(), options); err != nil {
+						b.Fatal(err)
+					}
+				}
+				b.ReportAllocs()
+				for b.Loop() {
+					if !warm {
+						b.StopTimer()
+						if err := os.RemoveAll(options.CacheDir); err != nil {
+							b.Fatal(err)
+						}
+						b.StartTimer()
+					}
+					if _, err := Run(b.Context(), options); err != nil {
+						b.Fatal(err)
+					}
+				}
+			})
+		}
+	}
+}
 
 func BenchmarkPrepareUnchangedInput(b *testing.B) {
 	store, err := cas.Open(b.TempDir())

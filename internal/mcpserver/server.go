@@ -15,6 +15,7 @@ type Options struct {
 	ConfigPath  string
 	CacheDir    string
 	CachePolicy cas.Policy
+	Jobs        int
 	// GitHubToken authenticates release lookups of GitHub sources that declare
 	// no token.
 	GitHubToken string
@@ -45,7 +46,7 @@ func newServer(opts Options) *mcp.Server {
 			return result, err
 		}
 	})
-	tools := catalog{config: opts.ConfigPath, cache: opts.CacheDir, githubToken: opts.GitHubToken}
+	tools := catalog{config: opts.ConfigPath, cache: opts.CacheDir, githubToken: opts.GitHubToken, jobs: opts.Jobs}
 	openWorld := true
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "describe",
@@ -96,4 +97,5 @@ func newServer(opts Options) *mcp.Server {
 // catalog runs the tools against one project.
 type catalog struct {
 	config, cache, githubToken string
+	jobs                       int
 }

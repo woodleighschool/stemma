@@ -13,7 +13,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/icon"
@@ -41,8 +40,10 @@ type Options struct {
 	// from the catalog at this Git revision, after checking the lockfile's
 	// shape.
 	ChangedSince string
-	Lock         lockfile.Options
-	Icons        IconOptions
+	// Jobs bounds independent preparations; zero uses two workers.
+	Jobs  int
+	Lock  lockfile.Options
+	Icons IconOptions
 	// Input selects artwork or facts without building the selected resource.
 	Input InputSelection
 	// Output names the resource output the artifact method materializes;
@@ -88,6 +89,10 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	default:
 		return report, fmt.Errorf("unsupported run method %q", opts.Method)
 	}
+	if opts.Jobs < 0 {
+		return report, errors.New("jobs must not be negative")
+	}
+	opts.Jobs = cmp.Or(opts.Jobs, 2)
 	if opts.Read != "" {
 		switch {
 		case opts.Method != "artifact" && opts.Method != "inspect":
@@ -278,6 +283,11 @@ func (e *execution) begin(ctx context.Context) (err error) {
 // run prepares every selected resource and reconciles its destinations,
 // then commits the lock changes of the resources that succeeded.
 func (e *execution) run(ctx context.Context) error {
+	if e.opts.Jobs > 1 && e.opts.Method != "update" {
+		if err := e.prepareAll(ctx); err != nil {
+			return err
+		}
+	}
 	for _, key := range e.selected {
 		if e.opts.Method == "update" || len(e.plans[key].Destinations) == 0 {
 			if err := e.prepare(ctx, key); err != nil {
@@ -428,88 +438,6 @@ func (e *execution) materialize(ctx context.Context) error {
 		e.fail(ctx, ResourceError{Resource: key, Err: err})
 	}
 	return e.complete(ctx, item)
-}
-
-// prepare prepares a resource once, after the resources whose outputs it
-// consumes, and reports it. A preparation failure belongs to the resource; the
-// error is one that stops the run.
-func (e *execution) prepare(ctx context.Context, key string) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if _, exists := e.prepared[key]; exists {
-		return nil
-	}
-	plan := e.plans[key]
-	for _, name := range sortedKeys(plan.Inputs) {
-		if ref := plan.Inputs[name].Resource; ref != nil {
-			if err := e.prepare(ctx, ref.Key()); err != nil {
-				return err
-			}
-		}
-	}
-	ctx = resourceContext(ctx, plan.Resource)
-	plugin.Logger(ctx).DebugContext(ctx, "Executing resource")
-	started := time.Now()
-	item := ResourceReport{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Key: key}
-	for _, producer := range producers(plan) {
-		if !e.prepared[producer].ready {
-			item.BlockedBy = append(item.BlockedBy, producer)
-		}
-	}
-	var entries map[string]source.Entry
-	var failure error
-	if len(item.BlockedBy) > 0 {
-		failure = fmt.Errorf("blocked by %s", strings.Join(item.BlockedBy, ", "))
-	} else {
-		acquireCtx := ctx
-		if e.opts.Method != "update" {
-			acquireCtx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("phase", "Acquire"))
-		}
-		entries, item.InputCacheHits, failure = e.locked.Acquire(acquireCtx, key)
-	}
-	result := preparedResource{report: len(e.report.Resources)}
-	if failure == nil && e.opts.Method != "update" {
-		work := filepath.Join(e.session.work, "resource-"+config.Fingerprint(key))
-		result.work = work
-		var inputs map[string]Prepared
-		if inputs, failure = e.inputs(plan, entries); failure == nil {
-			derive := ""
-			if e.opts.Method == "signature" {
-				derive = "signature"
-			}
-			prepareCtx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("phase", "Prepare"))
-			result.outputs, item.Cached, failure = prepareResource(prepareCtx, e.session.store, e.session.ops, plan, inputs, work, derive)
-		}
-	}
-	item.Artifacts = result.outputs
-	result.ready = failure == nil
-	if failure != nil {
-		item.Error = failure.Error()
-		if len(item.BlockedBy) == 0 {
-			e.fail(ctx, ResourceError{Resource: key, Err: failure})
-		}
-	}
-	e.prepared[key] = result
-	e.report.Resources = append(e.report.Resources, item)
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	switch {
-	case failure == nil && e.opts.Method == "update":
-		plugin.Logger(ctx).DebugContext(ctx, "Inputs resolved", "elapsed", time.Since(started).Round(time.Millisecond))
-	case failure == nil:
-		artifact := result.outputs["installer"]
-		plugin.Logger(ctx).DebugContext(ctx, "Prepared", "artifact", artifact.Filename, "version", artifact.Version, "cached", item.Cached, "elapsed", time.Since(started).Round(time.Millisecond))
-	case len(item.BlockedBy) > 0:
-		plugin.Logger(ctx).DebugContext(ctx, "Resource blocked", "blocked_by", item.BlockedBy)
-	default:
-		plugin.Logger(ctx).DebugContext(ctx, "Preparation failed", "error", failure)
-	}
-	if failure != nil || e.pending[key] == 0 {
-		return e.complete(ctx, &e.report.Resources[result.report])
-	}
-	return nil
 }
 
 func (e *execution) inputs(plan resourcePlan, entries map[string]source.Entry) (map[string]Prepared, error) {

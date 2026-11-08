@@ -255,7 +255,7 @@ spec:
 		testproject.Write(t, filename, text)
 	}
 	write(manifest)
-	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update", Jobs: 2}
 	if _, err := Run(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}

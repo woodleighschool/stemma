@@ -42,6 +42,29 @@ func TestEnvironmentPrefersTheGitHubCLIToken(t *testing.T) {
 	}
 }
 
+func TestPreparationJobs(t *testing.T) {
+	for _, tc := range []struct {
+		env  string
+		args []string
+		fail bool
+	}{
+		{"0", nil, true},
+		{"2", []string{"--jobs", "-1"}, true},
+		{"2", []string{"--jobs", "0"}, true},
+		{"0", []string{"--jobs", "1"}, false},
+		{"4", nil, false},
+	} {
+		t.Setenv("STEMMA_JOBS", tc.env)
+		cmd, finish := command(&bytes.Buffer{}, &bytes.Buffer{})
+		cmd.SetArgs(append(tc.args, "version"))
+		err := cmd.ExecuteContext(t.Context())
+		finish(err)
+		if (err != nil) != tc.fail || err != nil && !strings.Contains(err.Error(), "jobs must be at least 1") {
+			t.Fatalf("env %q, args %v: %v", tc.env, tc.args, err)
+		}
+	}
+}
+
 func TestReadPreservesBytesWithATerminalGuard(t *testing.T) {
 	for _, content := range []string{"\xca\xfe\xba\xbe\x00\x00\x00\x02", "\x1b[2J"} {
 		var redirected bytes.Buffer

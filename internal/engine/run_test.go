@@ -335,7 +335,7 @@ spec:
 	}
 }
 
-func TestPrepareFinishesEachResourceBeforeAcquiringTheNext(t *testing.T) {
+func TestSerialPreparationFinishesEachResourceBeforeAcquiringTheNext(t *testing.T) {
 	for _, cancelDuringValidation := range []bool{false, true} {
 		t.Run(fmt.Sprintf("cancel=%t", cancelDuringValidation), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
@@ -390,7 +390,7 @@ spec:
 			var logs bytes.Buffer
 			ctx = plugin.WithLogger(ctx, slog.New(slog.NewJSONHandler(&logs, nil)))
 			report, err := Run(ctx, Options{
-				ConfigPath: filename, CacheDir: t.TempDir(), Method: "prepare",
+				ConfigPath: filename, CacheDir: t.TempDir(), Method: "prepare", Jobs: 1,
 				Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 					if request.Prepared {
 						record("validate " + request.Identity.Resource.Name)
@@ -448,7 +448,7 @@ func TestApplyKeepsCrossedPublicationDependenciesIndependent(t *testing.T) {
 	testproject.Write(t, filename, manifest)
 	var applied []string
 	report, err := Run(t.Context(), Options{
-		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply",
+		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Jobs: 2,
 		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 			identity := request.Identity.Resource.Name + "/" + request.Identity.Destination
 

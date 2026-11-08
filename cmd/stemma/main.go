@@ -78,6 +78,8 @@ func interruptContext() (context.Context, context.CancelFunc) {
 
 // environment holds the process environment values commands start with.
 type environment struct {
+	// Jobs bounds independent package preparations; acquisition and publication stay serial.
+	Jobs         int    `env:"STEMMA_JOBS" envDefault:"2"`
 	CacheDir     string `env:"STEMMA_CACHE_DIR"`
 	CacheMaxSize string `env:"STEMMA_CACHE_MAX_SIZE" envDefault:"32GiB"`
 	// GHToken and GitHubToken authenticate release lookups of GitHub sources
@@ -95,6 +97,7 @@ type cli struct {
 	display                       *commandOutput
 	rootDir, configPath, cacheDir string
 	cacheSize                     string
+	jobs                          int
 	cachePolicy                   cas.Policy
 	githubToken                   string
 }
@@ -108,6 +111,9 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		if settingsErr != nil {
 			return settingsErr
 		}
+		if c.jobs < 1 {
+			return errors.New("jobs must be at least 1")
+		}
 		policy, err := parseCachePolicy(c.cacheSize)
 		if err != nil {
 			return err
@@ -116,6 +122,7 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		return display.start(cmd)
 	}
 	root.SetVersionTemplate(fmt.Sprintf("stemma %s (commit %s, built %s)\n", version, commit, date))
+	root.PersistentFlags().IntVar(&c.jobs, "jobs", settings.Jobs, "Maximum parallel preparations; acquisition and publication remain serial")
 	root.PersistentFlags().Bool("no-progress", false, "Disable terminal progress")
 	root.SetOut(c.out)
 	root.SetErr(errOut)
@@ -229,7 +236,7 @@ func (c *cli) mcpCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return mcpserver.Run(cmd.Context(), mcpserver.Options{ConfigPath: path, CacheDir: c.cacheDir, CachePolicy: c.cachePolicy, GitHubToken: c.githubToken, Version: version})
+		return mcpserver.Run(cmd.Context(), mcpserver.Options{ConfigPath: path, CacheDir: c.cacheDir, CachePolicy: c.cachePolicy, Jobs: c.jobs, GitHubToken: c.githubToken, Version: version})
 	}}
 }
 
@@ -261,7 +268,7 @@ func (c *cli) runCommand(method string) *cobra.Command {
 			}
 		}
 		c.display.selectors = slices.Clone(args)
-		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, GitHubToken: c.githubToken, Method: method, Resources: args, Profiles: profiles, ChangedSince: changedSince, Icons: icons, Input: input, ResourceDone: func(resource engine.ResourceReport) error {
+		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Jobs: c.jobs, GitHubToken: c.githubToken, Method: method, Resources: args, Profiles: profiles, ChangedSince: changedSince, Icons: icons, Input: input, ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone(method, resource)
 		}, Lock: lockfile.Options{Offline: offline}})
 		if err := c.display.report(c.out, method, report, runErr); err != nil {
@@ -354,7 +361,7 @@ func (c *cli) reconcileCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: c.cacheDir, StateDir: stateDir, GitHubToken: c.githubToken, PhaseStarted: c.display.reconcilePhase, ResourceDone: c.display.resourceDone, ApplyDone: c.display.applyDone, ProposalDone: c.display.proposalDone})
+		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: c.cacheDir, StateDir: stateDir, Jobs: c.jobs, GitHubToken: c.githubToken, PhaseStarted: c.display.reconcilePhase, ResourceDone: c.display.resourceDone, ApplyDone: c.display.applyDone, ProposalDone: c.display.proposalDone})
 		if err := c.display.reconciled(c.out, report, runErr); err != nil {
 			return errors.Join(runErr, err)
 		}
