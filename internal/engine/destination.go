@@ -84,7 +84,7 @@ func (e *execution) reconcile(ctx context.Context, ref destinationRef) error {
 		return err
 	}
 	if failure != nil {
-		plugin.Logger(ctx).DebugContext(ctx, "Destination failed", "resource", item.Kind+"/"+item.Name, "destination", ref.Destination, "error", failure)
+		plugin.Logger(ctx).InfoContext(ctx, "Destination failed", "resource", item.Kind+"/"+item.Name, "destination", ref.Destination, "error", failure)
 	}
 	e.pending[ref.Resource]--
 	if e.pending[ref.Resource] == 0 {
