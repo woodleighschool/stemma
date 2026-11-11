@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.12.4](https://github.com/woodleighschool/stemma/compare/v0.12.3...v0.12.4) (2026-11-11)
+
+
+### Bug Fixes
+
+* **build:** exclude MIT-0 asm from license collection ([1d574b1](https://github.com/woodleighschool/stemma/commit/1d574b18aa30da9cecff716b7d643d356cb04d8f))
+* **cache:** use operation versions for preparation ([20bfcec](https://github.com/woodleighschool/stemma/commit/20bfcec0ba7d840b13f3af6bfa1b6aa11cb7a260))
+* **engine:** isolate signature derivation from preparation cache ([ebd224b](https://github.com/woodleighschool/stemma/commit/ebd224beeb027dd7d16dd3c28f0b25107dfe1208))
+* **engine:** log failed destination results ([bfe4d6f](https://github.com/woodleighschool/stemma/commit/bfe4d6fc6c1d40898861deac8b7e2b39f2371a3a))
+* **engine:** preserve granular publication progress ([9db84dd](https://github.com/woodleighschool/stemma/commit/9db84ddff770723330acae3addd1856176b4c455))
+* **go:** update module github.com/azure/azure-sdk-for-go/sdk/storage/azblob (v1.8.2 → v1.8.3) ([#277](https://github.com/woodleighschool/stemma/issues/277)) ([8c235a1](https://github.com/woodleighschool/stemma/commit/8c235a11e5406360038c0d36881ef4dcafe9ff77))
+* **go:** update module github.com/gofrs/flock (v0.13.1 → v0.13.2) ([#295](https://github.com/woodleighschool/stemma/issues/295)) ([d9552af](https://github.com/woodleighschool/stemma/commit/d9552af661256312689e667a938f44b36cf26f2f))
+* **go:** update module github.com/jferrl/go-githubauth (v1.11.0 → v1.12.0) ([#276](https://github.com/woodleighschool/stemma/issues/276)) ([09aeb48](https://github.com/woodleighschool/stemma/commit/09aeb485fe040f04241e3dfecb258c965858512c))
+* **go:** update module github.com/klauspost/compress (v1.20.3 → v1.20.4) ([#303](https://github.com/woodleighschool/stemma/issues/303)) ([ef645f3](https://github.com/woodleighschool/stemma/commit/ef645f3889b91330e13b61efc1afa339b966b65a))
+* **go:** update module github.com/microsoft/kiota-abstractions-go (v1.12.0 → v1.12.1) ([#290](https://github.com/woodleighschool/stemma/issues/290)) ([5c8b4b5](https://github.com/woodleighschool/stemma/commit/5c8b4b5cca93b5ff839606bedef54d44c00ff635))
+* **go:** update module github.com/microsoft/kiota-http-go (v1.6.0 → v1.6.1) ([#305](https://github.com/woodleighschool/stemma/issues/305)) ([74ca0ec](https://github.com/woodleighschool/stemma/commit/74ca0ecab485ca5b92c51a2516f7f2aa98d3c968))
+* **go:** update module github.com/microsoft/kiota-serialization-form-go (v1.1.6 → v1.1.7) ([#306](https://github.com/woodleighschool/stemma/issues/306)) ([43ec34a](https://github.com/woodleighschool/stemma/commit/43ec34ad5640c8f91d6cecd059334435741cfcb0))
+* **go:** update module github.com/microsoft/kiota-serialization-text-go (v1.1.6 → v1.1.7) ([#291](https://github.com/woodleighschool/stemma/issues/291)) ([3bb5af2](https://github.com/woodleighschool/stemma/commit/3bb5af2a5354d83dcd96cf75d0fc308184ce3c3a))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (0e849cb → 1c41d45) ([#301](https://github.com/woodleighschool/stemma/issues/301)) ([42cccae](https://github.com/woodleighschool/stemma/commit/42cccaeb921920e40e9c645e219a8f48e5f3bf17))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (1c41d45 → 328036e) ([#302](https://github.com/woodleighschool/stemma/issues/302)) ([0e66b7f](https://github.com/woodleighschool/stemma/commit/0e66b7f6e3fe6eb89efc0d3e7b31d62427c2a921))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (449d945 → df0f295) ([#288](https://github.com/woodleighschool/stemma/issues/288)) ([7f3d935](https://github.com/woodleighschool/stemma/commit/7f3d9357485cc761b314db84cb29ca5a92ed6fa9))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (caa354d → 449d945) ([#285](https://github.com/woodleighschool/stemma/issues/285)) ([4fc3f95](https://github.com/woodleighschool/stemma/commit/4fc3f951fcf12a8282da212ff68bcbca8ad1355d))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (df0f295 → 0e849cb) ([#296](https://github.com/woodleighschool/stemma/issues/296)) ([f557605](https://github.com/woodleighschool/stemma/commit/f557605f536da185caee2f2065b0f43fd4b65e52))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (f91620f → caa354d) ([#274](https://github.com/woodleighschool/stemma/issues/274)) ([96dcfc9](https://github.com/woodleighschool/stemma/commit/96dcfc9285c7ee66994fbc53ba42c2f3b1e20fc8))
+* **go:** update module github.com/ncruces/go-sqlite3 (v0.36.0 → v0.37.0) ([#293](https://github.com/woodleighschool/stemma/issues/293)) ([36e1a05](https://github.com/woodleighschool/stemma/commit/36e1a05d8ac84546dd0f5606a093309cfcb34cbc))
+* **go:** update module go.yaml.in/yaml/v4 (v4.0.0-rc.7 → v4.0.0-rc.8) ([#272](https://github.com/woodleighschool/stemma/issues/272)) ([6fa1b63](https://github.com/woodleighschool/stemma/commit/6fa1b63e0bbffd5013c582942aad8f431011006f))
+* **go:** update module go.yaml.in/yaml/v4 (v4.0.0-rc.8 → v4.0.0-rc.9) ([#275](https://github.com/woodleighschool/stemma/issues/275)) ([28485e4](https://github.com/woodleighschool/stemma/commit/28485e4be09dc15aa0ba1232f695b3fc63406d9a))
+* **go:** update module golang.org/x/image (v0.47.0 → v0.48.0) ([#307](https://github.com/woodleighschool/stemma/issues/307)) ([501d85f](https://github.com/woodleighschool/stemma/commit/501d85f31ca15d66e9e41b7f9b753fda839028b9))
+* **go:** update module golang.org/x/oauth2 (v0.37.0 → v0.38.0) ([#298](https://github.com/woodleighschool/stemma/issues/298)) ([5f778d0](https://github.com/woodleighschool/stemma/commit/5f778d02d02b49864edb794b8dd7c267fdcceaa1))
+* **go:** update module golang.org/x/sync (v0.24.0 → v0.25.0) ([#299](https://github.com/woodleighschool/stemma/issues/299)) ([2b58fef](https://github.com/woodleighschool/stemma/commit/2b58fefbd27fd45db2422c203e6382d3acd81a29))
+* **go:** update module golang.org/x/sys (v0.49.0 → v0.50.0) ([#300](https://github.com/woodleighschool/stemma/issues/300)) ([e5786ff](https://github.com/woodleighschool/stemma/commit/e5786ffb958d063db5936de75add1416073c1699))
+* **go:** update module golang.org/x/term (v0.47.0 → v0.48.0) ([#308](https://github.com/woodleighschool/stemma/issues/308)) ([c2842ae](https://github.com/woodleighschool/stemma/commit/c2842ae275d443369ecc2bc9db971a4ae3a4fd12))
+* **plugin:** accept responses after pipe drain timeout ([eb50fc6](https://github.com/woodleighschool/stemma/commit/eb50fc6ede03bfa1c1118437bca326e5eb10012c))
+* **source:** accept newer winget minor schemas ([67f0c26](https://github.com/woodleighschool/stemma/commit/67f0c262595829ccc1a88ea72e70184085b8d1ee))
+* **windows:** allow preparation without destinations ([b2d31ae](https://github.com/woodleighschool/stemma/commit/b2d31ae71f51b5deb4f2198714a4d362a6118751))
+
+
+### Performance Improvements
+
+* **engine:** bound parallel resource preparation ([24c8e64](https://github.com/woodleighschool/stemma/commit/24c8e64f7b202ce7b212b720ddcda1ebc35d5c33))
+* **engine:** reconcile destinations once per apply ([1ee32c5](https://github.com/woodleighschool/stemma/commit/1ee32c567ffa029ed8da7a042b92eba8e0711d47))
+* **engine:** release preparation leases after storing outputs ([a020ad0](https://github.com/woodleighschool/stemma/commit/a020ad05d9c07fdaf74ebc29b2f50f94f5d26fbc))
+* **engine:** remove redundant resolver validation calls ([03ac173](https://github.com/woodleighschool/stemma/commit/03ac173072974944961bd9126738ae0ffcca92ef))
+* **intunewin:** validate setup trees without compression ([7193877](https://github.com/woodleighschool/stemma/commit/7193877987efe046bcd38baf9c7c6af3240b74cc))
+
 ## [0.12.3](https://github.com/woodleighschool/stemma/compare/v0.12.2...v0.12.3) (2026-11-05)
 
 
