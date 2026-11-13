@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.5](https://github.com/woodleighschool/stemma/compare/v0.12.4...v0.12.5) (2026-11-13)
+
+
+### Bug Fixes
+
+* **go:** update module github.com/microsoft/kiota-serialization-multipart-go (v1.1.5 → v1.1.6) ([#312](https://github.com/woodleighschool/stemma/issues/312)) ([3a1db3d](https://github.com/woodleighschool/stemma/commit/3a1db3d14f909958c4a00503b9c028a8662c0e5c))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (328036e → 0fa5e84) ([#314](https://github.com/woodleighschool/stemma/issues/314)) ([f28225c](https://github.com/woodleighschool/stemma/commit/f28225c08e61a99f53bf0f6fdb99f73864081a7c))
+
 ## [0.12.4](https://github.com/woodleighschool/stemma/compare/v0.12.3...v0.12.4) (2026-11-11)
 
 
