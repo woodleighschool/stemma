@@ -199,14 +199,13 @@ destination.
 
 ```sh
 stemma inspect installer.pkg
-stemma validate --resolved
-stemma validate --locked
+stemma validate
 stemma schema --output-file stemma.schema.json
 stemma schema --offline --output-file -
 stemma version
 ```
 
-`validate --resolved` and `schema --output-file -` print JSON documents.
+`schema --output-file -` prints a JSON document.
 `schema` requires an explicit output file and describes built-in and loaded plugin
 contracts independently of configured destination connections. `validate` checks
 destination references and metadata against the configured operations.
@@ -231,22 +230,9 @@ and uses current sources. Both return the subject IDs and static facts used by
 inside the input instead; MCP returns UTF-8 text up to 256 KiB, including control
 characters escaped by JSON. Selecting a package inside an archive returns
 its inventory entry. Inspect the package itself to read its receipts and payload.
-`validate` needs no credentials. `validate --resolved` also evaluates every
-environment value, as runs do, and prints the merged configuration with connection
-settings resolved. It needs every referenced variable and may expose secrets: do
-not share it without reviewing it.
-
-`validate --locked` also requires the lock to answer every declared input: each
-entry records the resolver, resolver version and declaration its input has now,
-and no document locks a resource that is no longer declared. It compares
-declarations only, without acquiring or reading input content. It does not verify
-that the pinned bytes remain available or match their digest: `prepare` verifies
-content. Validation still loads the project's plugins. A
-suspended resource may have no entries. An input whose declaration reads the
-environment is not compared: the command names it as unresolved and still
-succeeds, and `--resolved` compares it with the evaluated value. MCP `check` takes
-`locked` for the same comparison and returns the count compared with the
-unresolved inputs.
+`validate` reads no environment values, lock entries or input content; the
+commands that use them check them. It loads the project's plugins, from the cache
+with `--offline`.
 
 ## Plugins and cache
 

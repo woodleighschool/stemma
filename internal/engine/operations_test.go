@@ -344,7 +344,7 @@ spec:
 					t.Fatal(err)
 				}
 			}
-			if _, err := ValidateProject(t.Context(), opts, false); err != nil {
+			if err := ValidateProject(t.Context(), opts); err != nil {
 				t.Fatal(err)
 			}
 			contracts, err := ProjectContracts(t.Context(), opts)
@@ -544,7 +544,7 @@ spec:
 	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), reason) {
 		t.Fatalf("preparation checked against the stale destination: %v", err)
 	}
-	if _, err := ValidateProject(t.Context(), opts, false); err == nil || !strings.Contains(err.Error(), reason) {
+	if err := ValidateProject(t.Context(), opts); err == nil || !strings.Contains(err.Error(), reason) {
 		t.Fatalf("validation of the stale destination: %v", err)
 	}
 	if _, err := Schema(t.Context(), opts); err == nil || !strings.Contains(err.Error(), reason) {

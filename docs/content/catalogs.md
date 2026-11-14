@@ -132,9 +132,6 @@ values in the individual document when sharing them would obscure the app's inte
 Within one document, YAML anchors and aliases repeat a value, such as a publisher
 name used for both `publisher: &publisher Vendor` and `developer: *publisher`.
 
-Inspect the result with `stemma validate --resolved`. Treat resolved output as
-configuration: it may contain values supplied through your environment.
-
 ## Group opt-in work in profiles
 
 Some resources run on one prepared machine or on their own schedule, such as

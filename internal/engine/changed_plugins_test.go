@@ -162,7 +162,7 @@ spec:
 			if report, err := Run(t.Context(), opts); err != nil || !slices.Equal(preparedKeys(report), test.want) {
 				t.Fatalf("changed plugin prepared %v, want %v: %v", preparedKeys(report), test.want, err)
 			}
-			if _, err := ValidateProject(t.Context(), opts, false); err != nil {
+			if err := ValidateProject(t.Context(), opts); err != nil {
 				t.Fatalf("current plugin contracts: %v", err)
 			}
 			if test.transport == "path" {

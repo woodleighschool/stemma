@@ -115,7 +115,6 @@ its inputs. Facts cannot select what must be acquired before those facts exist.
 `stemma validate` reads no environment values. It checks declaration structure,
 expression syntax and the literal parts of each field. Once data is available, the
 resolved values must satisfy the field's native schema and semantic validation.
-`stemma validate --resolved` evaluates every environment value, as runs do.
 
 Document identities, object keys, `$input` names, resolver and operation names,
 component references and resource references remain literal, as do the source,

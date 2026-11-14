@@ -90,18 +90,6 @@ func TestLoadKeepsConnectionExpressionsUntilUse(t *testing.T) {
 	if _, err := p.Reconcile.SourceControl.ResolvedConfig(); err == nil {
 		t.Fatal("source control accepted a missing environment value")
 	}
-	if _, err := p.Resolved(); err == nil {
-		t.Fatal("resolved project accepted a missing environment value")
-	}
-	t.Setenv("STEMMA_TEST_SECRET", "test-secret")
-	t.Setenv("STEMMA_TEST_KEY", "test-key")
-	resolved, err := p.Resolved()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resolved.Destinations["repo"].Config["token"] != "test-secret" || resolved.Reconcile.SourceControl.Config["private_key"] != "test-key" || p.Destinations["repo"].Config["token"] != "{{ env.STEMMA_TEST_SECRET }}" {
-		t.Fatal("resolving did not evaluate connection settings or changed the loaded project")
-	}
 }
 
 func TestExpressionsRejectInvalidTypesAndDynamicIdentities(t *testing.T) {

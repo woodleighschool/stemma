@@ -62,8 +62,6 @@ func (o *commandOutput) start(cmd *cobra.Command) error {
 	switch cmd.Name() {
 	case "schema":
 		o.asJSON = true
-	case "validate":
-		o.asJSON, _ = cmd.Flags().GetBool("resolved")
 	case "reconcile":
 		o.reconciling = true
 	case "artifact", "inspect":

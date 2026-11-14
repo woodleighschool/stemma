@@ -63,96 +63,36 @@ func ProjectContracts(ctx context.Context, opts Options) (result Contracts, err 
 
 // ValidateProject checks the catalog as written: declared fields, expressions,
 // operation contracts and the resource and publication graphs. It reads no
-// environment values. Settings, inputs and metadata that hold expressions are
-// checked by schema, and their values when a command uses them. Resolved
-// validation evaluates everything a run would and returns the project with its
-// connection settings evaluated.
-func ValidateProject(ctx context.Context, opts Options, resolved bool) (result config.Project, err error) {
+// environment values, lock or input content. Settings, inputs and metadata
+// that hold expressions are checked by schema, and their values by the
+// commands that use them.
+func ValidateProject(ctx context.Context, opts Options) (err error) {
 	p, err := config.Load(opts.ConfigPath)
 	if err != nil {
-		return p, err
+		return err
 	}
 	done := plugin.Stage(ctx, "Validating project")
 	defer func() { done(err) }()
 	ops, cleanup, err := projectOperations(ctx, p, opts)
 	if err != nil {
-		return p, err
+		return err
 	}
 	defer cleanup()
 	// Validation answers whether the whole catalog is valid, so every declared
 	// resource is a root, including the suspended resources that runs skip.
-	plans, selected, err := discoverClosure(ctx, p, ops, sortedKeys(p.Resources), resolved, true, "")
+	plans, selected, err := discoverClosure(ctx, p, ops, sortedKeys(p.Resources), false, true, "")
 	if err != nil {
-		return p, err
+		return err
 	}
 	root, err := filepath.Abs(filepath.Dir(opts.ConfigPath))
 	if err != nil {
-		return p, err
+		return err
 	}
 	if err := verifyIcons(root, plans, selected); err != nil {
-		return p, err
-	}
-	if _, err := planDestinations(ctx, p, plans, ops, root, selected, resolved); err != nil {
-		return p, err
-	}
-	if opts.Compared != nil {
-		if err := compareLock(root, p, declarations(plans, selected), ops, resolved, opts.Compared); err != nil {
-			return p, err
-		}
-	}
-	if !resolved {
-		return p, nil
-	}
-	evaluated, err := p.Resolved()
-	if err != nil {
-		return p, err
-	}
-	used := map[string]bool{}
-	for _, plan := range plans {
-		for name := range plan.Destinations {
-			used[name] = true
-		}
-	}
-	for _, name := range sortedKeys(used) {
-		destination := evaluated.Destinations[name]
-		if err := ops.configuration(destination.Operation, destination.Config, true); err != nil {
-			return p, fmt.Errorf("destination %s: %w", name, err)
-		}
-	}
-	return evaluated, nil
-}
-
-// compareLock checks that the reviewed lock answers every declared input,
-// reading neither sources nor content. A declaration that holds expressions
-// is named as unresolved unless validation resolved it, since only its
-// evaluated value compares. A suspended resource may have no entries, since
-// no run acquires its inputs.
-func compareLock(root string, p config.Project, inputs map[string]map[string]plugin.Input, ops *operations, resolved bool, result *LockComparison) error {
-	*result = LockComparison{}
-	manager := source.New(nil, root, true)
-	if err := registerResolvers(manager, ops, ""); err != nil {
 		return err
 	}
-	locked, err := lockfile.Load(root)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	unread := func(input plugin.Input) bool { return !resolved && expression.Has(input.Config) }
-	for _, key := range sortedKeys(inputs) {
-		resource := p.Resources[key]
-		if resource.Suspend && len(locked.Inputs[key]) == 0 {
-			delete(inputs, key)
-			continue
-		}
-		for _, name := range sortedKeys(inputs[key]) {
-			if unread(inputs[key][name]) {
-				result.Unresolved = append(result.Unresolved, resource.Kind+"/"+resource.Metadata.Name+" input "+name)
-			} else {
-				result.Compared++
-			}
-		}
-	}
-	return lockfile.Compare(locked, inputs, manager, unread)
+	_, err = planDestinations(ctx, p, plans, ops, root, selected, false)
+	return err
 }
 
 func projectOperations(ctx context.Context, p config.Project, opts Options) (*operations, func(), error) {

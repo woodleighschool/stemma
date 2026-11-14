@@ -283,31 +283,6 @@ func (p Project) Validate() error {
 	return nil
 }
 
-// Resolved returns the project with its connection settings evaluated, as the
-// commands that connect see them.
-func (p Project) Resolved() (Project, error) {
-	destinations := make(map[string]Destination, len(p.Destinations))
-	for name, destination := range p.Destinations {
-		settings, err := destination.ResolvedConfig()
-		if err != nil {
-			return p, fmt.Errorf("destination %s: %w", name, err)
-		}
-		destination.Config = settings
-		destinations[name] = destination
-	}
-	p.Destinations = destinations
-	if p.Reconcile != nil {
-		control := p.Reconcile.SourceControl
-		settings, err := control.ResolvedConfig()
-		if err != nil {
-			return p, fmt.Errorf("reconcile source_control: %w", err)
-		}
-		control.Config = settings
-		p.Reconcile = &Reconcile{SourceControl: control}
-	}
-	return p, nil
-}
-
 func validateOperation(operation string) error {
 	if !plugin.ValidOperationName(operation) {
 		return errors.New("operation must be a named built-in or external capability")
