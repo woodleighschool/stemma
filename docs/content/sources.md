@@ -279,9 +279,9 @@ release again. Changing the pattern or release selector makes the declaration
 stale and requires a lock update, even with cached bytes.
 
 Homebrew, WinGet and GitHub assets with published hashes can update the lock
-without downloading the file. The hash pins the required bytes; preparation
-verifies them before use. A changed version or installer setting can therefore
-appear in review even when the file itself is unchanged.
+without downloading the file. The hash pins the required bytes, and a download
+must match it before the cache keeps it. A changed version or installer setting
+can therefore appear in review even when the file itself is unchanged.
 
 `update` also avoids downloads the cache or the lock can answer. A GitHub asset never
 changes, so an asset the cache fetched before, or the one the lock records, is
@@ -306,7 +306,7 @@ the lock diff holds only what the run selected. An `update` without a selection
 also removes the entries of resources that are no longer declared.
 
 A registry hash can be stale: resolution may succeed and preparation then fail.
-Every consuming path verifies the required digest before using content. Offline
+Content enters the cache only when it matches the required digest. Offline
 preparation requires cached bytes, not merely a resolved lock.
 
 If a vendor replaces bytes at a stable URL, a cold locked run fails the content
@@ -328,10 +328,12 @@ It controls source and plugin acquisition; **it does not disable destination
 network access for `plan` or `apply`**.
 
 Reusing prepared outputs verifies their recorded identity and inspection results.
-Destinations can reconcile metadata without installer bytes. Content is verified
-when a consumer needs it, and plugins receive their own copy; corrupt cached
-content is discarded and the command fails. Retry to fetch or rebuild it. Local
-inputs are still read in full to compare their current content with the lock.
+Destinations can reconcile metadata without installer bytes. Cached content is
+checked once, as it is stored, and trusted afterwards; plugins receive their own
+copy, and destinations check the bytes they publish. `stemma cache verify` reads
+every cached object again and discards any that changed, so the next run fetches
+or rebuilds it. Local inputs are still read in full to compare their current
+content with the lock.
 
 Repeated source lookups share cached responses and check with the publisher for
 changes on later runs. A failed lookup remains a failure, even with cached data.

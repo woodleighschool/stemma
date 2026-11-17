@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -101,6 +102,49 @@ func (s *Store) Info(ctx context.Context) (Usage, error) {
 	defer func() { _ = release() }()
 	_, usage, err := s.inventory(ctx)
 	return usage, err
+}
+
+// Verification reports an explicit check of every stored object.
+type Verification struct {
+	Objects   int      `json:"checked_objects"`
+	Bytes     int64    `json:"checked_bytes"`
+	Discarded []string `json:"discarded_objects,omitempty"`
+}
+
+// VerifyAll reads every stored object under a lease and discards each one
+// whose bytes differ from its digest, so a later run acquires or rebuilds it.
+// It does not record the objects' use.
+func (s *Store) VerifyAll(ctx context.Context) (result Verification, err error) {
+	release, err := s.Lease(ctx)
+	if err != nil {
+		return Verification{}, err
+	}
+	defer func() { err = errors.Join(err, release()) }()
+	entries, err := os.ReadDir(filepath.Join(s.Dir, "objects"))
+	if err != nil {
+		return Verification{}, err
+	}
+	done := plugin.Stage(ctx, "Verifying cached objects")
+	defer func() { done(err) }()
+	for _, entry := range entries {
+		// Imports in progress and stray names are left to maintenance.
+		ref, err := s.Lookup(entry.Name())
+		if err != nil {
+			continue
+		}
+		err = s.check(ctx, ref, func(r io.Reader) error {
+			_, err := io.Copy(io.Discard, r)
+			return err
+		})
+		if errors.Is(err, errCorrupt) {
+			result.Discarded = append(result.Discarded, ref.SHA256)
+		} else if err != nil {
+			return result, err
+		}
+		result.Objects++
+		result.Bytes += ref.Size
+	}
+	return result, nil
 }
 
 // Prune waits for active runs, then applies the policy without following symlinks.

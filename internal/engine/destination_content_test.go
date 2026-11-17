@@ -146,7 +146,7 @@ func TestDestinationContentRequestsMustBeSatisfiable(t *testing.T) {
 	}
 }
 
-func TestWarmReconciliationDefersPayloadIntegrityUntilConsumption(t *testing.T) {
+func TestReconciliationTrustsStoredPayloadsUntilVerified(t *testing.T) {
 	server := httptest.NewServer(http.FileServer(http.Dir("../apple/testdata")))
 	defer server.Close()
 	project := filepath.Join(t.TempDir(), "stemma.yaml")
@@ -200,8 +200,8 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Leave the descriptor and size intact. Metadata work must not certify or
-	// depend on the unused bytes; the first real consumer must reject them.
+	// Leave the descriptor and size intact. Metadata work must not read the
+	// unused bytes, and only an explicit verification checks them again.
 	if err := os.Chmod(name, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -222,11 +222,12 @@ spec:
 			t.Fatalf("metadata %s: %v", method, err)
 		}
 	}
-	consume = true
-	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "integrity verification") {
-		t.Fatalf("consumption error=%v", err)
+	verified, err := store.VerifyAll(t.Context())
+	if err != nil || verified.Objects == 0 || len(verified.Discarded) != 1 || verified.Discarded[0] != payload.SHA256 {
+		t.Fatalf("verification = %+v, %v", verified, err)
 	}
+	consume = true
 	if _, err := Run(t.Context(), opts); err != nil {
-		t.Fatalf("retry did not reacquire discarded content: %v", err)
+		t.Fatalf("run did not reacquire discarded content: %v", err)
 	}
 }

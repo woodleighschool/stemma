@@ -114,6 +114,38 @@ func (c *cli) cacheCommand() *cobra.Command {
 		}
 		return err
 	}
-	cmd.AddCommand(info, prune)
+	verify := &cobra.Command{Use: "verify", Short: "Check every cached object against its digest and discard any that changed", Args: cobra.NoArgs}
+	verifyJSON := jsonFlag(verify)
+	verify.RunE = func(cmd *cobra.Command, _ []string) error {
+		store, err := cas.Open(c.cacheDir)
+		if err != nil {
+			return err
+		}
+		result, err := store.VerifyAll(cmd.Context())
+		if err != nil {
+			return err
+		}
+		objects := func(n int) string {
+			if n == 1 {
+				return "1 object"
+			}
+			return fmt.Sprintf("%d objects", n)
+		}
+		if *verifyJSON {
+			err = writeJSON(c.out, result)
+		} else {
+			style := newTextStyle(c.out)
+			marker := style.paint("✓", color.FgHiGreen)
+			if len(result.Discarded) > 0 {
+				marker = style.paint("✗", color.FgHiRed)
+			}
+			_, err = fmt.Fprintf(c.out, "%s Checked %s (%s); discarded %d.\n", marker, objects(result.Objects), humanize.IBytes(uint64(max(0, result.Bytes))), len(result.Discarded))
+		}
+		if err == nil && len(result.Discarded) > 0 {
+			err = fmt.Errorf("discarded %s that no longer matched; the next run acquires or rebuilds them", objects(len(result.Discarded)))
+		}
+		return err
+	}
+	cmd.AddCommand(info, prune, verify)
 	return cmd
 }

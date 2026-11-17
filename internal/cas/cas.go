@@ -25,6 +25,9 @@ import (
 // MaxObjectSize bounds downloads and individual cache objects to 16 GiB.
 const MaxObjectSize int64 = 16 << 30
 
+// errCorrupt marks a stored object whose bytes no longer match its digest.
+var errCorrupt = errors.New("failed integrity verification")
+
 func validDigest(value string) bool {
 	decoded, err := hex.DecodeString(value)
 	return err == nil && len(decoded) == sha256.Size && strings.ToLower(value) == value
@@ -37,7 +40,9 @@ type Ref struct {
 }
 
 // Store contains content-addressed objects and disposable source and
-// derivation indexes.
+// derivation indexes. An object's digest is measured as it is written and
+// trusted afterwards: readers that stream an object check it again at no extra
+// cost, and VerifyAll checks every object on request.
 type Store struct {
 	Dir string
 	now func() time.Time
@@ -111,8 +116,7 @@ func (s *Store) Path(ref Ref) (string, error) {
 	return filepath.Join(s.Dir, "objects", ref.SHA256), nil
 }
 
-// Lookup describes a stored object without certifying its bytes. Read verifies
-// bytes when a consumer needs them.
+// Lookup describes a stored object without reading its bytes.
 func (s *Store) Lookup(digest string) (Ref, error) {
 	ref := Ref{SHA256: digest}
 	path, err := s.Path(ref)
@@ -130,14 +134,14 @@ func (s *Store) Lookup(digest string) (Ref, error) {
 	return ref, nil
 }
 
-// HasDigest reports availability, not integrity. Consumers must verify bytes.
+// HasDigest reports whether an object is stored.
 func (s *Store) HasDigest(digest string) bool {
 	_, err := s.Lookup(digest)
 	return err == nil
 }
 
 // Reuse records metadata-only reuse of an available object, such as an unchanged
-// source observation. It does not certify bytes; consumers still call Verify.
+// source observation.
 func (s *Store) Reuse(ctx context.Context, digest string) bool {
 	if !s.HasDigest(digest) {
 		return false
@@ -146,7 +150,7 @@ func (s *Store) Reuse(ctx context.Context, digest string) bool {
 	return true
 }
 
-// Verify hashes actual stored bytes instead of trusting file existence or size.
+// Verify reads and hashes an object's stored bytes, discarding it when they differ.
 func (s *Store) Verify(ctx context.Context, ref Ref) error {
 	return s.Read(ctx, ref, func(r io.Reader) error { _, err := io.Copy(io.Discard, r); return err })
 }
@@ -156,6 +160,15 @@ func (s *Store) Verify(ctx context.Context, ref Ref) error {
 // An object that fails integrity verification is discarded so a later run can
 // acquire or rebuild it. Consumer errors and cancellation do not discard it.
 func (s *Store) Read(ctx context.Context, ref Ref, read func(io.Reader) error) error {
+	if err := s.check(ctx, ref, read); err != nil {
+		return err
+	}
+	s.touch(ctx, "objects", ref.SHA256)
+	return nil
+}
+
+// check is Read without recording the object's use.
+func (s *Store) check(ctx context.Context, ref Ref, read func(io.Reader) error) error {
 	path, err := s.Path(ref)
 	if err != nil {
 		return err
@@ -179,21 +192,25 @@ func (s *Store) Read(ctx context.Context, ref Ref, read func(io.Reader) error) e
 		return err
 	}
 	if r.N != 1 || hex.EncodeToString(h.Sum(nil)) != ref.SHA256 {
-		failure := fmt.Errorf("cache object %s failed integrity verification", ref.SHA256)
 		if err := f.Close(); err != nil {
-			return errors.Join(failure, err)
+			return errors.Join(fmt.Errorf("cache object %s %w", ref.SHA256, errCorrupt), err)
 		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return errors.Join(failure, err)
-		}
-		return fmt.Errorf("%w; discarded corrupt content, retry to acquire or rebuild it", failure)
+		return discard(path, ref)
 	}
-	s.touch(ctx, "objects", ref.SHA256)
 	return nil
 }
 
-// Has reports whether an object is stored at its recorded size. It reads no
-// bytes; Verify checks them before anything uses the object.
+// discard removes an object whose bytes differ from its digest.
+func discard(path string, ref Ref) error {
+	failure := fmt.Errorf("cache object %s %w", ref.SHA256, errCorrupt)
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(failure, err)
+	}
+	return fmt.Errorf("%w; discarded corrupt content, retry to acquire or rebuild it", failure)
+}
+
+// Has reports whether an object is stored at its recorded size, without
+// reading it.
 func (s *Store) Has(ref Ref) bool {
 	path, err := s.Path(ref)
 	if err != nil {
@@ -260,7 +277,7 @@ func (s *Store) Write(ctx context.Context, expected string, write func(io.Writer
 
 // Capture stores content that write can produce again, such as a local file
 // or tree read on every run. It measures the content and writes it only when
-// the store lacks it; consumers verify stored bytes, as for any object.
+// the store lacks it.
 func (s *Store) Capture(ctx context.Context, expected string, write func(io.Writer) error) (Ref, error) {
 	ref, err := Digest(ctx, write)
 	if err != nil {
@@ -366,25 +383,33 @@ func (s *Store) Adopt(ctx context.Context, path string) (Ref, error) {
 	return ref, nil
 }
 
-// Lend verifies an object and links it at path, for Stemma's own code to read
-// in place. The link is the object, so nothing may write through it. Windows
-// keeps the read-only attribute on the file rather than the link, and removing
-// a link there would leave the object writable; it gets a copy instead.
+// Lend links an object at path, for Stemma's own code to read in place. The
+// link is the object, so nothing may write through it. Windows keeps the
+// read-only attribute on the file rather than the link, and removing a link
+// there would leave the object writable; it gets a copy instead.
 func (s *Store) Lend(ctx context.Context, ref Ref, path string) error {
 	if runtime.GOOS == "windows" {
 		return s.Materialize(ctx, ref, path)
-	}
-	if err := s.Verify(ctx, ref); err != nil {
-		return err
 	}
 	object, err := s.Path(ref)
 	if err != nil {
 		return err
 	}
+	info, err := os.Stat(object)
+	if err != nil {
+		return err
+	}
+	if info.Size() != ref.Size {
+		return discard(object, ref)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.Link(object, path)
+	if err := os.Link(object, path); err != nil {
+		return err
+	}
+	s.touch(ctx, "objects", ref.SHA256)
+	return nil
 }
 
 // Digest measures a canonical byte stream without storing another object.

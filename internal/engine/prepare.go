@@ -36,10 +36,9 @@ type Prepared struct {
 	Path          string                     `json:"-"`
 }
 
-// lend gives Stemma's own code a stored artifact for one invocation: the
-// verified cache object itself, which keeps the artifact's name but not its
-// mode, or an extracted directory for a tree the reader cannot take as
-// canonical TAR.
+// lend gives Stemma's own code a stored artifact for one invocation: the cache
+// object itself, which keeps the artifact's name but not its mode, or an
+// extracted directory for a tree the reader cannot take as canonical TAR.
 func lend(ctx context.Context, store *cas.Store, p Prepared, work string, tar bool) (plugin.Artifact, error) {
 	artifact := p.artifact()
 	switch {

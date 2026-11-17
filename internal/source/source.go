@@ -223,7 +223,7 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 }
 
 // FetchLocked ensures locked content is available, fetching it when absent.
-// Cached bytes are verified when consumed. Remote discovery is not refreshed;
+// Cached bytes are trusted as stored. Remote discovery is not refreshed;
 // local inputs are always rehashed.
 // The source index keeps whatever the fetch returned, so a source that moved
 // on is proposed by the next refresh without another download.

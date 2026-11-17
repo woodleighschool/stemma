@@ -288,7 +288,7 @@ and current configuration on every `run`. Return exactly one download request or
 an artifact inside the leased workspace. Discovery must not return either.
 
 The host confines credentials and custom headers to the request origin, rejects HTTPS downgrades,
-acquires mutable content conditionally, and verifies consumed content against
+acquires mutable content conditionally, and checks acquired content against
 the lock. The resolver owns observation validation, filename selection, and
 provider authentication. All downloads use the same transfer and cache lifecycle.
 

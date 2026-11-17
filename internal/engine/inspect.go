@@ -47,14 +47,11 @@ func (e *execution) inspectInput(ctx context.Context) error {
 }
 
 // readStored writes the file the run names inside a stored artifact. The
-// object is verified and then read where it is, so nothing is materialized.
+// object is read where it is, so nothing is materialized.
 func (e *execution) readStored(ctx context.Context, stored Prepared, work string) (err error) {
 	done := plugin.Stage(ctx, "Reading artifact", plugin.Detail(stored.Filename))
 	defer func() { done(err) }()
 	store := e.session.store
-	if err := store.Verify(ctx, stored.Payload); err != nil {
-		return err
-	}
 	artifact := stored.artifact()
 	if artifact.Path, err = store.Path(stored.Payload); err != nil {
 		return err

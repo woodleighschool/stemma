@@ -150,7 +150,7 @@ stemma artifact MacSoftware/foo --output-file ./foo.pkg
 ```
 
 `--read PATH` prints one file inside the artifact instead of its path. The cached
-artifact is verified and read where it is; nothing is copied out. Inside a
+artifact is read where it is; nothing is copied out. Inside a
 package, name an entry such as `Distribution`, or a file in a component's
 `Scripts` or `Payload` archive, which is decoded up to that file. Inside a disk
 image, archive or folder, name a path; it continues into a package found there. A
@@ -247,6 +247,7 @@ stemma cache info
 stemma cache prune --dry-run
 stemma cache prune
 stemma cache prune --all
+stemma cache verify
 ```
 
 `plugins list` shows declarations and recorded pins without acquiring or running
@@ -268,6 +269,9 @@ The disposable cache defaults to the system's user cache directory under `stemma
 protects content used in the last 24 hours; `--all` overrides that protection.
 `cache info` and `cache prune` accept `--json`. Pruning reports reclaimed bytes
 and never removes published packages, reconciliation state or user exports.
+Cached content is checked as it is stored and trusted afterwards. `cache verify`
+reads every cached object, discards any whose bytes no longer match, and fails
+when it discarded one; it also accepts `--json`.
 See [cache and offline runs](sources.md#cache-and-offline-runs) for lifecycle and
 accounting details.
 
