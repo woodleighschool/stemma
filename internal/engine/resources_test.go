@@ -71,7 +71,7 @@ func TestPreparationTreeLeaseContract(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				ops := &operations{registry: plugin.New("fixture", "1")}
+				ops := &operations{registry: plugin.New("fixture", "1"), external: map[string]bool{"fixture": true}}
 				operation := resourceOperation("fixture", "Fixture")
 				operation.TarInputs = encoded
 				operation.InputSchema, operation.OutputSchema = json.RawMessage(`{}`), json.RawMessage(`{}`)
@@ -146,7 +146,7 @@ func TestPreparationKeepsInputsImmutable(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			ops := &operations{registry: plugin.New("fixture", "1")}
+			ops := &operations{registry: plugin.New("fixture", "1"), external: map[string]bool{"fixture": true}}
 			operation := plugin.Operation{Name: "fixture", Kind: "resource", Resource: &plugin.ResourceKind{APIVersion: "example.test/v1", Kind: "Fixture"}, SideEffects: "workspace", Methods: []string{"discover", "run"}, InputSchema: json.RawMessage(`{}`), OutputSchema: json.RawMessage(`{}`)}
 			err = ops.registry.Register(operation, func(_ context.Context, envelope plugin.Request) (plugin.Response, error) {
 				var request plugin.ResourceRequest[json.RawMessage]

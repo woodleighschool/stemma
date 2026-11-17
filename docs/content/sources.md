@@ -328,10 +328,10 @@ It controls source and plugin acquisition; **it does not disable destination
 network access for `plan` or `apply`**.
 
 Reusing prepared outputs verifies their recorded identity and inspection results.
-Destinations can reconcile metadata without installer bytes. Content is copied
-and verified when a consumer needs it; corrupt cached content is discarded and
-the command fails. Retry to fetch or rebuild it. Local inputs are still read in
-full to compare their current content with the lock.
+Destinations can reconcile metadata without installer bytes. Content is verified
+when a consumer needs it, and plugins receive their own copy; corrupt cached
+content is discarded and the command fails. Retry to fetch or rebuild it. Local
+inputs are still read in full to compare their current content with the lock.
 
 Repeated source lookups share cached responses and check with the publisher for
 changes on later runs. A failed lookup remains a failure, even with cached data.

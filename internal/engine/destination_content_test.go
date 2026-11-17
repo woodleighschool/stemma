@@ -72,7 +72,7 @@ func TestDestinationContentIsVerifiedAndScopedToInvocation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			e := execution{session: &session{store: store, ops: &operations{registry: registry}}}
+			e := execution{session: &session{store: store, ops: &operations{registry: registry, external: map[string]bool{"fixture": true}}}}
 			work := t.TempDir()
 			for _, method := range []string{"validate", "plan", "apply"} {
 				_, err = e.callDestination(t.Context(), "fixture", plugin.ReconcileRequest[json.RawMessage]{Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "Fixture", Name: "example"}}, Method: method, Artifact: artifact, Inputs: inputs}, work)

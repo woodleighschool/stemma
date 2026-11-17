@@ -25,7 +25,7 @@ func TestReadKeepsPackageAndApplicationFactsSeparate(t *testing.T) {
 	data := readFixture(t, "../apple/testdata/fixture.pkg")
 	name := filepath.Join(t.TempDir(), "vendor-download")
 	writeFixture(t, name, data)
-	facts, err := Read(t.Context(), name)
+	facts, err := Read(t.Context(), name, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestReadKeepsPackageAndApplicationFactsSeparate(t *testing.T) {
 	}
 	other := filepath.Join(t.TempDir(), "different-name.pkg")
 	writeFixture(t, other, data)
-	renamed, err := Read(t.Context(), other)
+	renamed, err := Read(t.Context(), other, "")
 	if err != nil || !reflect.DeepEqual(facts, renamed) {
 		t.Fatalf("subject identity depends on temporary name: %+v, %v", renamed, err)
 	}
@@ -83,7 +83,7 @@ func TestReadRejectsACorruptPayload(t *testing.T) {
 	}
 	name := filepath.Join(t.TempDir(), "vendor.pkg")
 	writeFixture(t, name, data)
-	if _, err := Read(t.Context(), name); err == nil {
+	if _, err := Read(t.Context(), name, ""); err == nil {
 		t.Fatal("full inspection accepted corrupt payload")
 	}
 }
@@ -94,7 +94,7 @@ func TestReadAppAndMSIByContents(t *testing.T) {
 		if err := os.CopyFS(name, os.DirFS("../apple/testdata/Fixture.app")); err != nil {
 			t.Fatal(err)
 		}
-		facts, err := Read(t.Context(), name)
+		facts, err := Read(t.Context(), name, "")
 		if err != nil || len(facts.Subjects) != 1 || facts.Subjects[0].App == nil || facts.Subjects[0].App.Build != "42" || facts.Subjects[0].InstalledPath != "" {
 			t.Fatalf("wrong app facts: %+v, %v", facts, err)
 		}
@@ -102,7 +102,7 @@ func TestReadAppAndMSIByContents(t *testing.T) {
 	t.Run("msi", func(t *testing.T) {
 		name := filepath.Join(t.TempDir(), "download.bin")
 		writeFixture(t, name, readFixture(t, "../msi/testdata/test.msi"))
-		facts, err := Read(t.Context(), name)
+		facts, err := Read(t.Context(), name, "")
 		if err != nil || len(facts.Subjects) != 1 || facts.Subjects[0].MSI == nil {
 			t.Fatalf("wrong MSI facts: %+v, %v", facts, err)
 		}
@@ -117,7 +117,7 @@ func TestReadRejectsMalformedClaims(t *testing.T) {
 		t.Run(extension, func(t *testing.T) {
 			name := filepath.Join(t.TempDir(), "malformed"+extension)
 			writeFixture(t, name, []byte("not an installer"))
-			if _, err := Read(t.Context(), name); err == nil {
+			if _, err := Read(t.Context(), name, ""); err == nil {
 				t.Fatal("accepted claimed malformed artifact")
 			}
 		})
@@ -126,7 +126,7 @@ func TestReadRejectsMalformedClaims(t *testing.T) {
 	data := make([]byte, 1024)
 	copy(data[512:], "koly")
 	writeFixture(t, name, data)
-	if _, err := Read(t.Context(), name); err == nil {
+	if _, err := Read(t.Context(), name, ""); err == nil {
 		t.Fatal("DMG inspection accepted a corrupt filesystem")
 	}
 }
@@ -146,7 +146,7 @@ func TestReadDMGInventoriesApplicationsAndPackages(t *testing.T) {
 	name := filepath.Join(t.TempDir(), "vendor.dmg")
 	testdiskimage.Write(t, name, source)
 	data := readFixture(t, name)
-	facts, err := Read(t.Context(), name)
+	facts, err := Read(t.Context(), name, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestReadDMGInventoriesApplicationsAndPackages(t *testing.T) {
 	if err := os.Rename(name, renamed); err != nil {
 		t.Fatal(err)
 	}
-	again, err := Read(t.Context(), renamed)
+	again, err := Read(t.Context(), renamed, "")
 	if err != nil || !reflect.DeepEqual(facts, again) {
 		t.Fatalf("DMG facts depend on download filename: %+v, %v", again, err)
 	}
@@ -188,7 +188,7 @@ func TestReadLocalTreeAndVersionlessFile(t *testing.T) {
 	if err := os.CopyFS(filepath.Join(root, "Payload/Fixture.app"), os.DirFS("../apple/testdata/Fixture.app")); err != nil {
 		t.Fatal(err)
 	}
-	facts, err := Read(t.Context(), root)
+	facts, err := Read(t.Context(), root, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,13 +200,13 @@ func TestReadLocalTreeAndVersionlessFile(t *testing.T) {
 		t.Fatalf("local path became installed path: %+v", app)
 	}
 	script := filepath.Join(root, "postinstall")
-	file, err := Read(t.Context(), script)
+	file, err := Read(t.Context(), script, "")
 	if err != nil || len(file.Subjects) != 1 || file.Subjects[0].Kind != "file" || len(file.Subjects[0].SHA256) != 64 {
 		t.Fatalf("script facts invented metadata: %+v, %v", file, err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := Read(ctx, root); !errors.Is(err, context.Canceled) {
+	if _, err := Read(ctx, root, ""); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation lost: %v", err)
 	}
 }

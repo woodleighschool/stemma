@@ -31,7 +31,9 @@ const maxInspectedBytes = 16 << 30
 // and inventories the applications and packages in a DMG or directory tree.
 // It distinguishes installers by their contents and rejects malformed files
 // claiming supported formats. Unknown regular files retain their exact identity.
-func Read(ctx context.Context, name string) (plugin.Facts, error) {
+// digest is a file's SHA-256 when the caller has measured it; Read measures it
+// otherwise.
+func Read(ctx context.Context, name, digest string) (plugin.Facts, error) {
 	if err := ctx.Err(); err != nil {
 		return plugin.Facts{}, err
 	}
@@ -104,9 +106,12 @@ func Read(ctx context.Context, name string) (plugin.Facts, error) {
 			return plugin.Facts{}, fmt.Errorf("inspect dmg: %w", err)
 		}
 	}
-	root.SHA256, err = fileDigest(ctx, f, info.Size())
-	if err != nil {
-		return plugin.Facts{}, err
+	root.SHA256 = digest
+	if root.SHA256 == "" {
+		root.SHA256, err = fileDigest(ctx, f, info.Size())
+		if err != nil {
+			return plugin.Facts{}, err
+		}
 	}
 	facts.Subjects = append([]plugin.Subject{root}, facts.Subjects...)
 	return facts, ctx.Err()
@@ -145,7 +150,7 @@ func Source(ctx context.Context, source *contents.Source) (plugin.Facts, error) 
 		return inspectNode(ctx, node)
 	}
 	if !source.Traversable() {
-		return Read(ctx, input.Path)
+		return Read(ctx, input.Path, input.SHA256)
 	}
 	node, err := source.At(ctx, ".")
 	if err != nil {
@@ -294,7 +299,7 @@ func inspectNode(ctx context.Context, node contents.Node) (plugin.Facts, error) 
 	var err error
 	switch {
 	case node.Local != "":
-		facts, err = Read(ctx, node.Local)
+		facts, err = Read(ctx, node.Local, "")
 	default:
 		var info fs.FileInfo
 		info, err = node.Stat()

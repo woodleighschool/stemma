@@ -382,12 +382,9 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	request := plugin.ResourceRequest[json.RawMessage]{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Derive: derive, Environment: plan.Environment}
 	// Windows stores only the read-only bit, so compare modes against the lease.
 	leasedModes := map[string]os.FileMode{}
-	operation, err := ops.operation(plan.Operation)
-	if err != nil {
-		return nil, false, err
-	}
+	external := ops.external[plan.Operation]
 	for name, input := range inputs {
-		leased, err := leaseInput(ctx, store, input, filepath.Join(work, "inputs", config.Fingerprint(name)), operation.TarInputs)
+		leased, err := ops.lease(ctx, store, plan.Operation, input, filepath.Join(work, "inputs", config.Fingerprint(name)))
 		if err != nil {
 			return nil, false, err
 		}
@@ -395,11 +392,13 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		if err != nil {
 			return nil, false, err
 		}
-		info, err := os.Stat(leased.Path)
-		if err != nil {
-			return nil, false, err
+		if external {
+			info, err := os.Stat(leased.Path)
+			if err != nil {
+				return nil, false, err
+			}
+			leasedModes[name] = info.Mode().Perm()
 		}
-		leasedModes[name] = info.Mode().Perm()
 		request.Inputs[name] = leased
 	}
 	var response plugin.ResourceResult
@@ -407,21 +406,23 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	done = plugin.Stage(ctx, "Preparing outputs")
 	runErr := ops.call(ctx, plan.Operation, "run", request, &response)
 	done(runErr)
-	done = plugin.Stage(ctx, "Verifying workspace")
-	for name, input := range request.Inputs {
-		ref, err := digestPath(ctx, input.Path, input.Tree && input.Encoding == "")
-		if err != nil {
-			return nil, false, errors.Join(runErr, err)
+	if external {
+		done = plugin.Stage(ctx, "Verifying workspace")
+		for name, input := range request.Inputs {
+			ref, err := digestPath(ctx, input.Path, input.Tree && input.Encoding == "")
+			if err != nil {
+				return nil, false, errors.Join(runErr, err)
+			}
+			info, err := os.Stat(input.Path)
+			if err != nil {
+				return nil, false, errors.Join(runErr, err)
+			}
+			if ref != inputs[name].Payload || info.Mode().Perm() != leasedModes[name] {
+				return nil, false, errors.Join(runErr, fmt.Errorf("resource %s modified immutable input %s", plan.Resource.Reference().Key(), name))
+			}
 		}
-		info, err := os.Stat(input.Path)
-		if err != nil {
-			return nil, false, errors.Join(runErr, err)
-		}
-		if ref != inputs[name].Payload || info.Mode().Perm() != leasedModes[name] {
-			return nil, false, errors.Join(runErr, fmt.Errorf("resource %s modified immutable input %s", plan.Resource.Reference().Key(), name))
-		}
+		done(nil)
 	}
-	done(nil)
 	if runErr != nil {
 		return nil, false, runErr
 	}
@@ -445,12 +446,12 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			return nil, false, err
 		}
 		allowed := within(workspace, resolved)
-		var reused cas.Ref
+		var reused Prepared
 		for name, input := range request.Inputs {
 			if resolved == input.Path {
 				allowed = true
 				if input.Encoding == "" && input.Tree == artifact.Tree {
-					reused = inputs[name].Payload
+					reused = inputs[name]
 				}
 			}
 		}
@@ -464,7 +465,12 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		if info.IsDir() != artifact.Tree || !info.IsDir() && !info.Mode().IsRegular() {
 			return nil, false, fmt.Errorf("output %s has incorrect file-or-tree representation", name)
 		}
-		observed := Prepared{Payload: reused, Filename: artifact.Filename, Tree: artifact.Tree, Mode: uint32(info.Mode().Perm()), Format: artifact.Format, Version: artifact.Version}
+		observed := Prepared{Payload: reused.Payload, Filename: artifact.Filename, Tree: artifact.Tree, Mode: uint32(info.Mode().Perm()), Format: artifact.Format, Version: artifact.Version}
+		// A returned input keeps its recorded mode, which an input read in place
+		// from the cache does not carry on disk.
+		if reused.Payload.SHA256 != "" {
+			observed.Mode = reused.Mode
+		}
 		if observed.Format == "" {
 			observed.Format = "file"
 			if observed.Tree {
@@ -476,7 +482,13 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		}
 
 		if observed.Payload.SHA256 == "" {
-			observed.Payload, err = importPath(ctx, store, resolved, observed.Tree)
+			// A plugin's descendants can outlive its response, so only Stemma's
+			// own files join the cache without a copy.
+			if external || observed.Tree {
+				observed.Payload, err = importPath(ctx, store, resolved, observed.Tree)
+			} else {
+				observed.Payload, err = store.Adopt(ctx, resolved)
+			}
 			if err != nil {
 				return nil, false, err
 			}

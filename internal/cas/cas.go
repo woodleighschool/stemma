@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -311,6 +313,78 @@ func (s *Store) Materialize(ctx context.Context, ref Ref, path string) error {
 		return err
 	}
 	return fileio.RenameExclusive(out.Name(), path)
+}
+
+// Adopt stores a regular file its caller wrote and will not change again by
+// linking it into the store, so its bytes are not written twice. Windows keeps
+// the read-only attribute on the file rather than the link, so there the file
+// is copied instead.
+func (s *Store) Adopt(ctx context.Context, path string) (Ref, error) {
+	if runtime.GOOS == "windows" {
+		return s.ImportFile(ctx, path, "")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return Ref{}, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return Ref{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return Ref{}, errors.New("artifact must be a regular file")
+	}
+	ref, err := Digest(ctx, func(w io.Writer) error {
+		_, err := io.Copy(w, f)
+		return err
+	})
+	if err == nil {
+		err = f.Sync()
+	}
+	if err != nil {
+		return Ref{}, err
+	}
+	object, err := s.Path(ref)
+	if err != nil {
+		return Ref{}, err
+	}
+	if err := os.Chmod(path, 0o444); err != nil {
+		return Ref{}, err
+	}
+	// Link under a private name, then replace any object already stored, as
+	// Write does.
+	temporary := filepath.Join(s.Dir, "objects", ".import-"+rand.Text())
+	if err := os.Link(path, temporary); err != nil {
+		return Ref{}, err
+	}
+	defer func() { _ = os.Remove(temporary) }()
+	if err := os.Rename(temporary, object); err != nil {
+		return Ref{}, err
+	}
+	s.touch(ctx, "objects", ref.SHA256)
+	return ref, nil
+}
+
+// Lend verifies an object and links it at path, for Stemma's own code to read
+// in place. The link is the object, so nothing may write through it. Windows
+// keeps the read-only attribute on the file rather than the link, and removing
+// a link there would leave the object writable; it gets a copy instead.
+func (s *Store) Lend(ctx context.Context, ref Ref, path string) error {
+	if runtime.GOOS == "windows" {
+		return s.Materialize(ctx, ref, path)
+	}
+	if err := s.Verify(ctx, ref); err != nil {
+		return err
+	}
+	object, err := s.Path(ref)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.Link(object, path)
 }
 
 // Digest measures a canonical byte stream without storing another object.

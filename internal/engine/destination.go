@@ -229,7 +229,7 @@ func (e *execution) callDestination(ctx context.Context, operation string, reque
 		}
 		done := plugin.Stage(ctx, "Materializing destination content", plugin.Detail(name))
 		prepared := Prepared{Payload: cas.Ref{SHA256: artifact.SHA256, Size: artifact.Size}, Filename: artifact.Filename, Mode: artifact.Mode, Tree: artifact.Tree}
-		leased, err := materialize(ctx, e.session.store, prepared, filepath.Join(work, directory))
+		leased, err := e.session.ops.lease(ctx, e.session.store, operation, prepared, filepath.Join(work, directory))
 		done(err)
 		artifact.Path = leased.Path
 		return artifact, err

@@ -17,19 +17,16 @@ import (
 )
 
 func inspectPrepared(ctx context.Context, store *cas.Store, artifact Prepared) (plugin.Facts, error) {
-	if artifact.Path != "" {
-		return inspect.Read(ctx, artifact.Path)
-	}
 	work, err := os.MkdirTemp(filepath.Join(store.Dir, "work"), "inspection-*")
 	if err != nil {
 		return plugin.Facts{}, err
 	}
 	defer func() { cleanupError(ctx, os.RemoveAll(work)) }()
-	artifact, err = materialize(ctx, store, artifact, work)
+	leased, err := lend(ctx, store, artifact, work, false)
 	if err != nil {
 		return plugin.Facts{}, err
 	}
-	return inspect.Read(ctx, artifact.Path)
+	return inspect.Read(ctx, leased.Path, artifact.Payload.SHA256)
 }
 
 func (e *execution) inspectInput(ctx context.Context) error {
@@ -37,11 +34,11 @@ func (e *execution) inspectInput(ctx context.Context) error {
 		if e.opts.Read != "" {
 			return e.readStored(ctx, input, filepath.Join(work, "read"))
 		}
-		input, err := materialize(ctx, e.session.store, input, filepath.Join(work, "input"))
+		leased, err := lend(ctx, e.session.store, input, filepath.Join(work, "input"), true)
 		if err != nil {
 			return err
 		}
-		result, err := inspectInput(ctx, input.artifact(), e.opts.Input.Path, filepath.Join(work, "inspection"))
+		result, err := inspectInput(ctx, leased, e.opts.Input.Path, filepath.Join(work, "inspection"))
 		if err == nil {
 			e.report.Inspection = &result
 		}

@@ -207,6 +207,10 @@ type operations struct {
 	// Built-in versions change when their outputs or evidence change, including
 	// through shared dependencies. External plugins use their bundle identity.
 	identity map[string]string
+	// external names the operations that run in plugin processes. They get
+	// private copies of cached content and are checked for input mutation;
+	// Stemma's own operations read the cache in place.
+	external map[string]bool
 	plugins  map[string]plugins.Entry
 	// unavailable explains each operation a plugin offers at another interface
 	// version, by name and by resource kind.
@@ -222,7 +226,7 @@ func schemaJSON(value any) json.RawMessage {
 }
 
 func builtins(handlers map[string]reconcileHandler) (*operations, error) {
-	ops := &operations{registry: plugin.New("stemma", "operations/4"), identity: map[string]string{}, unavailable: map[string]error{}, unavailableKinds: map[plugin.ResourceKind]error{}, failed: map[string]error{}}
+	ops := &operations{registry: plugin.New("stemma", "operations/4"), identity: map[string]string{}, external: map[string]bool{}, unavailable: map[string]error{}, unavailableKinds: map[plugin.ResourceKind]error{}, failed: map[string]error{}}
 	for _, err := range []error{
 		plugin.Register(ops.registry, plugin.Operation{
 			Name: "munki", Kind: "reconcile", SideEffects: "remote", Methods: []string{"validate", "plan", "apply"},

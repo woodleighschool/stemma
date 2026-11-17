@@ -36,11 +36,37 @@ type Prepared struct {
 	Path          string                     `json:"-"`
 }
 
-func leaseInput(ctx context.Context, store *cas.Store, p Prepared, work string, tarInputs bool) (plugin.Artifact, error) {
-	if p.Tree && tarInputs {
+// lend gives Stemma's own code a stored artifact for one invocation: the
+// verified cache object itself, which keeps the artifact's name but not its
+// mode, or an extracted directory for a tree the reader cannot take as
+// canonical TAR.
+func lend(ctx context.Context, store *cas.Store, p Prepared, work string, tar bool) (plugin.Artifact, error) {
+	artifact := p.artifact()
+	switch {
+	case p.Tree && !tar:
+		leased, err := materialize(ctx, store, p, work)
+		return leased.artifact(), err
+	case p.Tree:
+		artifact.Path, artifact.Encoding = filepath.Join(work, "tree.tar"), "tar"
+	default:
+		artifact.Path = filepath.Join(work, "payload", p.Filename)
+	}
+	return artifact, store.Lend(ctx, p.Payload, artifact.Path)
+}
+
+// lease gives an operation a stored artifact for one invocation. A plugin
+// process gets a private copy; Stemma's own operations borrow the cache object.
+func (o *operations) lease(ctx context.Context, store *cas.Store, operation string, p Prepared, work string) (plugin.Artifact, error) {
+	op, err := o.operation(operation)
+	if err != nil {
+		return plugin.Artifact{}, err
+	}
+	if !o.external[operation] {
+		return lend(ctx, store, p, work, op.TarInputs)
+	}
+	if p.Tree && op.TarInputs {
 		artifact := p.artifact()
-		artifact.Path = filepath.Join(work, "tree.tar")
-		artifact.Encoding = "tar"
+		artifact.Path, artifact.Encoding = filepath.Join(work, "tree.tar"), "tar"
 		return artifact, store.Materialize(ctx, p.Payload, artifact.Path)
 	}
 	leased, err := materialize(ctx, store, p, work)

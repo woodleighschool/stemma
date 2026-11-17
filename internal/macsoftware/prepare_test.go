@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -148,7 +149,7 @@ func TestZIPApplicationIsPublishedInADiskImage(t *testing.T) {
 	if installer.Format != "dmg" || installer.Filename != "Example.dmg" || installer.Version != "123" || app.Path != "Example.app" || app.InstalledPath != "/Applications/Example.app" || len(outputs) != 1 {
 		t.Fatalf("outputs=%+v app=%+v", outputs, app)
 	}
-	reopened, err := inspect.Read(t.Context(), installer.Path)
+	reopened, err := inspect.Read(t.Context(), installer.Path, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +249,7 @@ func TestPackagePublishesTheSelectedApplication(t *testing.T) {
 		if installer.Format != "pkg" || installer.Filename != "Example.pkg" || installer.Version != "1.2" || app.InstalledPath != "/Applications/Example.app" || !signature.BuiltUnsigned(installer) {
 			t.Fatalf("%s: installer=%+v app=%+v", input.Filename, installer, app)
 		}
-		reopened, err := inspect.Read(t.Context(), installer.Path)
+		reopened, err := inspect.Read(t.Context(), installer.Path, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -600,8 +601,9 @@ func TestDMGFactsListEveryApplication(t *testing.T) {
 	if subjects[1].ID != "Suite/Example.app" || subjects[1].InstalledPath != "/Applications/Example.app" || subjects[2].ID != "Suite/Other.app" || subjects[2].InstalledPath != "" || subjects[2].App == nil {
 		t.Fatalf("applications = %+v", subjects[1:])
 	}
-	if entries, err := os.ReadDir(workspace); err != nil || len(entries) != 1 || entries[0].Name() != "Suite.dmg" {
-		t.Fatalf("inventory wrote to the workspace: %v, %v", entries, err)
+	// The retained image is published as it is, not copied into the workspace.
+	if entries, err := os.ReadDir(workspace); err != nil || len(entries) != 0 || outputs["installer"].Path != filename {
+		t.Fatalf("published %s, workspace %v, %v", outputs["installer"].Path, entries, err)
 	}
 }
 
@@ -658,7 +660,16 @@ func TestPackageIsPublishedAsALocalFile(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if len(files) != 1 || files[0] != installer.Path {
+			// A package input is published as it is; a member of a container
+			// is the workspace's only file.
+			want := []string{installer.Path}
+			if format == "pkg" {
+				want = nil
+				if installer.Path != input.Path {
+					t.Fatalf("package input published from %s", installer.Path)
+				}
+			}
+			if !slices.Equal(files, want) {
 				t.Fatalf("workspace must hold only the published package: %v", files)
 			}
 			// The source holds no application, so the selector names one in the package.

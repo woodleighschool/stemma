@@ -40,7 +40,7 @@ func TestSetupTreePreservesFilesAndSelectsMSIEvidence(t *testing.T) {
 	source := t.TempDir()
 	writeFixture(t, source, "bin/vendor.msi", msi, 0o640)
 	companion := writeFixture(t, t.TempDir(), "settings.ini", []byte("[Install]\nSilent=1\n"), 0o604)
-	inputs := map[string]plugin.Artifact{"source": {Path: source, Tree: true, EntryPoint: "bin/vendor.msi", Version: "stale", Evidence: map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"channel":"stable"}`)}}, "file:settings.ini": {Path: companion}}
+	inputs := map[string]plugin.Artifact{"source": {Path: source, Tree: true, EntryPoint: "bin/vendor.msi", Version: "stale", Evidence: map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"channel":"stable"}`)}}, "file:settings.ini": {Path: companion, Mode: 0o604}}
 	spec := Spec{Content: &Content{Files: map[string]plugin.Input{"settings.ini": {}}}}
 	outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false)
 	if err != nil {
@@ -113,7 +113,7 @@ func writeZip(t *testing.T, members map[string]string) string {
 func TestArchiveSourceIsTheSetupTree(t *testing.T) {
 	vendor := writeZip(t, map[string]string{"Installer.exe": "unexecuted installer", "Payload/app.msix": "bundle"})
 	companion := writeFixture(t, t.TempDir(), "settings.reg", []byte("Windows Registry Editor Version 5.00\n"), 0o644)
-	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: filepath.Base(vendor)}, "file:settings.reg": {Path: companion}}
+	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: filepath.Base(vendor)}, "file:settings.reg": {Path: companion, Mode: 0o644}}
 	spec := Spec{Content: &Content{Files: map[string]plugin.Input{"settings.reg": {}}}}
 	outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false)
 	if err != nil {
@@ -222,7 +222,7 @@ func TestArchiveCompanionOverlappingAMemberFails(t *testing.T) {
 	vendor := writeZip(t, map[string]string{"Installer.exe": "unexecuted installer", "Payload/app.msix": "bundle"})
 	inputs := map[string]plugin.Artifact{
 		"source":                {Path: vendor, Filename: filepath.Base(vendor)},
-		"file:payload/app.msix": {Path: writeFixture(t, t.TempDir(), "companion", []byte("settings"), 0o644)},
+		"file:payload/app.msix": {Path: writeFixture(t, t.TempDir(), "companion", []byte("settings"), 0o644), Mode: 0o644},
 	}
 	spec := Spec{Content: &Content{Files: map[string]plugin.Input{"payload/app.msix": {}}}}
 	workspace := t.TempDir()
@@ -243,7 +243,7 @@ func TestCompanionScriptReplacesSelectedMSIEvidence(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "executed")
 	script := []byte("#!/bin/sh\ntouch " + marker + "\nexit 91\n")
 	command := writeFixture(t, t.TempDir(), "install.cmd", script, 0o755)
-	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: "vendor.msi", Version: "1.2.3", Evidence: map[string]json.RawMessage{"windows.installer": json.RawMessage(`{"msi":{"productCode":"stale"}}`), "vendor.probe": json.RawMessage(`true`)}}, "file:install.cmd": {Path: command}}
+	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: "vendor.msi", Mode: 0o644, Version: "1.2.3", Evidence: map[string]json.RawMessage{"windows.installer": json.RawMessage(`{"msi":{"productCode":"stale"}}`), "vendor.probe": json.RawMessage(`true`)}}, "file:install.cmd": {Path: command, Mode: 0o755}}
 	spec := Spec{SetupFile: "install.cmd", Content: &Content{Files: map[string]plugin.Input{"install.cmd": {}}}}
 	outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false)
 	if err != nil {
@@ -281,17 +281,17 @@ func TestCompanionPathsFailBeforePublishing(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			source := t.TempDir()
 			file := writeFixture(t, source, "setup.exe", []byte("unexecuted installer"), 0o644)
-			input := plugin.Artifact{Path: file, Filename: "setup.exe"}
+			input := plugin.Artifact{Path: file, Filename: "setup.exe", Mode: 0o644}
 			if test.sourceTree {
 				writeFixture(t, source, "Data/vendor.ini", []byte("vendor"), 0o644)
 				input = plugin.Artifact{Path: source, Tree: true, EntryPoint: "setup.exe"}
 			}
 			companion := writeFixture(t, t.TempDir(), "companion", []byte("settings"), 0o644)
-			inputs := map[string]plugin.Artifact{"source": input, "file:" + test.target: {Path: companion}}
+			inputs := map[string]plugin.Artifact{"source": input, "file:" + test.target: {Path: companion, Mode: 0o644}}
 			content := &Content{Files: map[string]plugin.Input{test.target: {}}}
 			if test.second != "" {
 				content.Files[test.second] = plugin.Input{}
-				inputs["file:"+test.second] = plugin.Artifact{Path: companion}
+				inputs["file:"+test.second] = plugin.Artifact{Path: companion, Mode: 0o644}
 			}
 			workspace := t.TempDir()
 			if _, err := Prepare(t.Context(), Spec{SetupFile: test.setup, Content: content}, inputs, workspace, false); err == nil {

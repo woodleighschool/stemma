@@ -374,8 +374,10 @@ func (e *execution) icons(ctx context.Context) error {
 			selection.Path = e.opts.Input.Path
 		}
 		installer := prepared.outputs["installer"]
-		if installer.Payload.SHA256 != "" && installer.Path == "" {
-			installer, err = materialize(ctx, e.session.store, installer, filepath.Join(prepared.work, "artwork"))
+		if installer.Payload.SHA256 != "" {
+			var leased plugin.Artifact
+			leased, err = lend(ctx, e.session.store, installer, filepath.Join(prepared.work, "artwork"), false)
+			installer.Path = leased.Path
 		}
 		if err == nil {
 			item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], installer, selection, prepared.work)

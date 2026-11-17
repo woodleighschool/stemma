@@ -57,7 +57,7 @@ func TestPrepareEvaluatesAndCopiesTreeAndZIPWithoutChangingSources(t *testing.T)
 		t.Run(format, func(t *testing.T) {
 			input := plugin.Artifact{Path: root, Tree: true, Filename: "vendor", Version: "1.2.3"}
 			if format == "zip" {
-				input = plugin.Artifact{Path: archive, Filename: "vendor.zip", Format: "zip", Version: "1.2.3"}
+				input = plugin.Artifact{Path: archive, Filename: "vendor.zip", Format: "zip", Version: "1.2.3", Mode: 0o644}
 			}
 			config := map[string]any{
 

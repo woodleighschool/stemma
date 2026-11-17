@@ -145,14 +145,17 @@ func prepareImage(ctx context.Context, spec Spec, request Request, source *conte
 	if err != nil {
 		return nil, err
 	}
-	local := node.Local
-	if local == "" {
+	// The nested image belongs to the workspace, which outlives the source.
+	local := filepath.Join(request.Workspace, "image")
+	if node.Local == "" {
 		done := plugin.Stage(ctx, "Extracting disk image", plugin.Detail(path.Base(name)))
-		local, err = node.Materialize(ctx, filepath.Join(request.Workspace, "image"))
+		local, err = node.Materialize(ctx, local)
 		done(err)
-		if err != nil {
-			return nil, err
-		}
+	} else {
+		local, err = link(node.Local, local)
+	}
+	if err != nil {
+		return nil, err
 	}
 	// A path that named the image is spent; every other selector applies inside it.
 	if matchPath(spec.PackagePath, name) {
@@ -219,7 +222,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 	var installer plugin.Artifact
 	switch {
 	case retainImage:
-		if installer, err = retain(ctx, input.Path, input.Filename, request.Workspace); err != nil {
+		if installer, err = retain(ctx, input); err != nil {
 			return plugin.Artifact{}, nil, nil, err
 		}
 		installer.Facts = plugin.Facts{Version: plugin.FactsVersion, Subjects: slices.Clone(inventory.Subjects)}
@@ -239,7 +242,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 		// The package is read back as a vendor package is, so destinations
 		// derive from what it holds.
 		done := plugin.Stage(ctx, "Inspecting package", plugin.Detail(installer.Filename))
-		installer.Facts, err = inspect.Read(ctx, installer.Path)
+		installer.Facts, err = inspect.Read(ctx, installer.Path, installer.SHA256)
 		done(err)
 		if err != nil {
 			return plugin.Artifact{}, nil, nil, err
@@ -262,32 +265,25 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 	return installer, &app, verified, nil
 }
 
-// publishPackage retains a PKG source, or extracts the selected nested package.
+// publishPackage retains a PKG source, or the selected nested package.
 func publishPackage(ctx context.Context, spec Spec, request Request, source *contents.Source, inventory plugin.Facts, pkg string) (plugin.Artifact, *plugin.Subject, []signature.Observation, error) {
-	local, facts := request.Input.Path, inventory
-	extracted := false
-	if pkg != "." {
-		node, err := source.At(ctx, pkg)
-		if err != nil {
-			return plugin.Artifact{}, nil, nil, err
-		}
-		local = node.Local
-		if local == "" {
-			done := plugin.Stage(ctx, "Extracting package from disk image", plugin.Detail(path.Base(pkg)))
-			local, err = node.Materialize(ctx, filepath.Join(request.Workspace, "expanded"))
+	facts := inventory
+	var installer plugin.Artifact
+	var err error
+	if pkg == "." {
+		installer, err = retain(ctx, request.Input)
+	} else {
+		installer, err = extractPackage(ctx, source, pkg, request.Workspace)
+		if err == nil {
+			done := plugin.Stage(ctx, "Inspecting package", plugin.Detail(path.Base(pkg)))
+			facts, err = inspect.Read(ctx, installer.Path, installer.SHA256)
 			done(err)
-			if err != nil {
-				return plugin.Artifact{}, nil, nil, err
-			}
-			extracted = true
-		}
-		done := plugin.Stage(ctx, "Inspecting package", plugin.Detail(path.Base(pkg)))
-		facts, err = inspect.Read(ctx, local)
-		done(err)
-		if err != nil {
-			return plugin.Artifact{}, nil, nil, err
 		}
 	}
+	if err != nil {
+		return plugin.Artifact{}, nil, nil, err
+	}
+	local := installer.Path
 	app, err := selectApp(facts, spec.Application)
 	if err != nil {
 		return plugin.Artifact{}, nil, nil, err
@@ -308,18 +304,30 @@ func publishPackage(ctx context.Context, spec Spec, request Request, source *con
 			return plugin.Artifact{}, nil, nil, err
 		}
 	}
-	var installer plugin.Artifact
-	if extracted {
-		// Extraction belongs to the workspace; archive locals belong to the source.
-		installer, err = describeArtifact(ctx, local, "pkg")
-	} else {
-		installer, err = retain(ctx, local, filepath.Base(local), request.Workspace)
-	}
-	if err != nil {
-		return plugin.Artifact{}, nil, nil, err
-	}
 	installer.Format, installer.Facts = "pkg", facts
 	return installer, app, verified, nil
+}
+
+// extractPackage places a package the source holds in the workspace, which
+// outlives the source: a disk image's member is extracted, and an archive or
+// tree member is linked.
+func extractPackage(ctx context.Context, source *contents.Source, pkg, workspace string) (plugin.Artifact, error) {
+	node, err := source.At(ctx, pkg)
+	if err != nil {
+		return plugin.Artifact{}, err
+	}
+	local := filepath.Join(workspace, "expanded")
+	if node.Local == "" {
+		done := plugin.Stage(ctx, "Extracting package from disk image", plugin.Detail(path.Base(pkg)))
+		local, err = node.Materialize(ctx, local)
+		done(err)
+	} else {
+		local, err = link(node.Local, local)
+	}
+	if err != nil {
+		return plugin.Artifact{}, err
+	}
+	return describeArtifact(ctx, local, "pkg")
 }
 
 // writeImage places the selected application alone at the root of a new disk
@@ -367,29 +375,22 @@ func writePackage(ctx context.Context, node contents.Node, app plugin.Subject, v
 	return describeArtifact(ctx, output, "pkg")
 }
 
-func retain(ctx context.Context, source, filename, workspace string) (plugin.Artifact, error) {
-	if filename == "" || filepath.Base(filename) != filename {
-		return plugin.Artifact{}, errors.New("installer requires a base filename")
+// retain publishes the input as it is. A disk image extracted from another
+// container has no digest yet; it already belongs to the workspace.
+func retain(ctx context.Context, input plugin.Artifact) (plugin.Artifact, error) {
+	if input.SHA256 == "" {
+		return describeArtifact(ctx, input.Path, input.Format)
 	}
-	destination := filepath.Join(workspace, filename)
-	if filepath.Clean(source) == filepath.Clean(destination) {
-		return describeArtifact(ctx, destination, strings.TrimPrefix(filepath.Ext(filename), "."))
+	return plugin.Artifact{Path: input.Path, Filename: input.Filename, Size: input.Size, SHA256: input.SHA256, Format: input.Format}, nil
+}
+
+// link places a file an archive or tree holds in dir under its own name.
+func link(name, dir string) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
 	}
-	in, err := os.Open(source)
-	if err != nil {
-		return plugin.Artifact{}, err
-	}
-	defer func() { _ = in.Close() }()
-	out, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
-	if err != nil {
-		return plugin.Artifact{}, err
-	}
-	_, copyErr := io.Copy(out, fileio.Reader{Context: ctx, Reader: in})
-	if err := errors.Join(copyErr, out.Close()); err != nil {
-		_ = os.Remove(destination)
-		return plugin.Artifact{}, err
-	}
-	return describeArtifact(ctx, destination, strings.TrimPrefix(filepath.Ext(filename), "."))
+	target := filepath.Join(dir, filepath.Base(name))
+	return target, os.Link(name, target)
 }
 
 func describeArtifact(ctx context.Context, name, format string) (plugin.Artifact, error) {

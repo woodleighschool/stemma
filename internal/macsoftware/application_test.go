@@ -142,7 +142,7 @@ func TestIconExtractsOnlyDeclaredArtwork(t *testing.T) {
 func artworkInput(t *testing.T, root string) plugin.Artifact {
 	t.Helper()
 	app := filepath.Join(root, "Example.app")
-	facts, err := inspect.Read(t.Context(), app)
+	facts, err := inspect.Read(t.Context(), app, "")
 	if err != nil {
 		t.Fatal(err)
 	}

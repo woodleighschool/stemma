@@ -18,6 +18,7 @@ import (
 func registerKinds(ops *operations) error {
 	builder := resourceOperation("build.mac.pkg", "BuildMacPkg")
 	builder.ConfigSchema = schemaJSON(plugin.SchemaFor[macpkg.Spec]())
+	builder.TarInputs = true
 	mac := resourceOperation("software.mac", "MacSoftware")
 	mac.TarInputs = true
 	for _, err := range []error{
@@ -31,7 +32,7 @@ func registerKinds(ops *operations) error {
 	}
 	ops.identity["build.mac.pkg"] = macpkg.Version
 	ops.identity["software.mac"] = macsoftware.Version
-	ops.identity["software.windows"] = "windowssoftware/3"
+	ops.identity["software.windows"] = "windowssoftware/4"
 	return nil
 }
 

@@ -353,6 +353,7 @@ func (o *operations) register(loaded loadedPlugin) error {
 			return err
 		}
 		o.identity[operation.Name] = identity
+		o.external[operation.Name] = true
 	}
 	return nil
 }

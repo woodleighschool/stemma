@@ -39,6 +39,9 @@ type Node struct {
 	FS    fs.ReadLinkFS
 	Path  string
 	Local string
+	// perm is the leased input's own permissions, which a cache object read in
+	// place does not carry on disk; zero for any other node.
+	perm  fs.FileMode
 	image *diskimage.Image
 }
 
@@ -121,7 +124,7 @@ func (s *Source) whole() Node {
 	if s.packed != nil {
 		return Node{FS: s.packed, Path: s.input.Filename}
 	}
-	return Node{FS: treefs.Local(s.original), Path: filepath.Base(s.input.Path), Local: s.input.Path}
+	return Node{FS: treefs.Local(s.original), Path: filepath.Base(s.input.Path), Local: s.input.Path, perm: fs.FileMode(s.input.Mode).Perm()}
 }
 
 // At selects an exact path in the logical contents. A resolver-selected root
@@ -240,8 +243,21 @@ func (n Node) Stat() (fs.FileInfo, error) {
 			return nil, errors.New("content path traverses a symlink or nondirectory")
 		}
 	}
-	return n.FS.Lstat(n.Path)
+	info, err := n.FS.Lstat(n.Path)
+	if err != nil || n.perm == 0 {
+		return info, err
+	}
+	return leasedInfo{info, n.perm}, nil
 }
+
+// leasedInfo reports a leased input with its artifact's permissions.
+type leasedInfo struct {
+	fs.FileInfo
+
+	perm fs.FileMode
+}
+
+func (i leasedInfo) Mode() fs.FileMode { return i.FileInfo.Mode().Type() | i.perm }
 
 // Materialize copies a selection only when a native file is required.
 func (n Node) Materialize(ctx context.Context, destination string) (name string, err error) {

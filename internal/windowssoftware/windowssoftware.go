@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"path"
@@ -119,19 +120,26 @@ func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, 
 	}
 	artifact := source
 	cleanup := func() {}
-	if source.Tree || archived || spec.Content != nil && len(spec.Content.Files) > 0 {
+	switch {
+	case archived || spec.Content != nil && len(spec.Content.Files) > 0:
 		stage, err := os.MkdirTemp(workspace, ".windows-")
 		if err != nil {
 			return nil, err
 		}
 		cleanup = func() { _ = os.RemoveAll(stage) }
 		root := filepath.Join(stage, "setup")
-		if err := assemble(ctx, root, stage, source, archived, spec.Content, inputs); err != nil {
+		if err := assemble(ctx, root, source, archived, spec.Content, inputs); err != nil {
 			cleanup()
 			return nil, err
 		}
 		artifact.Path, artifact.Filename, artifact.Tree, artifact.Format = root, "setup", true, "directory"
 		artifact.Size, artifact.SHA256, artifact.Mode = 0, "", 0
+	case source.Tree:
+		// A setup tree with nothing to add is published as it is.
+		if err := validateLayout(ctx, source, nil, inputs); err != nil {
+			return nil, err
+		}
+		artifact.Filename, artifact.Format = "setup", "directory"
 	}
 	setup, err := selectSetup(ctx, spec.SetupFile, source, archived, artifact)
 	if err == nil && !relative(setup) {
@@ -205,7 +213,7 @@ func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact, 
 
 // assemble writes the setup tree at root. An archive source is extracted in
 // place, so its members are validated together with the content files.
-func assemble(ctx context.Context, root, workspace string, source plugin.Artifact, archived bool, content *Content, inputs map[string]plugin.Artifact) error {
+func assemble(ctx context.Context, root string, source plugin.Artifact, archived bool, content *Content, inputs map[string]plugin.Artifact) error {
 	tree := source
 	if archived {
 		done := plugin.Stage(ctx, "Extracting archive", plugin.Detail(source.Filename))
@@ -222,11 +230,11 @@ func assemble(ctx context.Context, root, workspace string, source plugin.Artifac
 	switch {
 	case archived:
 	case source.Tree:
-		if err := copyTree(ctx, source.Path, root, workspace); err != nil {
+		if err := linkTree(ctx, source.Path, root); err != nil {
 			return err
 		}
 	default:
-		if err := copyFile(ctx, source.Path, filepath.Join(root, source.Filename)); err != nil {
+		if err := copyFile(ctx, source, filepath.Join(root, source.Filename)); err != nil {
 			return err
 		}
 	}
@@ -240,10 +248,10 @@ func assemble(ctx context.Context, root, workspace string, source plugin.Artifac
 			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
-			if err := copyTree(ctx, input.Path, target, workspace); err != nil {
+			if err := linkTree(ctx, input.Path, target); err != nil {
 				return err
 			}
-		} else if err := copyFile(ctx, input.Path, target); err != nil {
+		} else if err := copyFile(ctx, input, target); err != nil {
 			return err
 		}
 	}
@@ -264,7 +272,11 @@ func describe(ctx context.Context, artifact plugin.Artifact, setup, versionFile 
 	if !info.Mode().IsRegular() {
 		return artifact, errors.New("setup entry point must be a regular file")
 	}
-	facts, err := inspection.Read(ctx, installer)
+	digest := ""
+	if !artifact.Tree {
+		digest = artifact.SHA256
+	}
+	facts, err := inspection.Read(ctx, installer, digest)
 	if err != nil {
 		return artifact, err
 	}
@@ -304,29 +316,54 @@ func describe(ctx context.Context, artifact plugin.Artifact, setup, versionFile 
 	return artifact, nil
 }
 
-func copyTree(ctx context.Context, source, target, workspace string) error {
-	f, err := os.CreateTemp(workspace, "content-*.tar")
-	if err != nil {
-		return err
+// linkTree places a validated setup tree at target, which must not exist. The
+// tree is a lease no one changes, so its files join by hard link.
+func linkTree(ctx context.Context, source, target string) error {
+	type directory struct {
+		path string
+		perm fs.FileMode
 	}
-	defer func() { _ = os.Remove(f.Name()) }()
-	err = archive.Pack(ctx, source, f)
-	err = errors.Join(err, f.Close())
-	if err != nil {
-		return err
+	var directories []directory
+	err := filepath.WalkDir(source, func(name string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(source, name)
+		if err != nil {
+			return err
+		}
+		destination := filepath.Join(target, relative)
+		if !entry.IsDir() {
+			return os.Link(name, destination) //nolint:gosec // Validation admitted only directories and regular files, and nothing else writes the lease.
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		directories = append(directories, directory{destination, info.Mode().Perm()})
+		return os.Mkdir(destination, 0o700)
+	})
+	// Permissions apply once a directory's entries exist, deepest first.
+	for i := len(directories) - 1; err == nil && i >= 0; i-- {
+		err = os.Chmod(directories[i].path, directories[i].perm)
 	}
-	return archive.Extract(ctx, f.Name(), target)
+	return err
 }
 
-func copyFile(ctx context.Context, source, target string) error {
-	info, err := os.Lstat(source)
+// copyFile stages a file input with its artifact's mode: one read in place
+// from the cache is read-only on disk.
+func copyFile(ctx context.Context, input plugin.Artifact, target string) error {
+	info, err := os.Lstat(input.Path)
 	if err != nil {
 		return err
 	}
 	if !info.Mode().IsRegular() {
 		return errors.New("content input must be a regular file")
 	}
-	in, err := os.Open(source)
+	in, err := os.Open(input.Path)
 	if err != nil {
 		return err
 	}
@@ -343,7 +380,7 @@ func copyFile(ctx context.Context, source, target string) error {
 		err = errors.New("content input changed during copy")
 	}
 	if err == nil {
-		err = out.Chmod(info.Mode().Perm())
+		err = out.Chmod(os.FileMode(input.Mode).Perm())
 	}
 	return errors.Join(err, out.Close())
 }
