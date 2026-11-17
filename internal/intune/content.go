@@ -23,7 +23,7 @@ import (
 	abs "github.com/microsoft/kiota-abstractions-go"
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/artifactname"
-	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/intunecontent"
 	"github.com/woodleighschool/stemma/internal/intunewin"
 	"github.com/woodleighschool/stemma/plugin"
@@ -116,7 +116,8 @@ func prepareArtifact(ctx context.Context, software string, artifact plugin.Artif
 	if identity.envelope {
 		return &preparedArtifact{path: artifact.Path, name: name, metadata: contentInfo(identity.metadata), setup: identity.setup}, nil
 	}
-	workspace, err := os.MkdirTemp("", "stemma-intune-")
+	// The workspace sits beside the leased content, on the cache's filesystem.
+	workspace, err := os.MkdirTemp(filepath.Dir(artifact.Path), ".intune-")
 	if err != nil {
 		return nil, err
 	}
@@ -126,35 +127,27 @@ func prepareArtifact(ctx context.Context, software string, artifact plugin.Artif
 			_ = os.RemoveAll(workspace)
 		}
 	}()
-	source := filepath.Join(workspace, "source")
-	if artifact.Tree {
-		if err := snapshotTree(ctx, artifact, workspace, source); err != nil {
-			return nil, err
-		}
-	} else if err := snapshotFile(ctx, artifact, source); err != nil {
-		return nil, err
-	}
 	path := filepath.Join(workspace, name)
 	var metadata intunecontent.Info
 	if identity.raw {
-		input, err := os.Open(filepath.Join(source, artifact.Filename))
-		if err != nil {
+		if metadata, err = encryptFile(ctx, artifact, path); err != nil {
 			return nil, err
-		}
-		defer func() { _ = input.Close() }()
-		encrypted, err := os.Create(path)
-		if err != nil {
-			return nil, err
-		}
-		metadata, err = intunecontent.Encrypt(ctx, input, encrypted)
-		closeErr := encrypted.Close()
-		if err != nil {
-			return nil, err
-		}
-		if closeErr != nil {
-			return nil, closeErr
 		}
 	} else {
+		if err := verifyContent(ctx, artifact); err != nil {
+			return nil, err
+		}
+		// An envelope packages a directory, which a single setup file joins by link.
+		source := artifact.Path
+		if !artifact.Tree {
+			source = filepath.Join(workspace, "source")
+			if err := os.Mkdir(source, 0o700); err != nil {
+				return nil, err
+			}
+			if err := os.Link(artifact.Path, filepath.Join(source, artifact.Filename)); err != nil {
+				return nil, err
+			}
+		}
 		m, err := intunewin.Write(ctx, source, strings.ReplaceAll(identity.setup, `\`, "/"), path)
 		if err != nil {
 			return nil, err
@@ -165,55 +158,48 @@ func prepareArtifact(ctx context.Context, software string, artifact plugin.Artif
 	return &preparedArtifact{path: path, name: name, metadata: metadata, setup: identity.setup, raw: identity.raw, cleanup: func() { _ = os.RemoveAll(workspace) }}, nil
 }
 
-func snapshotTree(ctx context.Context, artifact plugin.Artifact, workspace, source string) error {
-	snapshot, err := os.Create(filepath.Join(workspace, "source.tar"))
-	if err != nil {
-		return err
-	}
-	hash := sha256.New()
-	err = archive.Pack(ctx, artifact.Path, io.MultiWriter(snapshot, hash))
-	info, statErr := snapshot.Stat()
-	err = errors.Join(err, statErr, snapshot.Close())
-	if err != nil {
-		return err
-	}
-	if info.Size() != artifact.Size || hex.EncodeToString(hash.Sum(nil)) != artifact.SHA256 {
-		return errors.New("intune setup tree changed from its immutable digest")
-	}
-	return archive.Extract(ctx, snapshot.Name(), source)
-}
-
-func snapshotFile(ctx context.Context, artifact plugin.Artifact, source string) error {
-	if err := os.Mkdir(source, 0o700); err != nil {
-		return err
-	}
+// encryptFile encrypts a macOS installer for upload. Encryption measures the
+// plaintext, so it verifies the content as it reads it.
+func encryptFile(ctx context.Context, artifact plugin.Artifact, path string) (intunecontent.Info, error) {
 	input, err := os.Open(artifact.Path)
 	if err != nil {
-		return err
+		return intunecontent.Info{}, err
 	}
 	defer func() { _ = input.Close() }()
-	stat, err := input.Stat()
+	encrypted, err := os.Create(path)
+	if err != nil {
+		return intunecontent.Info{}, err
+	}
+	metadata, err := intunecontent.Encrypt(ctx, input, encrypted)
+	if err = errors.Join(err, encrypted.Close()); err != nil {
+		return intunecontent.Info{}, err
+	}
+	if metadata.PlaintextSize != artifact.Size || metadata.PayloadSHA256 != artifact.SHA256 {
+		return intunecontent.Info{}, errors.New("intune source changed from its immutable digest")
+	}
+	return metadata, nil
+}
+
+// verifyContent checks Win32 setup content against its digest before it is
+// packaged.
+func verifyContent(ctx context.Context, artifact plugin.Artifact) error {
+	ref, err := cas.Digest(ctx, func(w io.Writer) error {
+		if artifact.Tree {
+			return archive.Pack(ctx, artifact.Path, w)
+		}
+		input, err := os.Open(artifact.Path)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = input.Close() }()
+		_, err = io.Copy(w, input)
+		return err
+	})
 	if err != nil {
 		return err
 	}
-	if !stat.Mode().IsRegular() || stat.Size() > 2<<30 {
-		return errors.New("intune input must be a regular file no larger than 2 GiB")
-	}
-	output, err := os.Create(filepath.Join(source, artifact.Filename))
-	if err != nil {
-		return err
-	}
-	hash := sha256.New()
-	n, copyErr := io.Copy(io.MultiWriter(output, hash), io.LimitReader(fileio.Reader{Context: ctx, Reader: input}, 2<<30+1))
-	closeErr := output.Close()
-	if copyErr != nil {
-		return copyErr
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	if n > 2<<30 || n != artifact.Size || hex.EncodeToString(hash.Sum(nil)) != artifact.SHA256 {
-		return errors.New("intune source changed from its immutable digest")
+	if ref.Size != artifact.Size || ref.SHA256 != artifact.SHA256 {
+		return errors.New("intune setup content changed from its immutable digest")
 	}
 	return nil
 }
