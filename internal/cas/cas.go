@@ -3,6 +3,7 @@ package cas
 
 import (
 	"bufio"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -125,15 +126,6 @@ func (s *Store) Lookup(digest string) (Ref, error) {
 	}
 	ref.Size = info.Size()
 	return ref, nil
-}
-
-// VerifyDigest verifies content whose size has not been measured by this run.
-func (s *Store) VerifyDigest(ctx context.Context, digest string) error {
-	ref, err := s.Lookup(digest)
-	if err != nil {
-		return err
-	}
-	return s.Verify(ctx, ref)
 }
 
 // HasDigest reports availability, not integrity. Consumers must verify bytes.
@@ -262,6 +254,23 @@ func (s *Store) Write(ctx context.Context, expected string, write func(io.Writer
 	}
 	s.touch(ctx, "objects", ref.SHA256)
 	return ref, nil
+}
+
+// Capture stores content that write can produce again, such as a local file
+// or tree read on every run. It measures the content and writes it only when
+// the store lacks it; consumers verify stored bytes, as for any object.
+func (s *Store) Capture(ctx context.Context, expected string, write func(io.Writer) error) (Ref, error) {
+	ref, err := Digest(ctx, write)
+	if err != nil {
+		return Ref{}, err
+	}
+	if (expected == "" || expected == ref.SHA256) && s.Has(ref) {
+		s.touch(ctx, "objects", ref.SHA256)
+		return ref, nil
+	}
+	// Write checks the expected digest, and the measured one when none was
+	// expected, so content that changes between the passes is not stored.
+	return s.Write(ctx, cmp.Or(expected, ref.SHA256), write)
 }
 
 // ImportFile imports a regular file into the cache without retaining caller ownership.

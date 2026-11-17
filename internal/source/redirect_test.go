@@ -65,7 +65,11 @@ func TestHomebrewCaskHTTPMirrorReplay(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if err := cold.Store.VerifyDigest(t.Context(), digest); err != nil {
+				ref, err := cold.Store.Lookup(digest)
+				if err == nil {
+					err = cold.Store.Verify(t.Context(), ref)
+				}
+				if err != nil {
 					t.Fatal(err)
 				}
 			}

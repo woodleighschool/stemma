@@ -681,7 +681,7 @@ func TestPreparationFetchesContentTheSourceIndexNamed(t *testing.T) {
 	if updated, err := prepare(t, m, inputs, Options{Refresh: true}); err != nil || updated.Changed || fetches.Load() != 1 {
 		t.Fatalf("update fetched bytes it does not read: %v fetches=%d", err, fetches.Load())
 	}
-	if _, err := prepare(t, m, inputs, Options{IgnoreInputs: true}); err != nil || fetches.Load() != 2 || m.Store.VerifyDigest(t.Context(), entry(first).Content.SHA256) != nil {
+	if _, err := prepare(t, m, inputs, Options{IgnoreInputs: true}); err != nil || fetches.Load() != 2 || !m.Store.HasDigest(entry(first).Content.SHA256) {
 		t.Fatalf("preparation was left without the bytes the index named: %v fetches=%d", err, fetches.Load())
 	}
 }

@@ -332,7 +332,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 			if !matches && frozen {
 				return source.Entry{}, false, updateRequired(resource, staleReason(entry, input, version, true))
 			}
-			cached := matches && m.Store.VerifyDigest(ctx, entry.Content.SHA256) == nil
+			cached := matches && m.Store.HasDigest(entry.Content.SHA256)
 			current, _, err := resolve(ctx, input, entry)
 			if err != nil {
 				return current, false, err

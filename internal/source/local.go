@@ -131,7 +131,7 @@ func (m *Manager) readLocal(ctx context.Context, s fileRequest) (content Content
 			}
 		}
 		var object cas.Ref
-		object, err = m.importTree(ctx, root, names, s.SHA256)
+		object, err = m.captureTree(ctx, root, names, s.SHA256)
 		content.SHA256 = object.SHA256
 		return content, err
 	}
@@ -162,7 +162,7 @@ func (m *Manager) readLocal(ctx context.Context, s fileRequest) (content Content
 		}
 		defer func() { _ = tree.Close() }()
 		var object cas.Ref
-		object, err = m.importTree(ctx, tree, nil, s.SHA256)
+		object, err = m.captureTree(ctx, tree, nil, s.SHA256)
 		content.SHA256 = object.SHA256
 		return content, err
 	case info.Mode().IsRegular():
@@ -170,7 +170,13 @@ func (m *Manager) readLocal(ctx context.Context, s fileRequest) (content Content
 			return content, err
 		}
 		var object cas.Ref
-		object, err = m.Store.Import(ctx, f, s.SHA256)
+		object, err = m.Store.Capture(ctx, s.SHA256, func(w io.Writer) error {
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
+				return err
+			}
+			_, err := io.Copy(w, f)
+			return err
+		})
 		content.SHA256 = object.SHA256
 		return content, err
 	}
@@ -179,4 +185,10 @@ func (m *Manager) readLocal(ctx context.Context, s fileRequest) (content Content
 
 func (m *Manager) importTree(ctx context.Context, root *os.Root, names []string, expected string) (cas.Ref, error) {
 	return m.Store.Write(ctx, expected, func(w io.Writer) error { return archive.PackSelected(ctx, root, names, w) })
+}
+
+// captureTree stores a local tree, which every run reads again, without
+// rewriting content the cache already holds.
+func (m *Manager) captureTree(ctx context.Context, root *os.Root, names []string, expected string) (cas.Ref, error) {
+	return m.Store.Capture(ctx, expected, func(w io.Writer) error { return archive.PackSelected(ctx, root, names, w) })
 }
