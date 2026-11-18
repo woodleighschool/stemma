@@ -345,13 +345,13 @@ func (m machoSlice) signature() (*codeSignature, error) {
 	// LC_CODE_SIGNATURE bounds an allocation; the SuperBlob length bounds the
 	// signature. Unused allocation bytes still contribute to artifact identity.
 	data = data[:blobSize]
-	sig := &codeSignature{codeSize: offset, blobs: make(map[uint32][]byte)}
+	blobs := make(map[uint32][]byte, blobCount)
 	type span struct{ start, end uint32 }
 	var spans []span
 	for i := range blobCount {
 		index := data[12+8*i : 20+8*i]
 		slot, start := binary.BigEndian.Uint32(index[:4]), binary.BigEndian.Uint32(index[4:8])
-		if _, exists := sig.blobs[slot]; exists {
+		if _, exists := blobs[slot]; exists {
 			return nil, fmt.Errorf("duplicate signature slot %d", slot)
 		}
 		if start < 12+8*blobCount || uint64(start)+8 > uint64(len(data)) {
@@ -362,13 +362,8 @@ func (m machoSlice) signature() (*codeSignature, error) {
 			return nil, fmt.Errorf("invalid signature blob length")
 		}
 		blob := data[start : start+size]
-		sig.blobs[slot] = blob
+		blobs[slot] = blob
 		spans = append(spans, span{start, start + size})
-		if slot == 0 || slot >= 0x1000 && slot <= 0x1005 {
-			if binary.BigEndian.Uint32(blob[:4]) != 0xfade0c02 {
-				return nil, fmt.Errorf("invalid CodeDirectory magic")
-			}
-		}
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
 	for i := 1; i < len(spans); i++ {
@@ -376,16 +371,25 @@ func (m machoSlice) signature() (*codeSignature, error) {
 			return nil, fmt.Errorf("overlapping signature blobs")
 		}
 	}
-	if sig.blobs[0] == nil {
+	return signatureFromBlobs(blobs, offset)
+}
+
+func signatureFromBlobs(blobs map[uint32][]byte, size int64) (*codeSignature, error) {
+	if blobs[0] == nil {
 		return nil, fmt.Errorf("missing primary CodeDirectory")
 	}
-	sig.directories = append(sig.directories, sig.blobs[0])
+	directories := [][]byte{blobs[0]}
 	for slot := uint32(0x1000); slot <= 0x1005; slot++ {
-		if sig.blobs[slot] != nil {
-			sig.directories = append(sig.directories, sig.blobs[slot])
+		if blobs[slot] != nil {
+			directories = append(directories, blobs[slot])
 		}
 	}
-	return sig, nil
+	for _, cd := range directories {
+		if binary.BigEndian.Uint32(cd) != 0xfade0c02 {
+			return nil, fmt.Errorf("invalid CodeDirectory magic")
+		}
+	}
+	return &codeSignature{codeSize: size, blobs: blobs, directories: directories}, nil
 }
 
 func validateCodeDirectory(cd []byte) error {

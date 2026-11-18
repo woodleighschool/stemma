@@ -54,8 +54,7 @@ type resourceSeal struct {
 	seen        bool
 }
 
-// verifyContents verifies a Contents-style bundle and returns its main code
-// identity. Without CFBundleExecutable the executable is named after the bundle.
+// verifyContents returns the verified identity of a Contents-style bundle.
 func (v *bundleVerifier) verifyContents(bundle fs.ReadLinkFS, location, bundleName string) (identity codeIdentity, err error) {
 	entries, err := fs.ReadDir(bundle, ".")
 	if err != nil {
@@ -73,19 +72,7 @@ func (v *bundleVerifier) verifyContents(bundle fs.ReadLinkFS, location, bundleNa
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	executable, err := bundleExecutable(info, bundleName)
-	if err != nil {
-		return codeIdentity{}, err
-	}
-	return v.verifyCode(contents, path.Join(location, "Contents"), "MacOS/"+executable, "Info.plist", info)
-}
-
-func bundleExecutable(info []byte, bundleName string) (string, error) {
-	var facts AppFacts
-	if _, err := plist.Unmarshal(info, &facts); err != nil {
-		return "", fmt.Errorf("bundle Info.plist: %w", err)
-	}
-	return ResolveExecutable(facts.Executable, bundleName)
+	return v.verifyCode(contents, path.Join(location, "Contents"), bundleName, "MacOS", "Info.plist", info)
 }
 
 // ResolveExecutable returns the declared executable name, or the bundle filename
@@ -188,72 +175,62 @@ func (v *bundleVerifier) verifyShallow(bundle fs.ReadLinkFS, location, bundleNam
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	executable, err := bundleExecutable(info, bundleName)
-	if err != nil {
-		return codeIdentity{}, err
-	}
-	return v.verifyCode(bundle, location, executable, infoPath, info)
+	return v.verifyCode(bundle, location, bundleName, "", infoPath, info)
 }
 
-// verifyCode authenticates the main executable within a resource root, whose
-// CodeDirectory seals Info.plist and CodeResources, then the envelope itself.
-func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, location, executable, infoPath string, info []byte) (identity codeIdentity, err error) {
-	if err := realDirectory(root, "_CodeSignature"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+// verifyCode authenticates the bundle's main code and its resource envelope.
+func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, location, bundleName, executableDir, infoPath string, info []byte) (identity codeIdentity, err error) {
+	var declaration struct {
+		AppFacts
+
+		MainHTML         any `plist:"MainHTML"`
+		InstallerVersion any `plist:"IFMajorVersion"`
+	}
+	if _, err := plist.Unmarshal(info, &declaration); err != nil {
+		return codeIdentity{}, fmt.Errorf("bundle Info.plist: %w", err)
+	}
+	if declaration.MainHTML != nil {
+		return codeIdentity{}, fmt.Errorf("%w: widget bundle", ErrUnsupported)
+	}
+	name, err := ResolveExecutable(declaration.Executable, bundleName)
+	if err != nil {
 		return codeIdentity{}, err
 	}
-	signatureEntries, err := fs.ReadDir(root, "_CodeSignature")
-	if errors.Is(err, fs.ErrNotExist) {
-		// An absent envelope is unsigned only when the executable also has no
-		// signature. A deleted envelope must not disguise signed or ad-hoc code.
-		f, size, openErr := openRegular(root, executable)
-		if openErr != nil {
-			return codeIdentity{}, openErr
+	mainPath := path.Join(executableDir, name)
+	f, size, err := openRegular(root, mainPath)
+	if errors.Is(err, fs.ErrNotExist) && declaration.Executable == "" {
+		if declaration.InstallerVersion != nil {
+			return codeIdentity{}, fmt.Errorf("%w: installer bundle", ErrUnsupported)
 		}
-		defer closeRead(f, &err)
-		machO, err := isMachO(f, size)
-		if err != nil {
-			return codeIdentity{}, err
-		}
-		if !machO {
-			return codeIdentity{}, v.unsignedGeneric(path.Join(location, executable), f)
-		}
-		_, verifyErr := verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info}, v.roots)
-		if errors.Is(verifyErr, signature.ErrUnsigned) {
-			return codeIdentity{}, signature.ErrUnsigned
-		}
-		if err := v.ctx.Err(); err != nil {
-			return codeIdentity{}, err
-		}
-		if verifyErr != nil {
-			return codeIdentity{}, errors.New("bundle is missing its signature resource envelope")
-		}
-		return codeIdentity{}, errors.New("signed executable is missing its resource envelope")
+		// Without a declared or namesake executable, codesign uses Info.plist as code.
+		mainPath = infoPath
+		f, size, err = openRegular(root, mainPath)
+	}
+	if err != nil {
+		return codeIdentity{}, fmt.Errorf("bundle main file %q: %w", mainPath, err)
+	}
+	defer closeRead(f, &err)
+	metadata, err := subtree(root, "_CodeSignature")
+	if errors.Is(err, fs.ErrNotExist) && mainPath != infoPath {
+		return codeIdentity{}, v.withoutEnvelope(f, size, path.Join(location, mainPath), info)
 	}
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	for _, entry := range signatureEntries {
-		if entry.Name() != "CodeResources" || !entry.Type().IsRegular() {
-			return codeIdentity{}, fmt.Errorf("%w: legacy signature file %q", ErrUnsupported, entry.Name())
-		}
-	}
-	resources, err := readRegular(root, "_CodeSignature/CodeResources", maxCodeResources)
+	defer closeRead(metadata, &err)
+	resources, err := readRegular(metadata, "CodeResources", maxCodeResources)
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	f, size, err := openRegular(root, executable)
-	if err != nil {
-		return codeIdentity{}, err
-	}
-	identity, err = verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info, 3: resources}, v.roots)
-	err = errors.Join(err, f.Close())
+	external := map[uint32][]byte{1: info, 3: resources}
+	identity, err = v.verifyBundleMain(metadata, path.Join(location, mainPath), f, size, external)
 	if errors.Is(err, signature.ErrUnsigned) {
-		return codeIdentity{}, fmt.Errorf("%s: resource envelope exists but executable is unsigned", executable)
+		return codeIdentity{}, fmt.Errorf("%s: resource envelope exists but main file is unsigned", mainPath)
 	}
 	if err != nil {
-		return codeIdentity{}, fmt.Errorf("%s: %w", executable, err)
+		return codeIdentity{}, fmt.Errorf("%s: %w", mainPath, err)
 	}
-	if err := v.verifyResources(root, location, resources, executable, infoPath); err != nil {
+	if err := v.verifyResources(root, location, resources, mainPath, infoPath); err != nil {
 		if errors.Is(err, signature.ErrUnsigned) {
 			return codeIdentity{}, errors.New("resource envelope contains unsigned nested code")
 		}
@@ -262,7 +239,86 @@ func (v *bundleVerifier) verifyCode(root fs.ReadLinkFS, location, executable, in
 	return identity, nil
 }
 
-func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, location string, data []byte, executable, infoPath string) error {
+// Mach-O code carries its signature in the executable. For generic code,
+// including a script or the nominal Info.plist, the bundle holds the components.
+func (v *bundleVerifier) verifyBundleMain(metadata fs.ReadLinkFS, location string, code *treefs.File, size int64, external map[uint32][]byte) (codeIdentity, error) {
+	entries, err := fs.ReadDir(metadata, ".")
+	if err != nil {
+		return codeIdentity{}, err
+	}
+	machO, err := isMachO(code, size)
+	if err != nil {
+		return codeIdentity{}, err
+	}
+	if machO {
+		if len(entries) != 1 || entries[0].Name() != "CodeResources" {
+			return codeIdentity{}, fmt.Errorf("%w: unexpected signature files alongside a Mach-O signature", ErrUnsupported)
+		}
+		return verifyMachO(v.ctx, code, size, external, v.roots)
+	}
+	signed, err := v.hasSignatureAttributes(location, code)
+	if err != nil {
+		return codeIdentity{}, err
+	}
+	if signed {
+		return codeIdentity{}, errors.New("bundle main file has signature attributes as well as signature files")
+	}
+	blobs := map[uint32][]byte{}
+	remaining := int64(maxSignature)
+	for _, entry := range entries {
+		name := entry.Name()
+		slot, ok := signatureSlots[name]
+		if !ok || !entry.Type().IsRegular() {
+			return codeIdentity{}, fmt.Errorf("%w: unexpected signature file %q", ErrUnsupported, name)
+		}
+		if slot == 3 {
+			continue // CodeResources is a plist, already read as an external slot.
+		}
+		// ReadDir lists the numbered alternates in order. codesign stops at the first gap.
+		if slot > 0x1000 && slot <= 0x1004 && blobs[slot-1] == nil {
+			return codeIdentity{}, fmt.Errorf("missing alternate CodeDirectory before %s", name)
+		}
+		blob, err := readRegular(metadata, name, remaining)
+		if err != nil {
+			return codeIdentity{}, err
+		}
+		remaining -= int64(len(blob))
+		blobs[slot] = blob
+		if slot > 0 && slot < 0x1000 {
+			// Each metadata file must actually be sealed by the CodeDirectory.
+			external[slot] = blob
+		}
+	}
+	return v.verifyComponents(code, size, blobs, external)
+}
+
+// An absent envelope is unsigned only when the executable also has no signature.
+func (v *bundleVerifier) withoutEnvelope(f *treefs.File, size int64, location string, info []byte) error {
+	machO, err := isMachO(f, size)
+	if err != nil {
+		return err
+	}
+	if !machO {
+		signed, err := v.hasSignatureAttributes(location, f)
+		if err != nil {
+			return err
+		}
+		if signed {
+			return errors.New("generic executable has signature attributes but no resource envelope")
+		}
+		return signature.ErrUnsigned
+	}
+	_, err = verifyMachO(v.ctx, f, size, map[uint32][]byte{1: info}, v.roots)
+	if errors.Is(err, signature.ErrUnsigned) {
+		return signature.ErrUnsigned
+	}
+	if err := v.ctx.Err(); err != nil {
+		return err
+	}
+	return errors.New("bundle is missing its signature resource envelope")
+}
+
+func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, location string, data []byte, mainPath, infoPath string) error {
 	var manifest struct {
 		Files map[string]any `plist:"files2"`
 	}
@@ -317,6 +373,9 @@ func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, location string, da
 				return fmt.Errorf("symlink %q points to %q, sealed as %q", name, target, seal.target)
 			}
 		case entry.IsDir():
+			if name == "_CodeSignature" {
+				return fs.SkipDir // Its entries were checked as signature components.
+			}
 			if seal == nil {
 				return nil
 			}
@@ -330,7 +389,7 @@ func (v *bundleVerifier) verifyResources(root fs.ReadLinkFS, location string, da
 			return fs.SkipDir
 		case entry.Type().IsRegular():
 			if seal == nil {
-				if name == executable || name == infoPath || name == "_CodeSignature/CodeResources" || unsealedByDefault(name) {
+				if name == mainPath || name == infoPath || unsealedByDefault(name) {
 					return nil
 				}
 				return fmt.Errorf("unsealed resource %q", name)

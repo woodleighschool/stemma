@@ -2,7 +2,6 @@ package apple
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,11 +12,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/treefs"
 )
-
-// Nested code that is not a Mach-O, such as a script or data file in a code
-// directory, is generic code. codesign keeps its signature in extended
-// attributes named after the signature slots, and its CodeDirectories hash the
-// whole file.
 
 // xattrFS reports extended attributes, as a disk image does.
 type xattrFS interface {
@@ -60,40 +54,31 @@ func isMachO(r io.ReaderAt, size int64) (bool, error) {
 	return false, nil
 }
 
-// unsignedGeneric establishes absence without interpreting signature contents.
-// A generic executable can carry a signature even without a bundle envelope.
-func (v *bundleVerifier) unsignedGeneric(location string, file *treefs.File) error {
+// A generic file can carry its own signature even inside a signed bundle.
+func (v *bundleVerifier) hasSignatureAttributes(location string, file *treefs.File) (bool, error) {
 	if err := v.ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
-	var signed bool
 	if v.attributes != nil {
 		attributes, err := v.attributes.XattrValues(path.Join(v.base, location))
 		if err != nil {
-			return err
+			return false, err
 		}
 		for name := range attributes {
 			if strings.HasPrefix(name, signatureAttribute) {
-				signed = true
-				break
+				return true, nil
 			}
 		}
-	} else if local, ok := file.File.(*os.File); ok {
-		var err error
-		signed, err = nativeSignatureAttributes(v.ctx, local)
+		return false, v.ctx.Err()
+	}
+	if local, ok := file.File.(*os.File); ok {
+		signed, err := nativeSignatureAttributes(v.ctx, local)
 		if err != nil {
-			return fmt.Errorf("read executable signature attributes: %w", err)
+			return false, fmt.Errorf("read signature attributes: %w", err)
 		}
-	} else {
-		return fmt.Errorf("%w: generic executable requires extended attributes from its source", ErrUnsupported)
+		return signed, v.ctx.Err()
 	}
-	if signed {
-		return errors.New("generic executable has signature attributes but no resource envelope")
-	}
-	if err := v.ctx.Err(); err != nil {
-		return err
-	}
-	return signature.ErrUnsigned
+	return false, fmt.Errorf("%w: generic executable requires extended attributes from its source", ErrUnsupported)
 }
 
 // verifyGeneric authenticates generic code at a location in the verified
@@ -106,7 +91,7 @@ func (v *bundleVerifier) verifyGeneric(location string, r io.ReaderAt, size int6
 	if err != nil {
 		return codeIdentity{}, err
 	}
-	sig := &codeSignature{codeSize: size, blobs: map[uint32][]byte{}}
+	blobs := map[uint32][]byte{}
 	for name, value := range xattrs {
 		slotName, ok := strings.CutPrefix(name, signatureAttribute)
 		if !ok {
@@ -123,33 +108,32 @@ func (v *bundleVerifier) verifyGeneric(location string, r io.ReaderAt, size int6
 		if _, err := io.ReadFull(io.NewSectionReader(contextReaderAt{v.ctx, value}, 0, value.Size()), blob); err != nil {
 			return codeIdentity{}, fmt.Errorf("signature attribute %s: %w", name, err)
 		}
-		if slot == 0x10000 {
-			// The CMS signature is stored bare; an embedded signature wraps it.
-			header := make([]byte, 8, len(blob)+8)
-			binary.BigEndian.PutUint32(header, 0xfade0b01)
-			binary.BigEndian.PutUint32(header[4:], uint32(len(blob)+8)) //nolint:gosec // The length is bounded by maxSignature.
-			blob = append(header, blob...)
-		}
-		if len(blob) < 8 || binary.BigEndian.Uint32(blob[4:8]) != uint32(len(blob)) { //nolint:gosec // The length is bounded by maxSignature.
-			return codeIdentity{}, fmt.Errorf("invalid signature attribute %s", name)
-		}
-		if (slot == 0 || slot >= 0x1000 && slot <= 0x1004) && binary.BigEndian.Uint32(blob[:4]) != 0xfade0c02 {
-			return codeIdentity{}, fmt.Errorf("invalid CodeDirectory magic in %s", name)
-		}
-		sig.blobs[slot] = blob
+		blobs[slot] = blob
 	}
-	if len(sig.blobs) == 0 {
+	if len(blobs) == 0 {
 		return codeIdentity{}, signature.ErrUnsigned
 	}
-	if sig.blobs[0] == nil {
-		return codeIdentity{}, errors.New("generic code signature has no CodeDirectory")
-	}
+	return v.verifyComponents(r, size, blobs, nil)
+}
 
-	sig.directories = append(sig.directories, sig.blobs[0])
-	for slot := uint32(0x1000); slot <= 0x1004; slot++ {
-		if sig.blobs[slot] != nil {
-			sig.directories = append(sig.directories, sig.blobs[slot])
+// Both extended attributes and bundle files store CMS bare, while every other
+// signature component carries its blob header.
+func (v *bundleVerifier) verifyComponents(code io.ReaderAt, size int64, blobs, external map[uint32][]byte) (codeIdentity, error) {
+	for slot, blob := range blobs {
+		if slot == 0x10000 {
+			wrapped := make([]byte, 8, 8+len(blob))
+			binary.BigEndian.PutUint32(wrapped, 0xfade0b01)
+			binary.BigEndian.PutUint32(wrapped[4:], uint32(len(blob)+8)) //nolint:gosec // Both readers bound signature size.
+			blobs[slot] = append(wrapped, blob...)
+			continue
+		}
+		if len(blob) < 8 || binary.BigEndian.Uint32(blob[4:8]) != uint32(len(blob)) { //nolint:gosec // Both readers bound signature size.
+			return codeIdentity{}, fmt.Errorf("invalid signature blob in slot %d", slot)
 		}
 	}
-	return verifySignature(contextReaderAt{v.ctx, r}, sig, nil, v.roots)
+	sig, err := signatureFromBlobs(blobs, size)
+	if err != nil {
+		return codeIdentity{}, err
+	}
+	return verifySignature(contextReaderAt{v.ctx, code}, sig, external, v.roots)
 }

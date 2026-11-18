@@ -93,3 +93,17 @@ hdiutil create -srcfolder "$work/src" -fs HFS+ -format UDZO -volname Generic gen
 hdiutil create -srcfolder "$work/src" -fs APFS -format UDZO -volname Generic generic-apfs.dmg
 rm -rf "$work"
 ```
+
+`Codeless.bundle` contains a shallow framework with a script executable and a
+versioned framework with a sealed script resource. The host and versioned
+framework use Info.plist as signed content.
+`codeless-test.cer` is the self-signed test certificate trusted by the fixture
+test. To rebuild, use a disposable RSA code-signing identity with organisational
+unit `TESTSIGNER` and export its public certificate in DER format.
+
+```sh
+for bundle in Codeless.bundle/Contents/Frameworks/*.framework Codeless.bundle; do
+  codesign --force --sign "$identity" --timestamp=none --digest-algorithm=sha1,sha256 "$bundle"
+done
+codesign --verify --deep --strict Codeless.bundle
+```

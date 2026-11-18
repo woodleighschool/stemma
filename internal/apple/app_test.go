@@ -144,6 +144,7 @@ func bundleMutations() []bundleMutation {
 			writeTestFile(t, f, append(readTestFile(t, f), '\n'), 0o644)
 		}, false, false, true},
 		{"signature removed", remove("Contents/_CodeSignature"), false, false, true},
+		{"declared executable missing", remove("Contents/MacOS/fixture"), false, false, true},
 		{"executable modified first architecture", corrupt("Contents/MacOS/fixture", 0), false, false, true},
 		{"executable modified second architecture", corrupt("Contents/MacOS/fixture", 1), false, false, true},
 		{"helper modified", corrupt("Contents/MacOS/helper", 1), false, false, true},
@@ -670,15 +671,7 @@ func TestBundleExecutableResolution(t *testing.T) {
 		{name: "unsafe fallback", bundle: "../Helper.app", wantErr: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			values := map[string]any{"CFBundleName": "Display Name"}
-			if tt.declared != "" {
-				values["CFBundleExecutable"] = tt.declared
-			}
-			data, err := plist.Marshal(values, plist.XMLFormat)
-			if err != nil {
-				t.Fatal(err)
-			}
-			got, err := bundleExecutable(data, tt.bundle)
+			got, err := ResolveExecutable(tt.declared, tt.bundle)
 			if (err != nil) != tt.wantErr || got != tt.want {
 				t.Fatalf("executable %q, error %v; want %q, error %v", got, err, tt.want, tt.wantErr)
 			}
