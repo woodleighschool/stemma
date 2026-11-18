@@ -9,7 +9,6 @@ import (
 	"maps"
 	"path/filepath"
 	"slices"
-	"strings"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -209,7 +208,7 @@ func (c catalog) prepare(ctx context.Context, _ *mcp.CallToolRequest, in resourc
 	report, err := engine.Run(ctx, opts)
 	result := preparation{Resources: []prepared{}, Warnings: report.Warnings, Error: unreported(err)}
 	for _, resource := range report.Resources {
-		item := prepared{Resource: resourceName(resource), Notices: resource.Notices, Error: resource.Error, BlockedBy: keyNames(resource.BlockedBy), Inputs: inputs(resource.Inputs)}
+		item := prepared{Resource: resourceName(resource), Notices: resource.Notices, Error: resource.Error, BlockedBy: resource.BlockedBy.Names(), Inputs: inputs(resource.Inputs)}
 		for _, derived := range resource.Publications {
 			published := publication{Destination: derived.Destination, Origins: derived.Origins, Deferred: derived.Deferred}
 			if len(derived.Metadata) > 0 {
@@ -276,7 +275,7 @@ func (c catalog) check(ctx context.Context, _ *mcp.CallToolRequest, in checkInpu
 	}
 	result := checkResult{Valid: err == nil, Warnings: report.Warnings, Error: unreported(err)}
 	for _, resource := range report.Resources {
-		result.Resources = append(result.Resources, checked{Resource: resourceName(resource), Notices: resource.Notices, Status: string(resource.Status), Error: resource.Error, BlockedBy: keyNames(resource.BlockedBy)})
+		result.Resources = append(result.Resources, checked{Resource: resourceName(resource), Notices: resource.Notices, Status: string(resource.Status), Error: resource.Error, BlockedBy: resource.BlockedBy.Names()})
 	}
 	return outcome(err, result)
 }
@@ -308,17 +307,6 @@ func unreported(err error) string {
 
 func resourceName(resource engine.ResourceReport) string {
 	return resource.Kind + "/" + resource.Name
-}
-
-// keyNames shortens resource keys, which include the API version, to
-// Kind/name.
-func keyNames(keys []string) []string {
-	names := make([]string, 0, len(keys))
-	for _, key := range keys {
-		parts := strings.Split(key, "/")
-		names = append(names, strings.Join(parts[max(0, len(parts)-2):], "/"))
-	}
-	return names
 }
 
 func inputs(changes []lock.InputChange) []input {

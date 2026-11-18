@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
@@ -16,77 +17,67 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// reconcile reconciles one publication once, after the selected publications
-// it requires and the preparation of its resource. A failure belongs to the
-// resource; the error is one that stops the run.
-func (e *execution) reconcile(ctx context.Context, ref destinationRef) error {
+// A prepared publication waits on its first unfinished prerequisite. Finishing
+// that prerequisite wakes its waiters, even when the prerequisite failed.
+func (e *execution) reconcileReady(ctx context.Context, ref destinationRef, waiting map[destinationRef][]destinationRef) error {
 	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if e.reconciled[ref] {
-		return nil
-	}
-	plan := e.destinations[ref]
-	for _, dependency := range plan.requires {
-		if err := e.reconcile(ctx, dependency); err != nil {
-			return err
-		}
-	}
-	if err := e.prepare(ctx, ref.Resource); err != nil {
 		return err
 	}
 	prepared := e.prepared[ref.Resource]
-	item := &e.report.Resources[prepared.report]
-	e.reconciled[ref] = true
-	if !prepared.ready {
-		e.failed[ref] = true
-		return nil
+	if prepared.ready {
+		for _, dependency := range e.destinations[ref].requires {
+			if _, done := e.available[dependency]; !done {
+				waiting[dependency] = append(waiting[dependency], ref)
+				return nil
+			}
+		}
+		if err := e.reconcile(ctx, ref, prepared); err != nil {
+			return err
+		}
+	} else {
+		e.available[ref] = false
 	}
-	var failure error
+	for _, dependent := range waiting[ref] {
+		if err := e.reconcileReady(ctx, dependent, waiting); err != nil {
+			return err
+		}
+	}
+	delete(waiting, ref)
+	return nil
+}
+
+func (e *execution) reconcile(ctx context.Context, ref destinationRef, prepared preparedResource) error {
+	plan := e.destinations[ref]
+	item := &e.report.Resources[prepared.report]
+	publication := item.addPublication(ref.Destination)
 	if e.publishing() {
 		for _, dependency := range plan.requires {
-			if e.failed[dependency] {
-				required := e.plans[dependency.Resource].Resource
-				failure = fmt.Errorf("requires %s/%s on %s, which failed", required.Kind, required.Metadata.Name, dependency.Destination)
-				break
+			if !e.available[dependency] {
+				publication.BlockedBy = append(publication.BlockedBy, dependency.Resource)
 			}
 		}
 	}
-	// Preparation checks metadata against the prepared artifact, except
-	// metadata that reads env values, which only publication evaluates.
-	if failure == nil && (e.publishing() || !plan.environment) {
-		operation, err := e.session.ops.operation(e.session.project.Destinations[ref.Destination].Operation)
-		if err != nil {
-			return err
+	switch {
+	case len(publication.BlockedBy) > 0:
+		publication.Status = StatusBlocked
+		plugin.Logger(ctx).InfoContext(ctx, "Destination blocked", "resource", item.Kind+"/"+item.Name, "destination", ref.Destination, "blocked_by", publication.BlockedBy)
+	case !e.publishing() && plan.environment:
+		publication.Deferred = "its metadata reads environment values, which plan and apply evaluate"
+	default:
+		if err := e.publishTo(ctx, ref, prepared, publication); err != nil {
+			publication.Status, publication.Error = StatusFailed, err.Error()
+			if item.Error != "" {
+				item.Error += "\n"
+			}
+			item.Error += err.Error()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			e.fail(ctx, ResourceError{Resource: ref.Resource, Err: fmt.Errorf("%s: %w", ref.Destination, err)})
+			plugin.Logger(ctx).InfoContext(ctx, "Destination failed", "resource", item.Kind+"/"+item.Name, "destination", ref.Destination, "error", err)
 		}
-		peers, err := resolvePeerMetadata(ctx, e.session.store, e.plans, ref.Destination, plan.peers, e.prepared, operation.MetadataSchema)
-		failure = err
-		if failure == nil {
-			failure = e.publishTo(ctx, ref, prepared, peers, item)
-		}
-	} else if failure == nil {
-		item.publication(ref.Destination).Deferred = "its metadata reads environment values, which plan and apply evaluate"
 	}
-	if failure != nil {
-		e.failed[ref] = true
-		publication := item.publication(ref.Destination)
-		publication.Status = StatusFailed
-		if publication.Error == "" {
-			publication.Error = failure.Error()
-		}
-		if item.Error == "" {
-			item.Error = failure.Error()
-		} else {
-			item.Error += "\n" + failure.Error()
-		}
-		e.fail(ctx, ResourceError{Resource: ref.Resource, Err: fmt.Errorf("%s: %w", ref.Destination, failure)})
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if failure != nil {
-		plugin.Logger(ctx).InfoContext(ctx, "Destination failed", "resource", item.Kind+"/"+item.Name, "destination", ref.Destination, "error", failure)
-	}
+	e.available[ref] = !publication.Status.unsuccessful()
 	e.pending[ref.Resource]--
 	if e.pending[ref.Resource] == 0 {
 		return e.complete(ctx, item)
@@ -94,7 +85,7 @@ func (e *execution) reconcile(ctx context.Context, ref destinationRef) error {
 	return nil
 }
 
-func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource preparedResource, peers map[string]json.RawMessage, item *ResourceReport) (runErr error) {
+func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource preparedResource, publication *Publication) (runErr error) {
 	s, software, destination := e.session, e.plans[ref.Resource], ref.Destination
 	phase, stage := "Check", "Checking destination configuration"
 	switch e.opts.Method {
@@ -116,6 +107,10 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	d := s.project.Destinations[destination]
 	metadata := destinationMetadata(software.Destinations[destination])
 	operation, err := s.ops.operation(d.Operation)
+	if err != nil {
+		return err
+	}
+	peers, err := resolvePeerMetadata(ctx, s.store, e.plans, destination, e.destinations[ref].peers, e.prepared, operation.MetadataSchema)
 	if err != nil {
 		return err
 	}
@@ -171,7 +166,6 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 		request.Config = e.connections[destination]
 	}
 	response, err := e.callDestination(ctx, d.Operation, request, work)
-	publication := item.publication(destination)
 	publication.Metadata, publication.Origins = response.Metadata, mergeOrigins(origins, response.Origins)
 	if err == nil && len(response.Metadata) == 0 {
 		publication.Deferred = "the " + d.Operation + " destination does not report the values it derives"
@@ -189,16 +183,13 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 	return err
 }
 
-// publication returns the resource's publication to a destination, adding it
-// on first use.
-func (r *ResourceReport) publication(destination string) *Publication {
-	for i := range r.Publications {
-		if r.Publications[i].Destination == destination {
-			return &r.Publications[i]
-		}
-	}
-	r.Publications = append(r.Publications, Publication{Destination: destination})
-	return &r.Publications[len(r.Publications)-1]
+// Destination order in a report is independent of when its prerequisites finish.
+func (r *ResourceReport) addPublication(destination string) *Publication {
+	i, _ := slices.BinarySearchFunc(r.Publications, destination, func(p Publication, name string) int {
+		return strings.Compare(p.Destination, name)
+	})
+	r.Publications = slices.Insert(r.Publications, i, Publication{Destination: destination})
+	return &r.Publications[i]
 }
 
 func (e *execution) request(ref destinationRef, prepared Prepared, metadata map[string]any, peers map[string]json.RawMessage) (plugin.ReconcileRequest[json.RawMessage], error) {

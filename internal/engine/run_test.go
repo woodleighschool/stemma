@@ -463,14 +463,13 @@ func TestApplyKeepsCrossedPublicationDependenciesIndependent(t *testing.T) {
 	}
 	filename := filepath.Join(t.TempDir(), "stemma.yaml")
 	testproject.Write(t, filename, manifest)
-	var applied []string
+	applied := map[string][]string{}
 	report, err := Run(t.Context(), Options{
 		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Jobs: 2,
 		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
-			identity := request.Identity.Resource.Name + "/" + request.Identity.Destination
-
 			if request.Method == "apply" {
-				applied = append(applied, identity)
+				dest := request.Identity.Destination
+				applied[dest] = append(applied[dest], request.Identity.Resource.Name)
 			}
 			return plugin.ReconcileResponse{}, nil
 		}},
@@ -478,8 +477,59 @@ func TestApplyKeepsCrossedPublicationDependenciesIndependent(t *testing.T) {
 	if err != nil || len(report.Resources) != 2 {
 		t.Fatalf("crossed destinations blocked execution: %+v %v", report, err)
 	}
-	if got := strings.Join(applied, ", "); got != "b/first, a/first, a/second, b/second" {
-		t.Fatalf("publication dependencies lost: %s", got)
+	if !slices.Equal(applied["first"], []string{"b", "a"}) || !slices.Equal(applied["second"], []string{"a", "b"}) {
+		t.Fatalf("publication order by destination: %v", applied)
+	}
+}
+
+func TestPublicationBlockStaysWithItsDestination(t *testing.T) {
+	parts := strings.Split(policyProject, "\n---\n")
+	manifest := parts[0]
+	for _, name := range []string{"hub", "editor", "tools"} {
+		resource := strings.Replace(parts[1], "name: policy", "name: "+name, 1)
+		if name != "hub" {
+			resource = strings.Replace(resource, "description: original", "requires: [{resource: {kind: MacSoftware, name: hub}}]", 1)
+		}
+		manifest += "\n---\n" + resource
+	}
+	filename := filepath.Join(t.TempDir(), "stemma.yaml")
+	testproject.Write(t, filename, manifest)
+	for _, method := range []string{"plan", "apply"} {
+		t.Run(method, func(t *testing.T) {
+			handler := func(_ context.Context, req plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
+				if req.Method != method {
+					return plugin.ReconcileResponse{}, nil
+				}
+				name := req.Identity.Resource.Name
+				if req.Identity.Destination == "first" {
+					if name != "hub" {
+						t.Fatalf("called blocked publication %s", name)
+					}
+					return plugin.ReconcileResponse{}, errors.New("hub unavailable")
+				}
+				if name == "tools" {
+					return plugin.ReconcileResponse{}, errors.New("tools unavailable")
+				}
+				return plugin.ReconcileResponse{Version: "1"}, nil
+			}
+			report, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: method, Handlers: map[string]reconcileHandler{"munki": handler}})
+			if err == nil || report.Summary.Failed != 2 || report.Summary.Blocked != 1 || strings.Contains(err.Error(), "/editor") {
+				t.Fatalf("wrong failure attribution: %+v, %v", report, err)
+			}
+			for _, item := range report.Resources {
+				if item.Name == "hub" {
+					continue
+				}
+				first, second := item.Publications[0], item.Publications[1]
+				if first.Status != StatusBlocked || !slices.Equal(first.BlockedBy, []string{"stemma/v1alpha1/MacSoftware/hub"}) {
+					t.Fatalf("missing publication dependency: %+v", item)
+				}
+				if item.Name == "editor" && (item.Status != StatusBlocked || second.Status != StatusChanged) ||
+					item.Name == "tools" && (item.Status != StatusFailed || second.Status != StatusFailed) {
+					t.Fatalf("lost independent outcome: %+v", item)
+				}
+			}
+		})
 	}
 }
 
@@ -495,14 +545,13 @@ func TestApplyOrdersRequiredResourcesAndLeavesOthersToDestinations(t *testing.T)
 	}
 	filename := filepath.Join(t.TempDir(), "stemma.yaml")
 	testproject.Write(t, filename, manifest)
-	var applied []string
+	applied := map[string][]string{}
 	report, err := Run(t.Context(), Options{
 		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply",
 		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
-			identity := request.Identity.Resource.Name + "/" + request.Identity.Destination
-
 			if request.Method == "apply" {
-				applied = append(applied, identity)
+				dest := request.Identity.Destination
+				applied[dest] = append(applied[dest], request.Identity.Resource.Name)
 			}
 			return plugin.ReconcileResponse{}, nil
 		}},
@@ -510,8 +559,8 @@ func TestApplyOrdersRequiredResourcesAndLeavesOthersToDestinations(t *testing.T)
 	if err != nil || len(report.Resources) != 2 {
 		t.Fatalf("external reference blocked execution: %+v %v", report, err)
 	}
-	if got := strings.Join(applied, ", "); got != "suite/first, agent/first, suite/second, agent/second" {
-		t.Fatalf("required resource not reconciled first: %s", got)
+	if !slices.Equal(applied["first"], []string{"suite", "agent"}) || !slices.Equal(applied["second"], []string{"suite", "agent"}) {
+		t.Fatalf("publication order by destination: %v", applied)
 	}
 }
 

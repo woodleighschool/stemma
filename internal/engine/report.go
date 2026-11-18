@@ -5,6 +5,7 @@ import (
 	"errors"
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/signature"
@@ -42,11 +43,15 @@ const (
 	// the icon present, the destination current.
 	StatusUnchanged Status = "unchanged"
 	StatusFailed    Status = "failed"
-	// StatusBlocked is a resource whose required outputs failed.
+	// StatusBlocked means a required output or publication could not complete.
 	StatusBlocked Status = "blocked"
 	// StatusSkipped is a resource the command does not apply to; Reason says why.
 	StatusSkipped Status = "skipped"
 )
+
+func (s Status) unsuccessful() bool {
+	return s == StatusFailed || s == StatusBlocked
+}
 
 // ResourceReport is one resource's outcome.
 type ResourceReport struct {
@@ -64,7 +69,20 @@ type ResourceReport struct {
 	Icon      string          `json:"icon,omitempty"`
 	Notices   []plugin.Notice `json:"notices,omitempty"`
 	Error     string          `json:"error,omitempty"`
-	BlockedBy []string        `json:"blocked_by,omitempty"`
+	BlockedBy Blockers        `json:"blocked_by,omitempty"`
+}
+
+// Blockers lists the resource keys required at the point work stopped.
+type Blockers []string
+
+// Names returns each blocker's Kind/name for display.
+func (b Blockers) Names() []string {
+	names := make([]string, len(b))
+	for i, key := range b {
+		parts := strings.Split(key, "/")
+		names[i] = strings.Join(parts[max(0, len(parts)-2):], "/")
+	}
+	return names
 }
 
 // Publication is a resource's publication to one destination. Preparation
@@ -83,6 +101,7 @@ type Publication struct {
 	Metadata    json.RawMessage      `json:"metadata,omitempty"`
 	Origins     map[string]string    `json:"origins,omitempty"`
 	Deferred    string               `json:"deferred,omitempty"`
+	BlockedBy   Blockers             `json:"blocked_by,omitempty"`
 	Error       string               `json:"error,omitempty"`
 }
 
@@ -196,6 +215,10 @@ func (r *ResourceReport) status(method string) {
 		// prepared for another's icon.
 	case "plan", "apply":
 		for _, publication := range r.Publications {
+			if publication.Status == StatusBlocked {
+				r.Status = StatusBlocked
+				return
+			}
 			if publication.Status == StatusChanged {
 				r.Status = StatusChanged
 			}

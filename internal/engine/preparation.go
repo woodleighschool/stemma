@@ -38,40 +38,35 @@ func (e *execution) prepare(ctx context.Context, key string) error {
 	}
 	p := e.acquire(ctx, key)
 	e.build(ctx, p)
+	p.result.report = len(e.report.Resources)
+	e.report.Resources = append(e.report.Resources, ResourceReport{})
 	return e.recordPreparation(ctx, p)
 }
 
-// prepareAll keeps acquisition, lock updates and reporting on the coordinator.
-// Workers only prepare immutable inputs. All workers finish before the session
-// releases its workspaces and cache lease; destinations run afterwards.
-func (e *execution) prepareAll(ctx context.Context) error {
+// runResources keeps acquisition, destination calls and reporting on the
+// coordinator. Workers only prepare immutable inputs and finish before the
+// session releases its workspaces and cache lease.
+func (e *execution) runResources(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	defer func() { cancel(); workers.Wait() }()
-	defer func() {
-		// Completion order is useful for progress, while the final report follows
-		// dependency order regardless of which build finished first.
-		rank := map[string]int{}
-		for i, key := range e.selected {
-			rank[key] = i
-		}
-		slices.SortFunc(e.report.Resources, func(a, b ResourceReport) int { return rank[a.Key] - rank[b.Key] })
-		for i, item := range e.report.Resources {
-			prepared := e.prepared[item.Key]
-			prepared.report = i
-			e.prepared[item.Key] = prepared
-		}
-	}()
+	// Report slots follow selection order. Completion callbacks follow the work.
+	e.report.Resources = make([]ResourceReport, len(e.selected))
+	remaining := make([]int, len(e.selected))
+	for i := range remaining {
+		remaining[i] = i
+	}
 	limit := min(e.opts.Jobs, len(e.selected))
 	finished := make(chan *preparationTask, limit)
-	remaining := slices.Clone(e.selected)
+	waiting := map[destinationRef][]destinationRef{}
 	active := 0
 	for len(remaining) > 0 || active > 0 {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		for i := 0; i < len(remaining) && active < limit; {
-			key := remaining[i]
+			slot := remaining[i]
+			key := e.selected[slot]
 			ready := true
 			for _, producer := range producers(e.plans[key]) {
 				if _, done := e.prepared[producer]; !done {
@@ -85,26 +80,27 @@ func (e *execution) prepareAll(ctx context.Context) error {
 			}
 			remaining = slices.Delete(remaining, i, i+1)
 			p := e.acquire(ctx, key)
+			p.result.report = slot
+			active++
 			if p.failure != nil {
-				if err := e.recordPreparation(ctx, p); err != nil {
-					return err
-				}
+				finished <- p
 				continue
 			}
-			active++
 			workers.Go(func() {
 				e.build(ctx, p)
 				finished <- p
 			})
-		}
-		if active == 0 {
-			continue
 		}
 		select {
 		case p := <-finished:
 			active--
 			if err := e.recordPreparation(ctx, p); err != nil {
 				return err
+			}
+			for _, name := range sortedKeys(e.plans[p.item.Key].Destinations) {
+				if err := e.reconcileReady(ctx, destinationRef{p.item.Key, name}, waiting); err != nil {
+					return err
+				}
 			}
 		case <-ctx.Done():
 			return ctx.Err()
@@ -165,9 +161,8 @@ func (e *execution) recordPreparation(ctx context.Context, p *preparationTask) e
 			e.fail(ctx, ResourceError{Resource: key, Err: p.failure})
 		}
 	}
-	p.result.report = len(e.report.Resources)
 	e.prepared[key] = p.result
-	e.report.Resources = append(e.report.Resources, p.item)
+	e.report.Resources[p.result.report] = p.item
 	if err := ctx.Err(); err != nil {
 		return err
 	}

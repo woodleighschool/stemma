@@ -145,7 +145,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	e := &execution{
 		opts: opts, session: s, report: &report,
 		prepared: map[string]preparedResource{}, pending: map[string]int{},
-		reconciled: map[destinationRef]bool{}, failed: map[destinationRef]bool{},
+		available: map[destinationRef]bool{},
 	}
 	if err := e.begin(ctx); err != nil {
 		return report, err
@@ -195,8 +195,9 @@ type execution struct {
 	prepared map[string]preparedResource
 	// pending counts each resource's destinations still to reconcile; the
 	// resource completes when none remain.
-	pending            map[string]int
-	reconciled, failed map[destinationRef]bool
+	pending map[string]int
+	// available records whether a finished publication can satisfy its dependants.
+	available map[destinationRef]bool
 	// failures are the resource failures the run returns.
 	failures []error
 }
@@ -302,25 +303,14 @@ func (e *execution) begin(ctx context.Context) (err error) {
 // run prepares selected resources and reconciles their destinations,
 // then finishes the project lock update.
 func (e *execution) run(ctx context.Context) error {
-	if e.opts.Jobs > 1 && e.opts.Method != "update" {
-		if err := e.prepareAll(ctx); err != nil {
-			return err
-		}
-	}
-	for _, key := range e.selected {
-		if e.opts.Method == "update" || len(e.plans[key].Destinations) == 0 {
+	if e.opts.Method == "update" {
+		for _, key := range e.selected {
 			if err := e.prepare(ctx, key); err != nil {
 				return err
 			}
 		}
-		if e.opts.Method == "update" {
-			continue
-		}
-		for _, destination := range sortedKeys(e.plans[key].Destinations) {
-			if err := e.reconcile(ctx, destinationRef{key, destination}); err != nil {
-				return err
-			}
-		}
+	} else if err := e.runResources(ctx); err != nil {
+		return err
 	}
 	return e.commit(ctx)
 }
@@ -330,7 +320,7 @@ func (e *execution) run(ctx context.Context) error {
 func (e *execution) commit(ctx context.Context) error {
 	var rejected []string
 	for _, resource := range e.report.Resources {
-		if resource.Error != "" {
+		if resource.Status.unsuccessful() {
 			rejected = append(rejected, resource.Key)
 		}
 	}
@@ -516,25 +506,24 @@ func (e *execution) complete(ctx context.Context, item *ResourceReport) error {
 		return err
 	}
 	var saveErr error
-	if item.Error == "" {
-		if e.opts.Method == "update" {
-			result, err := e.locked.CommitResource(ctx, item.Key)
-			if e.report.LockChanged == nil {
-				e.report.LockChanged = new(bool)
-			}
-			*e.report.LockChanged = *e.report.LockChanged || result.Changed
-			e.report.Plugins = result.Plugins
-			item.Inputs = result.Changes
-			if err != nil {
-				saveErr = fmt.Errorf("save reviewed inputs: %w", err)
-				item.Error = saveErr.Error()
-			}
-		} else {
-			item.Inputs = e.locked.Changes(item.Key)
+	if e.opts.Method == "update" && item.Error == "" {
+		result, err := e.locked.CommitResource(ctx, item.Key)
+		if e.report.LockChanged == nil {
+			e.report.LockChanged = new(bool)
+		}
+		*e.report.LockChanged = *e.report.LockChanged || result.Changed
+		e.report.Plugins = result.Plugins
+		item.Inputs = result.Changes
+		if err != nil {
+			saveErr = fmt.Errorf("save reviewed inputs: %w", err)
+			item.Error = saveErr.Error()
 		}
 	}
-	plan := e.plans[item.Key]
 	item.status(e.opts.Method)
+	if e.opts.Method != "update" && !item.Status.unsuccessful() {
+		item.Inputs = e.locked.Changes(item.Key)
+	}
+	plan := e.plans[item.Key]
 	item.Notices = signatureNotices(plan.Resource.Reference(), item.Artifacts)
 	if e.prepared[item.Key].ready {
 		item.Notices = slices.Concat(plan.Notices, item.Notices)

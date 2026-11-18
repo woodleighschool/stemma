@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -123,9 +124,24 @@ func TestParallelPreparationDependenciesAndFailures(t *testing.T) {
 		return plugin.ResourceResult{Artifacts: map[string]plugin.Artifact{"installer": {Path: path}}}, nil
 	}
 	e := preparationFixture(t, map[string]string{"a": "", "b": "", "c": "a", "d": "", "e": "d"}, handle)
+	// b must reach its destination while the independent build of a is held.
+	e.opts.Method = "plan"
+	b := e.selected[1]
+	plan := e.plans[b]
+	plan.Destinations = map[string]map[string]any{"repo": {}}
+	e.plans[b] = plan
+	e.destinations = map[destinationRef]destinationPlan{{b, "repo"}: {}}
+	e.available = map[destinationRef]bool{}
+	e.pending[b] = 1
+	e.session.project.Destinations = map[string]config.Destination{"repo": {Operation: "repo"}}
+	if err := plugin.Register(e.session.ops.registry, plugin.Operation{Name: "repo", Kind: "reconcile", SideEffects: "remote", Methods: []string{"plan"}}, func(context.Context, plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
+		return plugin.ReconcileResponse{Version: "1"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 	e.opts.ResourceDone = func(item ResourceReport) error { completed <- item.Name; return nil }
 	done := make(chan error, 1)
-	go func() { done <- e.prepareAll(ctx) }()
+	go func() { done <- e.runResources(ctx) }()
 	for range 2 {
 		select {
 		case name := <-started:
@@ -153,6 +169,9 @@ func TestParallelPreparationDependenciesAndFailures(t *testing.T) {
 	}
 	if peak.Load() != 2 || active.Load() != 0 {
 		t.Fatalf("worker bound: peak %d, active %d", peak.Load(), active.Load())
+	}
+	if pubs := e.report.Resources[1].Publications; len(pubs) != 1 || pubs[0].Version != "1" {
+		t.Fatalf("missing destination result for b: %+v", pubs)
 	}
 	if len(e.failures) != 1 || e.report.Resources[3].Error == "" || !slices.Equal(e.report.Resources[4].BlockedBy, []string{e.selected[3]}) {
 		t.Fatalf("failed branch: %+v, %v", e.report.Resources, e.failures)
@@ -198,7 +217,7 @@ func TestParallelPreparationWaitsForWorkers(t *testing.T) {
 				e.opts.ResourceDone = func(ResourceReport) error { return want }
 			}
 			done := make(chan error, 1)
-			go func() { done <- e.prepareAll(ctx) }()
+			go func() { done <- e.runResources(ctx) }()
 			for range 2 {
 				select {
 				case <-started:
