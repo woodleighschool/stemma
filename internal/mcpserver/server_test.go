@@ -17,6 +17,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/icon"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testgit"
 )
@@ -91,7 +92,7 @@ spec:
 	call(t, session, "update", map[string]any{"resources": []string{"BuildMacPkg/wrapper"}}, &updated)
 	var result icons
 	call(t, session, "icon", map[string]any{"resources": []string{"MacSoftware/product"}, "input": "vendor", "path": "."}, &result)
-	if len(result.Resources) != 1 || !strings.HasPrefix(result.Resources[0].Icon, "created ") {
+	if len(result.Resources) != 1 || result.Resources[0].Status != "changed" || result.Resources[0].Icon != "icons/branding.png" {
 		t.Fatalf("icon: %+v", result)
 	}
 	if _, err := icon.Read(root, "branding"); err != nil {
@@ -113,7 +114,7 @@ func TestIconToolReadsCatalogFileIntoDeclaredAsset(t *testing.T) {
 	// The test runs outside the catalog, so only its root can resolve the path.
 	var result icons
 	call(t, session, "icon", map[string]any{"resources": []string{"MacSoftware/policy"}, "from": "artwork.ico"}, &result)
-	if len(result.Resources) != 1 || !strings.HasPrefix(result.Resources[0].Icon, "created ") {
+	if len(result.Resources) != 1 || result.Resources[0].Status != "changed" || result.Resources[0].Icon != "icons/branding.png" {
 		t.Fatalf("icon: %+v", result)
 	}
 	if _, err := icon.Read(root, "branding"); err != nil {
@@ -151,7 +152,7 @@ func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 		t.Fatalf("prepare = %+v", trial)
 	}
 	app := trial.Resources[0]
-	if len(app.Inputs) != 1 || app.Inputs[0].Change != "added" || app.Inputs[0].Resolver != "file" || app.Inputs[0].SHA256 == "" {
+	if len(app.Inputs) != 1 || app.Inputs[0].Kind != lock.Added || app.Inputs[0].Resolver != "file" || app.Inputs[0].SHA256 == "" {
 		t.Fatalf("inputs = %+v", app.Inputs)
 	}
 	if len(app.Artifacts) != 1 || app.Artifacts[0].Version != "1.2.3" || !strings.Contains(app.Artifacts[0].Signatures, "signer: apple:developer-id:SMLKBTR495") || len(app.Artifacts[0].Subjects) == 0 {
@@ -161,12 +162,12 @@ func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 		t.Fatalf("publications = %+v", app.Publications)
 	}
 	if _, err := os.Stat(lockPath); !os.IsNotExist(err) {
-		t.Fatalf("prepare wrote the lockfile: %v", err)
+		t.Fatalf("prepare wrote the lock: %v", err)
 	}
 
 	var update lockUpdate
 	call(t, session, "update", map[string]any{"resources": []string{"MacSoftware/app"}}, &update)
-	if !update.Changed || len(update.Resources) != 1 || len(update.Resources[0].Inputs) != 1 || update.Resources[0].Inputs[0].Change != "added" {
+	if !update.Changed || len(update.Resources) != 1 || len(update.Resources[0].Inputs) != 1 || update.Resources[0].Inputs[0].Kind != lock.Added {
 		t.Fatalf("update = %+v", update)
 	}
 	var locked preparation
@@ -177,7 +178,7 @@ func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 
 	var outcome icons
 	call(t, session, "icon", map[string]any{"resources": []string{"MacSoftware/app"}}, &outcome)
-	if len(outcome.Resources) != 1 || outcome.Resources[0].Icon != "no icon declared" {
+	if len(outcome.Resources) != 1 || outcome.Resources[0].Status != "skipped" || outcome.Resources[0].Reason != "no icon declared" {
 		t.Fatalf("icon = %+v", outcome)
 	}
 
@@ -185,11 +186,11 @@ func TestToolsTakeADraftToACheckedChange(t *testing.T) {
 	// its preparation can be reused.
 	var check checkResult
 	call(t, session, "check", map[string]any{"since": "HEAD"}, &check)
-	if !check.Valid || len(check.Resources) != 1 || check.Resources[0].Resource != "MacSoftware/app" || check.Resources[0].Status != "prepared" {
+	if !check.Valid || len(check.Resources) != 1 || check.Resources[0].Resource != "MacSoftware/app" || check.Resources[0].Status != "changed" || len(check.Resources[0].Notices) == 0 {
 		t.Fatalf("check = %+v", check)
 	}
 	call(t, session, "check", map[string]any{"since": "HEAD"}, &check)
-	if !check.Valid || len(check.Resources) != 1 || check.Resources[0].Status != "cached" {
+	if !check.Valid || len(check.Resources) != 1 || check.Resources[0].Status != "unchanged" {
 		t.Fatalf("second check = %+v", check)
 	}
 }
@@ -348,11 +349,12 @@ func write(t *testing.T, name, text string) {
 }
 
 func TestArtifactDescriptionKeepsUnsignedObservations(t *testing.T) {
-	artifact := describeArtifact("installer", engine.Prepared{Filename: "unsigned.pkg", Evidence: map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/4"}]`)}})
+	artifact := describeArtifact("installer", engine.Prepared{Filename: "unsigned.pkg", Evidence: map[string]json.RawMessage{"signing": json.RawMessage(`{"observed":[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/4"}]}`)}})
 	if artifact.Signatures != "signatures:\n  - unsigned: true\n" {
 		t.Fatalf("unsigned fragment: %s", artifact.Signatures)
 	}
-	observations, ok := artifact.Evidence["signatures"].([]any)
+	signing, _ := artifact.Evidence["signing"].(map[string]any)
+	observations, ok := signing["observed"].([]any)
 	if !ok || len(observations) != 1 || observations[0].(map[string]any)["state"] != "unsigned" {
 		t.Fatalf("lost structured observations: %+v", artifact.Evidence)
 	}

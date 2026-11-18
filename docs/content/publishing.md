@@ -472,6 +472,7 @@ applying need no local publication state.
 Munki reconciles an existing item with the same identity. Intune and Jamf require
 the marker or an explicit `app_id` or `package_id`; display names are not unique.
 The marker occupies the final line of the notes and preserves the remaining text.
+Jamf reports publications by filename, the native identity of each package.
 
 Changed bytes at the same version replace the existing content. After an
 interruption, the next run finds the remote object and uploads content if needed.

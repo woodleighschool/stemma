@@ -1,11 +1,8 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -15,7 +12,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/changes"
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/intunewin"
-	"github.com/woodleighschool/stemma/internal/lockfile"
 	"github.com/woodleighschool/stemma/internal/reconcile"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
@@ -37,182 +33,156 @@ func keyName(key string) string {
 	return key
 }
 
-// selected reports whether a resource belongs in a report without --all:
-// failures, completed preparation, and whatever the method changed or derived.
-func selected(method string, resource engine.ResourceReport) bool {
-	include := resource.Error != "" || len(resource.BlockedBy) > 0 || len(resource.Inputs) > 0
-	switch method {
-	case "signature", "prepare":
-		include = true
-	case "icon":
-		include = include || resource.Icon != "" && resource.Icon != "unchanged" && resource.Icon != "no icon declared"
-	}
-	for _, destination := range resource.Destinations {
-		include = include || destination.Error != "" || len(destination.Changes) > 0
-	}
-	return include
-}
-
-// resourceStatus names a resource's outcome for its block heading.
-func resourceStatus(method string, resource engine.ResourceReport) string {
-	switch {
-	case len(resource.BlockedBy) > 0:
-		return "blocked"
-	case resource.Error != "":
-		return "failed"
-	case method == "update" && len(resource.Inputs) > 0:
-		return quantity(len(resource.Inputs), "input") + " changed"
-	case method == "update":
-		return "inputs unchanged"
-	case method == "signature":
-		// A resource without a publisher to verify has no expectation to print.
-		if signatureDetails(resource) == "" {
-			return "nothing to declare"
-		}
-		return "signer derived"
-	case method == "icon" && resource.Icon != "":
-		return resource.Icon
-	}
-	if len(resource.Destinations) > 0 {
-		changed := 0
-		for _, destination := range resource.Destinations {
-			changed += len(destination.Changes)
-		}
-		switch {
-		case changed == 0:
-			return "unchanged"
-		case method == "apply":
-			return "applied"
-		default:
-			return "planned"
-		}
-	}
-	if resource.Cached {
-		return "cached"
-	}
-	return "prepared"
-}
-
-func destinationStatus(destination engine.DestinationReport) string {
-	switch {
-	case destination.Error != "" && len(destination.Changes) > 0:
-		return "failed (changes not confirmed)"
-	case destination.Error != "":
-		return "failed"
-	case len(destination.Changes) == 0:
-		return "unchanged"
-	case destination.Applied:
-		return "applied"
-	default:
-		return "planned"
-	}
-}
-
-// resourceHeading names a resource and its outcome.
-func resourceHeading(style textStyle, method string, resource engine.ResourceReport) string {
-	heading := changes.Text(resourceName(resource))
-	if len(resource.Destinations) == 0 {
-		if version := resource.Artifacts["installer"].Version; version != "" {
-			heading += " (" + changes.Text(version) + ")"
-		}
-		return style.outcomeLine(heading, resourceStatus(method, resource)) + "\n"
-	}
-	return style.heading(heading) + "\n"
-}
-
-func renderResourceDetail(style textStyle, method string, resource engine.ResourceReport, detailed bool) string {
+// renderRows gives unnamed outcomes to the enclosing subject; named outcomes
+// introduce a child scope. Every scope owns its indented details.
+func renderRows(style textStyle, subject string, status engine.Status, rows []changes.Row) string {
 	var text strings.Builder
-	text.WriteString(resourceHeading(style, method, resource))
-	if method == "prepare" && resource.Cached && resource.Error == "" && len(resource.BlockedBy) == 0 && len(resource.Destinations) == 0 && !detailed {
+	heading := resultHeading(changes.Text(subject), status)
+	if len(rows) == 1 && rows[0].Subject == "" {
+		style.writeHeading(&text, "", heading, rows[0].Summary)
+		for _, detail := range rows[0].Details {
+			style.writeLine(&text, "  ", detail)
+		}
 		return text.String()
 	}
-	for _, input := range resource.Inputs {
-		for index, line := range changes.InputLines(input) {
-			if index == 0 {
-				line = style.paint(line, inputColour(input))
-			}
-			fmt.Fprintf(&text, "  %s\n", line)
-		}
-	}
-	switch {
-	case len(resource.BlockedBy) > 0:
-		names := make([]string, 0, len(resource.BlockedBy))
-		for _, key := range resource.BlockedBy {
-			names = append(names, changes.Text(keyName(key)))
-		}
-		fmt.Fprintf(&text, "  blocked by %s\n", strings.Join(names, ", "))
-	case resource.Error != "" && len(resource.Destinations) == 0:
-		writeError(&text, style, "  ", resourceError(resource))
-	}
-	for _, destination := range resource.Destinations {
-		label := changes.Text(destination.Name)
-		if destination.Artifact != "" {
-			label = changes.Text(destination.Artifact) + " → " + label
-		}
-		if destination.Error != "" {
-			label += ": " + destinationStatus(destination)
-		}
-		fmt.Fprintf(&text, "  %s\n", style.paint(label, color.Bold))
-		if len(destination.Changes) == 0 && destination.Error == "" {
-			fmt.Fprintf(&text, "    %s No changes\n", style.paint("✓", color.Faint))
-		}
-		if method == "apply" && destination.Applied {
-			for _, line := range appliedActions(destination.Changes) {
-				fmt.Fprintf(&text, "    %s %s\n", style.paint("✓", color.FgHiGreen), line)
-			}
+	style.writeHeading(&text, "", heading, nil)
+	for _, row := range rows {
+		indent := "  "
+		if row.Subject != "" {
+			style.writeHeading(&text, indent, changes.Line{{Role: changes.Plain, Text: changes.Text(row.Subject)}}, row.Summary)
+			indent += "  "
 		} else {
-			for _, change := range destination.Changes {
-				lines := changes.Lines(change)
-				if detailed && change.Action == "create" && len(change.After) > 0 {
-					if data, err := json.MarshalIndent(change.After, "", "  "); err == nil {
-						lines = []string{"create " + changes.Text(change.Field)}
-						for line := range strings.SplitSeq(string(data), "\n") {
-							lines = append(lines, "  "+changes.Text(line))
-						}
-					}
-				} else if change.Action == "create" && len(change.Review) > 0 {
-					lines = []string{"create " + changes.Text(change.Field)}
-					for _, line := range change.Review {
-						lines = append(lines, "  "+changes.Text(line))
-					}
-					lines = append(lines, "  Full initial fields: --details")
-				}
-				for index, line := range lines {
-					prefix := "  "
-					if index == 0 {
-						prefix = style.paint("→ ", color.FgHiYellow)
-					}
-					fmt.Fprintf(&text, "    %s%s\n", prefix, changeLine(style, change.Action, index, line))
-				}
-			}
+			style.writeLine(&text, indent, row.Summary)
 		}
-		if destination.Error != "" {
-			writeError(&text, style, "    ", destination.Error)
+		for _, detail := range row.Details {
+			style.writeLine(&text, indent, detail)
 		}
-	}
-	if resource.Error == "" {
-		switch method {
-		case "signature":
-			text.WriteString(signatureDetails(resource))
-		case "icon":
-			if resource.IconPath != "" {
-				fmt.Fprintf(&text, "  %s\n", changes.Text(resource.IconPath))
-			}
-		case "prepare":
-			for _, name := range slices.Sorted(maps.Keys(resource.Artifacts)) {
-				artifact := resource.Artifacts[name]
-				fmt.Fprintf(&text, "  %s: %s", changes.Text(name), changes.Text(artifact.Filename))
-				if artifact.Version != "" && artifact.Version != resource.Artifacts["installer"].Version {
-					fmt.Fprintf(&text, " (%s)", changes.Text(artifact.Version))
-				}
-				text.WriteByte('\n')
-			}
-		}
-	}
-	if method != "prepare" {
-		text.WriteByte('\n')
 	}
 	return text.String()
+}
+
+// resourceRows are a resource's rows for the command that ran.
+func resourceRows(method string, resource engine.ResourceReport, namedInputs bool) []changes.Row {
+	if resource.Status == engine.StatusUnchanged && (method == "update" || method == "plan" || method == "apply") {
+		var versions []string
+		for _, publication := range resource.Publications {
+			if publication.Version != "" {
+				versions = append(versions, changes.Text(publication.Destination+" "+publication.Version))
+			}
+		}
+		summary := "unchanged"
+		if len(versions) > 0 {
+			summary += " (" + strings.Join(versions, ", ") + ")"
+		}
+		return []changes.Row{{Summary: changes.Line{{Role: changes.Old, Text: summary}}}}
+	}
+	if len(resource.BlockedBy) > 0 {
+		names := make([]string, 0, len(resource.BlockedBy))
+		for _, key := range resource.BlockedBy {
+			names = append(names, keyName(key))
+		}
+		return []changes.Row{changes.BlockedBy(names)}
+	}
+	switch method {
+	case "plan", "apply":
+		var rows []changes.Row
+		failed := false
+		for _, publication := range resource.Publications {
+			failed = failed || publication.Error != ""
+			if publication.Status == "" {
+				continue
+			}
+			rows = append(rows, changes.PublicationRow(publication))
+		}
+		if resource.Error != "" && !failed {
+			rows = append(rows, changes.Failed("", resourceError(resource)))
+		}
+		if len(rows) > 0 {
+			return rows
+		}
+	}
+	if resource.Error != "" {
+		return []changes.Row{changes.Failed("", resourceError(resource))}
+	}
+	if resource.Status == engine.StatusSkipped {
+		return []changes.Row{changes.Skipped(resource.Reason)}
+	}
+	switch method {
+	case "update":
+		if rows := changes.InputRows(resource.Inputs, namedInputs); len(rows) > 0 {
+			return rows
+		}
+	case "prepare", "signature":
+		return []changes.Row{artifactRow(method, resource)}
+	case "icon":
+		// A resource prepared only for another's icon has no path of its own.
+		if resource.Icon != "" {
+			role, text := changes.New, "created "+resource.Icon
+			if resource.Status == engine.StatusUnchanged {
+				role, text = changes.Old, resource.Icon
+			}
+			return []changes.Row{{Summary: changes.Line{{Role: role, Text: changes.Text(text)}}}}
+		}
+	}
+	return []changes.Row{{Summary: changes.Line{{Role: changes.Old, Text: "unchanged"}}}}
+}
+
+// artifactRow names what preparation produced: the installer's version and
+// file, or for signature the signers it derived. Details list the other
+// outputs, or each subject and the fragment to declare.
+func artifactRow(method string, resource engine.ResourceReport) changes.Row {
+	installer := resource.Artifacts["installer"]
+	role := changes.New
+	if resource.Status != engine.StatusChanged {
+		role = changes.Old
+	}
+	var row changes.Row
+	if method == "signature" {
+		var observations []signature.Observation
+		for _, name := range sortedNames(resource.Artifacts) {
+			observations = append(observations, signature.Read(resource.Artifacts[name].Evidence).Observed...)
+		}
+		row.Summary = changes.Line{{Role: changes.Plain, Text: quantity(len(observations), "signature")}}
+		for _, o := range observations {
+			subject := o.Subject.Path
+			if o.Input != "" {
+				subject = o.Input + "/" + subject
+			}
+			signer := o.Authority
+			if o.State == "unsigned" {
+				signer = "unsigned"
+			} else if o.Name != "" {
+				signer = o.Name + " (" + o.Authority + ")"
+			}
+			row.Details = append(row.Details, changes.Line{{Role: changes.Label, Text: changes.Text(subject) + ": "}, {Role: changes.Plain, Text: changes.Text(signer)}})
+		}
+		fragment := strings.TrimSuffix(signature.Fragment(observations), "\n")
+		if fragment != "" {
+			row.Details = append(row.Details, changes.Line{{Role: changes.Label, Text: "configuration:"}})
+			for line := range strings.SplitSeq(fragment, "\n") {
+				row.Details = append(row.Details, changes.Line{{Role: changes.Plain, Text: "  " + line}})
+			}
+		}
+		return row
+	}
+	row.Summary = changes.Line{{Role: role, Text: changes.Text(installer.Version)}}
+	if installer.Version == "" {
+		row.Summary = changes.Line{{Role: role, Text: "prepared"}}
+	}
+	for _, name := range sortedNames(resource.Artifacts) {
+		artifact := resource.Artifacts[name]
+		row.Details = append(row.Details, changes.Line{{Role: changes.Label, Text: changes.Text(name) + ": "}, {Role: changes.Plain, Text: changes.Text(artifact.Filename)}})
+	}
+	return row
+}
+
+func sortedNames[T any](values map[string]T) []string {
+	names := make([]string, 0, len(values))
+	for name := range values {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 func resourceError(resource engine.ResourceReport) string {
@@ -225,196 +195,11 @@ func resourceError(resource engine.ResourceReport) string {
 	return message
 }
 
-// Apply records confirmed actions, without presenting its earlier plan as a
-// second diff. Failed destinations keep their proposed changes for context.
-func appliedActions(items []plugin.Change) []string {
-	var lines []string
-	metadata := 0
-	for _, change := range items {
-		verb := map[string]string{"create": "Created", "upload": "Uploaded", "delete": "Deleted", "reconcile": "Reconciled"}[change.Action]
-		if verb == "" {
-			metadata++
-			continue
-		}
-		line := verb + " " + changes.Text(change.Field)
-		var name string
-		var names []string
-		switch {
-		case change.Action == "upload":
-			if change.Filename != "" {
-				line += ": " + changes.Text(change.Filename)
-			}
-		case change.Action == "delete":
-			line = "Deleted" + strings.TrimPrefix(changes.Lines(change)[0], "delete")
-		case json.Unmarshal(change.After, &name) == nil && name != "":
-			line += ": " + changes.Text(name)
-		case json.Unmarshal(change.After, &names) == nil && len(names) > 0:
-			line += ": " + changes.Text(strings.Join(names, ", "))
-		}
-		lines = append(lines, line)
-	}
-	if metadata > 0 {
-		lines = append(lines, "Updated "+quantity(metadata, "metadata field"))
-	}
-	return lines
-}
-
-// changeLine colours a change's first line by its action and collection
-// members by whether they are added or removed.
-func changeLine(style textStyle, action string, index int, line string) string {
-	switch {
-	case index == 0 && action == "create":
-		return style.paint(line, color.FgHiGreen)
-	case index == 0 && (action == "delete" || action == "clear"):
-		return style.paint(line, color.FgHiRed)
-	case index == 0:
-		return style.paint(line, color.FgHiYellow)
-	case strings.HasPrefix(strings.TrimLeft(line, " "), "+ "):
-		return style.paint(line, color.FgGreen)
-	case strings.HasPrefix(strings.TrimLeft(line, " "), "- "):
-		return style.paint(line, color.FgRed)
-	}
-	return line
-}
-
 func writeError(text *strings.Builder, style textStyle, indent, message string) {
-	for index, line := range errorLines(message) {
-		if index == 0 {
-			line = "✗ " + line
-		}
-		fmt.Fprintf(text, "%s%s\n", indent, style.paint(line, color.FgHiRed))
+	style.writeHeading(text, indent, resultHeading("Error", engine.StatusFailed), nil)
+	for _, line := range errorLines(message) {
+		style.writeLine(text, indent+"  ", changes.Line{{Role: changes.Failure, Text: line}})
 	}
-}
-
-// signatureDetails retains each observed subject and its owning input.
-func signatureDetails(resource engine.ResourceReport) string {
-	var text strings.Builder
-	for _, name := range slices.Sorted(maps.Keys(resource.Artifacts)) {
-		var observations []signature.Observation
-		if err := json.Unmarshal(resource.Artifacts[name].Evidence["signatures"], &observations); err != nil {
-			continue
-		}
-		for _, observed := range observations {
-			if observed.Input != "" {
-				fmt.Fprintf(&text, "  Input: %s\n", changes.Text(observed.Input))
-			}
-			fmt.Fprintf(&text, "  Subject: %s\n", changes.Text(observed.Subject.Path))
-			if observed.State == "unsigned" {
-				text.WriteString("  Signing state: unsigned\n")
-			} else {
-				// An App Store signature names its publisher by team alone.
-				if observed.Name == "" {
-					fmt.Fprintf(&text, "  Signer: %s\n", changes.Text(observed.Authority))
-				} else {
-					fmt.Fprintf(&text, "  Signer: %s (%s)\n", changes.Text(observed.Name), changes.Text(observed.Authority))
-				}
-				for _, replaced := range observed.Replaced {
-					fmt.Fprintf(&text, "  Replaced nested code: %s\n", changes.Text(replaced.Path))
-				}
-			}
-		}
-		for line := range strings.SplitSeq(strings.TrimSuffix(signature.Fragment(observations), "\n"), "\n") {
-			if line != "" {
-				fmt.Fprintf(&text, "  %s\n", changes.Text(line))
-			}
-		}
-	}
-	return text.String()
-}
-
-// printReportEnd ends a human report below the resources that streamed: the
-// plugin lock entries an update changed, the lock entries of resources no
-// longer declared, then the whole run's totals.
-func printReportEnd(out io.Writer, method string, report engine.Report, runErr error) error {
-	style := newTextStyle(out)
-	var text strings.Builder
-	if method == "prepare" && len(report.Resources) > 0 {
-		text.WriteByte('\n')
-	}
-	text.WriteString(renderPluginChanges(style, report.Plugins))
-	text.WriteString(renderRemovedInputs(style, report.RemovedInputs))
-	text.WriteString(renderSummary(style, method, report, runErr))
-	_, err := io.WriteString(out, text.String())
-	return err
-}
-
-func renderRemovedInputs(style textStyle, inputs []lockfile.InputChange) string {
-	var text strings.Builder
-	last := ""
-	for _, input := range inputs {
-		if input.Resource != last {
-			if last != "" {
-				text.WriteByte('\n')
-			}
-			text.WriteString(style.outcomeLine(changes.Text(keyName(input.Resource)), "no longer declared") + "\n")
-			last = input.Resource
-		}
-		for index, line := range changes.InputLines(input) {
-			if index == 0 {
-				line = style.paint(line, inputColour(input))
-			}
-			fmt.Fprintf(&text, "  %s\n", line)
-		}
-	}
-	if last != "" {
-		text.WriteByte('\n')
-	}
-	return text.String()
-}
-
-func inputColour(input lockfile.InputChange) color.Attribute {
-	switch {
-	case input.Before == nil:
-		return color.FgHiGreen
-	case input.After == nil:
-		return color.FgHiRed
-	case input.ContentChanged:
-		return color.FgHiYellow
-	}
-	return color.Faint
-}
-
-func renderSummary(style textStyle, method string, report engine.Report, runErr error) string {
-	s := report.Summary
-	var text strings.Builder
-	label := map[string]string{"update": "Update", "prepare": "Preparation", "signature": "Signatures", "icon": "Icons", "plan": "Plan", "apply": "Apply"}[method]
-	switch {
-	case errors.Is(runErr, errInterrupted):
-		label += " interrupted"
-	case runErr != nil || report.Error != "":
-		label += " incomplete"
-	}
-	text.WriteString(style.paint(label+":", color.Bold) + " ")
-	switch method {
-	case "update":
-		fmt.Fprintf(&text, "%s, %s checked", quantity(s.InputChanges, "input change"), quantity(s.Resources, "resource"))
-	case "prepare":
-		fmt.Fprintf(&text, "%d prepared, %d cached", s.Prepared, s.Cached)
-	case "signature":
-		fmt.Fprintf(&text, "%d derived", s.Derived)
-	case "icon":
-		fmt.Fprintf(&text, "%d created, %d unchanged, %d skipped", s.Created, s.Unchanged, s.Skipped)
-	case "plan", "apply":
-		switch {
-		case s.Changed == 0 && s.Failed == 0 && s.Blocked == 0 && runErr == nil && report.Error == "":
-			fmt.Fprintf(&text, "No changes; %s unchanged", quantity(s.Unchanged, "resource"))
-		case method == "plan":
-			fmt.Fprintf(&text, "%s with changes, %s, %d unchanged", quantity(s.Changed, "resource"), quantity(s.Destinations, "destination"), s.Unchanged)
-		default:
-			fmt.Fprintf(&text, "%s applied; %s, %s; %d unchanged", quantity(s.Applied, "publication"), quantity(s.Resources, "resource"), quantity(s.Destinations, "destination"), s.Unchanged)
-		}
-	}
-	if s.Failed > 0 {
-		text.WriteString(", " + style.paint(fmt.Sprintf("%d failed", s.Failed), color.FgHiRed))
-	}
-	if s.Blocked > 0 {
-		text.WriteString(", " + style.paint(fmt.Sprintf("%d blocked", s.Blocked), color.FgHiYellow))
-	}
-	text.WriteString(".\n")
-	if report.LockChanged != nil {
-		text.WriteString(lockfileStatus(style, *report.LockChanged) + "\n")
-	}
-	return text.String()
 }
 
 func quantity(count int, noun string) string {
@@ -424,20 +209,36 @@ func quantity(count int, noun string) string {
 	return fmt.Sprintf("%d %s", count, noun)
 }
 
-func lockfileStatus(style textStyle, changed bool) string {
-	if changed {
-		return style.paint("✓ Lockfile updated.", color.FgHiGreen)
+// reportEnd ends a human report below the rows that streamed: the plugin pins
+// and lock documents an update changed outside its resources, then the
+// summary.
+func reportEnd(style textStyle, method string, report engine.Report, streamed bool) string {
+	var blocks []string
+	for _, change := range report.Plugins {
+		blocks = append(blocks, renderRows(style, "plugin "+change.Name, engine.StatusChanged, []changes.Row{changes.PluginRow(change)}))
 	}
-	return style.paint("✓ Lockfile unchanged.", color.Faint)
+	reported := map[string]bool{}
+	for _, input := range report.Removed {
+		if !reported[input.Resource] {
+			reported[input.Resource] = true
+			blocks = append(blocks, renderRows(style, keyName(input.Resource), engine.StatusChanged, []changes.Row{changes.Undeclared()}))
+		}
+	}
+	var text strings.Builder
+	for _, block := range blocks {
+		text.WriteString(block)
+	}
+	if streamed || len(blocks) > 0 {
+		text.WriteString("\n")
+	}
+	text.WriteString(style.line(changes.Summary(method, report.Summary)) + "\n")
+	return text.String()
 }
 
-// renderReviewed describes the reviewed commit's publication, whose resources
-// streamed as they applied.
-func renderReviewed(style textStyle, report reconcile.Report) string {
-	apply := report.Apply
-	if apply == nil {
-		return ""
-	}
+// reviewedRow describes the reviewed commit's publication, whose resources
+// streamed as they applied: its outcome and time, with the apply's summary
+// below.
+func reviewedRow(report reconcile.Report) (string, changes.Row) {
 	head := report.Head
 	if len(head) > 12 {
 		head = head[:12]
@@ -445,82 +246,77 @@ func renderReviewed(style textStyle, report reconcile.Report) string {
 	if report.Branch != "" {
 		head = report.Branch + "@" + head
 	}
-	outcome := "applied"
+	apply := report.Apply
+	if apply.Error != "" {
+		return head, changes.Failed("", apply.Error)
+	}
+	row := changes.Row{Summary: changes.Line{{Role: changes.New, Text: "applied"}}}
 	switch {
 	case apply.Skipped:
-		outcome = "already applied"
+		row.Summary = changes.Line{{Role: changes.Old, Text: "already applied"}}
 	case apply.Failed():
-		outcome = "failed"
-	}
-	var text strings.Builder
-	text.WriteString(style.outcomeLine("Reviewed "+changes.Text(head), outcome))
-	if apply.Summary != "" {
-		fmt.Fprintf(&text, " (%s)", changes.Text(apply.Summary))
+		row.Summary = changes.Line{{Role: changes.Failure, Text: "failed"}}
 	}
 	if elapsed := apply.Elapsed.Round(time.Second); elapsed > 0 {
-		text.WriteString(style.paint(" ("+elapsed.String()+")", color.Faint))
+		row.Summary = append(row.Summary, changes.Span{Role: changes.Old, Text: " in " + elapsed.String()})
 	}
-	text.WriteByte('\n')
-	// Resource failures streamed as they happened; the error is the rest.
-	if apply.Error != "" {
-		writeError(&text, style, "  ", apply.Error)
+	if apply.Summary != "" {
+		row.Details = []changes.Line{{{Role: changes.Old, Text: changes.Text(apply.Summary)}}}
 	}
-	return text.String()
+	return head, row
 }
 
-// renderProposal describes one proposal branch's outcome.
-func renderProposal(style textStyle, proposal reconcile.Proposal) string {
-	var text strings.Builder
-	text.WriteString(style.outcomeLine(changes.Text(proposal.Name), proposal.Action))
-	if proposal.PullRequest != "" {
-		fmt.Fprintf(&text, "\n  Pull request: %s", changes.Text(proposal.PullRequest))
-	}
-	text.WriteByte('\n')
+// proposalRow describes one proposal branch's outcome.
+func proposalRow(proposal reconcile.Proposal) changes.Row {
 	if proposal.Error != "" {
-		writeError(&text, style, "  ", proposal.Error)
-	} else if proposal.Summary != "" {
-		fmt.Fprintf(&text, "  %s\n", changes.Text(proposal.Summary))
+		row := changes.Failed("", proposal.Error)
+		if proposal.PullRequest != "" {
+			row.Details = append(row.Details, changes.Line{{Role: changes.Label, Text: "pull request: "}, {Role: changes.Plain, Text: changes.Text(proposal.PullRequest)}})
+		}
+		return row
 	}
-	return text.String()
+	role := changes.New
+	switch proposal.Action {
+	case "unchanged":
+		role = changes.Old
+	case "blocked":
+		role = changes.Blocked
+	}
+	row := changes.Row{Summary: changes.Line{{Role: role, Text: changes.Text(proposal.Action)}}}
+	if proposal.PullRequest != "" {
+		row.Details = append(row.Details, changes.Line{{Role: changes.Label, Text: "pull request: "}, {Role: changes.Plain, Text: changes.Text(proposal.PullRequest)}})
+	}
+	if proposal.Summary != "" {
+		row.Details = append(row.Details, changes.Line{{Role: changes.Old, Text: changes.Text(proposal.Summary)}})
+	}
+	return row
 }
 
-// printReconcileEnd counts the proposals, which streamed as they finished, or
-// shows why the update phase stopped. A run that never reached the phase has
-// no proposals to count.
-func printReconcileEnd(out io.Writer, report reconcile.Report, runErr error) error {
-	update := report.Update
-	if update == nil {
-		return nil
-	}
-	style := newTextStyle(out)
-	label := "Proposals:"
-	if errors.Is(runErr, errInterrupted) {
-		label = "Proposals interrupted:"
-	}
-	var text strings.Builder
-	text.WriteString(style.paint(label, color.Bold) + " ")
+// proposalsEnd counts the proposals, which streamed as they finished, or
+// shows why the update phase stopped.
+func proposalsEnd(style textStyle, update *reconcile.Update) string {
 	if update.Error != "" {
-		text.WriteString(style.outcome("failed") + "\n")
-		writeError(&text, style, "  ", update.Error)
-	} else {
-		var counts []string
-		actions := map[string]int{}
-		for _, proposal := range update.Proposals {
-			if actions[proposal.Action] == 0 {
-				counts = append(counts, proposal.Action)
-			}
-			actions[proposal.Action]++
-		}
-		for i, action := range counts {
-			counts[i] = fmt.Sprintf("%d %s", actions[action], action)
-		}
-		if len(counts) == 0 {
-			counts = []string{"none"}
-		}
-		text.WriteString(strings.Join(counts, ", ") + ".\n")
+		var text strings.Builder
+		text.WriteString("\n")
+		writeError(&text, style, "", update.Error)
+		return text.String()
 	}
-	_, err := io.WriteString(out, text.String())
-	return err
+	var counts []string
+	actions := map[string]int{}
+	for _, proposal := range update.Proposals {
+		if actions[proposal.Action] == 0 {
+			counts = append(counts, proposal.Action)
+		}
+		actions[proposal.Action]++
+	}
+	for i, action := range counts {
+		counts[i] = fmt.Sprintf("%d %s", actions[action], action)
+	}
+	line := style.paint(quantity(len(update.Proposals), "proposal"), color.Bold)
+	if len(counts) > 0 {
+		line += style.paint(":", color.Bold) + " " + strings.Join(counts, ", ")
+	}
+	return "\n" + line + ".\n"
 }
 
 func printPlugins(out io.Writer, reports []engine.PluginReport) error {
@@ -529,7 +325,7 @@ func printPlugins(out io.Writer, reports []engine.PluginReport) error {
 	for _, report := range reports {
 		fields := [][2]string{{"Image", shortImage(report.Image)}, {"Path", changes.Text(report.Path)}, {"Status", report.Status}}
 		if report.Digest != "" && !strings.Contains(report.Image, "@"+report.Digest) {
-			fields = append(fields, [2]string{"Digest", shortDigest(report.Digest)})
+			fields = append(fields, [2]string{"Digest", changes.ShortDigest(report.Digest)})
 		}
 		version := report.Version
 		if revision := report.Revision; revision != "" {
@@ -548,7 +344,7 @@ func printPlugins(out io.Writer, reports []engine.PluginReport) error {
 			provides[operation.Kind] = append(provides[operation.Kind], operationLabel(operation.Name, operation.Resource))
 		}
 		fields = append(fields, [2]string{"Resolvers", strings.Join(provides["resolve"], ", ")}, [2]string{"Resource kinds", strings.Join(provides["resource"], ", ")}, [2]string{"Destinations", strings.Join(provides["reconcile"], ", ")})
-		writeFields(&text, style, report.Name, fields)
+		writeFields(&text, style, "", report.Name, fields)
 		for _, problem := range pluginProblems(report) {
 			writeError(&text, style, "  ", problem)
 		}
@@ -568,57 +364,52 @@ type publishedPlugin struct {
 	Platforms []string `json:"platforms"`
 }
 
-// printPluginUpdate names what plugins update did to each plugin's lock entry,
-// then the entries of plugins no longer declared.
-func printPluginUpdate(out io.Writer, update engine.PluginUpdate) error {
-	style := newTextStyle(out)
+// pluginUpdate describes what plugins update did to each plugin's lock entry,
+// then the entries of plugins no longer declared, then the counts.
+func pluginUpdate(style textStyle, update engine.PluginUpdate) string {
 	var text strings.Builder
+	counts := map[string]int{}
 	for _, report := range update.Plugins {
+		row := changes.Row{Summary: changes.Line{{Role: changes.Old, Text: "unchanged"}}}
 		outcome := "unchanged"
 		switch {
-		case report.Error != "":
+		case report.Error != "" || len(report.Unavailable) > 0:
 			outcome = "failed"
+			row = changes.Failed("", strings.Join(pluginProblems(report), "\n"))
 		case !report.Locked:
 			outcome = "pinned"
+			row.Summary = changes.Line{{Role: changes.Old, Text: "pinned"}}
 		case report.Before == "":
 			outcome = "locked"
+			row.Summary = changes.Line{{Role: changes.New, Text: "new " + changes.ShortDigest(report.Digest)}}
 		case report.Before != report.Digest:
 			outcome = "updated"
+			row.Summary = changes.Line{{Role: changes.Old, Text: changes.ShortDigest(report.Before) + " →"}, {Role: changes.Plain, Text: " "}, {Role: changes.New, Text: changes.ShortDigest(report.Digest)}}
 		}
-		text.WriteString(style.outcomeLine(changes.Text(report.Name), outcome) + "\n")
-		switch outcome {
-		case "locked":
-			fmt.Fprintf(&text, "  %s\n", shortDigest(report.Digest))
-		case "updated":
-			fmt.Fprintf(&text, "  %s → %s\n", shortDigest(report.Before), shortDigest(report.Digest))
+		counts[outcome]++
+		status := engine.StatusChanged
+		if outcome == "failed" {
+			status = engine.StatusFailed
 		}
-		for _, problem := range pluginProblems(report) {
-			writeError(&text, style, "  ", problem)
-		}
+		text.WriteString(renderRows(style, report.Name, status, []changes.Row{row}))
 	}
 	for _, name := range update.Removed {
-		text.WriteString(style.outcomeLine(changes.Text(name), "no longer declared") + "\n")
+		text.WriteString(renderRows(style, name, engine.StatusChanged, []changes.Row{changes.Undeclared()}))
 	}
-	text.WriteString(lockfileStatus(style, update.LockChanged) + "\n")
-	_, err := io.WriteString(out, text.String())
-	return err
-}
-
-// renderPluginChanges describes the plugin lock entries an update changed.
-func renderPluginChanges(style textStyle, plugins []lockfile.PluginChange) string {
-	var text strings.Builder
-	for _, change := range plugins {
-		name := "plugin " + changes.Text(change.Name)
-		switch {
-		case change.After == nil:
-			text.WriteString(style.outcomeLine(name, "no longer locked") + "\n")
-		case change.Before == nil:
-			fmt.Fprintf(&text, "%s\n  %s\n", style.outcomeLine(name, "locked"), shortDigest(change.After.Digest))
-		default:
-			fmt.Fprintf(&text, "%s\n  %s → %s\n", style.outcomeLine(name, "updated"), shortDigest(change.Before.Digest), shortDigest(change.After.Digest))
+	var parts []string
+	for _, outcome := range []string{"updated", "locked", "pinned", "unchanged", "failed"} {
+		if counts[outcome] > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", counts[outcome], outcome))
 		}
-		text.WriteByte('\n')
 	}
+	if text.Len() > 0 {
+		text.WriteString("\n")
+	}
+	line := style.paint(quantity(len(update.Plugins), "plugin"), color.Bold)
+	if len(parts) > 0 {
+		line += style.paint(":", color.Bold) + " " + strings.Join(parts, ", ")
+	}
+	text.WriteString(line + ".\n")
 	return text.String()
 }
 
@@ -653,16 +444,9 @@ func operationLabel(name string, resource *plugin.ResourceKind) string {
 }
 
 // shortDigest keeps enough of a digest to recognise it; --json has all of it.
-func shortDigest(digest string) string {
-	if len(digest) > 19 {
-		digest = digest[:19]
-	}
-	return changes.Text(digest)
-}
-
 func shortImage(image string) string {
 	if name, digest, pinned := strings.Cut(image, "@"); pinned {
-		return changes.Text(name) + "@" + shortDigest(digest)
+		return changes.Text(name) + "@" + changes.ShortDigest(digest)
 	}
 	return changes.Text(image)
 }
@@ -671,48 +455,66 @@ func shortImage(image string) string {
 // subject in it. --json carries the complete model.
 func renderInspection(style textStyle, inspection engine.Inspection) string {
 	var text strings.Builder
-	var digest string
-	if subjects := inspection.Facts.Subjects; len(subjects) > 0 && subjects[0].ID == "." {
-		digest = subjects[0].SHA256
-	}
-	writeFields(&text, style, inspection.Filename, [][2]string{{"Format", inspection.Format}, {"Version", inspection.Version}, {"SHA-256", digest}})
+	fields := [][2]string{{"Format", inspection.Format}, {"Version", inspection.Version}}
+	children := map[string][]plugin.Subject{}
 	for _, subject := range inspection.Facts.Subjects {
-		name := ""
-		if subject.Path != "." {
-			name = " " + subject.Path
-		}
-		if app := subject.App; app != nil {
-			writeFields(&text, style, "Application"+name, [][2]string{{"Installed path", subject.InstalledPath}, {"Bundle ID", app.BundleID}, {"Name", app.Name}, {"Version", app.Version}, {"Build", app.Build}, {"Executable", app.Executable}, {"Architectures", strings.Join(app.Architectures, ", ")}, {"Minimum OS", app.MinimumOS}})
-		}
-		if installer := subject.Installer; installer != nil {
-			writeFields(&text, style, "Installer"+name, [][2]string{{"Version", installer.Version}, {"Minimum OS", installer.MinimumOS}, {"Restart action", installer.RestartAction}})
-		}
-		if receipt := subject.Package; receipt != nil {
-			payload := "no"
-			if receipt.HasPayload {
-				payload = "yes"
+		if subject.ID == "." {
+			fields = append(fields, [2]string{"SHA-256", subject.SHA256})
+			for _, field := range subjectFields(subject) {
+				if field[0] != "Version" || field[1] != inspection.Version {
+					fields = append(fields, field)
+				}
 			}
-			var size string
-			if receipt.InstalledSize > 0 {
-				size = humanize.IBytes(uint64(receipt.InstalledSize) << 10)
-			}
-			writeFields(&text, style, "Package"+name, [][2]string{{"Identifier", receipt.Identifier}, {"Version", receipt.Version}, {"Install location", receipt.InstallLocation}, {"Installed size", size}, {"Payload", payload}})
+			continue
 		}
-		if msi := subject.MSI; msi != nil {
-			writeFields(&text, style, "MSI"+name, [][2]string{{"Product name", msi.ProductName}, {"Product version", msi.ProductVersion}, {"Manufacturer", msi.Manufacturer}, {"Product code", msi.ProductCode}, {"Upgrade code", msi.UpgradeCode}, {"Package code", msi.PackageCode}})
+		parent := subject.Parent
+		if parent == "" {
+			parent = "."
 		}
-		if name != "" && subject.App == nil && subject.Installer == nil && subject.Package == nil && subject.MSI == nil {
-			// A package in a disk image or tree is listed without being read.
-			writeFields(&text, style, strings.ToUpper(subject.Kind[:1])+subject.Kind[1:]+name, nil)
+		children[parent] = append(children[parent], subject)
+	}
+	writeFields(&text, style, "", inspection.Filename, fields)
+	var writeSubjects func(string, string)
+	writeSubjects = func(parent, indent string) {
+		for _, subject := range children[parent] {
+			name := strings.TrimPrefix(subject.Path, parent+"/")
+			writeFields(&text, style, indent, name, subjectFields(subject))
+			writeSubjects(subject.ID, indent+"  ")
 		}
 	}
+	writeSubjects(".", "  ")
 	return text.String()
+}
+
+func subjectFields(subject plugin.Subject) [][2]string {
+	var fields [][2]string
+	if app := subject.App; app != nil {
+		fields = append(fields, [][2]string{{"Installed path", subject.InstalledPath}, {"Bundle ID", app.BundleID}, {"Name", app.Name}, {"Version", app.Version}, {"Build", app.Build}, {"Executable", app.Executable}, {"Architectures", strings.Join(app.Architectures, ", ")}, {"Minimum OS", app.MinimumOS}}...)
+	}
+	if installer := subject.Installer; installer != nil {
+		fields = append(fields, [][2]string{{"Version", installer.Version}, {"Minimum OS", installer.MinimumOS}, {"Restart action", installer.RestartAction}}...)
+	}
+	if receipt := subject.Package; receipt != nil {
+		payload := "no"
+		if receipt.HasPayload {
+			payload = "yes"
+		}
+		var size string
+		if receipt.InstalledSize > 0 {
+			size = humanize.IBytes(uint64(receipt.InstalledSize) << 10)
+		}
+		fields = append(fields, [][2]string{{"Identifier", receipt.Identifier}, {"Version", receipt.Version}, {"Install location", receipt.InstallLocation}, {"Installed size", size}, {"Payload", payload}}...)
+	}
+	if msi := subject.MSI; msi != nil {
+		fields = append(fields, [][2]string{{"Product name", msi.ProductName}, {"Product version", msi.ProductVersion}, {"Manufacturer", msi.Manufacturer}, {"Product code", msi.ProductCode}, {"Upgrade code", msi.UpgradeCode}, {"Package code", msi.PackageCode}}...)
+	}
+	return fields
 }
 
 // renderEnvelope describes an Intune Win32 envelope.
 func renderEnvelope(style textStyle, filename string, envelope intunewin.Metadata) string {
 	var text strings.Builder
-	writeFields(&text, style, filename, [][2]string{
+	writeFields(&text, style, "", filename, [][2]string{
 		{"Format", "intunewin"},
 		{"Name", envelope.Name},
 		{"Setup file", envelope.SetupFile},
@@ -723,16 +525,16 @@ func renderEnvelope(style textStyle, filename string, envelope intunewin.Metadat
 	return text.String()
 }
 
-// writeFields writes a titled block of fields, leaving out empty ones.
-// Blocks after the first start with a blank line.
-func writeFields(text *strings.Builder, style textStyle, title string, fields [][2]string) {
-	if text.Len() > 0 {
-		text.WriteByte('\n')
+// writeFields emits a scope and its populated fields. An empty title adds
+// fields to the existing scope.
+func writeFields(text *strings.Builder, style textStyle, indent, title string, fields [][2]string) {
+	if title != "" {
+		style.writeHeading(text, indent, changes.Line{{Role: changes.Strong, Text: changes.Text(title)}}, nil)
+		indent += "  "
 	}
-	text.WriteString(style.heading(changes.Text(title)) + "\n")
 	for _, field := range fields {
 		if field[1] != "" {
-			fmt.Fprintf(text, "  %s: %s\n", field[0], changes.Text(field[1]))
+			style.writeLine(text, indent, changes.Line{{Role: changes.Label, Text: field[0] + ": "}, {Role: changes.Plain, Text: changes.Text(field[1])}})
 		}
 	}
 }

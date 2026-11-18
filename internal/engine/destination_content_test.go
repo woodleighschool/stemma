@@ -146,6 +146,70 @@ func TestDestinationContentRequestsMustBeSatisfiable(t *testing.T) {
 	}
 }
 
+func TestDestinationCopiesSetupTreeOncePerCommand(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "payload"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "payload", "setup.cmd"), []byte("echo fixture\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(root, "stemma.yaml")
+	testproject.Write(t, project, `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: fixture}
+spec:
+  imports: ['*.software.yaml']
+  destinations:
+    tenant: {operation: intune, config: {graph_url: 'https://graph.example.test', token: fixture}}
+---
+apiVersion: stemma/v1alpha1
+kind: WindowsSoftware
+metadata: {name: fixture}
+spec:
+  source: {path: payload}
+  setup_file: setup.cmd
+  destinations:
+    tenant: {display_name: Fixture}
+`)
+	var methods, paths []string
+	opts := Options{ConfigPath: project, CacheDir: t.TempDir(), Method: "update", Handlers: map[string]reconcileHandler{
+		"intune": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
+			if request.Artifact.Path == "" {
+				return plugin.ReconcileResponse{Content: &plugin.ContentRequest{Artifact: true}}, nil
+			}
+			methods = append(methods, request.Method)
+			paths = append(paths, request.Artifact.Path)
+			data, err := os.ReadFile(filepath.Join(request.Artifact.Path, "setup.cmd"))
+			if err != nil || string(data) != "echo fixture\n" {
+				t.Fatalf("leased setup: %q, %v", data, err)
+			}
+			return plugin.ReconcileResponse{Metadata: request.Metadata}, nil
+		},
+	}}
+	if _, err := Run(t.Context(), opts); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"prepare", "plan", "apply"} {
+		methods, paths = nil, nil
+		opts.Method = method
+		report, err := Run(t.Context(), opts)
+		want := method
+		if method == "prepare" {
+			want = "validate"
+		}
+		if err != nil || len(methods) != 1 || methods[0] != want {
+			t.Fatalf("%s consumed content through %v: %v", method, methods, err)
+		}
+		if report.Resources[0].Publications[0].Deferred != "" {
+			t.Fatal("destination metadata was lost")
+		}
+		if _, err := os.Stat(paths[0]); !os.IsNotExist(err) {
+			t.Fatalf("lease survived %s: %v", method, err)
+		}
+	}
+}
+
 func TestReconciliationTrustsStoredPayloadsUntilVerified(t *testing.T) {
 	server := httptest.NewServer(http.FileServer(http.Dir("../apple/testdata")))
 	defer server.Close()

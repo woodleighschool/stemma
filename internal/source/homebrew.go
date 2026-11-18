@@ -80,13 +80,12 @@ func (m *Manager) homebrewResolver() Resolver {
 	return resolverFor(homebrewInput, m.discoverHomebrew, m.acquireHomebrew)
 }
 
-// homebrewObservation is sufficient for cold replay, including hashless casks.
-type homebrewObservation struct {
-	URL      string            `json:"url"`
-	Filename string            `json:"filename"`
-	SHA256   string            `json:"sha256,omitempty"`
-	Bottle   bool              `json:"bottle,omitempty"`
-	Headers  map[string]string `json:"headers,omitempty"`
+// homebrewOrigin is enough to fetch the bytes again, including those of a
+// hashless cask. A bottle's URL names its digest.
+type homebrewOrigin struct {
+	URL     string            `json:"url"`
+	Bottle  bool              `json:"bottle,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 type brewDocument struct {
@@ -142,7 +141,6 @@ type brewDocument struct {
 
 type homebrewEvidence struct {
 	Name               string                       `json:"name"`
-	Version            string                       `json:"version"`
 	TargetArchitecture string                       `json:"target_architecture"`
 	MacOS              string                       `json:"macos"`
 	Language           string                       `json:"language,omitempty"`
@@ -188,7 +186,8 @@ func (m *Manager) discoverHomebrew(ctx context.Context, s homebrewConfig) (Disco
 		plugin.Logger(ctx).WarnContext(ctx, "Homebrew entry is deprecated", "kind", kind, "name", name, "reason", doc.DeprecationReason)
 	}
 	evidence := homebrewEvidence{Name: name, TargetArchitecture: s.Architecture, MacOS: s.MacOS}
-	observed := homebrewObservation{}
+	var origin homebrewOrigin
+	var version, filename, digest string
 	headers := map[string]string{}
 	if kind == "cask" {
 		if doc.Token != name {
@@ -197,12 +196,12 @@ func (m *Manager) discoverHomebrew(ctx context.Context, s homebrewConfig) (Disco
 		if !slices.Contains(doc.SupportedPlatforms, tag) {
 			return Discovery{}, fmt.Errorf("cask %s does not support %s", name, tag)
 		}
-		evidence.Version = doc.Version
-		observed.URL, observed.SHA256 = doc.URL, doc.SHA256
+		version = doc.Version
+		origin.URL, digest = doc.URL, doc.SHA256
 		selected := s.Language == ""
 		for _, language := range doc.LanguageVariations {
 			if s.Language != "" && slices.Contains(language.Languages, s.Language) || s.Language == "" && language.Default {
-				observed.URL, observed.SHA256 = language.URL, language.SHA256
+				origin.URL, digest = language.URL, language.SHA256
 				evidence.Language, selected = language.Value, true
 				break
 			}
@@ -257,8 +256,8 @@ func (m *Manager) discoverHomebrew(ctx context.Context, s homebrewConfig) (Disco
 				}
 			}
 		}
-		if observed.SHA256 == "no_check" {
-			observed.SHA256 = ""
+		if digest == "no_check" {
+			digest = ""
 		}
 	} else {
 		var formulaName string
@@ -296,47 +295,48 @@ func (m *Manager) discoverHomebrew(ctx context.Context, s homebrewConfig) (Disco
 		if strings.TrimPrefix(bottle.Cellar, ":") != "any_skip_relocation" {
 			return Discovery{}, fmt.Errorf("formula %s bottle requires Homebrew relocation or Cellar %q", name, bottle.Cellar)
 		}
-		evidence.Version, evidence.Revision, evidence.Rebuild = doc.Versions.Stable, &doc.Revision, &doc.Bottle.Stable.Rebuild
+		version, evidence.Revision, evidence.Rebuild = doc.Versions.Stable, &doc.Revision, &doc.Bottle.Stable.Rebuild
 		evidence.Cellar = "any_skip_relocation"
-		evidence.PayloadRoot = name + "/" + evidence.Version
+		evidence.PayloadRoot = name + "/" + version
 		if doc.Revision > 0 {
 			evidence.PayloadRoot += "_" + strconv.Itoa(doc.Revision)
 		}
-		observed = homebrewObservation{URL: bottle.URL, SHA256: bottle.SHA256, Bottle: true, Filename: name + "-" + path.Base(evidence.PayloadRoot) + "." + evidence.BottleTag + ".bottle.tar.gz"}
+		origin = homebrewOrigin{URL: bottle.URL, Bottle: true}
+		digest, filename = bottle.SHA256, name+"-"+path.Base(evidence.PayloadRoot)+"."+evidence.BottleTag+".bottle.tar.gz"
 	}
-	if evidence.Version == "" {
+	if version == "" {
 		return Discovery{}, errors.New("homebrew metadata has no version")
 	}
-	if err := validateHTTPURL(observed.URL); err != nil {
+	if err := validateHTTPURL(origin.URL); err != nil {
 		return Discovery{}, err
 	}
-	if observed.Filename == "" {
-		u, _ := url.Parse(observed.URL)
-		observed.Filename = path.Base(u.Path)
+	if filename == "" {
+		u, _ := url.Parse(origin.URL)
+		filename = path.Base(u.Path)
 	}
-	if !validFilename(observed.Filename) {
+	if !validFilename(filename) {
 		return Discovery{}, errors.New("homebrew download has no safe filename")
 	}
-	if observed.SHA256 != "" && !validDigest(observed.SHA256) {
+	if digest != "" && !validDigest(digest) {
 		return Discovery{}, errors.New("homebrew returned an invalid sha256")
 	}
-	if observed.Bottle && observed.SHA256 == "" {
+	if origin.Bottle && digest == "" {
 		return Discovery{}, errors.New("homebrew bottle has no sha256")
 	}
-	observed.Headers = headers
-	if err := observed.validate(s); err != nil {
+	origin.Headers = headers
+	found := Discovery{Version: version}
+	if digest != "" {
+		found.Content = &Content{SHA256: digest, Filename: filename, Mode: 0o644}
+	}
+	if err := origin.validate(s, found.Content); err != nil {
 		return Discovery{}, err
 	}
-	observation, _ := json.Marshal(observed)
-	claims, _ := json.Marshal(evidence)
-	found := Discovery{Observation: observation, Evidence: map[string]json.RawMessage{"homebrew." + kind: claims}}
-	found.Version = evidence.Version
-	if observed.Bottle {
-		found.Version = fmt.Sprintf("%s.%d.%d", evidence.Version, *evidence.Revision, *evidence.Rebuild)
+	found.Origin, _ = json.Marshal(origin)
+	claims, _ := json.Marshal(map[string]homebrewEvidence{kind: evidence})
+	found.Evidence = map[string]json.RawMessage{"homebrew": claims}
+	if origin.Bottle {
+		found.Version = fmt.Sprintf("%s.%d.%d", version, *evidence.Revision, *evidence.Rebuild)
 		found.ContentRoot = evidence.PayloadRoot
-	}
-	if observed.SHA256 != "" {
-		found.Content = &Content{SHA256: observed.SHA256, Filename: observed.Filename, Mode: 0o644}
 	}
 	return found, nil
 }
@@ -422,41 +422,49 @@ func standaloneBottle(doc brewDocument, s homebrewConfig) error {
 	return nil
 }
 
-func (observed homebrewObservation) validate(config homebrewConfig) error {
-	if observed.Bottle != (config.Formula != "") {
-		return errors.New("homebrew observation differs from the configured source")
+// validate checks an origin against its declaration and the content it is
+// expected to fetch, when that is known. A bottle is always pinned: its URL
+// names the blob's digest.
+func (origin homebrewOrigin) validate(config homebrewConfig, expected *Content) error {
+	if origin.Bottle != (config.Formula != "") {
+		return errors.New("homebrew origin differs from the configured source")
 	}
-	if err := validateHTTPURL(observed.URL); err != nil {
+	if err := validateHTTPURL(origin.URL); err != nil {
 		return err
 	}
-	if !validFilename(observed.Filename) {
-		return errors.New("homebrew download has no safe filename")
-	}
-	if observed.SHA256 != "" && !validDigest(observed.SHA256) {
-		return errors.New("homebrew returned an invalid sha256")
-	}
-	if err := validateHeaders(observed.Headers); err != nil {
+	if err := validateHeaders(origin.Headers); err != nil {
 		return err
 	}
-	if observed.Bottle {
-		u, _ := url.Parse(observed.URL)
-		if !validDigest(observed.SHA256) || u.Scheme != "https" || u.Host != "ghcr.io" || u.Path != "/v2/homebrew/core/"+strings.ReplaceAll(config.Formula, "@", "/")+"/blobs/sha256:"+observed.SHA256 || u.RawQuery != "" || len(observed.Headers) != 0 {
+	if origin.Bottle {
+		u, _ := url.Parse(origin.URL)
+		digest, ok := strings.CutPrefix(u.Path, "/v2/homebrew/core/"+strings.ReplaceAll(config.Formula, "@", "/")+"/blobs/sha256:")
+		if !ok || !validDigest(digest) || u.Scheme != "https" || u.Host != "ghcr.io" || u.RawQuery != "" || len(origin.Headers) != 0 || expected == nil || expected.SHA256 != digest {
 			return errors.New("unsupported Homebrew bottle registry URL")
 		}
 	}
 	return nil
 }
 
-func (m *Manager) acquireHomebrew(_ context.Context, config homebrewConfig, observation json.RawMessage) (Acquisition, error) {
-	var observed homebrewObservation
-	if err := decode(observation, &observed); err != nil {
+func (m *Manager) acquireHomebrew(_ context.Context, config homebrewConfig, entry Entry) (Acquisition, error) {
+	var origin homebrewOrigin
+	if err := decode(entry.Origin, &origin); err != nil {
 		return Acquisition{}, err
 	}
-	if err := observed.validate(config); err != nil {
+	expected := entry.expected()
+	if err := origin.validate(config, expected); err != nil {
 		return Acquisition{}, err
 	}
-	request := &Download{URL: observed.URL, Headers: observed.Headers, Filename: observed.Filename, SHA256: observed.SHA256, AllowHTTPRedirect: !observed.Bottle && observed.SHA256 != ""}
-	if observed.Bottle {
+	u, _ := url.Parse(origin.URL)
+	request := &Download{URL: origin.URL, Headers: origin.Headers, Filename: path.Base(u.Path)}
+	if expected != nil {
+		// The lock or the cask pins the digest, which makes a plain HTTP
+		// mirror as safe as the original.
+		request.Filename, request.SHA256, request.AllowHTTPRedirect = expected.Filename, expected.SHA256, !origin.Bottle
+	}
+	if !validFilename(request.Filename) {
+		return Acquisition{}, errors.New("homebrew download has no safe filename")
+	}
+	if origin.Bottle {
 		client := &auth.Client{Client: m.Client, Cache: auth.NewCache()}
 		request.Do = client.Do
 	}

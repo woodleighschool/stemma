@@ -55,14 +55,20 @@ func lend(ctx context.Context, store *cas.Store, p Prepared, work string, tar bo
 
 // lease gives an operation a stored artifact for one invocation. A plugin
 // process gets a private copy; Stemma's own operations borrow the cache object.
-func (o *operations) lease(ctx context.Context, store *cas.Store, operation string, p Prepared, work string) (plugin.Artifact, error) {
+func (o *operations) lease(ctx context.Context, store *cas.Store, operation string, p Prepared, work string) (_ plugin.Artifact, err error) {
 	op, err := o.operation(operation)
 	if err != nil {
 		return plugin.Artifact{}, err
 	}
-	if !o.external[operation] {
+	if !o.external[operation] && (!p.Tree || op.TarInputs) {
 		return lend(ctx, store, p, work, op.TarInputs)
 	}
+	label := "Copying input to workspace"
+	if p.Tree && !op.TarInputs {
+		label = "Extracting input to workspace"
+	}
+	done := plugin.Stage(ctx, label, plugin.Item(p.Filename))
+	defer func() { done(err) }()
 	if p.Tree && op.TarInputs {
 		artifact := p.artifact()
 		artifact.Path, artifact.Encoding = filepath.Join(work, "tree.tar"), "tar"
@@ -107,7 +113,7 @@ func materializeTree(ctx context.Context, store *cas.Store, ref cas.Ref, target 
 
 // expose replaces the operator's writable copy from the verified cache object.
 func expose(ctx context.Context, store *cas.Store, p Prepared, work, outputFile string) (path string, err error) {
-	done := plugin.Stage(ctx, "Materializing artifact", plugin.Detail(p.Filename))
+	done := plugin.Stage(ctx, "Copying prepared file", plugin.Detail(p.Filename))
 	defer func() { done(err) }()
 	if outputFile != "" {
 		return export(ctx, store, p, outputFile)

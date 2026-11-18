@@ -1,4 +1,4 @@
-package lockfile
+package lock
 
 import (
 	"maps"
@@ -8,13 +8,27 @@ import (
 	"github.com/woodleighschool/stemma/internal/source"
 )
 
+// ChangeKind names what a run did to one input's lock entry.
+type ChangeKind string
+
+const (
+	// Added is an input the lock did not record.
+	Added ChangeKind = "added"
+	// Removed is an input no longer declared.
+	Removed ChangeKind = "removed"
+	// Updated is an input whose content changed.
+	Updated ChangeKind = "updated"
+	// Refreshed is an input whose content is the same and whose entry is not.
+	Refreshed ChangeKind = "refreshed"
+)
+
 // InputChange compares a reviewed input with the entry committed by this run.
 type InputChange struct {
-	Resource       string        `json:"resource"`
-	Input          string        `json:"input"`
-	Before         *source.Entry `json:"before,omitempty"`
-	After          *source.Entry `json:"after,omitempty"`
-	ContentChanged bool          `json:"content_changed"`
+	Resource string        `json:"resource"`
+	Input    string        `json:"input"`
+	Kind     ChangeKind    `json:"kind"`
+	Before   *source.Entry `json:"before,omitempty"`
+	After    *source.Entry `json:"after,omitempty"`
 }
 
 // DiffInputs includes additions and removals, ordered by resource and input.
@@ -37,7 +51,17 @@ func DiffInputs(before, after map[string]map[string]source.Entry) []InputChange 
 			if aok && bok && a.Equal(b) {
 				continue
 			}
-			change := InputChange{Resource: resource, Input: name, ContentChanged: !aok || !bok || a.Content.SHA256 != b.Content.SHA256}
+			change := InputChange{Resource: resource, Input: name}
+			switch {
+			case !aok:
+				change.Kind = Added
+			case !bok:
+				change.Kind = Removed
+			case a.Content.SHA256 != b.Content.SHA256 || a.Content.Tree != b.Content.Tree:
+				change.Kind = Updated
+			default:
+				change.Kind = Refreshed
+			}
 			if aok {
 				change.Before = &a
 			}

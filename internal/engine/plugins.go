@@ -5,14 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
@@ -29,12 +28,12 @@ type PluginReport struct {
 	Image string `json:"image,omitempty"`
 	Path  string `json:"path,omitempty"`
 	// Digest names the code: the platform index of an image or the content of
-	// local files. Locked reports that it comes from the lockfile rather than
+	// local files. Locked reports that it comes from the lock rather than
 	// the declaration.
 	Digest string `json:"digest,omitempty"`
 	Locked bool   `json:"locked,omitempty"`
 	Status string `json:"status,omitempty"`
-	// Before is the digest the lockfile held before an update.
+	// Before is the digest the lock held before an update.
 	Before      string               `json:"before,omitempty"`
 	Version     string               `json:"version,omitempty"`
 	Revision    string               `json:"revision,omitempty"`
@@ -70,14 +69,14 @@ func ListPlugins(ctx context.Context, configPath string) ([]PluginReport, error)
 	if err != nil {
 		return nil, err
 	}
-	locked, err := lockfile.Load(filepath.Dir(configPath))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	locked, err := lock.LoadPlugins(filepath.Dir(configPath))
+	if err != nil {
 		return nil, err
 	}
 	reports := make([]PluginReport, 0, len(project.Plugins))
 	for _, name := range slices.Sorted(maps.Keys(project.Plugins)) {
 		declaration := project.Plugins[name]
-		entry := locked.Plugins[name]
+		entry := locked[name]
 		report := PluginReport{Name: name, Image: declaration.Image, Path: declaration.Path, Digest: plugins.Pin(declaration, entry), Status: "unlocked"}
 		switch {
 		case strings.Contains(declaration.Image, "@"):
@@ -106,8 +105,8 @@ func InspectPlugins(ctx context.Context, opts Options, verify bool) ([]PluginRep
 	if err != nil {
 		return nil, err
 	}
-	locked, err := lockfile.Load(root)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	locked, err := lock.LoadPlugins(root)
+	if err != nil {
 		return nil, err
 	}
 	var reports []PluginReport
@@ -115,7 +114,7 @@ func InspectPlugins(ctx context.Context, opts Options, verify bool) ([]PluginRep
 		store := plugins.New(cache, opts.Lock.Offline)
 		store.Verify = verify
 		var err error
-		reports, _, err = describePlugins(ctx, p, store, root, slices.Sorted(maps.Keys(p.Plugins)), locked.Plugins, false)
+		reports, _, err = describePlugins(ctx, p, store, root, slices.Sorted(maps.Keys(p.Plugins)), locked, false)
 		return err
 	})
 	if err != nil {
@@ -147,28 +146,26 @@ func UpdatePlugins(ctx context.Context, opts Options, names []string) (update Pl
 	if err != nil {
 		return update, err
 	}
-	unlock, err := lockfile.Lock(ctx, root)
+	unlock, err := lock.Lock(ctx, root)
 	if err != nil {
 		return update, err
 	}
 	defer func() { _ = unlock() }()
-	locked, err := lockfile.Load(root)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return update, err
-	}
+	// Updating plugins replaces a plugin document it cannot read.
+	locked, _ := lock.LoadPlugins(root)
 	err = withCacheLease(ctx, opts.CacheDir, func(store *cas.Store) error {
 		reports, resolved, err := describePlugins(ctx, p, plugins.New(store, false), root, names, nil, true)
 		if err != nil {
 			return err
 		}
 		entries := map[string]plugins.Entry{}
-		for name, entry := range locked.Plugins {
+		for name, entry := range locked {
 			if _, declared := p.Plugins[name]; declared {
 				entries[name] = entry
 			}
 		}
 		for i, report := range reports {
-			reports[i].Before = locked.Plugins[report.Name].Digest
+			reports[i].Before = locked[report.Name].Digest
 			if report.Error == "" {
 				delete(entries, report.Name)
 				if entry, ok := resolved[report.Name]; ok {
@@ -177,7 +174,7 @@ func UpdatePlugins(ctx context.Context, opts Options, names []string) (update Pl
 			}
 		}
 		update.Plugins = reports
-		result, err := lockfile.Prepare(ctx, root, nil, entries, source.New(store, root, false), lockfile.Options{PluginsOnly: true})
+		result, err := lock.Prepare(ctx, root, nil, entries, source.New(store, root, false), lock.Options{PluginsOnly: true})
 		if err != nil {
 			return err
 		}

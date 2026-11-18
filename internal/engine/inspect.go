@@ -49,7 +49,7 @@ func (e *execution) inspectInput(ctx context.Context) error {
 // readStored writes the file the run names inside a stored artifact. The
 // object is read where it is, so nothing is materialized.
 func (e *execution) readStored(ctx context.Context, stored Prepared, work string) (err error) {
-	done := plugin.Stage(ctx, "Reading artifact", plugin.Detail(stored.Filename))
+	done := plugin.Stage(ctx, "Reading file", plugin.Detail(stored.Filename))
 	defer func() { done(err) }()
 	store := e.session.store
 	artifact := stored.artifact()
@@ -65,7 +65,7 @@ func (e *execution) readStored(ctx context.Context, stored Prepared, work string
 // ReadMember writes one file inside a local artifact to w, or the names a
 // directory inside it holds.
 func ReadMember(ctx context.Context, name, member string, w io.Writer) (err error) {
-	done := plugin.Stage(ctx, "Reading artifact", plugin.Detail(filepath.Base(name)))
+	done := plugin.Stage(ctx, "Reading file", plugin.Detail(filepath.Base(name)))
 	defer func() { done(err) }()
 	name, err = filepath.Abs(name)
 	if err != nil {
@@ -97,7 +97,7 @@ func readMember(ctx context.Context, artifact plugin.Artifact, member, work stri
 
 // Inspect inventories a local artifact using the same facts as input expressions.
 func Inspect(ctx context.Context, name, selection string) (result Inspection, err error) {
-	done := plugin.Stage(ctx, "Inspecting artifact", plugin.Detail(filepath.Base(name)))
+	done := plugin.Stage(ctx, "Inspecting file", plugin.Detail(filepath.Base(name)))
 	defer func() { done(err) }()
 	name, err = filepath.Abs(name)
 	if err != nil {

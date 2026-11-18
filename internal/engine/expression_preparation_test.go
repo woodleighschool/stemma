@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 )
 
@@ -82,28 +82,28 @@ spec:
 	}
 	update()
 	first := run()
-	if first.Cached || first.Artifacts["installer"].Version == "" {
+	if reused(first) || first.Artifacts["installer"].Version == "" {
 		t.Fatalf("first build=%+v", first)
 	}
 	unchanged := run()
-	if !unchanged.Cached {
+	if !reused(unchanged) {
 		t.Fatal("unchanged build missed cache")
 	}
-	if err := os.RemoveAll(lockfile.Path(root)); err != nil {
+	if err := os.RemoveAll(lock.Path(root)); err != nil {
 		t.Fatal(err)
 	}
 	update()
-	if recreated := run(); !recreated.Cached || recreated.Artifacts["installer"].Payload != first.Artifacts["installer"].Payload {
+	if recreated := run(); !reused(recreated) || recreated.Artifacts["installer"].Payload != first.Artifacts["installer"].Payload {
 		t.Fatal("a recreated lock rebuilt unchanged inputs")
 	}
 	t.Setenv("STEMMA_TEST_DESCRIPTION", "changed publication")
 	t.Setenv("STEMMA_TEST_UNUSED", "unrelated")
-	if result := run(); !result.Cached {
+	if result := run(); !reused(result) {
 		t.Fatal("publication or unrelated environment rebuilt package")
 	}
 	t.Setenv("STEMMA_TEST_CONTENT", "two")
 	envChanged := run()
-	if envChanged.Cached || envChanged.Artifacts["installer"].Payload == first.Artifacts["installer"].Payload || envChanged.Artifacts["installer"].Version != first.Artifacts["installer"].Version {
+	if reused(envChanged) || envChanged.Artifacts["installer"].Payload == first.Artifacts["installer"].Payload || envChanged.Artifacts["installer"].Version != first.Artifacts["installer"].Version {
 		t.Fatal("used environment did not rebuild with unchanged receipt version")
 	}
 	payload := filepath.Join(root, "Vendor.app/Contents/Resources/message.txt")
@@ -112,12 +112,12 @@ spec:
 	}
 	update()
 	bytesChanged := run()
-	if bytesChanged.Cached || bytesChanged.Artifacts["installer"].Payload == envChanged.Artifacts["installer"].Payload || bytesChanged.Artifacts["installer"].Version != envChanged.Artifacts["installer"].Version {
+	if reused(bytesChanged) || bytesChanged.Artifacts["installer"].Payload == envChanged.Artifacts["installer"].Payload || bytesChanged.Artifacts["installer"].Version != envChanged.Artifacts["installer"].Version {
 		t.Fatal("changed source bytes did not rebuild with unchanged receipt version")
 	}
 	t.Setenv("STEMMA_TEST_VERSION", "9.8.7")
 	update()
-	if result := run(); result.Cached || result.Artifacts["installer"].Version != "9.8.7-1" {
+	if result := run(); reused(result) || result.Artifacts["installer"].Version != "9.8.7-1" {
 		t.Fatalf("expression did not refresh version: %+v", result.Artifacts["installer"])
 	}
 }

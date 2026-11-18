@@ -17,6 +17,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/inspect"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -150,7 +151,7 @@ func artworkInput(t *testing.T, root string) plugin.Artifact {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return plugin.Artifact{Path: app, Filename: "Example.app", Tree: true, Evidence: map[string]json.RawMessage{"macos.application": evidence}}
+	return plugin.Artifact{Path: app, Filename: "Example.app", Tree: true, Evidence: map[string]json.RawMessage{"macos": testevidence.MacOS(evidence)}}
 }
 
 func TestIconDoesNotBroadenMissingArtwork(t *testing.T) {

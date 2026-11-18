@@ -16,7 +16,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
@@ -72,7 +72,7 @@ spec:
 		t.Fatalf("warm resources: %+v", warm)
 	}
 	for i, item := range warm.Resources {
-		if !item.Cached || item.Artifacts["installer"].Payload != cold.Resources[i].Artifacts["installer"].Payload {
+		if !reused(item) || item.Artifacts["installer"].Payload != cold.Resources[i].Artifacts["installer"].Payload {
 			t.Fatalf("warm preparation rebuilt: %+v", item)
 		}
 	}
@@ -249,7 +249,7 @@ func preparationFixture(t *testing.T, dependencies map[string]string, handle fun
 		e.plans[key] = plan
 		e.selected = append(e.selected, key)
 	}
-	e.locked, err = lockfile.Begin(t.Context(), root, declarations(e.plans, e.selected), nil, source.New(store, root, false), lockfile.Options{})
+	e.locked, err = lock.Begin(t.Context(), root, declarations(e.plans, e.selected), nil, source.New(store, root, false), lock.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}

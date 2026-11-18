@@ -15,8 +15,7 @@ import (
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/internal/icon"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 	"golang.org/x/oauth2"
@@ -37,12 +36,12 @@ type Options struct {
 	// of the resources that declare none. A run names profiles or Resources.
 	Profiles []string
 	// ChangedSince narrows prepare to the resources whose preparation differs
-	// from the catalog at this Git revision, after checking the lockfile's
+	// from the catalog at this Git revision, after checking the lock's
 	// shape.
 	ChangedSince string
 	// Jobs bounds independent preparations; zero uses two workers.
 	Jobs  int
-	Lock  lockfile.Options
+	Lock  lock.Options
 	Icons IconOptions
 	// Input selects artwork or facts without building the selected resource.
 	Input InputSelection
@@ -56,14 +55,42 @@ type Options struct {
 	Read     string
 	ReadTo   io.Writer
 	Handlers map[string]reconcileHandler
+	// Started receives what the run will report on once it has selected its
+	// resources, before anything is acquired.
+	Started func(Selection)
 	// ResourceDone receives each final resource result, including failures.
 	ResourceDone func(ResourceReport) error
 }
 
+// Selection identifies resources with multiple inputs, as Kind/name, so a
+// report names the changed input even when only one of them changed.
+type Selection struct {
+	NamedInputs []string
+}
+
 // Run resolves locked resources in dependency order and reconciles destinations independently.
 func Run(ctx context.Context, opts Options) (report Report, runErr error) {
+	selected := 0
 	defer func() {
-		report.Summarize(opts.Method)
+		report.Command = opts.Method
+		// Publication can stop between destinations. Keep the observed results
+		// even when the resource did not reach its normal completion callback.
+		if opts.Method == "plan" || opts.Method == "apply" {
+			for i := range report.Resources {
+				resource := &report.Resources[i]
+				if resource.Status != "" || !slices.ContainsFunc(resource.Publications, func(p Publication) bool { return p.Status != "" }) {
+					continue
+				}
+				resource.Status = StatusFailed
+				resource.Error = cmp.Or(resource.Error, "run stopped before all destinations completed")
+				if opts.ResourceDone != nil {
+					runErr = errors.Join(runErr, opts.ResourceDone(*resource))
+				}
+			}
+		}
+		// Prepared resources that never reached a destination have no outcome.
+		report.Resources = slices.DeleteFunc(report.Resources, func(resource ResourceReport) bool { return resource.Status == "" })
+		report.Summarize(selected)
 		if runErr != nil {
 			report.Error = runErr.Error()
 		}
@@ -107,7 +134,7 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 			return report, err
 		}
 	}
-	// Update writes the lockfile and resolves plugin declarations. Every other
+	// Update writes the lock and resolves plugin declarations. Every other
 	// run consumes it as reviewed.
 	opts.Lock.Refresh = opts.Method == "update"
 	s, err := open(ctx, opts, opts.Lock.Refresh)
@@ -122,6 +149,10 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	if err := e.begin(ctx); err != nil {
 		return report, err
+	}
+	selected = len(e.selected)
+	if opts.Started != nil {
+		opts.Started(e.selection())
 	}
 	report.Resources = []ResourceReport{}
 	if opts.Method != "update" {
@@ -158,7 +189,7 @@ type execution struct {
 	// evaluated settings, which only plan and apply read.
 	destinations map[destinationRef]destinationPlan
 	connections  map[string]json.RawMessage
-	locked       *lockfile.Update
+	locked       *lock.Update
 	inputOwner   string
 
 	prepared map[string]preparedResource
@@ -182,10 +213,10 @@ func (e *execution) publishing() bool {
 }
 
 // begin selects the run's resources, checks every contract they rely on and
-// opens the lockfile, before anything is acquired.
+// opens the lock, before anything is acquired.
 func (e *execution) begin(ctx context.Context) (err error) {
 	s := e.session
-	done := plugin.Stage(ctx, "Validating operation contracts")
+	done := plugin.Stage(ctx, "Checking resource configuration")
 	defer func() { done(err) }()
 	e.roots, err = selectResources(s.project.Resources, e.opts.Resources, e.opts.Profiles)
 	if err != nil {
@@ -264,12 +295,12 @@ func (e *execution) begin(ctx context.Context) (err error) {
 	opts.PreserveUnselected = len(e.opts.Resources) > 0 || len(e.opts.Profiles) > 0 || e.opts.ChangedSince != ""
 	opts.Retain = unselected(s.project.Resources, e.selected)
 	plugin.Logger(ctx).DebugContext(ctx, "Resources selected", "count", len(e.selected), "unselected", len(opts.Retain))
-	e.locked, err = lockfile.Begin(ctx, s.root, inputs, s.ops.plugins, s.manager, opts)
+	e.locked, err = lock.Begin(ctx, s.root, inputs, s.ops.plugins, s.manager, opts)
 	return err
 }
 
-// run prepares every selected resource and reconciles its destinations,
-// then commits the lock changes of the resources that succeeded.
+// run prepares selected resources and reconciles their destinations,
+// then finishes the project lock update.
 func (e *execution) run(ctx context.Context) error {
 	if e.opts.Jobs > 1 && e.opts.Method != "update" {
 		if err := e.prepareAll(ctx); err != nil {
@@ -304,11 +335,11 @@ func (e *execution) commit(ctx context.Context) error {
 		}
 	}
 	result, err := e.locked.Commit(ctx, rejected...)
-	if err != nil {
-		return err
-	}
 	if e.opts.Method == "update" {
-		e.report.LockChanged = &result.Changed
+		if e.report.LockChanged == nil {
+			e.report.LockChanged = new(bool)
+		}
+		*e.report.LockChanged = *e.report.LockChanged || result.Changed
 		e.report.Plugins = result.Plugins
 	}
 	reported := map[string]bool{}
@@ -317,10 +348,21 @@ func (e *execution) commit(ctx context.Context) error {
 	}
 	for _, change := range result.Changes {
 		if !reported[change.Resource] {
-			e.report.RemovedInputs = append(e.report.RemovedInputs, change)
+			e.report.Removed = append(e.report.Removed, change)
 		}
 	}
-	return nil
+	return err
+}
+
+func (e *execution) selection() Selection {
+	var selection Selection
+	for _, key := range e.selected {
+		plan := e.plans[key]
+		if e.opts.Method == "update" && len(plan.Inputs) > 1 {
+			selection.NamedInputs = append(selection.NamedInputs, plan.Resource.Kind+"/"+plan.Resource.Metadata.Name)
+		}
+	}
+	return selection
 }
 
 // icons creates each selected resource's missing or forced icon. Only a
@@ -330,7 +372,7 @@ func (e *execution) icons(ctx context.Context) error {
 	if e.opts.Input.Name != "" {
 		return e.inputIcon(ctx)
 	}
-	outcomes, building := map[string]string{}, map[string]bool{}
+	outcomes, building := map[string]*ResourceReport{}, map[string]bool{}
 	var builds func(string)
 	builds = func(key string) {
 		for _, input := range e.plans[key].Inputs {
@@ -341,18 +383,19 @@ func (e *execution) icons(ctx context.Context) error {
 		}
 	}
 	for _, key := range e.selected {
-		if outcomes[key] = iconOutcome(e.opts.Icons, e.session.root, e.plans[key]); outcomes[key] == "" {
+		if outcomes[key] = iconOutcome(e.opts.Icons, e.session.root, e.plans[key]); outcomes[key] == nil {
 			e.pending[key] = 1
 			builds(key)
 		}
 	}
 	for _, key := range e.selected {
-		if outcome := outcomes[key]; outcome != "" {
+		if outcome := outcomes[key]; outcome != nil {
 			if building[key] {
 				continue // Preparing the resource that consumes it reports it.
 			}
 			resource := e.plans[key].Resource
-			e.report.Resources = append(e.report.Resources, ResourceReport{Name: resource.Metadata.Name, Kind: resource.Kind, Key: key, Icon: outcome})
+			outcome.Name, outcome.Kind, outcome.Key = resource.Metadata.Name, resource.Kind, key
+			e.report.Resources = append(e.report.Resources, *outcome)
 			if err := e.complete(ctx, &e.report.Resources[len(e.report.Resources)-1]); err != nil {
 				return err
 			}
@@ -380,7 +423,7 @@ func (e *execution) icons(ctx context.Context) error {
 			installer.Path = leased.Path
 		}
 		if err == nil {
-			item.Icon, err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], installer, selection, prepared.work)
+			err = createIcon(resourceContext(ctx, e.plans[key].Resource), e.opts.Icons, e.session.root, e.plans[key], installer, selection, prepared.work, item)
 		}
 		if err != nil {
 			item.Error = err.Error()
@@ -398,7 +441,7 @@ func (e *execution) icons(ctx context.Context) error {
 }
 
 // materialize prepares the selected resource and the builds it consumes from
-// the reviewed lockfile and exposes the selected output. No destination sees
+// the reviewed lock and exposes the selected output. No destination sees
 // the prepared artifact.
 func (e *execution) materialize(ctx context.Context) error {
 	key := e.roots[0]
@@ -449,13 +492,13 @@ func (e *execution) input(input plugin.Input, entry source.Entry) (Prepared, err
 			return Prepared{}, err
 		}
 		evidence := maps.Clone(entry.Evidence)
-		if entry.InputVersion != "" {
+		if entry.Version != "" {
 			if evidence == nil {
 				evidence = map[string]json.RawMessage{}
 			}
-			evidence["source"], _ = json.Marshal(map[string]string{"version": entry.InputVersion})
+			evidence["source"], _ = json.Marshal(map[string]string{"version": entry.Version})
 		}
-		return Prepared{Payload: ref, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, Version: entry.InputVersion, ContentRoot: entry.ContentRoot, InputsHash: entry.Content.SHA256, Evidence: evidence}, nil
+		return Prepared{Payload: ref, Filename: entry.Content.Filename, Tree: entry.Content.Tree, Mode: entry.Content.Mode, Version: entry.Version, ContentRoot: entry.Content.Root, InputsHash: entry.Content.SHA256, Evidence: evidence}, nil
 	}
 	ref := input.Resource
 	producer := e.prepared[ref.Key()]
@@ -467,29 +510,41 @@ func (e *execution) input(input plugin.Input, entry source.Entry) (Prepared, err
 	return artifact, nil
 }
 
-// complete reports a finished resource. A rejected resource keeps its
-// reviewed entries, so only a successful one has input changes.
+// complete saves an update's acquired inputs before reporting its final result.
 func (e *execution) complete(ctx context.Context, item *ResourceReport) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	var saveErr error
 	if item.Error == "" {
-		item.Inputs = e.locked.Changes(item.Key)
+		if e.opts.Method == "update" {
+			result, err := e.locked.CommitResource(ctx, item.Key)
+			if e.report.LockChanged == nil {
+				e.report.LockChanged = new(bool)
+			}
+			*e.report.LockChanged = *e.report.LockChanged || result.Changed
+			e.report.Plugins = result.Plugins
+			item.Inputs = result.Changes
+			if err != nil {
+				saveErr = fmt.Errorf("save reviewed inputs: %w", err)
+				item.Error = saveErr.Error()
+			}
+		} else {
+			item.Inputs = e.locked.Changes(item.Key)
+		}
 	}
 	plan := e.plans[item.Key]
-	if e.opts.Method == "icon" && item.Error == "" && (item.Icon == "unchanged" || strings.HasPrefix(item.Icon, "created ")) {
-		item.IconPath = icon.Relative(plan.Icon)
-	}
+	item.status(e.opts.Method)
 	item.Notices = signatureNotices(plan.Resource.Reference(), item.Artifacts)
 	if e.prepared[item.Key].ready {
 		item.Notices = slices.Concat(plan.Notices, item.Notices)
 	}
 	if e.opts.ResourceDone != nil {
 		if err := e.opts.ResourceDone(*item); err != nil {
-			return err
+			return errors.Join(saveErr, err)
 		}
 	}
-	return ctx.Err()
+	return errors.Join(saveErr, ctx.Err())
 }
 
 // fail records a resource failure, unless the run was interrupted and the

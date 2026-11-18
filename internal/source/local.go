@@ -174,7 +174,7 @@ func (m *Manager) readLocal(ctx context.Context, s fileRequest) (content Content
 			if _, err := f.Seek(0, io.SeekStart); err != nil {
 				return err
 			}
-			_, err := io.Copy(w, f)
+			_, err := io.Copy(w, plugin.ProgressReader(ctx, f, info.Size()))
 			return err
 		})
 		content.SHA256 = object.SHA256

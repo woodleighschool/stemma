@@ -1,6 +1,8 @@
 package intune
 
 import (
+	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -45,16 +47,16 @@ func TestCategoriesOwnTheCompleteSet(t *testing.T) {
 	if got := held(); !slices.Equal(got, []string{"cat-1", "cat-3"}) {
 		t.Fatalf("replaced app categories = %v", got)
 	}
-	if len(response.Changes) != 1 || response.Changes[0].Field != "categories" || string(response.Changes[0].Before) != `["Other apps","Productivity"]` || string(response.Changes[0].After) != `["Business","Productivity"]` {
-		t.Fatalf("category change = %+v", response.Changes)
+	if want := []plugin.FieldChange{{Field: "categories", Before: json.RawMessage(`["Other apps","Productivity"]`), After: json.RawMessage(`["Business","Productivity"]`)}}; !reflect.DeepEqual(response.Fields, want) {
+		t.Fatalf("category fields = %+v", response.Fields)
 	}
 
 	fake.mu.Lock()
 	writes := fake.writes
 	fake.mu.Unlock()
 	response, err = run(object{"categories": []any{"Productivity", "Business"}})
-	if err != nil || len(response.Changes) != 0 {
-		t.Fatalf("unchanged categories: %+v, %v", response.Changes, err)
+	if err != nil || response.Changed() {
+		t.Fatalf("unchanged categories: %+v, %v", response, err)
 	}
 	if _, err := run(object{"display_name": "Renamed"}); err != nil {
 		t.Fatal(err)
@@ -72,8 +74,9 @@ func TestCategoriesOwnTheCompleteSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Changes) != 2 || response.Changes[0].Action != "create" || string(response.Changes[0].After) != `"games"` || response.Changes[1].Field != "categories" {
-		t.Fatalf("new category changes = %+v", response.Changes)
+	// A category the run creates is a member like any other.
+	if want := []plugin.FieldChange{{Field: "categories", Before: json.RawMessage(`["Business","Productivity"]`), After: json.RawMessage(`["Other apps","games"]`)}}; !reflect.DeepEqual(response.Fields, want) {
+		t.Fatalf("new category fields = %+v", response.Fields)
 	}
 	fake.mu.Lock()
 	newest := fake.categories[len(fake.categories)-1]
@@ -85,8 +88,8 @@ func TestCategoriesOwnTheCompleteSet(t *testing.T) {
 		t.Fatalf("categories after creation = %v", got)
 	}
 	response, err = run(object{"categories": []any{"games", "Other apps"}})
-	if err != nil || len(response.Changes) != 0 {
-		t.Fatalf("unchanged categories: %+v, %v", response.Changes, err)
+	if err != nil || response.Changed() {
+		t.Fatalf("unchanged categories: %+v, %v", response, err)
 	}
 
 	fake.mu.Lock()
@@ -129,10 +132,10 @@ func TestCategoriesUseExactNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fake.writes != 0 || !slices.ContainsFunc(response.Changes, func(change plugin.Change) bool {
-		return change.Kind == "categories" && change.Action == "create" && string(change.After) == `"BUSINESS"`
+	if fake.writes != 0 || !slices.ContainsFunc(response.Fields, func(field plugin.FieldChange) bool {
+		return field.Field == "categories" && field.Before == nil && string(field.After) == `["BUSINESS","Business","business"]`
 	}) {
-		t.Fatalf("category plan: %+v, writes=%d", response.Changes, fake.writes)
+		t.Fatalf("category plan: %+v, writes=%d", response.Fields, fake.writes)
 	}
 	req.Method = "apply"
 	if _, err := reconcileFixture(t, c, req, desired); err != nil {
@@ -150,5 +153,28 @@ func TestCategoryNamesAreValidatedBeforeConnecting(t *testing.T) {
 		if _, err := compileRequest(req); err == nil {
 			t.Fatalf("accepted categories %#v", categories)
 		}
+	}
+}
+
+func TestCategoryFailureRetainsConfirmedMembershipChanges(t *testing.T) {
+	fake, c := newGraphFixture(t)
+	fake.categories = []object{{"id": "old", "displayName": "Old"}, {"id": "new", "displayName": "New"}}
+	req := fixtureRequest(t)
+	if _, err := reconcileRequest(t, c, req); err != nil {
+		t.Fatal(err)
+	}
+	fake.appCategories, fake.failCategoryRemoval = []string{"old"}, true
+	req.Metadata = raw(object{"categories": []any{"New"}})
+	result, err := reconcileRequest(t, c, req)
+	if err == nil || !slices.Equal(fake.appCategories, []string{"old", "new"}) {
+		t.Fatalf("fixture did not partially apply: %+v, %v", fake.appCategories, err)
+	}
+	want := []plugin.FieldChange{{Field: "categories", Before: raw([]string{"Old"}), After: raw([]string{"New", "Old"})}}
+	if !reflect.DeepEqual(result.Fields, want) {
+		t.Fatalf("partial membership: %+v", result)
+	}
+	fake.failCategoryRemoval = false
+	if _, err := reconcileRequest(t, c, req); err != nil || !slices.Equal(fake.appCategories, []string{"new"}) {
+		t.Fatalf("retry: %v %v", fake.appCategories, err)
 	}
 }

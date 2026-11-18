@@ -2,7 +2,6 @@ package intune
 
 import (
 	"cmp"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -69,13 +68,11 @@ func deriveMac(req plugin.ReconcileRequest[Config], m object, origins map[string
 	if !req.Prepared && req.Artifact.SHA256 == "" && len(req.Artifact.Facts.Subjects) == 0 {
 		return m, nil
 	}
-	var selected *plugin.Subject
-	if data := req.Artifact.Evidence["macos.application"]; len(data) > 0 {
-		if err := json.Unmarshal(data, &selected); err != nil || selected == nil || selected.App == nil {
-			return nil, errors.New("macos.application evidence requires an application subject")
-		}
+	macos, err := plugin.ReadMacOS(req.Artifact.Evidence)
+	if err != nil {
+		return nil, err
 	}
-	apps, origin, err := detectedApps(req.Artifact.Facts, selected, text(m["type"]))
+	apps, origin, err := detectedApps(req.Artifact.Facts, macos.Application, text(m["type"]))
 	if err != nil {
 		return nil, err
 	}
@@ -165,14 +162,11 @@ func validateLOB(artifact plugin.Artifact, declared []any, managed bool) error {
 	if artifact.Size > lobLimit {
 		return errors.New("a line-of-business PKG must be at most 2 GiB")
 	}
-	var observations []signature.Observation
 	signedRoot := false
-	if json.Unmarshal(artifact.Evidence["signatures"], &observations) == nil {
-		for _, observed := range observations {
-			signer, err := signature.Parse(observed.Signer)
-			if err == nil && signer.Scheme == signature.AppleDeveloperID && observed.Input == "" && observed.Subject.Path == "." && observed.State == "signed" && observed.Authority == "Developer ID Installer" && observed.Verifier == signature.Verifier {
-				signedRoot = true
-			}
+	for _, observed := range signature.Read(artifact.Evidence).Observed {
+		signer, err := signature.Parse(observed.Signer)
+		if err == nil && signer.Scheme == signature.AppleDeveloperID && observed.Input == "" && observed.Subject.Path == "." && observed.State == "signed" && observed.Authority == "Developer ID Installer" && observed.Verifier == signature.Verifier {
+			signedRoot = true
 		}
 	}
 	if !signedRoot {
@@ -226,30 +220,33 @@ func validateLOB(artifact plugin.Artifact, declared []any, managed bool) error {
 
 // deriveInstaller supplies the standard msiexec commands, MSI information and
 // ProductCode detection of a selected setup MSI. Declared MSI properties
-// extend the derived install command, and declared version comparisons
-// without a value compare with the managed version.
+// extend the derived install command, and the display version and declared
+// version comparisons without a value use the managed version.
 func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origins map[string]string) (object, error) {
 	properties, _ := metadata["msi_properties"].(object)
 	delete(metadata, "msi_properties")
 	if err := deriveVersionRules(req, metadata, origins); err != nil {
 		return nil, err
 	}
+	metadata, err := deriveDisplayVersion(req, metadata, origins)
+	if err != nil {
+		return nil, err
+	}
 	setup := req.Artifact.EntryPoint
 	if setup == "" {
 		setup = req.Artifact.Filename
 	}
-	data := req.Artifact.Evidence["windows.installer"]
-	if !strings.EqualFold(path.Ext(setup), ".msi") || len(data) == 0 {
+	windows, err := plugin.ReadWindows(req.Artifact.Evidence)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(path.Ext(setup), ".msi") || windows.Installer == nil {
 		if properties != nil && req.Artifact.SHA256 != "" {
 			return nil, errors.New("msi_properties requires an MSI setup file")
 		}
 		return metadata, nil
 	}
-	var selected *plugin.Subject
-	if err := json.Unmarshal(data, &selected); err != nil || selected == nil || selected.MSI == nil {
-		return nil, errors.New("selected Windows MSI evidence is invalid")
-	}
-	msi := selected.MSI
+	msi := windows.Installer.MSI
 	defaults := msiDefaults(msi)
 	if strings.ContainsAny(setup, "\"%\r\n") && metadata["install_command"] == nil {
 		return nil, errors.New("MSI setup path cannot be represented safely in a standard command")
@@ -266,6 +263,20 @@ func deriveInstaller(req plugin.ReconcileRequest[Config], metadata object, origi
 		}
 	}
 	return mergeDerived(metadata, defaults, "windows.installer", origins)
+}
+
+// deriveDisplayVersion shows the managed version. An installer without one
+// clears the version an earlier installer set.
+func deriveDisplayVersion(req plugin.ReconcileRequest[Config], metadata object, origins map[string]string) (object, error) {
+	version := req.Artifact.Version
+	if version == "" && !req.Prepared && req.Artifact.SHA256 == "" {
+		return metadata, nil
+	}
+	var value any = cleared{}
+	if version != "" {
+		value = version
+	}
+	return mergeDerived(metadata, object{"display_version": value}, "artifact.version", origins)
 }
 
 // windowsVersion matches the dotted version a file or registry rule compares.

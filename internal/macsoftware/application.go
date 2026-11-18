@@ -2,7 +2,6 @@ package macsoftware
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -24,15 +23,14 @@ var ErrNoApplication = errors.New("installer has no selected application")
 // Icon extracts artwork for Raw or stages a bundle for Glassy. Presentation
 // must already be resolved. Installer bytes stay untouched.
 func Icon(ctx context.Context, installer plugin.Artifact, workspace string, presentation icon.Presentation) (icon.Subject, error) {
-	data, ok := installer.Evidence["macos.application"]
-	if !ok {
+	macos, err := plugin.ReadMacOS(installer.Evidence)
+	if err != nil {
+		return icon.Subject{}, err
+	}
+	if macos.Application == nil {
 		return icon.Subject{}, ErrNoApplication
 	}
-	var app plugin.Subject
-	if err := json.Unmarshal(data, &app); err != nil || app.App == nil {
-		return icon.Subject{}, errors.New("macos.application evidence requires an application subject")
-	}
-	return applicationIcon(ctx, installer, app, nil, workspace, presentation)
+	return applicationIcon(ctx, installer, *macos.Application, nil, workspace, presentation)
 }
 
 // IconFromSource reads a selected application from an already open input.

@@ -12,10 +12,7 @@ import (
 
 func selected(artifact plugin.Artifact, app plugin.Subject, versionKey string) plugin.Artifact {
 	artifact.Evidence = map[string]json.RawMessage{}
-	artifact.Evidence["macos.application"], _ = json.Marshal(app)
-	if versionKey != "" {
-		artifact.Evidence["macos.version_key"], _ = json.Marshal(versionKey)
-	}
+	artifact.Evidence["macos"], _ = json.Marshal(plugin.MacOSEvidence{Application: &app, VersionKey: versionKey})
 	return artifact
 }
 

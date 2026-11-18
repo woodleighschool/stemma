@@ -50,8 +50,8 @@ func TestValidatePreviewsLocalManagedValuesWithoutCredentials(t *testing.T) {
 			t.Errorf("origin for %s = %q, want %q", field, got, want)
 		}
 	}
-	if len(response.Changes) != 0 || len(server.operations()) != 0 {
-		t.Fatalf("local validation planned changes or contacted Jamf: %+v, %v", response.Changes, server.operations())
+	if response.Changed() || len(server.operations()) != 0 {
+		t.Fatalf("local validation planned changes or contacted Jamf: %+v, %v", response, server.operations())
 	}
 }
 

@@ -39,10 +39,8 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, change := range publication.Changes {
-		if change.Action == "upload" && change.Field == "payload_sha256" && change.Filename != fake.app["fileName"] {
-			t.Fatalf("reported upload %q differs from published %v", change.Filename, fake.app["fileName"])
-		}
+	if uploads := publication.Uploads; len(uploads) != 1 || uploads[0].Name != plugin.UploadInstaller || uploads[0].Filename != fake.app["fileName"] {
+		t.Fatalf("reported uploads %+v differ from published %v", uploads, fake.app["fileName"])
 	}
 	published := publishedMarker(t, fake)
 	if published.identity != req.Identity.Digest() || published.content != "1" || published.payload == "" {
@@ -77,8 +75,8 @@ func TestUploadThenMetadataAndAssignmentOwnership(t *testing.T) {
 	writes := fake.writes
 	fake.mu.Unlock()
 	response, err := reconcileFixture(t, c, req, desired)
-	if err != nil || len(response.Changes) != 0 {
-		t.Fatalf("unchanged reconciliation: %+v, %v", response.Changes, err)
+	if err != nil || response.Changed() {
+		t.Fatalf("unchanged reconciliation: %+v, %v", response, err)
 	}
 	fake.mu.Lock()
 	if fake.writes != writes {
@@ -115,7 +113,7 @@ func TestReconciliationRequestsContentBeforePublication(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.Method = "plan"
-	if response, err := reconcileFixture(t, c, req, desired); err != nil || response.Content != nil || len(response.Changes) == 0 {
+	if response, err := reconcileFixture(t, c, req, desired); err != nil || response.Content != nil || !response.Changed() {
 		t.Fatalf("planning=%+v err=%v", response, err)
 	}
 	req.Method = "apply"
@@ -129,7 +127,7 @@ func TestReconciliationRequestsContentBeforePublication(t *testing.T) {
 	}
 	req.Artifact.Path = ""
 	writes := fake.writes
-	if response, err := reconcileFixture(t, c, req, desired); err != nil || response.Content != nil || len(response.Changes) != 0 || fake.writes != writes {
+	if response, err := reconcileFixture(t, c, req, desired); err != nil || response.Content != nil || response.Changed() || fake.writes != writes {
 		t.Fatalf("unchanged=%+v err=%v", response, err)
 	}
 	desired["description"] = "Changed"
@@ -361,7 +359,7 @@ func TestUnchangedApplyWaitsForPendingPublication(t *testing.T) {
 	writes := fake.writes
 	fake.mu.Unlock()
 	req.Method = "plan"
-	if response, err := reconcileFixture(t, c, req, desired); err != nil || len(response.Changes) != 0 {
+	if response, err := reconcileFixture(t, c, req, desired); err != nil || response.Changed() {
 		t.Fatalf("pending plan: %+v, %v", response, err)
 	}
 	fake.mu.Lock()
@@ -370,7 +368,7 @@ func TestUnchangedApplyWaitsForPendingPublication(t *testing.T) {
 	}
 	fake.mu.Unlock()
 	req.Method = "apply"
-	if response, err := reconcileFixture(t, c, req, desired); err != nil || len(response.Changes) != 0 {
+	if response, err := reconcileFixture(t, c, req, desired); err != nil || response.Changed() {
 		t.Fatalf("pending apply: %+v, %v", response, err)
 	}
 	fake.mu.Lock()
@@ -410,8 +408,8 @@ func TestFreshRequestRediscoversPublishedApp(t *testing.T) {
 			for _, method := range []string{"plan", "apply"} {
 				req.Method = method
 				response, err := reconcileFixture(t, c, req, desired)
-				if err != nil || len(response.Changes) != 0 {
-					t.Fatalf("%s after rediscovery: %+v, %v", method, response.Changes, err)
+				if err != nil || response.Changed() {
+					t.Fatalf("%s after rediscovery: %+v, %v", method, response, err)
 				}
 			}
 			fake.mu.Lock()
@@ -439,7 +437,7 @@ func TestPlanAndValidationDoNotWrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	response, err := reconcileFixture(t, c, req, desired)
-	if err != nil || len(response.Changes) == 0 {
+	if err != nil || !response.Changed() {
 		t.Fatalf("plan: %+v, %v", response, err)
 	}
 	fake.mu.Lock()
@@ -544,8 +542,8 @@ func TestMarkerDriftRestoresContent(t *testing.T) {
 			}
 			fake.mu.Unlock()
 			response, err := reconcileFixture(t, c, req, desired)
-			if err != nil || len(response.Changes) != 0 {
-				t.Fatalf("repaired drift did not settle: %+v, %v", response.Changes, err)
+			if err != nil || response.Changed() {
+				t.Fatalf("repaired drift did not settle: %+v, %v", response, err)
 			}
 			fake.mu.Lock()
 			defer fake.mu.Unlock()
@@ -622,6 +620,7 @@ type graphFixture struct {
 
 	creates, versions, blobLists, commits, assigns, appLists, writes      int
 	failBlob, failCommit, failActivation, failFileRead, failRelationships bool
+	failCategoryRemoval                                                   bool
 	blockList                                                             bool // the upload was committed as a block list
 
 	pendingAppReads    int
@@ -757,6 +756,10 @@ func (f *graphFixture) serve(w http.ResponseWriter, r *http.Request) {
 		f.appCategories = append(f.appCategories, id)
 		w.WriteHeader(http.StatusNoContent)
 	case strings.HasPrefix(path, appsPath+"/app-1/categories/") && strings.HasSuffix(path, "/$ref") && r.Method == http.MethodDelete:
+		if f.failCategoryRemoval {
+			http.Error(w, "category removal failed", http.StatusBadRequest)
+			return
+		}
 		id := strings.TrimSuffix(strings.TrimPrefix(path, appsPath+"/app-1/categories/"), "/$ref")
 		index := slices.Index(f.appCategories, id)
 		if index < 0 {
@@ -1013,9 +1016,13 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 			fake.app["owner"] = "Remote owner"
 			fake.app["ignoreVersionDetection"] = true
 			desired = update
-			_, err := reconcileFixture(t, c, req, desired)
+			updated, err := reconcileFixture(t, c, req, desired)
 			if err != nil {
 				t.Fatal(err)
+			}
+			// The primary bundle version is the app's version, not one of its fields.
+			if updated.Previous != "1.0" || updated.Version != "1.1" || slices.ContainsFunc(updated.Fields, func(field plugin.FieldChange) bool { return field.Field == "primary_bundle_version" }) {
+				t.Fatalf("version update: %+v", updated)
 			}
 			operatingSystem := fake.app["minimumSupportedOperatingSystem"].(object)
 			if operatingSystem["v12_0"] != false || operatingSystem["v14_0"] != true {
@@ -1026,8 +1033,8 @@ func TestMacRawContentAndMetadata(t *testing.T) {
 			}
 			req.Method = "plan"
 			response, err := reconcileFixture(t, c, req, desired)
-			if err != nil || len(response.Changes) != 0 {
-				t.Fatalf("settled plan: %v, %v", response.Changes, err)
+			if err != nil || response.Changed() {
+				t.Fatalf("settled plan: %+v, %v", response, err)
 			}
 		})
 	}
@@ -1069,25 +1076,20 @@ func TestPKGInstallScripts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, script := range scripts {
-			for _, value := range []string{string(raw(script)), base64.StdEncoding.EncodeToString([]byte(script)), secret, "preinstall-token"} {
-				if strings.Contains(string(raw(response)), value) {
-					t.Fatalf("%s response reported script text", method)
-				}
-			}
-		}
 		return response
 	}
 	scriptChanges := func(response plugin.ReconcileResponse) []string {
 		var changes []string
-		for _, change := range response.Changes {
-			if strings.HasSuffix(change.Field, "_script") {
-				changes = append(changes, change.Action+" "+change.Field)
+		for _, field := range response.Fields {
+			if strings.HasSuffix(field.Field, "_script") {
+				changes = append(changes, field.Field+": "+string(field.Before)+" → "+string(field.After))
 			}
 		}
 		return changes
 	}
-	run("plan")
+	if changes := scriptChanges(run("plan")); !slices.Equal(changes, []string{"post_install_script:  → " + string(raw(post)), "pre_install_script:  → " + string(raw(pre))}) {
+		t.Fatalf("created scripts: %v", changes)
+	}
 	run("apply")
 	stored := func(key string) string {
 		fake.mu.Lock()
@@ -1099,16 +1101,16 @@ func TestPKGInstallScripts(t *testing.T) {
 	if stored("preInstallScript") != metadata["pre_install_script"] || stored("postInstallScript") != post {
 		t.Fatalf("published scripts: %+v", fake.app)
 	}
-	if response := run("plan"); len(response.Changes) != 0 {
-		t.Fatalf("settled plan: %+v", response.Changes)
+	if response := run("plan"); response.Changed() {
+		t.Fatalf("settled plan: %+v", response)
 	}
 	post = "#!/bin/sh\nbootstrap --server example.test --password " + secret + "\n"
 	scripts = append(scripts, post)
 	metadata["post_install_script"], metadata["pre_install_script"] = post, nil
-	if changes := scriptChanges(run("plan")); !slices.Equal(changes, []string{"set post_install_script", "clear pre_install_script"}) {
+	if changes := scriptChanges(run("plan")); !slices.Equal(changes, []string{"post_install_script: " + string(raw(scripts[1])) + " → " + string(raw(post)), "pre_install_script: " + string(raw(pre)) + " → null"}) {
 		t.Fatalf("planned script changes: %v", changes)
 	}
-	if changes := scriptChanges(run("apply")); !slices.Equal(changes, []string{"set post_install_script", "clear pre_install_script"}) {
+	if changes := scriptChanges(run("apply")); !slices.Equal(changes, []string{"post_install_script: " + string(raw(scripts[1])) + " → " + string(raw(post)), "pre_install_script: " + string(raw(pre)) + " → null"}) {
 		t.Fatalf("script changes: %v", changes)
 	}
 	fake.mu.Lock()
@@ -1117,16 +1119,16 @@ func TestPKGInstallScripts(t *testing.T) {
 	if !cleared || stored("postInstallScript") != post {
 		t.Fatalf("updated scripts: %+v", fake.app)
 	}
-	if response := run("plan"); len(response.Changes) != 0 {
-		t.Fatalf("settled script update: %+v", response.Changes)
+	if response := run("plan"); response.Changed() {
+		t.Fatalf("settled script update: %+v", response)
 	}
 	if fake.versions != 1 || fake.blobLists != 1 {
 		t.Fatal("script update uploaded unchanged content")
 	}
 	// Omission leaves a script another administrator set.
 	delete(metadata, "post_install_script")
-	if response := run("plan"); len(response.Changes) != 0 || stored("postInstallScript") != post {
-		t.Fatalf("omitted script: %+v", response.Changes)
+	if response := run("plan"); response.Changed() || stored("postInstallScript") != post {
+		t.Fatalf("omitted script: %+v", response)
 	}
 
 	metadata["post_install_script"] = post
@@ -1135,7 +1137,7 @@ func TestPKGInstallScripts(t *testing.T) {
 	fake.app["notes"] = ""
 	fake.app["postInstallScript"] = object{"scriptContent": base64.StdEncoding.EncodeToString([]byte(scripts[1]))}
 	fake.mu.Unlock()
-	if changes := scriptChanges(run("plan")); !slices.Equal(changes, []string{"set post_install_script"}) {
+	if changes := scriptChanges(run("plan")); !slices.Equal(changes, []string{"post_install_script: " + string(raw(scripts[1])) + " → " + string(raw(post))}) {
 		t.Fatalf("adopted script changes: %v", changes)
 	}
 	// A disk image app names the way to a PKG; a line-of-business app has none.
@@ -1186,8 +1188,8 @@ func TestMacValidationAndAdoption(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Graph exposes no digest of adopted content, so adoption publishes it again.
-	if !slices.ContainsFunc(response.Changes, func(change plugin.Change) bool { return change.Kind == "content" }) {
-		t.Fatalf("adoption did not plan publication: %+v", response.Changes)
+	if len(response.Uploads) != 1 || response.Uploads[0].Name != plugin.UploadInstaller || response.Uploads[0].Before != "" {
+		t.Fatalf("adoption did not plan publication: %+v", response)
 	}
 	if len(fake.paths) != 1 || fake.paths[0] != "/beta"+appsPath+"/app-1" {
 		t.Fatalf("adoption did not read explicit per-software ID: %v", fake.paths)
@@ -1267,7 +1269,29 @@ func compileRequest(req plugin.ReconcileRequest[Config]) (object, error) {
 	return compile(metadata)
 }
 
+// reconcileFixture reconciles compiled Graph metadata whose only derived field
+// is the setup file.
 func reconcileFixture(t testing.TB, c *client, req plugin.ReconcileRequest[Config], desired object) (plugin.ReconcileResponse, error) {
+	t.Helper()
+	return reconcileGraph(t, c, req, desired, map[string]string{})
+}
+
+// reconcileRequest derives and compiles the request's metadata as Handle does,
+// then reconciles it.
+func reconcileRequest(t testing.TB, c *client, req plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, error) {
+	t.Helper()
+	metadata, origins, err := derive(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	desired, err := compile(metadata)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reconcileGraph(t, c, req, desired, origins)
+}
+
+func reconcileGraph(t testing.TB, c *client, req plugin.ReconcileRequest[Config], desired object, origins map[string]string) (plugin.ReconcileResponse, error) {
 	t.Helper()
 	artifact, err := identifyArtifact(t.Context(), req.Artifact, text(desired["@odata.type"]))
 	if err != nil {
@@ -1275,7 +1299,7 @@ func reconcileFixture(t testing.TB, c *client, req plugin.ReconcileRequest[Confi
 	}
 	desired = maps.Clone(desired)
 	if desired["@odata.type"] == win32Type {
-		desired["setupFilePath"] = artifact.setup
+		desired["setupFilePath"], origins["setup_file"] = artifact.setup, "installer.entry_point"
 	}
 	return c.handle(t.Context(), req, desired, artifact)
 }

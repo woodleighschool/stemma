@@ -40,7 +40,7 @@ command.
 2. **Apply.** When the reviewed commit differs from the last one applied in full,
    run frozen `apply` without selectors and record the result as the
    `stemma/apply` commit status. Each resource reuses cached inputs or
-   acquires them from their locked observations before its destinations are
+   acquires them from their locked origins before its destinations are
    written. Missing or stale lock entries, unavailable content, or content that
    differs from the reviewed identity fail that resource and block consumers of its outputs; independent resources still
    publish. The applied marker moves only when the whole apply succeeded; a
@@ -61,10 +61,10 @@ command.
    or updates the proposal with a failing status and a safe summary; detailed
    failures remain in the run report.
 
-Both phases start from the reviewed commit's project and lockfile. When either
+Both phases start from the reviewed commit's project and lock. When either
 does not load, neither phase runs: the run fails with that one error, and the
 commit's `stemma/apply` status fails unless the commit was already applied. A
-missing lockfile loads; the update phase proposes one. Past that point the
+missing lock loads; the update phase proposes one. Past that point the
 phases fail independently. A stale lock on the reviewed branch fails apply
 loudly while the update phase still proposes the fix; the exit status is nonzero
 when either phase failed. Pull requests and commit statuses name resources,
@@ -89,7 +89,7 @@ Further behaviour of the update phase:
   it is; the lock refresh continues without it. Consumers of its outputs are
   reported as blocked and retain their proposals too. Successful independent
   resources still get update proposals.
-- Plugins load from the reviewed lockfile, and reconcile never changes their
+- Plugins load from the reviewed lock, and reconcile never changes their
   entries. A plugin that does not load fails the phases that use it; fix its
   entry with `stemma plugins update` and commit the result. A plugin has to be
   reachable from a fresh checkout: an image, or a tracked path.
@@ -156,7 +156,7 @@ converges on what the destinations already hold. To take over by hand, stop the
 schedule and run `stemma apply` from any checkout.
 
 A fresh cache needs no warm-up command. Publication fetches missing inputs from
-their recorded locked observations and rejects content that differs from the
+their recorded locked origins and rejects content that differs from the
 reviewed identity. If historical content is no longer available, publication
 fails for the affected resource; discovery can independently propose newer
 content for review. Acquisition never repairs missing or stale lock entries.

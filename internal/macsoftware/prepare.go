@@ -72,7 +72,7 @@ func prepare(ctx context.Context, spec Spec, request Request, depth int) (output
 	if spec.PackagePath != "" && !source.Traversable() {
 		return nil, errors.New("package_path requires an archive source")
 	}
-	done := plugin.Stage(ctx, "Inspecting installer", plugin.Detail(input.Filename))
+	done := plugin.Stage(ctx, "Reading package and application metadata", plugin.Detail(input.Filename))
 	inventory, err := inspect.Source(ctx, source)
 	done(err)
 	if err != nil {
@@ -108,26 +108,23 @@ func prepare(ctx context.Context, spec Spec, request Request, depth int) (output
 	installer.Version = installerVersion(installer.Facts)
 	// Application selection and signing evidence belong to the prepared output.
 	installer.Evidence = maps.Clone(input.Evidence)
-	delete(installer.Evidence, "macos.application")
-	delete(installer.Evidence, "macos.version_key")
-	delete(installer.Evidence, "signatures")
-	delete(installer.Evidence, signature.BuildEvidence)
-	delete(installer.Evidence, signature.UnverifiedEvidence)
+	delete(installer.Evidence, plugin.EvidenceMacOS)
+	delete(installer.Evidence, plugin.EvidenceSigning)
 	if installer.Evidence == nil {
 		installer.Evidence = map[string]json.RawMessage{}
 	}
+	signing := signature.Evidence{Observed: verified}
 	if spec.Package != nil {
 		// Preparation never signs, so the package's signing state is its own to
 		// state, apart from the application's publisher.
-		installer.Evidence[signature.BuildEvidence] = json.RawMessage(`"unsigned"`)
+		signing.Build = "unsigned"
+	}
+	if err := signing.Write(installer.Evidence); err != nil {
+		return nil, err
 	}
 	if app != nil {
 		installer.Version = appVersion(*app, spec.Application)
-		installer.Evidence["macos.application"], _ = json.Marshal(app)
-		installer.Evidence["macos.version_key"], _ = json.Marshal(versionKey(spec.Application, *app))
-	}
-	if verified != nil {
-		installer.Evidence["signatures"], _ = json.Marshal(verified)
+		installer.Evidence[plugin.EvidenceMacOS], _ = json.Marshal(plugin.MacOSEvidence{Application: app, VersionKey: versionKey(spec.Application, *app)})
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -205,7 +202,7 @@ func publishApplication(ctx context.Context, spec Spec, request Request, source 
 		} else {
 			targets[0].ID, targets[0].Path, targets[0].Parent = published, published, "."
 		}
-		verified, err = signature.Verify(ctx, spec.Signatures, targets, request.DeriveSignature, func(subject plugin.Subject) (signature.Result, error) {
+		verified, err = signature.Verify(ctx, input.Filename, spec.Signatures, targets, request.DeriveSignature, func(subject plugin.Subject) (signature.Result, error) {
 			var result signature.Result
 			var err error
 			if retainImage {
@@ -297,7 +294,7 @@ func publishPackage(ctx context.Context, spec Spec, request Request, source *con
 	derive := request.DeriveSignature && !built
 	var verified []signature.Observation
 	if enforce || derive {
-		verified, err = signature.Verify(ctx, spec.Signatures, facts.Subjects[:1], derive, func(plugin.Subject) (signature.Result, error) {
+		verified, err = signature.Verify(ctx, installer.Filename, spec.Signatures, facts.Subjects[:1], derive, func(plugin.Subject) (signature.Result, error) {
 			return apple.VerifyPackage(ctx, local, signature.Signer{})
 		})
 		if err != nil {

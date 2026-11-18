@@ -106,7 +106,7 @@ installation is installed again by the next run.
 ## Updates
 
 A declaration that names its digest suits automated updates: the tag and digest
-move together in `stemma.yaml` and the lockfile does not change. Renovate's docker
+move together in `stemma.yaml` and the lock does not change. Renovate's docker
 datasource can do this with a regex manager:
 
 ```json5

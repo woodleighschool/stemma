@@ -23,7 +23,7 @@ type Options struct {
 	Version string
 }
 
-const instructions = `Stemma prepares the software a catalog declares from its vendors' sources and publishes it to destinations. These tools work on the catalog's files as they are now. describe answers what a document can declare; inspect reads a resource input's static facts; prepare tries documents against their current sources without the lockfile; update records sources in the lockfile; icon creates declared icons; check runs the checks a pull request runs. None of them publish.`
+const instructions = `Stemma prepares the software a catalog declares from its vendors' sources and publishes it to destinations. These tools work on the catalog's files as they are now. describe answers what a document can declare; inspect reads a resource input's static facts; prepare tries documents against their current sources without the lock; update records sources in the lock; icon creates declared icons; check runs the checks a pull request runs. None of them publish.`
 
 // Run serves the project's tools on standard input and output until the
 // client disconnects or ctx ends.
@@ -58,13 +58,13 @@ func newServer(opts Options) *mcp.Server {
 	}, tools.describe)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "inspect",
-		Description: "Inspect a resource input from its current source without building that resource or changing the lockfile. Returns static subjects and their exact paths, app versions and builds, identifiers, and installer facts. Use these facts to write build expressions. Set read to return one text file inside the input instead, such as a package's Distribution or an installer script.",
+		Description: "Inspect a resource input from its current source without building that resource or changing the lock. Returns static subjects and their exact paths, app versions and builds, identifiers, and installer facts. Use these facts to write build expressions. Set read to return one text file inside the input instead, such as a package's Distribution or an installer script.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld},
 	}, tools.inspect)
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "prepare",
-		Description: "Prepare resources from their sources as they are now, ignoring the lockfile. " +
-			"Reports the lockfile changes update would record, each artifact with its inspected facts, and signed or unsigned observations and the signatures block to declare. " +
+		Description: "Prepare resources from their sources as they are now, ignoring the lock. " +
+			"Reports the lock changes update would record, each artifact with its inspected facts, and signed or unsigned observations and the signatures block to declare. " +
 			"Destination metadata is checked against the artifact, and publications has an entry for each destination. " +
 			"Where the destination reports it, as munki does, metadata is the declared metadata with every derived value, null or empty for a field the destination clears, and origins names each field's source. " +
 			"An entry with deferred and no metadata is not a preview: deferred says why. Writes nothing to the catalog.",
@@ -72,7 +72,7 @@ func newServer(opts Options) *mcp.Server {
 	}, tools.prepare)
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "update",
-		Description: "Resolve the resources' sources and record them in the lockfile, reporting each input change. Other resources keep their entries.",
+		Description: "Resolve the resources' sources and record them in the lock, reporting each input change. Other resources keep their entries.",
 		Annotations: &mcp.ToolAnnotations{OpenWorldHint: &openWorld},
 	}, tools.update)
 	mcp.AddTool(server, &mcp.Tool{
@@ -86,7 +86,7 @@ func newServer(opts Options) *mcp.Server {
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "check",
 		Description: "Check the catalog as pull requests do: prepare affected resources " +
-			"from the lockfile since a Git revision, then validate every document. " +
+			"from the lock since a Git revision, then validate every document. " +
 			"Suspended resources are only validated, and so are profiled resources unless an affected resource consumes their outputs.",
 		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, OpenWorldHint: &openWorld},
 	}, tools.check)

@@ -19,9 +19,9 @@ func TestSemanticChanges(t *testing.T) {
 		{"changed type", "value", `"1"`, `1`, []string{`value: "1" → 1`}},
 		{"empty collection", "value", `null`, `[]`, []string{`value: null → []`}},
 		{"large integer", "size", "9007199254740992", "9007199254740993", []string{"size: 9007199254740992 → 9007199254740993"}},
-		{"script", "package.postinstall_script", `"#!/bin/sh\necho old\nexit 0\n"`, `"#!/bin/sh\necho new\nexit 0\n"`, []string{"package.postinstall_script: changed (3 lines)"}},
-		{"added script", "package.postinstall_script", `null`, `"#!/bin/sh\nexit 0\n"`, []string{"package.postinstall_script: null → 2 lines"}},
-		{"receipt identity", "package.receipts", `[{"packageid":"com.example.pkg","version":"1"}]`, `[{"packageid":"com.example.pkg","version":"2"}]`, []string{"package.receipts[com.example.pkg].version: 1 → 2"}},
+		{"script", "package.postinstall_script", `"#!/bin/sh\necho old\nexit 0\n"`, `"#!/bin/sh\necho new\nexit 0\n"`, []string{"package.postinstall_script:", "  - echo old", "  + echo new"}},
+		{"added script", "package.postinstall_script", `null`, `"#!/bin/sh\nexit 0\n"`, []string{"package.postinstall_script:", "  - null", "  + #!/bin/sh", "  + exit 0", `  + ""`}},
+		{"receipt identity", "package.receipts", `[{"packageid":"com.example.pkg","version":"1"}]`, `[{"packageid":"com.example.pkg","version":"2"}]`, []string{"package.receipts:", "  - com.example.pkg: version: 1", "  + com.example.pkg: version: 2"}},
 		{"removed object field", "metadata", `{"a":false,"b":1}`, `{"a":false}`, []string{"metadata.b: 1 → (absent)"}},
 		{"unchanged", "field", `{"a":1}`, `{"a":1}`, nil},
 	} {
@@ -31,21 +31,6 @@ func TestSemanticChanges(t *testing.T) {
 				t.Fatalf("got %q want %q", got, test.want)
 			}
 		})
-	}
-}
-
-func TestCreatesAndRetentionDescribeObjects(t *testing.T) {
-	for _, test := range []struct {
-		change plugin.Change
-		want   string
-	}{
-		{plugin.Change{Action: "create", Field: "package", After: json.RawMessage(`{"version":"2","uninstallable":false}`)}, "create package\n  uninstallable: false\n  version: 2"},
-		{plugin.Change{Action: "create", Field: "package", After: json.RawMessage(`{"blocking_applications":["Example"],"receipts":[]}`)}, "create package\n  blocking_applications:\n    – Example\n  receipts: []"},
-		{plugin.Change{Action: "delete", Kind: "retention", Field: "package", Before: json.RawMessage(`"1.0"`)}, "delete package: 1.0 (retention)"},
-	} {
-		if got := strings.Join(Lines(test.change), "\n"); got != test.want {
-			t.Fatalf("got %q want %q", got, test.want)
-		}
 	}
 }
 
@@ -73,25 +58,9 @@ func TestCollectionReorderIsVisible(t *testing.T) {
 	}
 }
 
-func TestMultilineValuesShowSizeWithoutContents(t *testing.T) {
-	script := json.RawMessage(`"#!/bin/sh\ncurl -H \"Authorization: secret\" https://example.test\n"`)
-	for _, change := range []plugin.Change{
-		{Action: "set", Field: "package.postinstall_script", Before: json.RawMessage(`"exit 0\n"`), After: script},
-		{Action: "create", Field: "package", After: json.RawMessage(`{"postinstall_script":` + string(script) + `}`)},
-		{Action: "create", Field: "script", After: script},
-		{Action: "delete", Field: "script", Before: script},
-		{Action: "set", Field: "package", Before: json.RawMessage(`{}`), After: json.RawMessage(`{"postinstall_script":` + string(script) + `}`)},
-	} {
-		got := strings.Join(Lines(change), "\n")
-		if strings.Contains(got, "secret") || !strings.Contains(got, "2 lines") {
-			t.Fatalf("%s %s: %s", change.Action, change.Field, got)
-		}
-	}
-}
-
 func TestAddedInstallHasReadableValues(t *testing.T) {
 	installs := strings.Join(compare("package.installs", json.RawMessage(`[]`), json.RawMessage(`[{"path":"/Applications/Example.app","type":"application","CFBundleShortVersionString":"2"}]`)), "\n")
-	for _, want := range []string{"package.installs[/Applications/Example.app] (added)", "CFBundleShortVersionString: 2", "type: application"} {
+	for _, want := range []string{"package.installs:", "  + /Applications/Example.app: CFBundleShortVersionString: 2, type: application"} {
 		if !strings.Contains(installs, want) {
 			t.Fatalf("missing %q: %s", want, installs)
 		}
@@ -117,43 +86,22 @@ func TestReceiptReorderingDoesNotEraseAReportedChange(t *testing.T) {
 	}
 }
 
-func TestOperationWithoutValueDiffRemainsVisible(t *testing.T) {
-	if got := strings.Join(Lines(plugin.Change{Kind: "metadata", Action: "reconcile", Field: "catalogs/testing"}), "\n"); got != "reconcile catalogs/testing" {
-		t.Fatalf("operation lost: %s", got)
-	}
-}
-
 func compare(field string, before, after json.RawMessage) []string {
 	return difference(Text(field), decode(before), decode(after))
 }
 
-func TestCreationExpandsCollectionObjectsWithoutExposingScripts(t *testing.T) {
-	change := plugin.Change{Action: "create", Field: "pkginfo", After: json.RawMessage(`{"installs":[{"path":"/Applications/Example.app","version":"2","script":"first\nprivate second"}]}`)}
-	text := strings.Join(Lines(change), "\n")
-	for _, want := range []string{"create pkginfo", "– path: /Applications/Example.app", "script: 2 lines", "version: 2"} {
-		if !strings.Contains(text, want) {
-			t.Fatalf("missing %q: %s", want, text)
+func TestScriptDiffsRetainValues(t *testing.T) {
+	script := json.RawMessage(`"#!/bin/sh\ncurl -H \"Authorization: secret\" https://example.test\n"`)
+	for _, field := range []plugin.FieldChange{
+		{Field: "pkginfo.postinstall_script", Before: json.RawMessage(`"exit 0\n"`), After: script},
+		{Field: "pkginfo.postinstall_script", After: script},
+		{Field: "pkginfo", After: json.RawMessage(`{"postinstall_script":` + string(script) + `}`)},
+		{Field: "pkginfo.postinstall_script", Before: script},
+		{Field: "detection", Before: json.RawMessage(`[{"script":"exit 0\n","type":"script"}]`), After: json.RawMessage(`[{"script":` + string(script) + `,"type":"script"}]`)},
+	} {
+		got := strings.Join(fieldChange(field), "\n")
+		if !strings.Contains(got, "Authorization: secret") || strings.Contains(got, "2 lines") {
+			t.Fatalf("%+v: %s", field, got)
 		}
-	}
-	if strings.Contains(text, "private") || strings.Contains(text, "{\"") {
-		t.Fatal(text)
-	}
-}
-
-func TestUploadNamesFileWithoutReplacingContentIdentity(t *testing.T) {
-	change := plugin.Change{Action: "upload", Field: "package.installer", Filename: "Example-2.pkg", Before: json.RawMessage(`"old-digest"`), After: json.RawMessage(`"new-digest"`)}
-	got := strings.Join(Lines(change), "\n")
-	if got != "upload package.installer: Example-2.pkg" {
-		t.Fatal(got)
-	}
-	if string(change.After) != `"new-digest"` || string(change.Before) != `"old-digest"` {
-		t.Fatal("lost content identity")
-	}
-}
-
-func TestUploadKeepsDigestOutOfHumanReview(t *testing.T) {
-	change := plugin.Change{Action: "upload", Field: "package.installer", Before: json.RawMessage(`"old-digest"`), After: json.RawMessage(`"new-digest"`)}
-	if got := strings.Join(Lines(change), "\n"); got != "upload package.installer" {
-		t.Fatal(got)
 	}
 }

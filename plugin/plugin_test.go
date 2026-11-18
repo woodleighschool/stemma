@@ -153,7 +153,7 @@ func TestExecutableProtocol(t *testing.T) {
 				t.Fatal(err)
 			}
 			result := reconcileResponse(t, response)
-			if len(result.Changes) != 2 || string(result.Changes[0].After) != `{}` || string(result.Changes[1].After) != fields {
+			if len(result.Fields) != 2 || string(result.Fields[0].After) != `{}` || string(result.Fields[1].After) != fields {
 				t.Fatalf("presence changed for %q: %+v", fields, result)
 			}
 		}
@@ -163,7 +163,7 @@ func TestExecutableProtocol(t *testing.T) {
 			request := plugin.ReconcileRequest[json.RawMessage]{Method: "apply", Config: raw(t, map[string]bool{"fail": fail})}
 			response, err := plugin.Run(t.Context(), binary, reconcileRequest(t, request))
 			result := reconcileResponse(t, response)
-			if (err != nil) != fail || len(result.Changes) != 1 || result.Changes[0].Field != "applied" {
+			if (err != nil) != fail || len(result.Fields) != 1 || result.Fields[0].Field != "applied" {
 				t.Fatalf("fail=%v: response=%+v error=%v", fail, result, err)
 			}
 			if fail && (response.Error != "later upload failed" || !strings.Contains(err.Error(), response.Error)) {
@@ -198,10 +198,10 @@ func TestExecutableProtocol(t *testing.T) {
 			<-r.Context().Done()
 		}))
 		defer server.Close()
-		t.Setenv("STEMMA_ECHO_RESPONSE", `{"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
+		t.Setenv("STEMMA_ECHO_RESPONSE", `{"output":{"fields":[{"field":"installer","after":"b"}]}}`)
 		t.Setenv("STEMMA_ECHO_WAIT_URL", server.URL)
 		response, err := plugin.Run(ctx, binary, plugin.Request{Method: "describe"})
-		if !errors.Is(err, context.Canceled) || string(response.Output) != `{"changes":[{"kind":"content","field":"installer","action":"upload"}]}` {
+		if !errors.Is(err, context.Canceled) || string(response.Output) != `{"fields":[{"field":"installer","after":"b"}]}` {
 			t.Fatalf("cancellation lost buffered response: response=%+v err=%v", response, err)
 		}
 	})
@@ -227,10 +227,10 @@ func TestExecutableProtocol(t *testing.T) {
 		}
 	})
 	t.Run("process errors retain partial output without diagnostics", func(t *testing.T) {
-		t.Setenv("STEMMA_ECHO_RESPONSE", `{"output":{"changes":[{"kind":"content","field":"installer","action":"upload"}]}}`)
+		t.Setenv("STEMMA_ECHO_RESPONSE", `{"output":{"fields":[{"field":"installer","after":"b"}]}}`)
 		t.Setenv("STEMMA_ECHO_FAIL", "1")
 		response, err := plugin.Run(t.Context(), binary, plugin.Request{Method: "describe"})
-		if err == nil || len(reconcileResponse(t, response).Changes) != 1 || strings.Contains(err.Error(), "credential") {
+		if err == nil || len(reconcileResponse(t, response).Fields) != 1 || strings.Contains(err.Error(), "credential") {
 			t.Fatalf("partial output=%s error=%v", response.Output, err)
 		}
 	})
@@ -242,7 +242,7 @@ func TestExecutableProtocol(t *testing.T) {
 		}
 	})
 	t.Run("inherited output descriptors", func(t *testing.T) {
-		const output = `{"changes":[{"kind":"content","field":"installer","action":"upload"}]}`
+		const output = `{"fields":[{"field":"installer","after":"b"}]}`
 		const response = `{"output":` + output + `}`
 		for _, test := range []struct {
 			name, stream, response, output, wantErr string
@@ -722,5 +722,25 @@ func TestIdentityDigestIsStable(t *testing.T) {
 	identity := plugin.Identity{Project: "catalog", Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "firefox"}, Destination: "jamf"}
 	if got, want := identity.Digest(), "5168eb4696e1eb85cd086ef1f1d8412367f432432c699fb8babf61e98cf2538e"; got != want {
 		t.Fatalf("digest = %s, want %s", got, want)
+	}
+}
+
+func TestReconcileResponseChanged(t *testing.T) {
+	for name, test := range map[string]struct {
+		response plugin.ReconcileResponse
+		want     bool
+	}{
+		"validate":                {plugin.ReconcileResponse{Metadata: json.RawMessage(`{}`)}, false},
+		"same version":            {plugin.ReconcileResponse{Version: "1.0", Previous: "1.0"}, false},
+		"no version reported":     {plugin.ReconcileResponse{Previous: "1.0"}, false},
+		"new software":            {plugin.ReconcileResponse{Version: "1.0"}, true},
+		"new version":             {plugin.ReconcileResponse{Version: "1.1", Previous: "1.0"}, true},
+		"bytes replaced in place": {plugin.ReconcileResponse{Version: "1.0", Previous: "1.0", Uploads: []plugin.Upload{{Name: plugin.UploadInstaller, Filename: "app.pkg", After: "b"}}}, true},
+		"field":                   {plugin.ReconcileResponse{Fields: []plugin.FieldChange{{Field: "description", After: json.RawMessage(`"x"`)}}}, true},
+		"retention":               {plugin.ReconcileResponse{Version: "1.0", Previous: "1.0", Removed: []string{"0.9"}}, true},
+	} {
+		if got := test.response.Changed(); got != test.want {
+			t.Errorf("%s: Changed() = %v, want %v", name, got, test.want)
+		}
 	}
 }

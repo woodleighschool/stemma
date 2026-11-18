@@ -120,7 +120,7 @@ func TestReleaseDiscoveryReusesAppCredentials(t *testing.T) {
 					candidate, err := engine.Resolve(t.Context(), options)
 					for _, name := range []string{"fixture", "other"} {
 						resource := candidate.Resources[key(name)]
-						if err != nil || resource.Error != "" || resource.Inputs["source"].InputVersion != "v1" {
+						if err != nil || resource.Error != "" || resource.Inputs["source"].Version != "v1" {
 							t.Fatalf("release lookup: %v, %+v", err, resource)
 						}
 					}

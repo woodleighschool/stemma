@@ -11,7 +11,7 @@ import (
 )
 
 // Acquisition describes exactly one transfer. Requests are transient; only the
-// resolver's observation and the resulting content belong in durable state.
+// resolver's origin and the resulting content belong in durable state.
 type Acquisition struct {
 	Download *Download
 	Artifact *plugin.Artifact
@@ -38,7 +38,7 @@ type fileRequest struct {
 }
 
 func (m *Manager) acquire(ctx context.Context, resolver Resolver, input plugin.Input, entry Entry, previous *record) (record, bool, error) {
-	request, err := resolver.Acquire(ctx, input, entry.Observation)
+	request, err := resolver.Acquire(ctx, input, entry)
 	if err != nil {
 		return record{}, false, err
 	}

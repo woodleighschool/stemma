@@ -1,6 +1,7 @@
 package munkirepo
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 
 // prune keeps the newest others beside the current publication and removes the
 // rest of the family, newest first, unless the repository still pins them.
+// Removed names each by version, or by its pkginfo path when it records none.
 func prune(ctx context.Context, root string, current map[string]any, others []item, keep int, apply bool, response *plugin.ReconcileResponse) error {
 	for _, old := range others[min(keep-1, len(others)):] {
 		if err := ctx.Err(); err != nil {
@@ -30,8 +32,10 @@ func prune(ctx context.Context, root string, current map[string]any, others []it
 		if protected {
 			continue
 		}
-		response.Changes = append(response.Changes, plugin.Change{Kind: "retention", Field: old.path, Action: "delete"})
+		version, _ := old.document["version"].(string)
+		retired := cmp.Or(version, old.path)
 		if !apply {
+			response.Removed = append(response.Removed, retired)
 			continue
 		}
 		catalogs, err := catalogChanges(root, old.document, nil)
@@ -50,6 +54,7 @@ func prune(ctx context.Context, root string, current map[string]any, others []it
 		if err := os.Remove(filepath.Join(root, filepath.FromSlash(old.path))); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
+		response.Removed = append(response.Removed, retired)
 		location, _ := old.document["installer_item_location"].(string)
 		if location == "" {
 			continue

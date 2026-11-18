@@ -22,7 +22,8 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/intunewin"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -55,10 +56,10 @@ func TestPreparationJobs(t *testing.T) {
 		{"4", nil, false},
 	} {
 		t.Setenv("STEMMA_JOBS", tc.env)
-		cmd, finish := command(&bytes.Buffer{}, &bytes.Buffer{})
+		cmd, finish := command(&bytes.Buffer{}, &bytes.Buffer{}, nil)
 		cmd.SetArgs(append(tc.args, "version"))
 		err := cmd.ExecuteContext(t.Context())
-		finish(err)
+		err = finish(err)
 		if (err != nil) != tc.fail || err != nil && !strings.Contains(err.Error(), "jobs must be at least 1") {
 			t.Fatalf("env %q, args %v: %v", tc.env, tc.args, err)
 		}
@@ -91,74 +92,58 @@ func TestReadPreservesBytesWithATerminalGuard(t *testing.T) {
 
 func TestReportRetainsIndependentDestinationResults(t *testing.T) {
 	report := engine.Report{Resources: []engine.ResourceReport{
-		{Name: "missing", Error: "source unavailable"},
+		{Name: "missing", Status: engine.StatusFailed, Error: "source unavailable"},
 		{
-			Name: "Example", Error: "one destination failed", Kind: "MacSoftware",
-			Destinations: []engine.DestinationReport{
-				{Name: "unavailable", Error: "remote unavailable"},
-				{Name: "local", Applied: true},
+			Name: "Example", Status: engine.StatusFailed, Error: "one destination failed", Kind: "MacSoftware",
+			Publications: []engine.Publication{
+				{Destination: "unavailable", Status: engine.StatusFailed, Error: "remote unavailable"},
+				{Destination: "local", Status: engine.StatusUnchanged, Version: "1", Previous: "1"},
 			},
 		},
 	}}
-	var out strings.Builder
-	for _, resource := range report.Resources {
-		out.WriteString(renderResourceDetail(textStyle{}, "apply", resource, false))
-	}
-	for _, want := range []string{
-		"➤ missing: failed\n  ✗ source unavailable\n",
-		"➤ MacSoftware/Example\n",
-		"  unavailable: failed\n    ✗ remote unavailable\n",
-		"  local\n    ✓ No changes\n",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("report missing %q: %s", want, out.String())
-		}
+	report.Summarize(2)
+	got := render(t, "apply", engine.Selection{}, report, report.Resources)
+	want := "✗ missing: failed\n  source unavailable\n" +
+		"✗ MacSoftware/Example:\n  unavailable: failed\n    remote unavailable\n  local: 1 unchanged\n" +
+		"\n2 resources: 2 failed.\n"
+	if got != want {
+		t.Fatalf("report:\n%q\nwant:\n%q", got, want)
 	}
 }
 
 func TestIconReportNamesEachOutcome(t *testing.T) {
 	report := engine.Report{Resources: []engine.ResourceReport{
-		{Name: "word", Kind: "MacSoftware", Icon: "created glassy"},
-		{Name: "chrome", Kind: "WindowsSoftware", Icon: "created raw"},
-		{Name: "teams", Kind: "MacSoftware", Icon: "unchanged"},
-		{Name: "rosetta", Kind: "MacSoftware", Icon: "no artwork"},
-		{Name: "zoom", Kind: "MacSoftware", Error: "quick look icon rendering: timed out"},
+		{Name: "word", Kind: "MacSoftware", Status: engine.StatusChanged, Icon: "icons/word.png"},
+		{Name: "chrome", Kind: "WindowsSoftware", Status: engine.StatusChanged, Icon: "icons/chrome.png"},
+		{Name: "teams", Kind: "MacSoftware", Status: engine.StatusUnchanged, Icon: "icons/teams.png"},
+		{Name: "rosetta", Kind: "MacSoftware", Status: engine.StatusSkipped, Reason: "no artwork"},
+		{Name: "zoom", Kind: "MacSoftware", Status: engine.StatusFailed, Error: "quick look icon rendering: timed out"},
 	}}
-	var out strings.Builder
-	for _, resource := range report.Resources {
-		out.WriteString(renderResourceDetail(textStyle{}, "icon", resource, false))
-	}
-	report.Summarize("icon")
-	out.WriteString(renderSummary(textStyle{}, "icon", report, nil))
-	for _, want := range []string{
-		"✓ MacSoftware/word: created glassy\n",
-		"✓ WindowsSoftware/chrome: created raw\n",
-		"✓ MacSoftware/teams: unchanged\n",
-		"– MacSoftware/rosetta: no artwork\n",
-		"➤ MacSoftware/zoom: failed\n  ✗ quick look icon rendering: timed out\n",
-		"Icons: 2 created, 1 unchanged, 1 skipped, 1 failed.",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Fatalf("report missing %q: %s", want, out.String())
-		}
+	report.Summarize(5)
+	selection := engine.Selection{}
+	got := render(t, "icon", selection, report, report.Resources)
+	want := "✓ MacSoftware/word: created icons/word.png\n" +
+		"✓ WindowsSoftware/chrome: created icons/chrome.png\n" +
+		"✓ MacSoftware/teams: icons/teams.png\n– MacSoftware/rosetta: skipped\n  no artwork\n✗ MacSoftware/zoom: failed\n  quick look icon rendering: timed out\n" +
+		"\n5 resources: 2 created, 1 unchanged, 1 failed, 1 without artwork.\n"
+	if got != want {
+		t.Fatalf("report:\n%q\nwant:\n%q", got, want)
 	}
 }
 
-func TestIconRunsShowCreatedIconsAndMissingArtwork(t *testing.T) {
+func TestIconRunsListSkippedResources(t *testing.T) {
 	var out bytes.Buffer
 	output := newCommandOutput(&out, &out)
 	for _, resource := range []engine.ResourceReport{
-		{Name: "word", Kind: "MacSoftware", Icon: "created glassy"},
-		{Name: "chrome", Kind: "WindowsSoftware", Icon: "no artwork"},
-		{Name: "teams", Kind: "MacSoftware", Icon: "unchanged"},
-		{Name: "fonts", Kind: "MacSoftware", Icon: "no icon declared"},
+		{Name: "chrome", Kind: "WindowsSoftware", Status: engine.StatusSkipped, Reason: "no artwork"},
+		{Name: "teams", Kind: "MacSoftware", Status: engine.StatusUnchanged, Icon: "icons/teams.png"},
 	} {
 		if err := output.resourceDone("icon", resource); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := out.String(); !strings.Contains(got, "✓ MacSoftware/word: created glassy\n") || !strings.Contains(got, "– WindowsSoftware/chrome: no artwork\n") || strings.Contains(got, "teams") || strings.Contains(got, "fonts") {
-		t.Fatalf("icon output: %s", got)
+	if got := out.String(); got != "– WindowsSoftware/chrome: skipped\n  no artwork\n✓ MacSoftware/teams: icons/teams.png\n" {
+		t.Fatalf("icon output: %q", got)
 	}
 }
 
@@ -227,7 +212,7 @@ spec:
 	}
 	run := func(success bool, args ...string) engine.Report {
 		t.Helper()
-		output := invoke(success, append(args, "--json", "--all")...)
+		output := invoke(success, append(args, "--json")...)
 		var report engine.Report
 		if len(output) > 0 {
 			if err := json.Unmarshal(output, &report); err != nil {
@@ -247,7 +232,7 @@ spec:
 	}
 	filename := filepath.Join(t.TempDir(), "editor", "schema.json")
 	for range 2 {
-		if output := invoke(true, "schema", "--offline", "--output-file", filename); string(output) != "✓ Wrote "+filename+".\n" {
+		if output := invoke(true, "schema", "--offline", "--output-file", filename); !strings.HasSuffix(string(output), "written\n") {
 			t.Fatalf("file result: %s", output)
 		}
 		data, err := os.ReadFile(filename)
@@ -284,10 +269,10 @@ spec:
 		t.Fatalf("inspection lost container/receipt facts: %+v", inspected.Facts)
 	}
 	if output := invoke(false, "artifact", "fixture"); len(output) != 0 || downloads.Load() != 0 {
-		t.Fatalf("artifact without a lockfile printed %q or acquired input", output)
+		t.Fatalf("artifact without a lock printed %q or acquired input", output)
 	}
 	if output := invoke(false, "prepare"); len(output) != 0 || downloads.Load() != 0 {
-		t.Fatalf("preparation without a lockfile printed %q or acquired input", output)
+		t.Fatalf("preparation without a lock printed %q or acquired input", output)
 	}
 	updated := run(true, "update")
 	if updated.LockChanged == nil || !*updated.LockChanged {
@@ -295,16 +280,16 @@ spec:
 	}
 	prepared := run(true, "prepare")
 	if prepared.LockChanged != nil || len(prepared.Resources) != 1 {
-		t.Fatalf("locked preparation reported a lockfile: %+v", prepared)
+		t.Fatalf("locked preparation reported a lock: %+v", prepared)
 	}
-	if output := string(invoke(true, "prepare", "--no-progress")); !strings.Contains(output, "✓ MacSoftware/fixture ("+prepared.Resources[0].Artifacts["installer"].Version+"): cached\n") || strings.Contains(output, "installer:") {
-		t.Fatalf("cached preparation did not leave a compact result: %s", output)
+	if output := string(invoke(true, "prepare", "--no-progress")); output != "✓ MacSoftware/fixture: 1.2.3\n  installer: fixture-1.2.3.pkg\n\n1 resource: 1 cached.\n" {
+		t.Fatalf("cached preparation printed %q", output)
 	}
 	if downloads.Load() != 1 {
 		t.Fatal("unexpected acquisition count")
 	}
 	// Validation reads no input content.
-	if output := string(invoke(true, "validate", "--offline")); output != "✓ Configuration is valid.\n" || downloads.Load() != 1 {
+	if output := string(invoke(true, "validate", "--offline")); output != "✓ stemma.yaml: valid\n" || downloads.Load() != 1 {
 		t.Fatalf("validation printed %q", output)
 	}
 	materialized, found := strings.CutSuffix(string(invoke(true, "artifact", "MacSoftware/fixture")), "\n")
@@ -318,11 +303,11 @@ spec:
 	var signer []struct {
 		Signer string `json:"signer"`
 	}
-	if len(derived.Resources) != 1 || json.Unmarshal(derived.Resources[0].Artifacts["installer"].Evidence["signatures"], &signer) != nil || (len(signer) != 1 || signer[0].Signer != "apple:developer-id:SMLKBTR495") {
+	if len(derived.Resources) != 1 || json.Unmarshal(testevidence.Signatures(derived.Resources[0].Artifacts["installer"].Evidence), &signer) != nil || (len(signer) != 1 || signer[0].Signer != "apple:developer-id:SMLKBTR495") {
 		t.Fatalf("signature derivation: %+v", derived.Resources)
 	}
 	plan := run(true, "plan")
-	if len(plan.Resources) != 1 || len(plan.Resources[0].Destinations) != 2 {
+	if len(plan.Resources) != 1 || len(plan.Resources[0].Publications) != 2 {
 		t.Fatalf("incomplete plan: %#v", plan)
 	}
 	for _, name := range []string{"first", "second"} {
@@ -331,39 +316,37 @@ spec:
 		}
 	}
 	applied := run(true, "apply")
-	for _, destination := range applied.Resources[0].Destinations {
-		if !destination.Applied {
+	for _, publication := range applied.Resources[0].Publications {
+		if publication.Status != engine.StatusChanged {
 			t.Fatal("destination not applied")
 		}
 	}
 	warm := run(true, "apply", "--offline")
-	if !warm.Resources[0].Cached || downloads.Load() != 1 {
+	if !warm.Resources[0].Artifacts["installer"].Cached || downloads.Load() != 1 {
 		t.Fatal("warm run repeated preparation or acquisition")
 	}
-	for _, destination := range warm.Resources[0].Destinations {
-		if len(destination.Changes) != 0 {
-			t.Fatalf("unchanged run made changes: %#v", destination.Changes)
+	for _, publication := range warm.Resources[0].Publications {
+		if publication.Status != engine.StatusUnchanged {
+			t.Fatalf("unchanged run made changes: %#v", publication)
 		}
 	}
 	write(strings.Replace(manifest, "description: original", "description: edited", 1))
 	metadata := run(true, "apply")
-	if !metadata.Resources[0].Cached || downloads.Load() != 1 {
+	if !metadata.Resources[0].Artifacts["installer"].Cached || downloads.Load() != 1 {
 		t.Fatal("metadata change invalidated preparation")
 	}
-	for _, destination := range metadata.Resources[0].Destinations {
-		for _, change := range destination.Changes {
-			if change.Kind == "content" {
-				t.Fatal("metadata edit uploaded content")
-			}
+	for _, publication := range metadata.Resources[0].Publications {
+		if len(publication.Uploads) != 0 {
+			t.Fatal("metadata edit uploaded content")
 		}
 	}
 	if err := os.RemoveAll(cache); err != nil {
 		t.Fatal(err)
 	}
 	cold := run(true, "apply")
-	for _, destination := range cold.Resources[0].Destinations {
-		if len(destination.Changes) != 0 {
-			t.Fatalf("cold cache replayed publication: %#v", destination.Changes)
+	for _, publication := range cold.Resources[0].Publications {
+		if publication.Status != engine.StatusUnchanged {
+			t.Fatalf("cold cache replayed publication: %#v", publication)
 		}
 	}
 	if downloads.Load() != 2 {
@@ -375,9 +358,9 @@ spec:
 		t.Fatal(err)
 	}
 	fresh := run(true, "apply")
-	for _, destination := range fresh.Resources[0].Destinations {
-		if !destination.Applied || len(destination.Changes) != 0 {
-			t.Fatalf("a runner without local state replayed publication: %+v", destination)
+	for _, publication := range fresh.Resources[0].Publications {
+		if publication.Status != engine.StatusUnchanged {
+			t.Fatalf("a runner without local state replayed publication: %+v", publication)
 		}
 	}
 	materialized = strings.TrimSpace(string(invoke(true, "artifact", "--offline", "MacSoftware/fixture")))
@@ -390,7 +373,7 @@ spec:
 		t.Fatalf("artifact --no-input-lock printed %s, want %s", unlocked, materialized)
 	}
 	if current, err := testproject.ReadLock(project); err != nil || !bytes.Equal(current, reviewed) {
-		t.Fatalf("artifact --no-input-lock changed the lockfile: %v", err)
+		t.Fatalf("artifact --no-input-lock changed the lock: %v", err)
 	}
 	invoke(false, "artifact", "--offline", "--no-input-lock", "MacSoftware/fixture")
 	// A read prints the file alone, from the artifact or from a local copy.
@@ -430,7 +413,7 @@ spec:
 		t.Fatalf("prepare: %+v", tried)
 	}
 	if current, err := testproject.ReadLock(project); err != nil || !bytes.Equal(current, reviewed) {
-		t.Fatalf("prepare changed the lockfile: %v", err)
+		t.Fatalf("prepare changed the lock: %v", err)
 	}
 }
 
@@ -478,36 +461,34 @@ func TestInspectDescribesALocalArtifact(t *testing.T) {
 	inspect := func(args ...string) string {
 		t.Helper()
 		var out, stderr bytes.Buffer
-		cmd, finish := command(&out, &stderr)
+		cmd, finish := command(&out, &stderr, nil)
 		cmd.SetArgs(append([]string{"inspect"}, args...))
 		err := cmd.ExecuteContext(t.Context())
-		finish(err)
+		err = finish(err)
 		if err != nil || stderr.Len() != 0 {
 			t.Fatalf("inspect %v: %v; %s", args, err, stderr.String())
 		}
 		return out.String()
 	}
-	want := fmt.Sprintf(`➤ fixture.pkg
+	want := fmt.Sprintf(`fixture.pkg:
   Format: pkg
   Version: 1.2.3
   SHA-256: %x
-
-➤ Package PackageInfo
-  Identifier: au.edu.vic.woodleigh.stemma.fixture
-  Version: 1.2.3
-  Install location: /Applications
-  Installed size: 85 KiB
-  Payload: yes
-
-➤ Application Payload/SignedFixture.app
-  Installed path: /Applications/SignedFixture.app
-  Bundle ID: au.edu.vic.woodleigh.stemma.fixture
-  Name: Stemma Fixture
-  Version: 1.2.3
-  Build: 42
-  Executable: fixture
-  Architectures: arm64, x86_64
-  Minimum OS: 13.0
+  PackageInfo:
+    Identifier: au.edu.vic.woodleigh.stemma.fixture
+    Version: 1.2.3
+    Install location: /Applications
+    Installed size: 85 KiB
+    Payload: yes
+    Payload/SignedFixture.app:
+      Installed path: /Applications/SignedFixture.app
+      Bundle ID: au.edu.vic.woodleigh.stemma.fixture
+      Name: Stemma Fixture
+      Version: 1.2.3
+      Build: 42
+      Executable: fixture
+      Architectures: arm64, x86_64
+      Minimum OS: 13.0
 `, sha256.Sum256(data))
 	if got := inspect(fixture); got != want {
 		t.Fatalf("inspect printed:\n%s\nwant:\n%s", got, want)
@@ -523,7 +504,7 @@ func TestInspectDescribesALocalArtifact(t *testing.T) {
 
 func TestEnvelopeDescribesItsPayload(t *testing.T) {
 	got := renderEnvelope(textStyle{}, "chrome.intunewin", intunewin.Metadata{Name: "Chrome", SetupFile: "setup.exe", PayloadSHA256: "ab12", PlaintextSize: 3 << 20, EncryptedContentSize: 3<<20 + 48})
-	want := `➤ chrome.intunewin
+	want := `chrome.intunewin:
   Format: intunewin
   Name: Chrome
   Setup file: setup.exe
@@ -539,10 +520,10 @@ func TestEnvelopeDescribesItsPayload(t *testing.T) {
 func TestBuiltinSchemaWithoutProject(t *testing.T) {
 	t.Chdir(t.TempDir())
 	var out, stderr bytes.Buffer
-	cmd, finish := command(&out, &stderr)
+	cmd, finish := command(&out, &stderr, nil)
 	cmd.SetArgs([]string{"schema", "--builtins", "--output-file", "-"})
 	err := cmd.ExecuteContext(t.Context())
-	finish(err)
+	err = finish(err)
 	if err != nil {
 		t.Fatalf("schema without a project: %v; %s", err, stderr.String())
 	}
@@ -592,24 +573,24 @@ spec:
 			if _, err := engine.Run(t.Context(), engine.Options{ConfigPath: filename, CacheDir: cache, Method: "update"}); err != nil {
 				t.Fatal(err)
 			}
-			before, err := lockfile.Load(project)
+			before, err := lock.Load(project)
 			if err != nil {
 				t.Fatal(err)
 			}
 			refresh.Store(true)
 			var out, logs bytes.Buffer
-			cmd, finish := command(&out, &logs)
+			cmd, finish := command(&out, &logs, nil)
 			args := []string{"update", "--root", project, "--cache-dir", cache}
 			if asJSON {
 				args = append(args, "--json")
 			}
 			cmd.SetArgs(args)
 			err = cmd.ExecuteContext(t.Context())
-			finish(err)
+			err = finish(err)
 			if err == nil || !strings.Contains(err.Error(), "HTTP 404") {
 				t.Fatalf("failed refresh silently reused its reviewed lock: %v", err)
 			}
-			after, err := lockfile.Load(project)
+			after, err := lock.Load(project)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -622,22 +603,22 @@ spec:
 				if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 					t.Fatal(err)
 				}
-				if report.Error == "" || report.LockChanged == nil || !*report.LockChanged || len(report.Resources) != 3 || report.Resources[2].Error != "" || len(report.Resources[2].Inputs) != 1 || report.Summary.InputChanges != 1 || len(report.Resources[1].BlockedBy) != 1 || report.Resources[1].BlockedBy[0] != broken {
+				if report.Error == "" || report.LockChanged == nil || !*report.LockChanged || len(report.Resources) != 3 || report.Resources[2].Error != "" || len(report.Resources[2].Inputs) != 1 || report.Summary.Changed != 1 || len(report.Resources[1].BlockedBy) != 1 || report.Resources[1].BlockedBy[0] != broken {
 					t.Fatalf("incomplete JSON report: %+v", report)
 				}
 			} else {
-				for _, want := range []string{"➤ MacSoftware/broken: failed\n", "– MacSoftware/consumer: blocked\n  blocked by MacSoftware/broken\n", "✓ MacSoftware/healthy: 1 input changed\n  source (content changed): healthy.pkg\n", "Update incomplete: 1 input change, 3 resources checked, 1 failed, 1 blocked.", "Lockfile updated."} {
+				for _, want := range []string{"✗ MacSoftware/broken: failed\n", "  input source: download", "✗ MacSoftware/consumer: blocked\n  blocked by MacSoftware/broken\n", "✓ MacSoftware/healthy: healthy.pkg file changed\n", "3 resources: 1 updated, 1 failed, 1 blocked."} {
 					if !strings.Contains(out.String(), want) {
 						t.Fatalf("report missing %q: %s", want, out.String())
 					}
 				}
 			}
-			// Recommendations are separate from the single command failure diagnostic.
+			// Resource failures are already in the report; stderr holds notices.
 			var notices string
 			if !asJSON {
-				notices = "! MacSoftware/healthy: Source has no signature expectation\n  Run `stemma signature MacSoftware/healthy` to derive one.\n"
+				notices = "! MacSoftware/healthy:\n  Source has no signature expectation\n  Run `stemma signature MacSoftware/healthy` to derive one.\n"
 			}
-			if logs.String() != notices+"✗ MacSoftware/broken: input source: download "+server.URL+"/broken.pkg: HTTP 404 Not Found\n" {
+			if logs.String() != notices {
 				t.Fatalf("stderr repeated the report: %s", logs.String())
 			}
 		})
@@ -661,11 +642,11 @@ spec:
   scripts: {postinstall: '#!/bin/sh'}
 `)
 	var out, logs bytes.Buffer
-	cmd, finish := command(&out, &logs)
+	cmd, finish := command(&out, &logs, nil)
 	cmd.SetArgs([]string{"inspect", "BuildMacPkg/example", "--input", "vendor", "--path", "Missing.app", "--no-input-lock", "--root", root, "--cache-dir", t.TempDir()})
 	err := cmd.ExecuteContext(t.Context())
-	finish(err)
-	if err == nil || out.Len() != 0 || !strings.Contains(logs.String(), "✗ BuildMacPkg/example:") || !strings.Contains(logs.String(), "missing.zip") {
+	err = finish(err)
+	if err == nil || out.Len() != 0 || !strings.Contains(logs.String(), "BuildMacPkg/example:") || !strings.Contains(logs.String(), "missing.zip") {
 		t.Fatalf("error=%v stdout=%q stderr=%q", err, out.String(), logs.String())
 	}
 }
@@ -675,10 +656,10 @@ func TestIntunewinJSONIdentifiesTheGeneratedFile(t *testing.T) {
 	testproject.Write(t, filepath.Join(source, "setup.exe"), "synthetic input; never executed")
 	output := filepath.Join(t.TempDir(), "output.intunewin")
 	var stdout, stderr bytes.Buffer
-	cmd, finish := command(&stdout, &stderr)
+	cmd, finish := command(&stdout, &stderr, nil)
 	cmd.SetArgs([]string{"package", "intunewin", source, "setup.exe", output, "--json"})
 	err := cmd.ExecuteContext(t.Context())
-	finish(err)
+	err = finish(err)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -729,10 +710,10 @@ spec:
 	update := func(args ...string) ([]string, error) {
 		t.Helper()
 		var out, logs bytes.Buffer
-		cmd, finish := command(&out, &logs)
+		cmd, finish := command(&out, &logs, nil)
 		cmd.SetArgs(append([]string{"update", "--json", "--root", project, "--cache-dir", cache}, args...))
 		err := cmd.ExecuteContext(t.Context())
-		finish(err)
+		err = finish(err)
 		var report engine.Report
 		if out.Len() > 0 {
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {

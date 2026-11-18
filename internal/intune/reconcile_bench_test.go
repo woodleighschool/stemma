@@ -30,8 +30,8 @@ func BenchmarkWarmReconcile(b *testing.B) {
 				if err != nil {
 					b.Fatal(err)
 				}
-				if (len(response.Changes) != 0) != change {
-					b.Fatalf("unexpected changes: %+v", response.Changes)
+				if response.Changed() != change {
+					b.Fatalf("unexpected changes: %+v", response)
 				}
 			}
 			b.ReportMetric(float64(len(server.paths)-before)/float64(b.N), "requests/op")

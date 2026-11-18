@@ -2,7 +2,6 @@ package source
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -64,11 +63,11 @@ func localInput(input plugin.Input) (localConfig, error) {
 func (m *Manager) fileResolver() Resolver {
 	resolver := resolverFor(fileInput,
 		func(context.Context, fileConfig) (Discovery, error) {
-			return Discovery{Observation: json.RawMessage(`{}`)}, nil
+			return Discovery{}, nil
 		},
-		func(_ context.Context, s fileConfig, observation json.RawMessage) (Acquisition, error) {
-			if err := decode(observation, &struct{}{}); err != nil {
-				return Acquisition{}, fmt.Errorf("file observation: %w", err)
+		func(_ context.Context, s fileConfig, entry Entry) (Acquisition, error) {
+			if err := decodeOrigin(entry.Origin, &struct{}{}); err != nil {
+				return Acquisition{}, fmt.Errorf("file origin: %w", err)
 			}
 			name := filepath.FromSlash(s.Path)
 			if !absolutePath(s.Path) {
@@ -95,11 +94,11 @@ func (m *Manager) fileResolver() Resolver {
 func (m *Manager) localResolver() Resolver {
 	resolver := resolverFor(localInput,
 		func(context.Context, localConfig) (Discovery, error) {
-			return Discovery{Observation: json.RawMessage(`{}`)}, nil
+			return Discovery{}, nil
 		},
-		func(_ context.Context, s localConfig, observation json.RawMessage) (Acquisition, error) {
-			if err := decode(observation, &struct{}{}); err != nil {
-				return Acquisition{}, fmt.Errorf("local observation: %w", err)
+		func(_ context.Context, s localConfig, entry Entry) (Acquisition, error) {
+			if err := decodeOrigin(entry.Origin, &struct{}{}); err != nil {
+				return Acquisition{}, fmt.Errorf("local origin: %w", err)
 			}
 			return Acquisition{File: &fileRequest{Path: s.Base, Include: s.Include, Filename: s.Filename, SHA256: s.SHA256}}, nil
 		})

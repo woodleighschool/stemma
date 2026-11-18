@@ -9,6 +9,8 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/woodleighschool/stemma/plugin"
@@ -52,16 +54,16 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 	}
 	installerPath := req.Artifact.Path
 	req.Artifact.Path = ""
-	if result := run(); len(result.Changes) != 0 || result.Content != nil {
-		t.Fatalf("unchanged icon planned writes: %+v", result.Changes)
+	if result := run(); result.Changed() || result.Content != nil {
+		t.Fatalf("unchanged icon planned writes: %+v", result)
 	}
 	// Changed bytes are ordinary drift: planning reports them, applying replaces them.
 	unleased := second
 	unleased.Path = ""
 	req.Inputs["icon"] = unleased
 	req.Method = "plan"
-	if result := run(); len(result.Changes) != 1 || result.Changes[0].Field != "icon" {
-		t.Fatalf("changed icon plan: %+v", result.Changes)
+	if result := run(); !reflect.DeepEqual(result.Uploads, []plugin.Upload{{Name: plugin.UploadIcon, Filename: "icon.png", Before: first.SHA256, After: second.SHA256}}) || len(result.Fields) != 0 {
+		t.Fatalf("changed icon plan: %+v", result)
 	}
 	if text(fake.app["largeIcon"].(object)["value"]) != original {
 		t.Fatal("plan wrote icon")
@@ -75,8 +77,8 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 	}
 	// Without a declared icon the published artwork is left unchanged.
 	req.Inputs = nil
-	if result := run(); len(result.Changes) != 0 || text(fake.app["largeIcon"].(object)["value"]) != replaced {
-		t.Fatalf("undeclared icon changed the app: %+v", result.Changes)
+	if result := run(); result.Changed() || text(fake.app["largeIcon"].(object)["value"]) != replaced {
+		t.Fatalf("undeclared icon changed the app: %+v", result)
 	}
 	req.Inputs = map[string]plugin.Artifact{"icon": second}
 	delete(fake.app, "largeIcon")
@@ -96,7 +98,12 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 	req.Artifact.Path = installerPath
 	req.Artifact.SHA256 = hex.EncodeToString(digest[:])
 	req.Artifact.Size = int64(len(data))
-	run()
+	result := run()
+	if !slices.ContainsFunc(result.Uploads, func(upload plugin.Upload) bool {
+		return upload.Name == plugin.UploadIcon && upload.After == second.SHA256
+	}) {
+		t.Fatalf("restored icon not reported: %+v", result)
+	}
 	if restored, _ := fake.app["largeIcon"].(object); text(restored["value"]) != replaced {
 		t.Fatal("publication did not restore matching artwork")
 	}
@@ -104,7 +111,7 @@ func TestIconPublicationIndependentOfContent(t *testing.T) {
 		t.Fatal("installer update did not publish exactly once")
 	}
 	writes := fake.writes
-	if result := run(); len(result.Changes) != 0 || fake.writes != writes {
-		t.Fatalf("settled publication wrote again: %+v", result.Changes)
+	if result := run(); result.Changed() || fake.writes != writes {
+		t.Fatalf("settled publication wrote again: %+v", result)
 	}
 }

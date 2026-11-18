@@ -46,7 +46,7 @@ kind: ExternalInstaller
 metadata: {name: fixture}
 spec:
   source: {path: vendor.pkg}
-  evidence: {signatures: %s}
+  evidence: {signing: {observed: %s}}
 `, evidence))
 	if err := os.WriteFile(filepath.Join(root, "vendor.pkg"), []byte("vendor"), 0o644); err != nil {
 		t.Fatal(err)
@@ -65,7 +65,7 @@ spec:
 			t.Fatal(err)
 		}
 		resource := report.Resources[0]
-		if len(resource.Notices) != 1 || resource.Notices[0].Code != "signature-timestamp-missing" || resource.Cached != (attempt == 1) {
+		if len(resource.Notices) != 1 || resource.Notices[0].Code != "signature-timestamp-missing" || reused(resource) != (attempt == 1) {
 			t.Fatalf("attempt %d: %+v", attempt, resource)
 		}
 	}
@@ -108,7 +108,7 @@ spec:
 			t.Fatalf("report=%+v", report)
 		}
 		resource := report.Resources[0]
-		if len(resource.Notices) != 1 || resource.Notices[0].Code != "signature-expectation-missing" || resource.Cached != (attempt == 1) {
+		if len(resource.Notices) != 1 || resource.Notices[0].Code != "signature-expectation-missing" || reused(resource) != (attempt == 1) {
 			t.Fatalf("attempt %d: %+v", attempt, resource)
 		}
 		if !reflect.DeepEqual(streamed, report.Resources) {
@@ -178,7 +178,7 @@ spec:
 	for attempt := range 2 {
 		resources := run("prepare")
 		builder := resources["BuildMacPkg/wrapper"]
-		if !reflect.DeepEqual(builder.Notices, want) || builder.Cached != (attempt == 1) || len(resources["MacSoftware/published"].Notices) != 0 {
+		if !reflect.DeepEqual(builder.Notices, want) || reused(builder) != (attempt == 1) || len(resources["MacSoftware/published"].Notices) != 0 {
 			t.Fatalf("attempt %d: %+v", attempt, resources)
 		}
 	}
@@ -232,7 +232,7 @@ spec:
 	options.Resources = []string{"MacSoftware/vendor"}
 	for _, test := range []struct{ method, failure string }{
 		{"icon", ""},
-		{"signature", "inputs are missing from the lockfile; run stemma update MacSoftware/vendor"},
+		{"signature", "inputs are missing from the lock; run stemma update MacSoftware/vendor"},
 		{"update", "HTTP 403"},
 	} {
 		t.Run(test.method, func(t *testing.T) {
@@ -244,7 +244,7 @@ spec:
 			if len(report.Resources) != 1 || len(report.Resources[0].Notices) != 0 {
 				t.Fatalf("premature advice: %+v", report)
 			}
-			if test.method == "icon" && report.Resources[0].Icon != "no icon declared" {
+			if test.method == "icon" && report.Resources[0].Reason != "no icon declared" {
 				t.Fatalf("unexpected icon result: %+v", report)
 			}
 			if (requests.Load() > 0) != (test.method == "update") {
@@ -256,5 +256,43 @@ spec:
 	report, err := Run(t.Context(), options)
 	if err != nil || len(report.Resources) != 1 || len(report.Resources[0].Notices) != 1 || report.Resources[0].Notices[0].Code != "signature-expectation-missing" {
 		t.Fatalf("successful update lost advice: %+v, %v", report, err)
+	}
+}
+
+func TestResourceOutputEvidenceNamesAreNamespaces(t *testing.T) {
+	root := t.TempDir()
+	binary := filepath.Join(root, "local-plugin", "plugin")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	writeEchoPlugin(t, binary)
+	testproject.Write(t, filepath.Join(root, "stemma.yaml"), `apiVersion: stemma/v1alpha1
+kind: Project
+metadata: {name: evidence}
+spec:
+  imports: ['*.software.yaml']
+  plugins:
+    provider: {path: local-plugin}
+---
+apiVersion: example.test/v1
+kind: ExternalInstaller
+metadata: {name: fixture}
+spec:
+  source: {path: vendor.pkg}
+  evidence: {vendor.release: {version: "1.2"}}
+`)
+	if err := os.WriteFile(filepath.Join(root, "vendor.pkg"), []byte("vendor"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	options := Options{ConfigPath: filepath.Join(root, "stemma.yaml"), CacheDir: t.TempDir(), Method: "update"}
+	if _, err := UpdatePlugins(t.Context(), options, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Run(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	options.Method = "prepare"
+	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), `evidence "vendor.release" must be one namespace name`) {
+		t.Fatalf("dotted output evidence accepted: %v", err)
 	}
 }

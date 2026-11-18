@@ -13,6 +13,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -333,7 +334,7 @@ func TestPrepareVerifiesTheWrappedInputBeforeBuilding(t *testing.T) {
 				t.Fatal(err)
 			}
 			var verified []signature.Observation
-			if err := json.Unmarshal(artifact.Evidence["signatures"], &verified); err != nil || len(verified) != 1 || verified[0].Input != "vendor" || verified[0].Signer != signer || verified[0].Target != "Vendor Installer.app" || verified[0].Subject.Path != subjectPath {
+			if err := json.Unmarshal(testevidence.Signatures(artifact.Evidence), &verified); err != nil || len(verified) != 1 || verified[0].Input != "vendor" || verified[0].Signer != signer || verified[0].Target != "Vendor Installer.app" || verified[0].Subject.Path != subjectPath {
 				t.Fatalf("input evidence: %+v, %v", verified, err)
 			}
 			rejected := prepareRequest(t, config(map[string]any{"input": "vendor", "subject": map[string]any{"path": subjectPath}, "signer": "apple:developer-id:AAAAAAAAAA"}), inputs)
@@ -351,7 +352,7 @@ func TestPrepareVerifiesTheWrappedInputBeforeBuilding(t *testing.T) {
 			derive := prepareRequest(t, declaration, inputs)
 			derive.Derive = "signature"
 			derived, err := Prepare(t.Context(), derive)
-			if err != nil || json.Unmarshal(derived.Evidence["signatures"], &verified) != nil || verified[0].Signer != signer {
+			if err != nil || json.Unmarshal(testevidence.Signatures(derived.Evidence), &verified) != nil || verified[0].Signer != signer {
 				t.Fatalf("derived input evidence: %+v, %v", verified, err)
 			}
 		})
@@ -378,7 +379,7 @@ func TestPrepareVerifiesPackageInputsAndRejectsUnsignedApplications(t *testing.T
 	}
 	artifact, err := Prepare(t.Context(), prepareRequest(t, config, map[string]plugin.Artifact{"vendor": {Path: pkg, Filename: "vendor.pkg"}}))
 	var verified []signature.Observation
-	if err != nil || json.Unmarshal(artifact.Evidence["signatures"], &verified) != nil || verified[0].Signer != signer {
+	if err != nil || json.Unmarshal(testevidence.Signatures(artifact.Evidence), &verified) != nil || verified[0].Signer != signer {
 		t.Fatalf("package input: %+v, %v", verified, err)
 	}
 	if _, err := Prepare(t.Context(), prepareRequest(t, config, map[string]plugin.Artifact{"vendor": {Path: pkg, Filename: "download.bin"}})); err != nil {
@@ -426,7 +427,7 @@ func TestBuiltPackageInputNeedsNoSigningExpectation(t *testing.T) {
 			t.Fatal(err)
 		}
 		var observations []signature.Observation
-		if err := json.Unmarshal(artifact.Evidence["signatures"], &observations); err != nil || len(observations) != 1 || observations[0].Input != "vendor" {
+		if err := json.Unmarshal(testevidence.Signatures(artifact.Evidence), &observations); err != nil || len(observations) != 1 || observations[0].Input != "vendor" {
 			t.Fatalf("derive %t: %+v, %v", derive, observations, err)
 		}
 	}
@@ -470,7 +471,7 @@ func TestBuildWithoutExpectationsListsUnverifiedSubjects(t *testing.T) {
 	}
 	var unverified []signature.Unverified
 	want := signature.Unverified{Input: "vendor", Subject: plugin.SubjectSelector{Path: "Vendor Installer.app"}}
-	if err := json.Unmarshal(artifact.Evidence[signature.UnverifiedEvidence], &unverified); err != nil || len(unverified) != 1 || unverified[0] != want {
+	if err := json.Unmarshal(testevidence.Unverified(artifact.Evidence), &unverified); err != nil || len(unverified) != 1 || unverified[0] != want {
 		t.Fatalf("unverified subjects: %+v, %v", unverified, err)
 	}
 	// Data beside the application is no signing subject.
@@ -478,7 +479,7 @@ func TestBuildWithoutExpectationsListsUnverifiedSubjects(t *testing.T) {
 	if artifact, err = Prepare(t.Context(), prepareRequest(t, config, inputs)); err != nil {
 		t.Fatal(err)
 	}
-	if evidence, listed := artifact.Evidence[signature.UnverifiedEvidence]; listed {
+	if evidence := testevidence.Unverified(artifact.Evidence); evidence != nil {
 		t.Fatalf("a build of data listed unverified subjects: %s", evidence)
 	}
 }
@@ -508,7 +509,7 @@ func TestBuilderSignatureScopeFollowsConsumedSelections(t *testing.T) {
 			t.Fatal(err)
 		}
 		var observations []signature.Observation
-		if err := json.Unmarshal(artifact.Evidence["signatures"], &observations); err != nil || len(observations) != 1 || observations[0].Input != "vendor" || observations[0].Subject.Path != "Selected.app" {
+		if err := json.Unmarshal(testevidence.Signatures(artifact.Evidence), &observations); err != nil || len(observations) != 1 || observations[0].Input != "vendor" || observations[0].Subject.Path != "Selected.app" {
 			t.Fatalf("scope: %+v, %v", observations, err)
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -250,10 +251,8 @@ func TestExistingRepositoryItemIsAdoptedInPlace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, change := range response.Changes {
-		if change.Kind == "content" {
-			t.Fatalf("matching installer bytes planned an upload: %+v", change)
-		}
+	if len(response.Uploads) != 0 {
+		t.Fatalf("matching installer bytes planned an upload: %+v", response.Uploads)
 	}
 	if got := apply(t, root, &request); got != pkginfo {
 		t.Fatalf("existing item republished at %s", got)
@@ -268,6 +267,7 @@ func TestExistingRepositoryItemIsAdoptedInPlace(t *testing.T) {
 	assertConverged(t, request)
 
 	// The same version with different bytes is drift, replaced where it lives.
+	original := request.Artifact.SHA256
 	replacement := []byte("rebuilt installer content")
 	if err := os.WriteFile(request.Artifact.Path, replacement, 0o600); err != nil {
 		t.Fatal(err)
@@ -276,8 +276,15 @@ func TestExistingRepositoryItemIsAdoptedInPlace(t *testing.T) {
 	request.Artifact.SHA256, request.Artifact.Size = hex.EncodeToString(digest[:]), int64(len(replacement))
 	request.Method = "plan"
 	response, err = munkirepo.Handle(t.Context(), request)
-	if err != nil || len(response.Changes) == 0 || response.Changes[0].Kind != "content" {
-		t.Fatalf("changed bytes plan: %+v %v", response.Changes, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload := plugin.Upload{Name: plugin.UploadInstaller, Filename: "apps/App-1.pkg", Before: original, After: request.Artifact.SHA256}
+	if response.Version != "1" || response.Previous != "1" || !slices.Equal(response.Uploads, []plugin.Upload{upload}) {
+		t.Fatalf("changed bytes plan: %+v", response)
+	}
+	if len(response.Fields) != 1 || response.Fields[0].Field != "pkginfo.installer_item_hash" {
+		t.Fatalf("changed bytes reported fields beyond the content they follow: %+v", response.Fields)
 	}
 	apply(t, root, &request)
 	if published, err := os.ReadFile(filepath.Join(root, "pkgs", "apps", "App-1.pkg")); err != nil || !bytes.Equal(published, replacement) {
@@ -297,6 +304,83 @@ func TestExistingRepositoryItemIsAdoptedInPlace(t *testing.T) {
 	if _, err := munkirepo.Handle(t.Context(), request); err == nil || !strings.Contains(err.Error(), "shared") {
 		t.Fatalf("replaced installer bytes another item installs: %v", err)
 	}
+}
+
+func TestNewSoftwareReportsItsInitialFields(t *testing.T) {
+	_, request := repositoryRequest(t, "App.pkg", `{"category":"Productivity"}`)
+	request.Method = "plan"
+	response, err := munkirepo.Handle(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload := plugin.Upload{Name: plugin.UploadInstaller, Filename: "App.pkg", After: request.Artifact.SHA256}
+	if response.Version != "1" || response.Previous != "" || !slices.Equal(response.Uploads, []plugin.Upload{upload}) {
+		t.Fatalf("new software: %+v", response)
+	}
+	want := []plugin.FieldChange{
+		{Field: "pkginfo.catalogs", After: json.RawMessage(`["testing"]`)},
+		{Field: "pkginfo.category", After: json.RawMessage(`"Productivity"`)},
+		{Field: "pkginfo.installer_item_hash", After: json.RawMessage(`"` + request.Artifact.SHA256 + `"`)},
+		{Field: "pkginfo.installer_item_location", After: json.RawMessage(`"App.pkg"`)},
+		{Field: "pkginfo.installer_item_size", After: json.RawMessage(`0`)},
+		{Field: "pkginfo.name", After: json.RawMessage(`"App"`)},
+	}
+	if !reflect.DeepEqual(response.Fields, want) {
+		t.Fatalf("initial fields: %+v", response.Fields)
+	}
+}
+
+func TestVersionBumpReplacesThePreviousVersion(t *testing.T) {
+	root, request := repositoryRequest(t, "App-1.pkg", `{"description":"Editor","category":"Productivity"}`)
+	build := func(version string, installedSize int64) {
+		t.Helper()
+		content := []byte("installer " + version)
+		if err := os.WriteFile(request.Artifact.Path, content, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		digest := sha256.Sum256(content)
+		request.Artifact.Filename, request.Artifact.Version = "App-"+version+".pkg", version
+		request.Artifact.SHA256, request.Artifact.Size = hex.EncodeToString(digest[:]), int64(len(content))
+		request.Artifact.Facts = plugin.Facts{Subjects: []plugin.Subject{{Kind: "package", Package: &plugin.PackageFacts{Identifier: "example.app", Version: version, HasPayload: true, InstalledSize: installedSize}}}}
+	}
+	build("1", 20)
+	first := apply(t, root, &request)
+	// The new version neither carries nor reports a field nothing declares.
+	document := readNative[map[string]any](t, first)
+	document["display_name"] = "Operator title"
+	writeNative(t, first, document)
+
+	build("2", 24)
+	request.Metadata = json.RawMessage(`{"retention":{"keep":1},"pkginfo":{"description":"Editor","category":"Utilities"}}`)
+	request.Method = "plan"
+	planned, err := munkirepo.Handle(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload := plugin.Upload{Name: plugin.UploadInstaller, Filename: "App-2.pkg", After: request.Artifact.SHA256}
+	if planned.Version != "2" || planned.Previous != "1" || !slices.Equal(planned.Uploads, []plugin.Upload{upload}) || !slices.Equal(planned.Removed, []string{"1"}) {
+		t.Fatalf("version bump: %+v", planned)
+	}
+	content := map[string]bool{}
+	for _, field := range planned.Fields {
+		content[field.Field] = true
+		if field.Field == "pkginfo.category" && (string(field.Before) != `"Productivity"` || string(field.After) != `"Utilities"`) {
+			t.Fatalf("category change: %+v", field)
+		}
+	}
+	want := map[string]bool{"pkginfo.category": true, "pkginfo.installed_size": true, "pkginfo.installer_item_hash": true, "pkginfo.installer_item_location": true, "pkginfo.receipts": true}
+	if !maps.Equal(content, want) {
+		t.Fatalf("version bump fields: %v", content)
+	}
+	request.Method = "apply"
+	applied, err := munkirepo.Handle(t.Context(), request)
+	if err != nil || !reflect.DeepEqual(applied, planned) {
+		t.Fatalf("apply reported %+v, planned %+v: %v", applied, planned, err)
+	}
+	if _, err := os.Stat(first); !os.IsNotExist(err) {
+		t.Fatal("retention kept the replaced version")
+	}
+	assertConverged(t, request)
 }
 
 func TestArchitectureVariantsAreSeparateItems(t *testing.T) {
@@ -350,8 +434,12 @@ func TestInterruptedCatalogMembershipChangeConvergesOnRetry(t *testing.T) {
 		t.Skip("host does not enforce directory write permissions")
 	}
 	request.Metadata = nativeMetadata(`{"catalogs":["production"]}`)
-	if _, err := munkirepo.Handle(t.Context(), request); err == nil {
+	response, err := munkirepo.Handle(t.Context(), request)
+	if err == nil {
 		t.Fatal("publication succeeded with unwritable catalogs")
+	}
+	if response.Changed() {
+		t.Fatalf("failed publication reported writes it never made: %+v", response)
 	}
 	if got := readNative[map[string]any](t, pkginfo); !reflect.DeepEqual(got, old) {
 		t.Fatal("failed catalog publication replaced the previous membership history")
@@ -447,8 +535,8 @@ func assertConverged(t *testing.T, request plugin.ReconcileRequest[munkirepo.Con
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Changes) != 0 {
-		t.Fatalf("unchanged reconciliation has drift: %#v", response.Changes)
+	if response.Changed() {
+		t.Fatalf("unchanged reconciliation has drift: %+v", response)
 	}
 }
 
@@ -496,19 +584,12 @@ func TestPreparedIconPublishesAndRetainsExplicitOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	uploads := map[string]string{}
-	for _, change := range planned.Changes {
-		if change.Action != "upload" {
-			continue
-		}
-		var digest string
-		if err := json.Unmarshal(change.After, &digest); err != nil || change.Filename == "" {
-			t.Fatalf("upload lost identity: %+v %v", change, err)
-		}
-		uploads[change.Field] = digest
+	uploads := map[string]plugin.Upload{}
+	for _, upload := range planned.Uploads {
+		uploads[upload.Name] = upload
 	}
-	if uploads["installer"] != request.Artifact.SHA256 || uploads["icon"] != artifact.SHA256 {
-		t.Fatalf("upload evidence: %v", uploads)
+	if uploads[plugin.UploadInstaller].After != request.Artifact.SHA256 || uploads[plugin.UploadIcon].After != artifact.SHA256 || len(uploads) != 2 {
+		t.Fatalf("upload evidence: %+v", planned.Uploads)
 	}
 	pkginfo := apply(t, root, &request)
 	values := readNative[map[string]any](t, pkginfo)
@@ -516,6 +597,9 @@ func TestPreparedIconPublishesAndRetainsExplicitOverride(t *testing.T) {
 	published, err := os.ReadFile(filepath.Join(root, "icons", name))
 	if err != nil || !bytes.Equal(data, published) || values["icon_hash"] != artifact.SHA256 {
 		t.Fatalf("icon publication: %v %#v", err, values)
+	}
+	if uploads[plugin.UploadInstaller].Filename != values["installer_item_location"] || uploads[plugin.UploadIcon].Filename != name {
+		t.Fatalf("uploads are not named as stored: %+v", planned.Uploads)
 	}
 	assertConverged(t, request)
 	request.Inputs = nil
@@ -569,17 +653,13 @@ func TestDeclaredIconReplacesOnChangeAndStaysWhenUndeclared(t *testing.T) {
 	request.Inputs["icon"] = second
 	request.Method = "plan"
 	response, err := munkirepo.Handle(t.Context(), request)
-	if err != nil || len(response.Changes) == 0 {
-		t.Fatalf("changed icon plan: %+v %v", response, err)
+	if err != nil {
+		t.Fatal(err)
 	}
 	check(first)
-	for _, change := range response.Changes {
-		if change.Action == "upload" && change.Field == "icon" {
-			var before, after string
-			if json.Unmarshal(change.Before, &before) != nil || json.Unmarshal(change.After, &after) != nil || before != first.SHA256 || after != second.SHA256 {
-				t.Fatalf("icon upload lost before/after evidence: %+v", change)
-			}
-		}
+	upload := plugin.Upload{Name: plugin.UploadIcon, Filename: "stemma/" + second.SHA256 + ".png", Before: first.SHA256, After: second.SHA256}
+	if !slices.Equal(response.Uploads, []plugin.Upload{upload}) {
+		t.Fatalf("icon upload lost before/after evidence: %+v", response.Uploads)
 	}
 	apply(t, root, &request)
 	check(second)
@@ -603,6 +683,27 @@ func TestDeclaredIconReplacesOnChangeAndStaysWhenUndeclared(t *testing.T) {
 	check(second)
 	if _, err := os.Stat(content); err != nil {
 		t.Fatalf("missing icon content was not republished: %v", err)
+	}
+	assertConverged(t, request)
+}
+
+func TestMissingCatalogRepairIsReported(t *testing.T) {
+	root, request := repositoryRequest(t, "App.pkg", `{}`)
+	apply(t, root, &request)
+	catalog := filepath.Join(root, "catalogs", "testing")
+	if err := os.Remove(catalog); err != nil {
+		t.Fatal(err)
+	}
+	for _, method := range []string{"plan", "apply"} {
+		request.Method = method
+		result, err := munkirepo.Handle(t.Context(), request)
+		if err != nil || !result.Changed() || !slices.Equal(result.Repairs, []string{"catalog testing"}) || len(result.Uploads) != 0 {
+			t.Fatalf("%s: %+v, %v", method, result, err)
+		}
+		_, err = os.Stat(catalog)
+		if method == "plan" && !os.IsNotExist(err) || method == "apply" && err != nil {
+			t.Fatalf("%s catalog: %v", method, err)
+		}
 	}
 	assertConverged(t, request)
 }

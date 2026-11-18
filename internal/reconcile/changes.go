@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/woodleighschool/stemma/internal/engine"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/source"
 )
 
@@ -107,7 +107,7 @@ func diff(candidate engine.Candidate) map[string]change {
 }
 
 // sameContent reports whether every input resolved to the bytes already
-// locked, so only observations, filenames or declarations changed.
+// locked, so only entry metadata such as origins, evidence or declarations changed.
 func sameContent(before, after map[string]source.Entry) bool {
 	if len(before) != len(after) {
 		return false
@@ -158,7 +158,7 @@ func branchName(kind, name string) string {
 // proposes reports whether published lock documents already record every
 // change of the set; an absent lock records no entries.
 func proposes(published map[string][]byte, set changeset) bool {
-	file, err := lockfile.Decode(published)
+	file, err := lock.Decode(published)
 	if err != nil {
 		return false
 	}

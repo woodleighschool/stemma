@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
@@ -49,7 +49,7 @@ spec:
     version: "{{ inputs.vendor.facts['missing.app'].app.version }}"
   scripts: {postinstall: '#!/bin/sh'}
 `)
-	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "inspect", Resources: []string{"BuildMacPkg/wrapper"}, Input: InputSelection{Name: "vendor"}, Lock: lockfile.Options{IgnoreInputs: true}}
+	opts := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "inspect", Resources: []string{"BuildMacPkg/wrapper"}, Input: InputSelection{Name: "vendor"}, Lock: lock.Options{IgnoreInputs: true}}
 	for _, selection := range []string{"", "Example.app", "Installers/Example.pkg"} {
 		t.Run(selection, func(t *testing.T) {
 			opts.Input.Path = selection
@@ -85,7 +85,7 @@ spec:
 	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), `available subject IDs: ["." "Example.app" "Installers/Example.pkg"]`) {
 		t.Fatalf("missing subject: %v", err)
 	}
-	if _, err := os.Stat(lockfile.Path(root)); !os.IsNotExist(err) {
+	if _, err := os.Stat(lock.Path(root)); !os.IsNotExist(err) {
 		t.Fatalf("inspection wrote lock: %v", err)
 	}
 }

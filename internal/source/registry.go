@@ -2,7 +2,6 @@ package source
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
@@ -23,7 +22,7 @@ func builtins(m *Manager) map[string]Resolver {
 
 var builtinDescriptors = builtins(nil)
 
-func resolverFor[C any](parse func(plugin.Input) (C, error), discover func(context.Context, C) (Discovery, error), acquire func(context.Context, C, json.RawMessage) (Acquisition, error)) Resolver {
+func resolverFor[C any](parse func(plugin.Input) (C, error), discover func(context.Context, C) (Discovery, error), acquire func(context.Context, C, Entry) (Acquisition, error)) Resolver {
 	schema := plugin.SchemaFor[C]()
 	schema.ID, schema.Version = "", ""
 	for _, name := range schema.Required {
@@ -39,7 +38,7 @@ func resolverFor[C any](parse func(plugin.Input) (C, error), discover func(conte
 		}
 	}
 	return Resolver{
-		Version: "2", Schema: schema,
+		Version: "3", Schema: schema,
 		Fingerprint: func(input plugin.Input) (string, error) {
 			config, err := parse(input)
 			if err != nil {
@@ -58,12 +57,12 @@ func resolverFor[C any](parse func(plugin.Input) (C, error), discover func(conte
 			}
 			return discover(ctx, config)
 		},
-		Acquire: func(ctx context.Context, input plugin.Input, observation json.RawMessage) (Acquisition, error) {
+		Acquire: func(ctx context.Context, input plugin.Input, entry Entry) (Acquisition, error) {
 			config, err := parse(input)
 			if err != nil {
 				return Acquisition{}, err
 			}
-			return acquire(ctx, config, observation)
+			return acquire(ctx, config, entry)
 		},
 	}
 }

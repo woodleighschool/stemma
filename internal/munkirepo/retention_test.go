@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/munkirepo"
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -76,14 +78,8 @@ func TestRetentionPlansWithoutWritingAndCoversTheWholeFamily(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var planned []string
-	for _, change := range response.Changes {
-		if change.Kind == "retention" {
-			planned = append(planned, change.Field)
-		}
-	}
-	if len(planned) != 1 || planned[0] != "pkgsinfo/apps/App-0.9.plist" {
-		t.Fatalf("planned retention: %v", planned)
+	if response.Previous != "0.10" || !slices.Equal(response.Removed, []string{"0.9"}) {
+		t.Fatalf("planned publication replaces %q and removes %v", response.Previous, response.Removed)
 	}
 	if _, err := os.Stat(imported["0.9"]); err != nil {
 		t.Fatal("plan deleted a publication")
@@ -135,10 +131,8 @@ func TestRetentionPreservesBareReferencesWithDifferentAvailability(t *testing.T)
 				if err != nil {
 					t.Fatal(err)
 				}
-				for _, change := range response.Changes {
-					if change.Kind == "retention" {
-						t.Fatalf("%s prunes a referenced publication with different %s", method, test.field)
-					}
+				if len(response.Removed) != 0 {
+					t.Fatalf("%s prunes a referenced publication with different %s", method, test.field)
 				}
 			}
 			if _, err := os.Stat(first); err != nil {
@@ -206,7 +200,7 @@ func TestInstallerFormatChangeClearsInapplicableDerivedFields(t *testing.T) {
 // selectApplication records the application a MacSoftware preparation selected.
 func selectApplication(request *plugin.ReconcileRequest[munkirepo.Config], app plugin.Subject) {
 	data, _ := json.Marshal(app)
-	request.Artifact.Evidence = map[string]json.RawMessage{"macos.application": data}
+	request.Artifact.Evidence = map[string]json.RawMessage{"macos": testevidence.MacOS(data)}
 }
 
 func TestRetentionRejectsUnreadableReferenceDocuments(t *testing.T) {

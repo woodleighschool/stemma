@@ -27,13 +27,13 @@ func TestRetentionApplyHonorsObservedReferences(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			retiring := []summary{{ID: 1, FileName: "vendor-old.pkg"}}
+			retiring := []summary{{ID: 1, FileName: "vendor-old.pkg", Notes: fixtureMarker}}
 			var plan plugin.ReconcileResponse
 			if err := c.prune(t.Context(), retiring, patch, installs, false, &plan); err != nil {
 				t.Fatal(err)
 			}
-			if !slices.Equal(deletions(plan), []string{"1"}) {
-				t.Fatalf("plan did not release the managed reference: %+v", plan.Changes)
+			if !slices.Equal(plan.Removed, []string{"vendor-old.pkg"}) {
+				t.Fatalf("plan did not release the managed reference: %+v", plan.Removed)
 			}
 			// Another writer can restore the reference after reconciliation.
 			// Pruning must honor the reference returned by its own fresh read.
@@ -41,8 +41,8 @@ func TestRetentionApplyHonorsObservedReferences(t *testing.T) {
 			if err := c.prune(t.Context(), retiring, patch, installs, true, &applied); err != nil {
 				t.Fatal(err)
 			}
-			if len(deletions(applied)) != 0 || !server.exists("1") || server.count("DELETE "+packagePath+"/1") != 0 {
-				t.Fatalf("apply deleted the package still referenced by %s: %+v", kind, applied.Changes)
+			if len(applied.Removed) != 0 || !server.exists("1") || server.count("DELETE "+packagePath+"/1") != 0 {
+				t.Fatalf("apply deleted the package still referenced by %s: %+v", kind, applied.Removed)
 			}
 		})
 	}

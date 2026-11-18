@@ -79,36 +79,25 @@ type wingetSource struct {
 	catalog wingetCatalog
 }
 
-type wingetObservation struct {
-	Package  string `json:"package"`
-	Version  string `json:"version"`
-	URL      string `json:"url"`
-	Filename string `json:"filename"`
-	SHA256   string `json:"sha256"`
+// wingetOrigin is the installer URL a manifest names. The manifest states the
+// installer's digest, which the entry's content records.
+type wingetOrigin struct {
+	URL string `json:"url"`
 }
 
-func (observed wingetObservation) validate(config wingetConfig) error {
-	if !strings.EqualFold(observed.Package, config.Package) || observed.Version == "" || config.Version != "latest" && observed.Version != config.Version {
-		return errors.New("winget observation differs from the configured package")
-	}
-	if err := validateHTTPURL(observed.URL); err != nil {
-		return err
-	}
-	if !validDigest(observed.SHA256) || !validFilename(observed.Filename) {
-		return errors.New("winget observation requires a digest and safe filename")
-	}
-	return nil
-}
-
-func acquireWinget(_ context.Context, config wingetConfig, observation json.RawMessage) (Acquisition, error) {
-	var observed wingetObservation
-	if err := decode(observation, &observed); err != nil {
+func acquireWinget(_ context.Context, _ wingetConfig, entry Entry) (Acquisition, error) {
+	var origin wingetOrigin
+	if err := decode(entry.Origin, &origin); err != nil {
 		return Acquisition{}, err
 	}
-	if err := observed.validate(config); err != nil {
+	expected := entry.expected()
+	if err := validateHTTPURL(origin.URL); err != nil {
 		return Acquisition{}, err
 	}
-	return Acquisition{Download: &Download{URL: observed.URL, Filename: observed.Filename, SHA256: observed.SHA256}}, nil
+	if expected == nil {
+		return Acquisition{}, errors.New("winget origin requires the installer digest its manifest states")
+	}
+	return Acquisition{Download: &Download{URL: origin.URL, Filename: expected.Filename, SHA256: expected.SHA256}}, nil
 }
 
 type wingetVersions struct {
@@ -263,26 +252,27 @@ func selectWinget(data []byte, config wingetConfig, version string) (Discovery, 
 	if err != nil {
 		return Discovery{}, err
 	}
-	evidence["package_identifier"], evidence["package_version"] = config.Package, version
-	evidence["installer_sha256"] = digest
+	// The entry's content and origin record the installer's digest and URL.
+	delete(evidence, "installer_sha256")
+	delete(evidence, "installer_url")
+	evidence["package_identifier"] = config.Package
 	for _, key := range []string{"PackageName", "Publisher"} {
 		if value := wingetString(manifest.Fields, key); value != "" {
 			evidence[wingetFieldName(key)] = value
 		}
 	}
-	encoded, err := json.Marshal(evidence)
+	encoded, err := json.Marshal(map[string]any{"installer": evidence})
 	if err != nil {
 		return Discovery{}, err
 	}
-	observed := wingetObservation{Package: config.Package, Version: version, URL: address, Filename: filename, SHA256: digest}
-	if err := observed.validate(config); err != nil {
+	if err := validateHTTPURL(address); err != nil {
 		return Discovery{}, err
 	}
-	observation, err := json.Marshal(observed)
+	origin, err := json.Marshal(wingetOrigin{URL: address})
 	if err != nil {
 		return Discovery{}, err
 	}
-	return Discovery{Version: version, Content: &Content{SHA256: digest, Filename: filename, Mode: 0o644}, Observation: observation, Immutable: true, Evidence: map[string]json.RawMessage{"winget.installer": encoded}}, nil
+	return Discovery{Version: version, Content: &Content{SHA256: digest, Filename: filename, Mode: 0o644}, Origin: origin, Immutable: true, Evidence: map[string]json.RawMessage{"winget": encoded}}, nil
 }
 
 var wingetInheritedFields = strings.Fields(`InstallerType PackageFamilyName ProductCode InstallerLocale Platform MinimumOSVersion Scope InstallModes InstallerSwitches InstallerSuccessCodes UpgradeBehavior Commands Protocols FileExtensions Dependencies Capabilities RestrictedCapabilities InstallerAbortsTerminal InstallLocationRequired RequireExplicitUpgrade ReleaseDate UnsupportedOSArchitectures ElevationRequirement Markets AppsAndFeaturesEntries ExpectedReturnCodes UnsupportedArguments DisplayInstallWarnings NestedInstallerType NestedInstallerFiles InstallationMetadata DownloadCommandProhibited RepairBehavior ArchiveBinariesDependOnPath Authentication DesiredStateConfiguration`)

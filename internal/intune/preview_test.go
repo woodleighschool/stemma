@@ -36,6 +36,7 @@ func TestValidationPreviewsManagedWindowsMetadata(t *testing.T) {
 	want := object{
 		"type": "win32", "display_name": "Declared name", "architectures": nil, "categories": []any{}, "dependencies": []any{},
 		"setup_file":         "Example.msi",
+		"display_version":    "2.0.1",
 		"msi":                object{"product_code": msi.ProductCode, "product_version": "2.0", "product_name": "Example", "publisher": "Declared vendor", "upgrade_code": nil},
 		"install_command":    `msiexec /i "Example.msi" /qn /norestart PORTAL="vpn.example.test"`,
 		"uninstall_command":  `msiexec /x "` + msi.ProductCode + `" /qn /norestart`,
@@ -46,7 +47,7 @@ func TestValidationPreviewsManagedWindowsMetadata(t *testing.T) {
 	if !reflect.DeepEqual(metadata, want) {
 		t.Fatalf("preview = %s, want %s", response.Metadata, raw(want))
 	}
-	if len(response.Changes) != 0 || response.Origins["msi.upgrade_code"] != "windows.installer" || response.Origins["msi.publisher"] != "" || response.Origins["detection.0.value"] != "artifact.version" {
+	if response.Changed() || response.Origins["display_version"] != "artifact.version" || response.Origins["msi.upgrade_code"] != "windows.installer" || response.Origins["msi.publisher"] != "" || response.Origins["detection.0.value"] != "artifact.version" {
 		t.Fatalf("preview changes or origins: %+v", response)
 	}
 	compiled, err := compile(metadata)
@@ -56,6 +57,7 @@ func TestValidationPreviewsManagedWindowsMetadata(t *testing.T) {
 	wantGraph := object{
 		"@odata.type": win32Type, "displayName": "Declared name", "allowedArchitectures": nil, "categories": []any{}, "dependencies": []any{},
 		"setupFilePath":        "Example.msi",
+		"displayVersion":       "2.0.1",
 		"msiInformation":       object{"productCode": msi.ProductCode, "productVersion": "2.0", "productName": "Example", "publisher": "Declared vendor", "upgradeCode": nil},
 		"installCommandLine":   want["install_command"],
 		"uninstallCommandLine": want["uninstall_command"],
@@ -115,6 +117,10 @@ func TestValidationPreviewsThePreparedSetupEntrypoint(t *testing.T) {
 			}
 			if metadata["setup_file"] != `bin\setup.cmd` || response.Origins["setup_file"] != "installer.entry_point" {
 				t.Fatalf("prepared setup file = %v from %q", metadata["setup_file"], response.Origins["setup_file"])
+			}
+			// An installer without a managed version clears the one an earlier installer showed.
+			if version, cleared := metadata["display_version"]; !cleared || version != nil || response.Origins["display_version"] != "artifact.version" {
+				t.Fatalf("display version = %v from %q", version, response.Origins["display_version"])
 			}
 		})
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	abs "github.com/microsoft/kiota-abstractions-go"
 	"github.com/woodleighschool/stemma/plugin"
@@ -37,10 +38,16 @@ func (c *client) resolveCategories(ctx context.Context, names []any) ([]object, 
 	return resolved, nil
 }
 
-func (c *client) reconcileCategories(ctx context.Context, appID string, names []any) error {
+func (c *client) reconcileCategories(ctx context.Context, appID string, names []any) (completed []plugin.FieldChange, runErr error) {
+	var createdNames []string
+	defer func() {
+		if runErr != nil && len(createdNames) > 0 {
+			runErr = fmt.Errorf("created app categories %s; %w", strings.Join(createdNames, ", "), runErr)
+		}
+	}()
 	resolved, err := c.resolveCategories(ctx, names)
 	if err != nil {
-		return err
+		return completed, err
 	}
 	for _, category := range resolved {
 		if text(category["id"]) != "" {
@@ -48,41 +55,54 @@ func (c *client) reconcileCategories(ctx context.Context, appID string, names []
 		}
 		var created object
 		if err := c.request(ctx, abs.POST, c.categories(), object{"@odata.type": "#microsoft.graph.mobileAppCategory", "displayName": category["displayName"]}, &created); err != nil {
-			return fmt.Errorf("create Intune app category %q: %w", category["displayName"], err)
+			return completed, fmt.Errorf("create Intune app category %q: %w", category["displayName"], err)
 		}
+		createdNames = append(createdNames, text(category["displayName"]))
 		if category["id"] = text(created["id"]); category["id"] == "" {
-			return errors.New("intune category creation omitted ID")
+			return completed, errors.New("intune category creation omitted ID")
 		}
 	}
 	ids := categoryIDs(resolved)
 	current, err := c.list(ctx, c.appCategories(appID))
 	if err != nil {
-		return err
+		return completed, err
 	}
 	held := categoryIDs(current)
+	actual := slices.Clone(current)
+	defer func() {
+		if !slices.Equal(categoryList(current), categoryList(actual)) {
+			completed = []plugin.FieldChange{{Field: "categories", Before: raw(categoryList(current)), After: raw(categoryList(actual))}}
+		}
+	}()
 	for _, id := range ids {
 		if !slices.Contains(held, id) {
 			ref := object{"@odata.id": c.beta.PathParameters["baseurl"] + "/deviceAppManagement/mobileAppCategories/" + id}
 			if err := c.request(ctx, abs.POST, c.categoryRef(appID, ""), ref, nil); err != nil {
-				return fmt.Errorf("add Intune app category: %w", err)
+				return completed, fmt.Errorf("add Intune app category: %w", err)
+			}
+			for _, category := range resolved {
+				if text(category["id"]) == id {
+					actual = append(actual, category)
+				}
 			}
 		}
 	}
 	for _, id := range held {
 		if !slices.Contains(ids, id) {
 			if err := c.request(ctx, abs.DELETE, c.categoryRef(appID, id), nil, nil); err != nil {
-				return fmt.Errorf("remove Intune app category: %w", err)
+				return completed, fmt.Errorf("remove Intune app category: %w", err)
 			}
+			actual = slices.DeleteFunc(actual, func(category object) bool { return text(category["id"]) == id })
 		}
 	}
 	readback, err := c.list(ctx, c.appCategories(appID))
 	if err != nil {
-		return err
+		return completed, err
 	}
 	if !sameCategories(readback, ids) {
-		return errors.New("intune category readback differs from requested categories")
+		return completed, errors.New("intune category readback differs from requested categories")
 	}
-	return nil
+	return completed, nil
 }
 
 func categoryIDs(categories []object) []string {
@@ -109,26 +129,25 @@ func categoryList(categories []object) []string {
 	return names
 }
 
-func (c *client) planCategories(ctx context.Context, current object, names []any) ([]plugin.Change, bool, error) {
+// planCategories reports the app's category names and the declared ones, when
+// they differ. A declared name may be a category applying creates.
+func (c *client) planCategories(ctx context.Context, current object, names []any) ([]plugin.FieldChange, error) {
 	categories, err := c.resolveCategories(ctx, names)
 	if err != nil {
-		return nil, false, err
-	}
-	var changes []plugin.Change
-	for _, category := range categories {
-		if text(category["id"]) == "" {
-			changes = append(changes, plugin.Change{Kind: "categories", Field: "category", Action: "create", After: raw(category["displayName"])})
-		}
+		return nil, err
 	}
 	var existing []object
 	if current != nil {
 		if existing, err = c.list(ctx, c.appCategories(text(current["id"]))); err != nil {
-			return nil, false, err
+			return nil, err
 		}
 	}
 	if sameCategories(existing, categoryIDs(categories)) {
-		return changes, false, nil
+		return nil, nil
 	}
-	changes = append(changes, plugin.Change{Kind: "categories", Field: "categories", Action: "replace", Before: raw(categoryList(existing)), After: raw(categoryList(categories))})
-	return changes, true, nil
+	field := plugin.FieldChange{Field: "categories", After: raw(categoryList(categories))}
+	if current != nil {
+		field.Before = raw(categoryList(existing))
+	}
+	return []plugin.FieldChange{field}, nil
 }

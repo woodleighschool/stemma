@@ -19,7 +19,7 @@ import (
 func (m *Manager) download(ctx context.Context, s Download, previous *record) (result record, reused bool, err error) {
 	address := s.URL
 	if err := validateDownload(s.Download); err != nil {
-		return record{}, false, fmt.Errorf("observation URL: %w", err)
+		return record{}, false, fmt.Errorf("origin URL: %w", err)
 	}
 	if s.AllowHTTPRedirect && (s.SHA256 == "" || s.Do != nil) {
 		return record{}, false, errors.New("HTTP redirects require a pinned sha256 and host transport")

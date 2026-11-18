@@ -1,5 +1,6 @@
-// Package lockfile separates update resolution from preparation of reviewed inputs.
-package lockfile
+// Package lock records the reviewed inputs and plugins of a project, one
+// document per resource, and separates update resolution from preparation.
+package lock
 
 import (
 	"bytes"
@@ -27,7 +28,7 @@ import (
 
 // Version is the format of every lock document. It changes whenever older
 // entries no longer read the same, so a mismatch fails before any entry is used.
-const Version = 5
+const Version = 6
 
 // File is a project's whole lock: the reviewed inputs of each resource and the
 // content of its executable plugins. On disk each resource has its own
@@ -39,13 +40,13 @@ type File struct {
 }
 
 // Options controls lock consumption independently of cache use. A run consumes
-// the reviewed lockfile as it is and fails on missing or stale entries; only
+// the reviewed lock as it is and fails on missing or stale entries; only
 // Refresh and PluginsOnly write it.
 type Options struct {
 	// Refresh resolves inputs from their sources and records what they provide.
 	Refresh bool
 	Offline bool
-	// IgnoreInputs resolves inputs as if the lockfile had no input entries and
+	// IgnoreInputs resolves inputs as if the lock had no input entries and
 	// saves nothing.
 	IgnoreInputs bool
 	// PluginsOnly records plugin entries and keeps the input entries.
@@ -56,18 +57,17 @@ type Options struct {
 	Retain []string
 }
 
-// frozen reports whether the run consumes the reviewed lockfile as it is.
+// frozen reports whether the run consumes the reviewed lock as it is.
 func (o Options) frozen() bool {
 	return !o.Refresh && !o.IgnoreInputs && !o.PluginsOnly
 }
 
 // Result reports acquisition separately from downstream metadata changes.
 type Result struct {
-	File      File
-	Changed   bool
-	Changes   []InputChange
-	Plugins   []PluginChange
-	CacheHits map[string]map[string]bool
+	File    File
+	Changed bool
+	Changes []InputChange
+	Plugins []PluginChange
 }
 
 // Lock serializes project operations and releases automatically after a process crash.
@@ -108,7 +108,7 @@ func Path(root string) string { return filepath.Join(root, directory) }
 func documentPath(resource string) (string, error) {
 	name := directory + "/" + strings.TrimPrefix(resource, defaultAPIVersion) + ".yaml"
 	if strings.Count(resource, "/") != 3 || !fs.ValidPath(name) || !filepath.IsLocal(filepath.FromSlash(name)) || strings.ContainsAny(name, "\\:") {
-		return "", fmt.Errorf("lockfile: resource %q has no lock document path", resource)
+		return "", fmt.Errorf("lock: resource %q has no lock document path", resource)
 	}
 	return name, nil
 }
@@ -143,10 +143,10 @@ func Load(root string) (File, error) {
 		return err
 	})
 	if err != nil {
-		return File{}, fmt.Errorf("lockfile: %w", err)
+		return File{}, fmt.Errorf("lock: %w", err)
 	}
 	if len(files) == 0 {
-		return File{}, fmt.Errorf("lockfile: %w", fs.ErrNotExist)
+		return File{}, fmt.Errorf("lock: %w", fs.ErrNotExist)
 	}
 	return Decode(files)
 }
@@ -189,39 +189,130 @@ func Decode(files map[string][]byte) (File, error) {
 	}
 	file := File{Version: Version, Inputs: map[string]map[string]source.Entry{}}
 	for _, name := range names(files) {
-		var document struct {
-			Version int                      `yaml:"version"`
-			Inputs  map[string]source.Entry  `yaml:"inputs,omitempty"`
-			Plugins map[string]plugins.Entry `yaml:"plugins,omitempty"`
-		}
-		if err := decode(files[name], &document); err != nil {
-			return File{}, fmt.Errorf("lockfile: %s: %w", name, err)
-		}
 		if name == pluginDocument {
-			if len(document.Plugins) == 0 || document.Inputs != nil {
-				return File{}, fmt.Errorf("lockfile: %s locks plugins and nothing else", name)
+			pins, err := decodePlugins(name, files[name])
+			if err != nil {
+				return File{}, remedy(err, "run stemma update")
 			}
-			file.Plugins = document.Plugins
+			file.Plugins = pins
 			continue
 		}
 		resource, ok := resourceOf(name)
 		if !ok {
-			return File{}, fmt.Errorf("lockfile: %s is not a lock document", name)
+			return File{}, fmt.Errorf("lock: %s is not a lock document", name)
 		}
-		if len(document.Inputs) == 0 || document.Plugins != nil {
-			return File{}, fmt.Errorf("lockfile: %s locks named inputs and nothing else", name)
+		entries, err := decodeInputs(name, files[name])
+		if err != nil {
+			return File{}, remedy(err, "run stemma update")
 		}
-		for input, entry := range document.Inputs {
-			if input == "" {
-				return File{}, fmt.Errorf("lockfile: %s has an empty input name", name)
-			}
-			if err := entry.Validate(); err != nil {
-				return File{}, fmt.Errorf("lockfile: %s input %s: %w", name, input, err)
-			}
-		}
-		file.Inputs[resource] = document.Inputs
+		file.Inputs[resource] = entries
 	}
 	return file, nil
+}
+
+// remedy names the command that replaces a document this Stemma cannot use,
+// unless the document needs a newer one.
+func remedy(err error, command string) error {
+	if errors.As(err, new(newerVersionError)) {
+		return err
+	}
+	return fmt.Errorf("%w; %s", err, command)
+}
+
+// decodeInputs reads one resource's document, named in its errors.
+func decodeInputs(name string, data []byte) (map[string]source.Entry, error) {
+	var document struct {
+		Version int                      `yaml:"version"`
+		Inputs  map[string]source.Entry  `yaml:"inputs,omitempty"`
+		Plugins map[string]plugins.Entry `yaml:"plugins,omitempty"`
+	}
+	if err := decode(data, &document); err != nil {
+		return nil, fmt.Errorf("lock: %s: %w", name, err)
+	}
+	if len(document.Inputs) == 0 || document.Plugins != nil {
+		return nil, fmt.Errorf("lock: %s locks named inputs and nothing else", name)
+	}
+	for input, entry := range document.Inputs {
+		if input == "" {
+			return nil, fmt.Errorf("lock: %s has an empty input name", name)
+		}
+		if err := entry.Validate(); err != nil {
+			return nil, fmt.Errorf("lock: %s input %s: %w", name, input, err)
+		}
+	}
+	return document.Inputs, nil
+}
+
+// decodePlugins reads the plugin document, named in its errors.
+func decodePlugins(name string, data []byte) (map[string]plugins.Entry, error) {
+	var document struct {
+		Version int                      `yaml:"version"`
+		Inputs  map[string]source.Entry  `yaml:"inputs,omitempty"`
+		Plugins map[string]plugins.Entry `yaml:"plugins,omitempty"`
+	}
+	if err := decode(data, &document); err != nil {
+		return nil, fmt.Errorf("lock: %s: %w", name, err)
+	}
+	if len(document.Plugins) == 0 || document.Inputs != nil {
+		return nil, fmt.Errorf("lock: %s locks plugins and nothing else", name)
+	}
+	return document.Plugins, nil
+}
+
+// LoadPlugins reads the plugin document alone. A project that locks no
+// plugins has none.
+func LoadPlugins(root string) (map[string]plugins.Entry, error) {
+	data, err := readDocument(root, pluginDocument)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	pins, err := decodePlugins(pluginDocument, data)
+	if err != nil {
+		return nil, remedy(err, "run stemma plugins update")
+	}
+	return pins, nil
+}
+
+// readDocument reads one document by its slash path below the root, or
+// nothing when it does not exist.
+func readDocument(root, name string) ([]byte, error) {
+	filename := filepath.Join(root, filepath.FromSlash(name))
+	info, err := os.Lstat(filename)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("lock: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxDocument {
+		return nil, fmt.Errorf("lock: %s is not a regular file of at most 8 MiB", name)
+	}
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("lock: %w", err)
+	}
+	return data, nil
+}
+
+// documentNames lists the documents of a project's lock by their slash path
+// below the root, without reading them.
+func documentNames(root string) (map[string]bool, error) {
+	existing := map[string]bool{}
+	err := documents(root, func(name string, _ fs.DirEntry) error {
+		existing[name] = true
+		return nil
+	})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("lock: %w", err)
+	}
+	return existing, nil
+}
+
+// newerVersionError is a document written by a newer Stemma.
+type newerVersionError int
+
+func (v newerVersionError) Error() string {
+	return fmt.Sprintf("version %d needs a newer stemma", int(v))
 }
 
 // decode reads one strict YAML document of the current format.
@@ -237,9 +328,9 @@ func decode(data []byte, document any) error {
 	}
 	switch {
 	case header.Version > Version:
-		return fmt.Errorf("version %d needs a newer stemma", header.Version)
+		return newerVersionError(header.Version)
 	case header.Version != Version:
-		return fmt.Errorf("version %d is not supported; delete it and run stemma update", header.Version)
+		return fmt.Errorf("version %d is not supported", header.Version)
 	}
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -253,18 +344,27 @@ func decode(data []byte, document any) error {
 	return nil
 }
 
-// Update stages input observations until Commit writes the lock documents.
+// Update acquires input entries and saves resource or project lock documents.
 // Callers hold the project lock for its lifetime.
 type Update struct {
 	result Result
 	old    File
-	// reviewed holds the lockfile's input entries, which a run that ignores
-	// them still reports its observations against.
+	// reviewed holds the lock's input entries, which a run that ignores
+	// them still reports its entries against.
 	reviewed map[string]map[string]source.Entry
-	root     string
-	opts     Options
-	inputs   map[string]map[string]plugin.Input
-	acquire  func(ctx context.Context, resource string, input plugin.Input, entry source.Entry) (source.Entry, bool, error)
+	// acquired are the resources whose inputs this update obtained.
+	acquired map[string]bool
+	// existing are the lock's current documents, by name.
+	existing map[string]bool
+	// unreadable are handled resources whose documents an update replaces.
+	unreadable        map[string]bool
+	unreadablePlugins bool
+	// undeclared are the resources whose documents a full update removes.
+	undeclared []string
+	root       string
+	opts       Options
+	inputs     map[string]map[string]plugin.Input
+	acquire    func(ctx context.Context, resource string, input plugin.Input, entry source.Entry) (source.Entry, bool, error)
 }
 
 // Begin loads reviewed inputs without acquiring resource content.
@@ -272,7 +372,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	result := Result{File: File{Version: Version, Inputs: map[string]map[string]source.Entry{}, Plugins: map[string]plugins.Entry{}}, CacheHits: map[string]map[string]bool{}}
+	result := Result{File: File{Version: Version, Inputs: map[string]map[string]source.Entry{}, Plugins: map[string]plugins.Entry{}}}
 	opts.Offline = opts.Offline || m.Offline
 	manager := *m
 	manager.Offline = opts.Offline
@@ -281,29 +381,72 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		return nil, errors.New("offline runs use input locks and cannot refresh or ignore them")
 	}
 	frozen := opts.frozen()
-	old, err := Load(root)
-	if errors.Is(err, os.ErrNotExist) && requiresLock(inputs) && frozen {
-		return nil, errors.New("lockfile: missing; run stemma update")
-	}
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	existing, err := documentNames(root)
+	if err != nil {
 		return nil, err
+	}
+	if len(existing) == 0 && requiresLock(inputs) && frozen {
+		return nil, errors.New("lock: missing; run stemma update")
+	}
+	// A run reads only the documents of the resources it handles, so another
+	// resource's document never fails it. An update replaces a document it
+	// cannot read.
+	old := File{Version: Version, Inputs: map[string]map[string]source.Entry{}}
+	if old.Plugins, err = LoadPlugins(root); err != nil && frozen {
+		return nil, err
+	}
+	unreadablePlugins := err != nil
+	unreadable := map[string]bool{}
+	for _, resource := range names(inputs) {
+		name, err := documentPath(resource)
+		if err != nil {
+			return nil, err
+		}
+		if !existing[name] {
+			continue
+		}
+		entries, err := readResource(root, name)
+		switch {
+		case err != nil && frozen:
+			return nil, remedy(err, "run stemma update "+selector(resource))
+		case err != nil:
+			unreadable[resource] = true
+		default:
+			old.Inputs[resource] = entries
+		}
+	}
+	// Only a run of the whole catalog answers for the documents of resources
+	// it no longer declares.
+	var undeclared []string
+	if !opts.PreserveUnselected && !opts.PluginsOnly {
+		var stale []error
+		for _, name := range slices.Sorted(maps.Keys(existing)) {
+			resource, ok := resourceOf(name)
+			if name == pluginDocument {
+				continue
+			}
+			if !ok {
+				return nil, fmt.Errorf("lock: %s is not a lock document", name)
+			}
+			if _, handled := inputs[resource]; handled || slices.Contains(opts.Retain, resource) {
+				continue
+			}
+			if frozen {
+				stale = append(stale, notDeclared(resource))
+				continue
+			}
+			undeclared = append(undeclared, resource)
+			if entries, err := readResource(root, name); err == nil {
+				old.Inputs[resource] = entries
+			}
+		}
+		if err := errors.Join(stale...); err != nil {
+			return nil, err
+		}
 	}
 	reviewed := old.Inputs
 	if opts.IgnoreInputs {
 		old.Inputs = nil
-	}
-	var undeclared []error
-	for _, resource := range names(old.Inputs) {
-		if _, selected := inputs[resource]; !selected && !opts.PluginsOnly {
-			if opts.PreserveUnselected || slices.Contains(opts.Retain, resource) {
-				result.File.Inputs[resource] = old.Inputs[resource]
-			} else if frozen {
-				undeclared = append(undeclared, notDeclared(resource))
-			}
-		}
-	}
-	if err := errors.Join(undeclared...); err != nil {
-		return nil, err
 	}
 	resolved := map[string]source.Entry{}
 	resolve := func(ctx context.Context, input plugin.Input, previous source.Entry) (source.Entry, bool, error) {
@@ -311,7 +454,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		if err != nil {
 			return source.Entry{}, false, err
 		}
-		// Inputs sharing a declaration share one observation.
+		// Inputs sharing a declaration share one discovery.
 		key := input.Resolver + "\x00" + version + "\x00" + declaration
 		if current, ok := resolved[key]; ok {
 			return current, m.Store.HasDigest(current.Content.SHA256), nil
@@ -327,7 +470,7 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		if err != nil {
 			return source.Entry{}, false, err
 		}
-		matches := entry.Version == 1 && entry.Resolver == input.Resolver && entry.ResolverVersion == version && entry.Declaration == declaration
+		matches := entry.Validate() == nil && entry.Resolver == input.Resolver && entry.ResolverVersion == version && entry.Declaration == declaration
 		if m.IsLocal(input.Resolver) {
 			if !matches && frozen {
 				return source.Entry{}, false, updateRequired(resource, staleReason(entry, input, version, true))
@@ -361,17 +504,20 @@ func Begin(ctx context.Context, root string, inputs map[string]map[string]plugin
 		}
 		return current, cached, nil
 	}
-	if opts.PluginsOnly {
-		result.File.Inputs = old.Inputs
-		if result.File.Inputs == nil {
-			result.File.Inputs = map[string]map[string]source.Entry{}
-		}
-	}
 	result.File.Plugins = pluginEntries
-	return &Update{result: result, old: old, reviewed: reviewed, root: root, opts: opts, inputs: inputs, acquire: acquire}, nil
+	return &Update{result: result, old: old, reviewed: reviewed, acquired: map[string]bool{}, existing: existing, unreadable: unreadable, unreadablePlugins: unreadablePlugins, undeclared: undeclared, root: root, opts: opts, inputs: inputs, acquire: acquire}, nil
 }
 
-// Check verifies the lockfile's shape without reading declared values: it
+// readResource reads one resource's document by its name.
+func readResource(root, name string) (map[string]source.Entry, error) {
+	data, err := readDocument(root, name)
+	if err != nil {
+		return nil, err
+	}
+	return decodeInputs(name, data)
+}
+
+// Check verifies the lock's shape without reading declared values: it
 // holds entries for exactly the declared inputs, besides whatever retained
 // resources keep. Runs that acquire an input compare its entry with the
 // declaration.
@@ -385,7 +531,7 @@ func Check(root string, inputs map[string]map[string]plugin.Input, retain []stri
 
 func check(old File, inputs map[string]map[string]plugin.Input, retain []string) error {
 	if old.Version == 0 && requiresLock(inputs) {
-		return errors.New("lockfile: missing; run stemma update")
+		return errors.New("lock: missing; run stemma update")
 	}
 	var stale []error
 	for _, resource := range names(old.Inputs) {
@@ -396,12 +542,12 @@ func check(old File, inputs map[string]map[string]plugin.Input, retain []string)
 	for _, resource := range names(inputs) {
 		for _, name := range names(old.Inputs[resource]) {
 			if _, declared := inputs[resource][name]; !declared {
-				stale = append(stale, fmt.Errorf("lockfile: %s input %s is no longer declared; run stemma update", resource, name))
+				stale = append(stale, fmt.Errorf("lock: %s input %s is no longer declared; run stemma update", resource, name))
 			}
 		}
 		for _, name := range names(inputs[resource]) {
 			if _, locked := old.Inputs[resource][name]; !locked {
-				stale = append(stale, fmt.Errorf("lockfile: %s input %s is missing; run stemma update", resource, name))
+				stale = append(stale, fmt.Errorf("lock: %s input %s is missing; run stemma update", resource, name))
 			}
 		}
 	}
@@ -415,7 +561,7 @@ func notDeclared(resource string) error {
 	if err != nil {
 		return err
 	}
-	return fmt.Errorf("lockfile: %s locks a resource that is no longer declared; delete it or run stemma update", document)
+	return fmt.Errorf("lock: %s locks a resource that is no longer declared; delete it or run stemma update", document)
 }
 
 func requiresLock(inputs map[string]map[string]plugin.Input) bool {
@@ -431,8 +577,8 @@ func requiresLock(inputs map[string]map[string]plugin.Input) bool {
 // local declaration includes its resolved path, which follows the document.
 func staleReason(entry source.Entry, input plugin.Input, version string, local bool) string {
 	switch {
-	case entry.Version == 0:
-		return "input is missing from the lockfile"
+	case entry.Resolver == "":
+		return "input is missing from the lock"
 	case entry.Resolver != input.Resolver || entry.ResolverVersion != version:
 		return "input resolver changed since it was locked"
 	case local:
@@ -444,69 +590,72 @@ func staleReason(entry source.Entry, input plugin.Input, version string, local b
 // staleInputs says why a resource's reviewed entries are not its declared inputs.
 func staleInputs(locked map[string]source.Entry) string {
 	if len(locked) == 0 {
-		return "inputs are missing from the lockfile"
+		return "inputs are missing from the lock"
 	}
 	return "declared inputs changed since they were locked"
 }
 
 func updateRequired(resource, reason string) error {
-	parts := strings.Split(resource, "/")
-	selector := strings.Join(parts[max(0, len(parts)-2):], "/")
-	return fmt.Errorf("%s; run stemma update %s", reason, selector)
+	return fmt.Errorf("%s; run stemma update %s", reason, selector(resource))
 }
 
-// Acquire obtains one resource's inputs. Repeated calls reuse the same observation.
+// selector names a resource as the command line does.
+func selector(resource string) string {
+	parts := strings.Split(resource, "/")
+	return strings.Join(parts[max(0, len(parts)-2):], "/")
+}
+
+// Acquire obtains one resource's inputs. Repeated calls reuse the same entries.
 // Callers scope the logger to the resource.
-func (u *Update) Acquire(ctx context.Context, resource string) (map[string]source.Entry, map[string]bool, error) {
+func (u *Update) Acquire(ctx context.Context, resource string) (map[string]source.Entry, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	if hits, ok := u.result.CacheHits[resource]; ok {
-		return u.result.File.Inputs[resource], hits, nil
+	if u.acquired[resource] {
+		return u.result.File.Inputs[resource], nil
 	}
 	inputs, ok := u.inputs[resource]
 	if !ok || resource == "" {
-		return nil, nil, fmt.Errorf("unknown input resource %q", resource)
+		return nil, fmt.Errorf("unknown input resource %q", resource)
 	}
 	if u.opts.frozen() && len(u.old.Inputs[resource]) != len(inputs) {
-		return nil, nil, updateRequired(resource, staleInputs(u.old.Inputs[resource]))
+		return nil, updateRequired(resource, staleInputs(u.old.Inputs[resource]))
 	}
 	entries := map[string]source.Entry{}
-	hits := map[string]bool{}
 	for _, name := range names(inputs) {
 		if err := ctx.Err(); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if name == "" {
-			return nil, nil, errors.New("input lock has an empty input name")
+			return nil, errors.New("input lock has an empty input name")
 		}
-		entry, hit, err := u.ReadInput(ctx, resource, name)
+		entry, err := u.ReadInput(ctx, resource, name)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		entries[name], hits[name] = entry, hit
+		entries[name] = entry
 	}
 	if len(entries) > 0 {
 		u.result.File.Inputs[resource] = entries
 	}
-	u.result.CacheHits[resource] = hits
-	return entries, hits, nil
+	u.acquired[resource] = true
+	return entries, nil
 }
 
 // ReadInput leases one declared input without advancing the resource's lock update.
-func (u *Update) ReadInput(ctx context.Context, resource, name string) (source.Entry, bool, error) {
+func (u *Update) ReadInput(ctx context.Context, resource, name string) (source.Entry, error) {
 	if err := ctx.Err(); err != nil {
-		return source.Entry{}, false, err
+		return source.Entry{}, err
 	}
 	input, ok := u.inputs[resource][name]
 	if !ok {
-		return source.Entry{}, false, fmt.Errorf("unknown input %s/%s", resource, name)
+		return source.Entry{}, fmt.Errorf("unknown input %s/%s", resource, name)
 	}
 	if u.opts.frozen() && len(u.old.Inputs[resource]) != len(u.inputs[resource]) {
-		return source.Entry{}, false, updateRequired(resource, staleInputs(u.old.Inputs[resource]))
+		return source.Entry{}, updateRequired(resource, staleInputs(u.old.Inputs[resource]))
 	}
 	if entry, ok := u.result.File.Inputs[resource][name]; ok {
-		return entry, u.result.CacheHits[resource][name], nil
+		return entry, nil
 	}
 	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("input", name))
 	done := plugin.Stage(ctx, "Acquiring input")
@@ -517,73 +666,192 @@ func (u *Update) ReadInput(ctx context.Context, resource, name string) (source.E
 	}
 	done(err, plugin.Detail(detail))
 	if err != nil {
-		return source.Entry{}, false, fmt.Errorf("input %s: %w", name, err)
+		return source.Entry{}, fmt.Errorf("input %s: %w", name, err)
 	}
-	return entry, hit, nil
+	return entry, nil
 }
 
 // Changes compares one acquired resource's inputs with its reviewed entries,
 // as Commit records them unless the resource is rejected. A run that ignores
 // input locks records nothing and reports what an update would record.
 func (u *Update) Changes(resource string) []InputChange {
-	if _, acquired := u.result.CacheHits[resource]; u.opts.PluginsOnly || !acquired {
+	if u.opts.PluginsOnly || !u.acquired[resource] {
 		return nil
 	}
 	return DiffInputs(map[string]map[string]source.Entry{resource: u.reviewed[resource]}, map[string]map[string]source.Entry{resource: u.result.File.Inputs[resource]})
 }
 
-// Commit replaces the lockfile after every selected resource was acquired or
-// rejected. Rejected resources retain their complete reviewed entries, including
-// when acquisition succeeded but downstream preparation failed.
+// CommitResource saves one acquired resource and the plugin pins it uses.
+// Other resource documents, including undeclared ones, remain untouched.
+func (u *Update) CommitResource(ctx context.Context, resource string) (Result, error) {
+	if !u.acquired[resource] {
+		return Result{}, fmt.Errorf("%s inputs were not acquired", resource)
+	}
+	part := *u
+	part.inputs = map[string]map[string]plugin.Input{resource: u.inputs[resource]}
+	part.undeclared = nil
+	return part.Commit(ctx)
+}
+
+// Commit writes the documents of the resources the update handled, after
+// every one was acquired or rejected, and the plugin document. Rejected
+// resources keep their reviewed documents, including when acquisition
+// succeeded but downstream preparation failed. Documents of other resources
+// are not touched, except that a full update removes those of resources the
+// catalog no longer declares.
 func (u *Update) Commit(ctx context.Context, rejected ...string) (Result, error) {
 	result, old, opts := u.result, u.old, u.opts
-	result.File.Inputs = maps.Clone(result.File.Inputs)
-	result.CacheHits = maps.Clone(result.CacheHits)
+	result.File.Inputs = map[string]map[string]source.Entry{}
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
+	owned := map[string]map[string]source.Entry{}
 	if !opts.PluginsOnly {
 		for resource, inputs := range u.inputs {
 			if slices.Contains(rejected, resource) {
-				delete(result.File.Inputs, resource)
-				delete(result.CacheHits, resource)
 				if entries, ok := old.Inputs[resource]; ok {
 					result.File.Inputs[resource] = entries
 				}
 				continue
 			}
-			if len(result.File.Inputs[resource]) != len(inputs) {
+			entries := u.result.File.Inputs[resource]
+			if len(entries) != len(inputs) {
 				return result, fmt.Errorf("%s inputs were not acquired", resource)
 			}
+			owned[resource] = entries
+			if len(entries) > 0 {
+				result.File.Inputs[resource] = entries
+			}
+		}
+		for _, resource := range u.undeclared {
+			owned[resource] = nil
 		}
 	}
-
-	empty := len(result.File.Inputs) == 0 && len(result.File.Plugins) == 0
-	if empty && old.Version == 0 {
-		return result, nil
+	for resource, entries := range owned {
+		if u.unreadable[resource] || !sameJSON(old.Inputs[resource], entries) {
+			result.Changed = true
+		}
 	}
-	before, err := json.Marshal(old)
-	if err != nil {
-		return result, err
+	if u.unreadablePlugins || !sameJSON(old.Plugins, result.File.Plugins) {
+		result.Changed = true
 	}
-	after, err := json.Marshal(result.File)
-	if err != nil {
-		return result, err
-	}
-	result.Changed = !bytes.Equal(before, after)
 	if opts.frozen() && result.Changed {
-		return result, errors.New("lockfile contains stale entries; run stemma update")
+		return result, errors.New("lock contains stale entries; run stemma update")
 	}
+	var writeErr error
 	if result.Changed && !opts.IgnoreInputs {
-		if err := Save(u.root, result.File); err != nil {
-			return result, err
+		writeErr = u.write(owned, result.File.Plugins)
+	}
+	pluginsSaved := writeErr == nil
+	// Individual documents are atomic; the set is not. On a failed save,
+	// read back owned documents to retain only confirmed changes.
+	if writeErr != nil {
+		result.Changed = false
+		for resource, entries := range owned {
+			name, _ := documentPath(resource)
+			actual, err := readResource(u.root, name)
+			if len(entries) == 0 {
+				if _, statErr := os.Lstat(filepath.Join(u.root, name)); errors.Is(statErr, fs.ErrNotExist) {
+					actual, err = nil, nil
+				}
+			}
+			if err != nil || !sameJSON(actual, entries) {
+				delete(owned, resource)
+				delete(result.File.Inputs, resource)
+				if previous, ok := old.Inputs[resource]; ok {
+					result.File.Inputs[resource] = previous
+				}
+				continue
+			}
+			result.Changed = result.Changed || u.unreadable[resource] || !sameJSON(old.Inputs[resource], entries)
+		}
+		pins, err := LoadPlugins(u.root)
+		if err != nil || !sameJSON(pins, result.File.Plugins) {
+			result.File.Plugins = old.Plugins
+		} else {
+			pluginsSaved = true
+			result.Changed = result.Changed || u.unreadablePlugins || !sameJSON(old.Plugins, pins)
 		}
 	}
 	if !opts.IgnoreInputs {
-		result.Changes = DiffInputs(old.Inputs, result.File.Inputs)
+		before, after := map[string]map[string]source.Entry{}, map[string]map[string]source.Entry{}
+		for resource, entries := range owned {
+			name, _ := documentPath(resource)
+			delete(u.existing, name)
+			if previous, ok := old.Inputs[resource]; ok {
+				before[resource] = previous
+			}
+			if len(entries) > 0 {
+				u.existing[name] = true
+				after[resource] = entries
+			}
+		}
+		result.Changes = DiffInputs(before, after)
+		if pluginsSaved {
+			delete(u.existing, pluginDocument)
+			if len(result.File.Plugins) > 0 {
+				u.existing[pluginDocument] = true
+			}
+		}
 	}
 	result.Plugins = DiffPlugins(old.Plugins, result.File.Plugins)
-	return result, nil
+	return result, writeErr
+}
+
+// sameJSON compares lock values as their documents record them; nothing and
+// an empty collection are the same.
+func sameJSON[T any](a, b map[string]T) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return len(a) == len(b)
+	}
+	left, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	right, err := json.Marshal(b)
+	return err == nil && bytes.Equal(left, right)
+}
+
+// write makes the owned documents and the plugin document match the update:
+// it removes the documents of owned resources that lock nothing, then writes
+// those that differ, each atomically.
+func (u *Update) write(owned map[string]map[string]source.Entry, pins map[string]plugins.Entry) error {
+	locked := map[string]map[string]source.Entry{}
+	var stale []string
+	for _, resource := range names(owned) {
+		if len(owned[resource]) > 0 {
+			locked[resource] = owned[resource]
+			continue
+		}
+		name, err := documentPath(resource)
+		if err != nil {
+			return err
+		}
+		if u.existing[name] {
+			stale = append(stale, name)
+		}
+	}
+	files, err := Encode(File{Inputs: locked, Plugins: pins})
+	if err != nil {
+		return err
+	}
+	if len(pins) == 0 && u.existing[pluginDocument] {
+		stale = append(stale, pluginDocument)
+	}
+	// The documents left afterwards must coexist on case-insensitive
+	// filesystems, including those of resources the update did not handle.
+	after := map[string][]byte{}
+	for name := range u.existing {
+		after[name] = nil
+	}
+	for _, name := range stale {
+		delete(after, name)
+	}
+	maps.Copy(after, files)
+	if err := checkPaths(after); err != nil {
+		return err
+	}
+	return replace(u.root, files, stale)
 }
 
 // Encode renders the documents Save leaves in a project, keyed by their slash
@@ -642,10 +910,10 @@ func checkPaths(files map[string][]byte) error {
 			prefix := strings.Join(parts, "/")
 			folded := strings.ToLower(prefix)
 			if previous, exists := paths[folded]; exists && previous != prefix {
-				return fmt.Errorf("lockfile: %s and %s have the same case-insensitive path", previous, prefix)
+				return fmt.Errorf("lock: %s and %s have the same case-insensitive path", previous, prefix)
 			}
 			if _, file := files[prefix]; file && prefix != name {
-				return fmt.Errorf("lockfile: %s is both a document and a directory", prefix)
+				return fmt.Errorf("lock: %s is both a document and a directory", prefix)
 			}
 			paths[folded] = prefix
 		}
@@ -663,21 +931,27 @@ func Save(root string, file File) error {
 	var stale []string
 	err = documents(root, func(name string, _ fs.DirEntry) error {
 		if _, kept := files[name]; !kept {
-			stale = append(stale, filepath.Join(root, filepath.FromSlash(name)))
+			stale = append(stale, name)
 		}
 		return nil
 	})
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	// Remove stale paths first so case-only renames cannot delete a document
-	// just written or leave its parent directories with the old identity.
+	return replace(root, files, stale)
+}
+
+// replace removes the stale documents, then writes those of files that differ
+// on disk. Stale paths go first so case-only renames cannot delete a document
+// just written or leave its parent directories with the old identity.
+func replace(root string, files map[string][]byte, stale []string) error {
 	for _, name := range stale {
-		if err := os.Remove(name); err != nil {
+		filename := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.Remove(filename); err != nil {
 			return err
 		}
 		// Removal stops at the first directory that still holds something.
-		for dir := filepath.Dir(name); dir != root; dir = filepath.Dir(dir) {
+		for dir := filepath.Dir(filename); dir != root; dir = filepath.Dir(dir) {
 			if os.Remove(dir) != nil {
 				break
 			}
@@ -706,7 +980,7 @@ func Prepare(ctx context.Context, root string, inputs map[string]map[string]plug
 	}
 	if !opts.PluginsOnly {
 		for _, resource := range names(inputs) {
-			if _, _, err := update.Acquire(ctx, resource); err != nil {
+			if _, err := update.Acquire(ctx, resource); err != nil {
 				return Result{}, fmt.Errorf("%s: %w", resource, err)
 			}
 		}

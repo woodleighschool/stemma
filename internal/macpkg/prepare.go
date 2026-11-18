@@ -116,16 +116,9 @@ func Prepare(ctx context.Context, request plugin.ResourceRequest[json.RawMessage
 		return artifact, err
 	}
 	// The builder never signs, so the package's signing state is its own to state.
-	artifact.Evidence = map[string]json.RawMessage{signature.BuildEvidence: json.RawMessage(`"unsigned"`)}
-	if len(observed) > 0 {
-		if artifact.Evidence["signatures"], err = json.Marshal(observed); err != nil {
-			return plugin.Artifact{}, err
-		}
-	}
-	if len(unverified) > 0 {
-		if artifact.Evidence[signature.UnverifiedEvidence], err = json.Marshal(unverified); err != nil {
-			return plugin.Artifact{}, err
-		}
+	artifact.Evidence = map[string]json.RawMessage{}
+	if err := (signature.Evidence{Observed: observed, Build: "unsigned", Unverified: unverified}).Write(artifact.Evidence); err != nil {
+		return plugin.Artifact{}, err
 	}
 	return artifact, nil
 }
@@ -196,8 +189,9 @@ func verifyInputs(ctx context.Context, sources *sources, spec Spec, derive bool)
 		if err != nil {
 			return nil, fmt.Errorf("input %q %w", name, err)
 		}
-		observed, err := signature.Verify(ctx, policies[name], subjects, derive, func(subject plugin.Subject) (signature.Result, error) {
-			return apple.VerifySubject(ctx, source, subject, sources.workspace)
+		inputCtx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("input", name))
+		observed, err := signature.Verify(inputCtx, source.Artifact().Filename, policies[name], subjects, derive, func(subject plugin.Subject) (signature.Result, error) {
+			return apple.VerifySubject(inputCtx, source, subject, sources.workspace)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("input %q: %w", name, err)

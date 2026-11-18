@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -92,13 +93,20 @@ func (config Config) Validate() error {
 	return nil
 }
 
-// derive answers validation with the pkginfo the request publishes. The
-// repository names the installer's file, so its location is left out.
 func derive(request plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, error) {
 	input, _, derived, err := nativeInput(request)
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
 	}
+	destination, err := munki.DecodeDestination(request.Metadata)
+	if err != nil {
+		return plugin.ReconcileResponse{}, err
+	}
+	return preview(input, derived, destination.Retention)
+}
+
+// preview describes managed metadata without repository-assigned values.
+func preview(input munki.Input, derived munki.Derived, retention *plugin.Retention) (plugin.ReconcileResponse, error) {
 	pkginfo, err := munki.Render(input)
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
@@ -109,11 +117,7 @@ func derive(request plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, 
 	for _, field := range derived.Cleared {
 		pkginfo[field] = nil
 	}
-	destination, err := munki.DecodeDestination(request.Metadata)
-	if err != nil {
-		return plugin.ReconcileResponse{}, err
-	}
-	metadata, err := json.Marshal(munki.DestinationMetadata{Pkginfo: raw(pkginfo), Retention: destination.Retention})
+	metadata, err := json.Marshal(munki.DestinationMetadata{Pkginfo: raw(pkginfo), Retention: retention})
 	return plugin.ReconcileResponse{Origins: derived.Origins, Metadata: metadata}, err
 }
 
@@ -208,7 +212,14 @@ func freeName(directory, base, extension string, reusable func(string) (bool, er
 	}
 }
 
-func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, error) {
+// transfer is bytes a publication writes to path in the repository.
+type transfer struct {
+	upload   plugin.Upload
+	path     string
+	artifact plugin.Artifact
+}
+
+func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest[Config]) (response plugin.ReconcileResponse, err error) {
 	input, managed, derived, err := nativeInput(request)
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
@@ -217,6 +228,14 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
 	}
+	response, err = preview(input, derived, destination.Retention)
+	if err != nil {
+		return response, err
+	}
+	metadata := response.Metadata
+	defer func() {
+		response.Metadata, response.Origins = metadata, derived.Origins
+	}()
 	items, err := pkgsinfo(root)
 	if err != nil {
 		return plugin.ReconcileResponse{}, err
@@ -255,8 +274,15 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		pkginfoPath = "pkgsinfo/" + name
 	}
 	desired := mergeFields(old, nil)
+	// cleared lists the fields the publication removes or keeps absent.
+	var cleared []string
+	unset := func(key string) {
+		delete(desired, key)
+		cleared = append(cleared, key)
+	}
 	origins := derived.Origins
-	// Artwork belongs to the software, so a new installer can retain the newest reference.
+	// A new version replaces the newest other one. Artwork belongs to the
+	// software, so a new installer can retain that version's reference.
 	previous := old
 	if previous == nil && len(others) > 0 {
 		previous = others[0].document
@@ -277,11 +303,11 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		}
 	}
 	for _, field := range derived.Cleared {
-		delete(desired, field)
+		unset(field)
 	}
 	for key, value := range managed {
 		if value == nil {
-			delete(desired, key)
+			unset(key)
 		} else {
 			desired[key] = value
 		}
@@ -332,7 +358,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		if value, ok := generated[key]; ok {
 			desired[key] = value
 		} else {
-			delete(desired, key)
+			unset(key)
 		}
 	}
 	removalManaged := old == nil
@@ -344,102 +370,78 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		if value, exists := generated["items_to_remove"]; exists {
 			desired["items_to_remove"] = value
 		} else {
-			delete(desired, "items_to_remove")
+			unset("items_to_remove")
 		}
 	}
 	if _, managedCatalogs := managed["catalogs"]; !managedCatalogs && old == nil {
 		desired["catalogs"] = []string{"testing"}
 	}
-	response := plugin.ReconcileResponse{Origins: origins}
-	contentNeeded, iconNeeded := false, false
-	contentPath := ""
+	var transfers []transfer
+	contentNeeded := false
 	if input.InstallerType != "nopkg" {
-		contentPath = filepath.Join(root, "pkgs", filepath.FromSlash(input.InstallerLocation))
-		matches, err := fileMatches(ctx, contentPath, request.Artifact)
+		filename := filepath.Join(root, "pkgs", filepath.FromSlash(input.InstallerLocation))
+		matches, err := fileMatches(ctx, filename, request.Artifact)
 		if err != nil {
-			return response, err
+			return plugin.ReconcileResponse{}, err
 		}
 		if !matches {
 			contentNeeded = true
 			// Replacing bytes in place must not break another item that installs them.
 			for _, other := range items {
 				if other.path != pkginfoPath && other.document["installer_item_location"] == input.InstallerLocation {
-					return response, fmt.Errorf("installer %s is shared with %s, so its bytes cannot be replaced", input.InstallerLocation, other.path)
+					return plugin.ReconcileResponse{}, fmt.Errorf("installer %s is shared with %s, so its bytes cannot be replaced", input.InstallerLocation, other.path)
 				}
 			}
-			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "installer", Action: "upload", Filename: input.InstallerLocation, Before: raw(old["installer_item_hash"]), After: raw(request.Artifact.SHA256)})
+			before, _ := old["installer_item_hash"].(string)
+			transfers = append(transfers, transfer{plugin.Upload{Name: plugin.UploadInstaller, Filename: input.InstallerLocation, Before: before, After: request.Artifact.SHA256}, filename, request.Artifact})
 		}
 	}
-	iconPath := ""
 	if origins["pkginfo.icon_name"] == "input.icon" {
+		icon := request.Inputs["icon"]
 		name, _ := managed["icon_name"].(string)
-		iconPath = filepath.Join(root, "icons", filepath.FromSlash(name))
-		matches, err := fileMatches(ctx, iconPath, request.Inputs["icon"])
+		filename := filepath.Join(root, "icons", filepath.FromSlash(name))
+		matches, err := fileMatches(ctx, filename, icon)
 		if err != nil {
-			return response, err
+			return plugin.ReconcileResponse{}, err
 		}
 		if !matches {
-			iconNeeded = true
-			response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "icon", Action: "upload", Filename: request.Inputs["icon"].Filename, Before: raw(old["icon_hash"]), After: raw(request.Inputs["icon"].SHA256)})
-		}
-	}
-	if len(old) == 0 {
-		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "pkginfo", Action: "create", After: raw(desired), Review: reviewCreation(desired)})
-	} else {
-		for key, value := range desired {
-			if hashValue(old[key]) != hashValue(value) {
-				response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: key, Action: "set", Before: raw(old[key]), After: raw(value)})
-			}
-		}
-		for key, value := range old {
-			if _, exists := desired[key]; !exists {
-				response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: key, Action: "clear", Before: raw(value)})
-			}
+			before, _ := old["icon_hash"].(string)
+			transfers = append(transfers, transfer{plugin.Upload{Name: plugin.UploadIcon, Filename: name, Before: before, After: icon.SHA256}, filename, icon})
 		}
 	}
 	catalogs, err := catalogChanges(root, old, desired)
 	if err != nil {
-		return response, err
+		return plugin.ReconcileResponse{}, err
 	}
-	if len(catalogs) > 0 {
-		names := make([]string, 0, len(catalogs))
-		for name := range catalogs {
-			names = append(names, name)
-		}
-		slices.Sort(names)
-		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "catalogs", Action: "reconcile", After: raw(names)})
+	publication := plugin.ReconcileResponse{Metadata: response.Metadata, Origins: origins, Version: want.version, Fields: fieldChanges(previous, desired, cleared)}
+	publication.Previous, _ = previous["version"].(string)
+	for _, name := range slices.Sorted(maps.Keys(catalogs)) {
+		publication.Repairs = append(publication.Repairs, "catalog "+name)
 	}
-	sort.Slice(response.Changes, func(i, j int) bool {
-		a, b := response.Changes[i], response.Changes[j]
-		return a.Kind+"/"+a.Field < b.Kind+"/"+b.Field
-	})
+	for _, pending := range transfers {
+		publication.Uploads = append(publication.Uploads, pending.upload)
+	}
 	if request.Method != "apply" {
 		if destination.Retention != nil {
-			err = prune(ctx, root, desired, others, destination.Retention.Keep, false, &response)
+			err = prune(ctx, root, desired, others, destination.Retention.Keep, false, &publication)
 		}
-		return response, err
+		return publication, err
 	}
+	// Apply reports each write as it completes, so a failed apply returns only
+	// what it published.
+	response.Origins = origins
 	if contentNeeded && request.Artifact.Path == "" {
 		response.Content = &plugin.ContentRequest{Artifact: true}
 		return response, nil
 	}
 	// No catalog references an installer before its complete bytes are available.
-	if contentNeeded {
-		if err := publishContent(ctx, contentPath, request.Artifact); err != nil {
+	for _, pending := range transfers {
+		if err := publishContent(ctx, pending.path, pending.artifact); err != nil {
 			return response, err
 		}
+		response.Uploads = append(response.Uploads, pending.upload)
 	}
-	if iconNeeded {
-		if err := publishContent(ctx, iconPath, request.Inputs["icon"]); err != nil {
-			return response, err
-		}
-	}
-	names := make([]string, 0, len(catalogs))
-	for name := range catalogs {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
+	for _, name := range slices.Sorted(maps.Keys(catalogs)) {
 		data, err := plist.MarshalIndent(catalogs[name], plist.XMLFormat, "  ")
 		if err != nil {
 			return response, err
@@ -447,6 +449,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 		if err := fileio.Write(filepath.Join(root, "catalogs", name), data, 0o644); err != nil {
 			return response, err
 		}
+		response.Repairs = append(response.Repairs, "catalog "+name)
 	}
 	// Keep the previous catalog membership until every catalog is published, so a
 	// retry after interruption still knows which old catalogs require removal.
@@ -459,6 +462,7 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 			return response, err
 		}
 	}
+	response.Version, response.Previous, response.Fields = publication.Version, publication.Previous, publication.Fields
 	if destination.Retention != nil {
 		err = prune(ctx, root, desired, others, destination.Retention.Keep, true, &response)
 	}
@@ -575,7 +579,7 @@ func fileMatches(ctx context.Context, path string, artifact plugin.Artifact) (bo
 	return hex.EncodeToString(h.Sum(nil)) == artifact.SHA256, nil
 }
 func publishContent(ctx context.Context, path string, artifact plugin.Artifact) (err error) {
-	done := plugin.Stage(ctx, "Publishing Munki content", plugin.Detail(filepath.Base(path)))
+	done := plugin.Stage(ctx, "Copying Munki installer", plugin.Detail(filepath.Base(path)))
 	defer func() { done(err) }()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

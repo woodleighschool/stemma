@@ -33,23 +33,45 @@ var ErrMismatch = errors.New("signature: unexpected signer")
 // artifact. Invalid, partial and unsupported signatures must not wrap it.
 var ErrUnsigned = errors.New("signature: not signed")
 
-// BuildEvidence is the artifact evidence in which an operation that builds an
-// artifact states the signing state it gave it. A builder that never signs
-// records "unsigned".
-const BuildEvidence = "build.signature"
+// Evidence is the signing namespace of an artifact's evidence: each subject
+// preparation verified or observed, the signing state an operation that
+// builds the artifact gave it ("unsigned" for a builder that never signs),
+// and the signing subjects it took in without an expectation.
+type Evidence struct {
+	Observed   []Observation `json:"observed,omitempty"`
+	Build      string        `json:"build,omitempty"`
+	Unverified []Unverified  `json:"unverified,omitempty"`
+}
+
+// Read returns the signing evidence among an artifact's evidence. Absent or
+// unreadable evidence is empty.
+func Read(evidence map[string]json.RawMessage) Evidence {
+	var signing Evidence
+	_ = json.Unmarshal(evidence[plugin.EvidenceSigning], &signing)
+	return signing
+}
+
+// Write records the signing evidence among an artifact's evidence, replacing
+// what was there. Empty signing evidence removes the namespace.
+func (e Evidence) Write(evidence map[string]json.RawMessage) error {
+	if len(e.Observed) == 0 && e.Build == "" && len(e.Unverified) == 0 {
+		delete(evidence, plugin.EvidenceSigning)
+		return nil
+	}
+	data, err := json.Marshal(e)
+	if err == nil {
+		evidence[plugin.EvidenceSigning] = data
+	}
+	return err
+}
 
 // BuiltUnsigned reports whether the operation that produced artifact built it
 // and left it unsigned. Its signing state is then the builder's own, with no
 // publisher to expect: derivation reports nothing for it, and a declared
 // expectation still verifies it.
 func BuiltUnsigned(artifact plugin.Artifact) bool {
-	var state string
-	return json.Unmarshal(artifact.Evidence[BuildEvidence], &state) == nil && state == "unsigned"
+	return Read(artifact.Evidence).Build == "unsigned"
 }
-
-// UnverifiedEvidence is the artifact evidence in which an operation lists the
-// signing subjects it took in without an expectation.
-const UnverifiedEvidence = "signature.unverified"
 
 // Unverified names one such subject. Input is empty when the subject belongs
 // to the published artifact.
@@ -199,7 +221,8 @@ type Observation struct {
 
 // Verify resolves declarations against the complete signing scope before doing
 // I/O. Derivation observes every subject without enforcing declarations.
-func Verify(ctx context.Context, expectations []Expectation, subjects []plugin.Subject, derive bool, check func(plugin.Subject) (Result, error)) ([]Observation, error) {
+// filename names the artifact's root subject in progress.
+func Verify(ctx context.Context, filename string, expectations []Expectation, subjects []plugin.Subject, derive bool, check func(plugin.Subject) (Result, error)) ([]Observation, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -237,17 +260,17 @@ func Verify(ctx context.Context, expectations []Expectation, subjects []plugin.S
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		detail := subject.Path
-		if detail == "." && len(subjects) == 1 {
-			detail = ""
+		item := subject.Path
+		if item == "." {
+			item = filename
 		}
-		done := plugin.Stage(ctx, "Inspecting signature", plugin.Detail(detail))
+		done := plugin.Stage(ctx, "Verifying signature", plugin.Item(item))
 		result, err := check(subject)
+		outcome, stageErr := result.Name, err
 		if errors.Is(err, ErrUnsigned) {
-			done(nil, plugin.Detail("unsigned"))
-		} else {
-			done(err, plugin.Detail(result.Name))
+			outcome, stageErr = "unsigned", nil
 		}
+		done(stageErr, plugin.Detail(outcome))
 		observed := Observation{Subject: plugin.SubjectSelector{Path: subject.Path}, State: "signed", Result: result}
 		if errors.Is(err, ErrUnsigned) {
 			observed.State, observed.Result = "unsigned", Result{Verifier: Verifier}
@@ -297,8 +320,8 @@ func Recommend(resource plugin.ResourceReference, source string) plugin.Notice {
 // a valid signature lacks, and never fail a resource.
 func Notices(resource plugin.ResourceReference, evidence map[string]json.RawMessage) []plugin.Notice {
 	var notices []plugin.Notice
-	var unverified []Unverified
-	if json.Unmarshal(evidence[UnverifiedEvidence], &unverified) == nil {
+	signing := Read(evidence)
+	if unverified := signing.Unverified; len(unverified) > 0 {
 		// One expectation is derived for everything a source supplies.
 		recommended := map[string]bool{}
 		for _, subject := range unverified {
@@ -313,10 +336,7 @@ func Notices(resource plugin.ResourceReference, evidence map[string]json.RawMess
 			notices = append(notices, Recommend(resource, source))
 		}
 	}
-	var observations []Observation
-	if json.Unmarshal(evidence["signatures"], &observations) != nil {
-		return notices
-	}
+	observations := signing.Observed
 	// The published artifact is one signing scope and each build input another.
 	scope := map[string]int{}
 	for _, observed := range observations {

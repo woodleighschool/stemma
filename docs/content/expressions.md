@@ -7,7 +7,7 @@ Quote expressions in YAML:
 ```yaml
 client_secret: "{{ env.CLIENT_SECRET }}"
 version: "{{ facts.app.app.version }}-1"
-description: "Vendor release {{ evidence['vendor.release'].version }}"
+description: "Vendor release {{ evidence.vendor.release.version }}"
 ```
 
 ## Values and text
@@ -20,7 +20,7 @@ object is an error.
 ```yaml
 enabled: "{{ env.CHANNEL == 'production' }}"
 keep: "{{ int(env.RETAIN_VERSIONS) }}"
-description: "Release {{ evidence['vendor.release'].version }}"
+description: "Release {{ evidence.vendor.release.version }}"
 ```
 
 Environment values are always strings. Convert them explicitly when the target
@@ -42,15 +42,16 @@ substitutions inside script text remain shell syntax.
 | ---------- | -------------------------------------------------------------------------------------------- | ----------------------------- |
 | `env`      | Referenced process environment values                                                        | When a command uses the value |
 | `facts`    | Inspected subjects by path or selection name, with their `app`, `package` or other fields    | After software preparation    |
-| `evidence` | Namespaced metadata supplied with the prepared artifact                                      | Destination metadata          |
+| `evidence` | Metadata supplied with the prepared artifact, by namespace                                   | Destination metadata          |
 | `inputs`   | Named builder inputs: `version`, `filename`, `sha256`, `size`, `format`, `evidence`, `facts` | Builder preparation           |
 
 `evidence.source.version` is the version the source states for its input, when
 it states one: a Homebrew cask's, a release tag or a `match` pattern's `version`
 group.
 
-Names containing punctuation use brackets, such as
-`evidence['vendor.release'].version`. Builder inputs expose portable metadata,
+Each evidence namespace is one name, and what it holds nests below it, as in
+`evidence.homebrew.cask.macos`. Stemma writes `source`, `signing`, `macos` and
+`windows`; a resolver writes its own. Builder inputs expose portable metadata,
 not runner paths. A downloaded input may have no declared version.
 
 Software kinds expose inspected subjects and can name selections for destination

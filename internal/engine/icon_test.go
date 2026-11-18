@@ -20,7 +20,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/icon"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
@@ -223,8 +223,11 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 		}
 		result := map[string]string{}
 		for _, resource := range report.Resources {
-			result[resource.Name] = resource.Icon
-			if resource.Icon == "unchanged" && len(resource.Artifacts) != 0 {
+			result[resource.Name] = string(resource.Status)
+			if resource.Reason != "" {
+				result[resource.Name] = resource.Reason
+			}
+			if resource.Status == StatusUnchanged && len(resource.Artifacts) != 0 {
 				t.Fatalf("%s: prepared %s although its asset exists", method, resource.Name)
 			}
 		}
@@ -241,7 +244,7 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 	// A new declaration is locked and extracts before its asset exists; the raw
 	// presentation writes Mac and Windows artwork alike.
 	statuses("update")
-	want := map[string]string{"example": "created raw", "setup": "created raw", "fixture": "no artwork", "branding": "no installer output", "plain": "no icon declared"}
+	want := map[string]string{"example": "changed", "setup": "changed", "fixture": "no artwork", "branding": "no installer output", "plain": "no icon declared"}
 	if got := statuses("icon"); fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("first run: %v", got)
 	}
@@ -259,11 +262,11 @@ func TestIconsAreCreatedOnceAndPublishedAsExactBytes(t *testing.T) {
 	}
 	assetIs("example", custom)
 	options.Icons.Force = true
-	if got := statuses("icon"); got["example"] != "created raw" || got["setup"] != "created raw" {
+	if got := statuses("icon"); got["example"] != "changed" || got["setup"] != "changed" {
 		t.Fatalf("forced run: %v", got)
 	}
 	assetIs("example", bundleArtwork)
-	if _, err := os.Stat(lockfile.Path(root)); err != nil {
+	if _, err := os.Stat(lock.Path(root)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -347,7 +350,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Resources) != 1 || report.Resources[0].Icon != "created raw" || len(report.Resources[0].Artifacts) != 0 {
+	if len(report.Resources) != 1 || report.Resources[0].Status != StatusChanged || report.Resources[0].Icon != "icons/branding.png" || len(report.Resources[0].Artifacts) != 0 {
 		t.Fatalf("icon run: %+v", report.Resources)
 	}
 	got, err := icon.Read(root, "branding")
@@ -369,7 +372,7 @@ spec:
 	}
 	opts.Input.Path = "icon.msi"
 	report, err = Run(t.Context(), opts)
-	if err != nil || report.Resources[0].Icon != "created raw" {
+	if err != nil || report.Resources[0].Status != StatusChanged {
 		t.Fatalf("MSI input icon: %+v, %v", report.Resources, err)
 	}
 	opts.Input.Name = "unknown"
@@ -448,7 +451,7 @@ spec:
 	}
 	opts.Input = InputSelection{Name: "source"}
 	selected, err := Run(t.Context(), opts)
-	if err != nil || selected.Resources[0].Icon != direct.Resources[0].Icon || !strings.HasPrefix(direct.Resources[0].Icon, "no application selected") {
+	if err != nil || selected.Resources[0].Reason != direct.Resources[0].Reason || !strings.HasPrefix(direct.Resources[0].Reason, "no application selected") {
 		t.Fatalf("default=%+v input=%+v error=%v", direct, selected, err)
 	}
 }
@@ -497,7 +500,7 @@ spec:
 	}
 	opts.Method = "icon"
 	report, err := Run(t.Context(), opts)
-	if err != nil || !strings.HasPrefix(report.Resources[0].Icon, "no application selected; name one with --path") || !strings.Contains(report.Resources[0].Icon, "Payload/Other.app") {
+	if err != nil || !strings.HasPrefix(report.Resources[0].Reason, "no application selected; name one with --path") || !strings.Contains(report.Resources[0].Reason, "Payload/Other.app") {
 		t.Fatalf("unselected: %+v, %v", report.Resources, err)
 	}
 	opts.Input.Path = "Payload/Missing.app"
@@ -506,7 +509,7 @@ spec:
 	}
 	opts.Input.Path = "Payload/Other.app"
 	report, err = Run(t.Context(), opts)
-	if err != nil || report.Resources[0].Icon != "created raw" {
+	if err != nil || report.Resources[0].Status != StatusChanged {
 		t.Fatalf("selected application: %+v, %v", report.Resources, err)
 	}
 	if got, err := icon.Read(root, "suite"); err != nil || !bytes.Equal(got, want) {
@@ -535,10 +538,10 @@ func TestIconFromLocalSourceNeedsNoLockOrCache(t *testing.T) {
 		done = append(done, resource)
 		return nil
 	}}
-	outcome := func(want string, asset []byte) {
+	outcome := func(want Status, asset []byte) {
 		t.Helper()
 		report, err := Run(t.Context(), options)
-		if err != nil || len(report.Resources) != 1 || report.Resources[0].Icon != want {
+		if err != nil || len(report.Resources) != 1 || report.Resources[0].Status != want {
 			t.Fatalf("icon from %s: %+v, %v", options.Icons.From, report.Resources, err)
 		}
 		got, err := icon.Read(root, "shared-artwork")
@@ -546,15 +549,15 @@ func TestIconFromLocalSourceNeedsNoLockOrCache(t *testing.T) {
 			t.Fatalf("icons/shared-artwork.png holds %d bytes, want %d: %v", len(got), len(asset), err)
 		}
 	}
-	outcome("created raw", bundleArtwork)
-	if len(done) != 1 || done[0].IconPath != "icons/shared-artwork.png" {
+	outcome(StatusChanged, bundleArtwork)
+	if len(done) != 1 || done[0].Icon != "icons/shared-artwork.png" {
 		t.Fatalf("completed resources: %+v", done)
 	}
 	options.Icons.From = artworkFile
-	outcome("unchanged", bundleArtwork)
+	outcome(StatusUnchanged, bundleArtwork)
 	options.Icons.Force = true
-	outcome("created raw", artwork)
-	for _, path := range []string{cache, lockfile.Path(root)} {
+	outcome(StatusChanged, artwork)
+	for _, path := range []string{cache, lock.Path(root)} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("local icon touched %s: %v", path, err)
 		}
@@ -613,7 +616,7 @@ func TestIconFromSelectsAnApplicationInsideAContainer(t *testing.T) {
 			}
 			options.Input.Path = test.path
 			report, err := Run(t.Context(), options)
-			if err != nil || report.Resources[0].Icon != "created raw" {
+			if err != nil || report.Resources[0].Status != StatusChanged {
 				t.Fatalf("selected application: %+v, %v", report.Resources, err)
 			}
 			if got, err := icon.Read(root, "shared-artwork"); err != nil || !bytes.Equal(got, want) {

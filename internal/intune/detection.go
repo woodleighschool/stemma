@@ -159,6 +159,55 @@ func propertyRule(rule object, properties, locations map[string]string, existenc
 	return native, nil
 }
 
+// declaredRule names a Graph detection rule the way declarations do. Other
+// rules pass through unchanged.
+func declaredRule(rule object) any {
+	if rule["ruleType"] != "detection" {
+		return rule
+	}
+	declared := object{}
+	set := func(key string, value any) {
+		if value != nil {
+			declared[key] = value
+		}
+	}
+	compare := func(operator any) {
+		if operator != "notConfigured" {
+			set("operator", declaredChoice(operator, operators))
+		}
+	}
+	switch rule["@odata.type"] {
+	case "#microsoft.graph.win32LobAppProductCodeRule":
+		declared["type"] = "msi"
+		set("product_code", rule["productCode"])
+		set("product_version", rule["productVersion"])
+		compare(rule["productVersionOperator"])
+		return declared
+	case "#microsoft.graph.win32LobAppPowerShellScriptRule":
+		script, _ := base64.StdEncoding.DecodeString(text(rule["scriptContent"]))
+		declared["type"], declared["script"] = "script", string(script)
+		set("enforce_signature_check", rule["enforceSignatureCheck"])
+		set("run_as_32bit", rule["runAs32Bit"])
+		return declared
+	case "#microsoft.graph.win32LobAppFileSystemRule":
+		declared["type"] = "file"
+		set("path", rule["path"])
+		set("name", rule["fileOrFolderName"])
+		set("property", declaredChoice(rule["operationType"], fileProperties))
+	case "#microsoft.graph.win32LobAppRegistryRule":
+		declared["type"] = "registry"
+		set("key", rule["keyPath"])
+		set("value_name", rule["valueName"])
+		set("property", declaredChoice(rule["operationType"], registryProperties))
+	default:
+		return rule
+	}
+	set("check_32bit", rule["check32BitOn64System"])
+	compare(rule["operator"])
+	set("value", rule["comparisonValue"])
+	return declared
+}
+
 // scriptRule carries the PowerShell text; Graph's base64 encoding stays here.
 func scriptRule(rule object) (object, error) {
 	if err := fields(rule, "type", "script", "enforce_signature_check", "run_as_32bit"); err != nil {

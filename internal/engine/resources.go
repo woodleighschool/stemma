@@ -336,9 +336,8 @@ func preflight(plans map[string]resourcePlan, selected []string, p config.Projec
 // prepareResource reuses cached outputs unless derive names a policy to
 // observe, which always runs the operation and keeps its outputs out of the
 // cache.
-func prepareResource(ctx context.Context, store *cas.Store, ops *operations, plan resourcePlan, inputs map[string]Prepared, work string, derive string) (result map[string]Prepared, cacheHit bool, err error) {
-	done := plugin.Stage(ctx, "Checking preparation cache")
-	// The deferred call finishes whichever stage is current, with the outputs it found.
+func prepareResource(ctx context.Context, store *cas.Store, ops *operations, plan resourcePlan, inputs map[string]Prepared, work string, derive string) (result map[string]Prepared, err error) {
+	done := plugin.Stage(ctx, "Preparing files")
 	var detail string
 	defer func() { done(err, plugin.Detail(detail)) }()
 	identityInputs := map[string]plugin.Artifact{}
@@ -349,101 +348,105 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 		identityInputs[name] = artifact
 		modes[name] = input.Mode
 	}
+	// Outputs follow the resource interface's contract, including its evidence
+	// names, so outputs cached under another interface are never recalled.
 	key := config.Fingerprint(struct {
-		Implementation, Provider string
-		Identity                 plugin.ResourceReference
-		Config                   json.RawMessage
-		Inputs                   map[string]plugin.Artifact
-		Modes                    map[string]uint32
-		Environment              map[string]string
-	}{"resource/3", ops.identity[plan.Operation], plan.Resource.Reference(), plan.Config, identityInputs, modes, plan.Environment})
+		Interface   int
+		Provider    string
+		Identity    plugin.ResourceReference
+		Config      json.RawMessage
+		Inputs      map[string]plugin.Artifact
+		Modes       map[string]uint32
+		Environment map[string]string
+	}{plugin.ResourceInterface, ops.identity[plan.Operation], plan.Resource.Reference(), plan.Config, identityInputs, modes, plan.Environment})
 	if derive == "" {
 		cached, complete, err := recallOutputs(ctx, store, key)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		if complete {
 			detail = strings.TrimSpace(cached["installer"].Filename + " (cached)")
-			return cached, true, nil
+			return cached, nil
 		}
 	}
 
-	done(nil, plugin.Detail("not cached"))
 	defer func() { cleanupError(ctx, os.RemoveAll(work)) }()
-	done = plugin.Stage(ctx, "Materializing inputs")
 	workspace := filepath.Join(work, "output")
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	workspace, err = filepath.EvalSymlinks(workspace)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	request := plugin.ResourceRequest[json.RawMessage]{Config: plan.Config, Identity: plan.Resource.Reference(), Inputs: map[string]plugin.Artifact{}, Workspace: workspace, Derive: derive, Environment: plan.Environment}
 	// Windows stores only the read-only bit, so compare modes against the lease.
 	leasedModes := map[string]os.FileMode{}
 	external := ops.external[plan.Operation]
 	for name, input := range inputs {
-		leased, err := ops.lease(ctx, store, plan.Operation, input, filepath.Join(work, "inputs", config.Fingerprint(name)))
+		inputCtx := plugin.WithLogger(ctx, plugin.Logger(ctx).With("input", name))
+		leased, err := ops.lease(inputCtx, store, plan.Operation, input, filepath.Join(work, "inputs", config.Fingerprint(name)))
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		leased.Path, err = filepath.EvalSymlinks(leased.Path)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		if external {
 			info, err := os.Stat(leased.Path)
 			if err != nil {
-				return nil, false, err
+				return nil, err
 			}
 			leasedModes[name] = info.Mode().Perm()
 		}
 		request.Inputs[name] = leased
 	}
 	var response plugin.ResourceResult
-	done(nil)
-	done = plugin.Stage(ctx, "Preparing outputs")
 	runErr := ops.call(ctx, plan.Operation, "run", request, &response)
-	done(runErr)
 	if external {
-		done = plugin.Stage(ctx, "Verifying workspace")
+		checked := plugin.Stage(ctx, "Checking prepared files")
+		defer func() { checked(err) }()
 		for name, input := range request.Inputs {
 			ref, err := digestPath(ctx, input.Path, input.Tree && input.Encoding == "")
 			if err != nil {
-				return nil, false, errors.Join(runErr, err)
+				return nil, errors.Join(runErr, err)
 			}
 			info, err := os.Stat(input.Path)
 			if err != nil {
-				return nil, false, errors.Join(runErr, err)
+				return nil, errors.Join(runErr, err)
 			}
 			if ref != inputs[name].Payload || info.Mode().Perm() != leasedModes[name] {
-				return nil, false, errors.Join(runErr, fmt.Errorf("resource %s modified immutable input %s", plan.Resource.Reference().Key(), name))
+				return nil, errors.Join(runErr, fmt.Errorf("resource %s modified immutable input %s", plan.Resource.Reference().Key(), name))
 			}
 		}
-		done(nil)
+		checked(nil)
 	}
 	if runErr != nil {
-		return nil, false, runErr
+		return nil, runErr
 	}
-	done = plugin.Stage(ctx, "Recording artifacts")
 	outputs := map[string]Prepared{}
 	for name, artifact := range response.Artifacts {
 		if artifact.Encoding != "" {
-			return nil, false, fmt.Errorf("output %s must be a file or directory, not an encoded lease", name)
+			return nil, fmt.Errorf("output %s must be a file or directory, not an encoded lease", name)
 		}
 		if !safeOutputName(name) {
-			return nil, false, fmt.Errorf("unsafe output name %q", name)
+			return nil, fmt.Errorf("unsafe output name %q", name)
 		}
 		if artifact.Filename == "" {
 			artifact.Filename = filepath.Base(artifact.Path)
 		}
 		if !safeFilename(artifact.Filename) {
-			return nil, false, errors.New("unsafe artifact filename")
+			return nil, errors.New("unsafe artifact filename")
+		}
+		for evidence := range artifact.Evidence {
+			if !plugin.ValidEvidenceName(evidence) {
+				return nil, fmt.Errorf("output %s evidence %q must be one namespace name; nest what it holds", name, evidence)
+			}
 		}
 		resolved, err := filepath.EvalSymlinks(artifact.Path)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		allowed := within(workspace, resolved)
 		var reused Prepared
@@ -456,14 +459,14 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			}
 		}
 		if !allowed {
-			return nil, false, fmt.Errorf("output %s is outside the workspace and leased inputs", name)
+			return nil, fmt.Errorf("output %s is outside the workspace and leased inputs", name)
 		}
 		info, err := os.Stat(resolved)
 		if err != nil {
-			return nil, false, err
+			return nil, err
 		}
 		if info.IsDir() != artifact.Tree || !info.IsDir() && !info.Mode().IsRegular() {
-			return nil, false, fmt.Errorf("output %s has incorrect file-or-tree representation", name)
+			return nil, fmt.Errorf("output %s has incorrect file-or-tree representation", name)
 		}
 		observed := Prepared{Payload: reused.Payload, Filename: artifact.Filename, Tree: artifact.Tree, Mode: uint32(info.Mode().Perm()), Format: artifact.Format, Version: artifact.Version}
 		// A returned input keeps its recorded mode, which an input read in place
@@ -478,7 +481,7 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 			}
 		}
 		if !safeOutputName(observed.Format) {
-			return nil, false, errors.New("invalid artifact format")
+			return nil, errors.New("invalid artifact format")
 		}
 
 		if observed.Payload.SHA256 == "" {
@@ -490,15 +493,15 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 				observed.Payload, err = store.Adopt(ctx, resolved)
 			}
 			if err != nil {
-				return nil, false, err
+				return nil, err
 			}
 		}
 		if artifact.SHA256 != "" && (artifact.SHA256 != observed.Payload.SHA256 || artifact.Size != observed.Payload.Size) {
-			return nil, false, fmt.Errorf("output %s digest differs from its bytes", name)
+			return nil, fmt.Errorf("output %s digest differs from its bytes", name)
 		}
 		if artifact.Facts.Version != 0 {
 			if err := validateFacts(artifact.Facts); err != nil {
-				return nil, false, err
+				return nil, err
 			}
 			observed.Facts = artifact.Facts
 			observed.SuppliedFacts = true
@@ -514,9 +517,9 @@ func prepareResource(ctx context.Context, store *cas.Store, ops *operations, pla
 	}
 	detail = outputs["installer"].Filename
 	if derive != "" {
-		return outputs, false, nil
+		return outputs, nil
 	}
-	return outputs, false, rememberOutputs(ctx, store, key, outputs)
+	return outputs, rememberOutputs(ctx, store, key, outputs)
 }
 
 func rememberOutputs(ctx context.Context, store *cas.Store, key string, outputs map[string]Prepared) error {

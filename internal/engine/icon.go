@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
@@ -69,25 +68,38 @@ func iconInput(ctx context.Context, store *cas.Store, root, name string) (Prepar
 	return Prepared{Payload: ref, Filename: name + ".png", Format: "png", Mode: 0o644}, err
 }
 
-// iconOutcome reports, in the words the CLI prints, why a resource needs no
-// icon created, or "" when it does. Existing files stay unless forced, so
-// committed artwork survives a catalog-wide run.
-func iconOutcome(options IconOptions, root string, plan resourcePlan) string {
+// iconOutcome is the outcome of a resource that needs no icon created, or nil
+// when it does. Existing files stay unless forced, so committed artwork
+// survives a catalog-wide run.
+func iconOutcome(options IconOptions, root string, plan resourcePlan) *ResourceReport {
 	name := plan.Icon
 	if name == "" {
-		return "no icon declared"
+		return &ResourceReport{Status: StatusSkipped, Reason: "no icon declared"}
 	}
 	if exists, err := icon.Exists(root, name); err == nil && exists && !options.Force {
-		return "unchanged"
+		return &ResourceReport{Status: StatusUnchanged, Icon: icon.Relative(name)}
 	}
-	return ""
+	return nil
 }
 
 // createIcon writes one resource's declared asset from its prepared installer,
-// a selected input or a local source, and reports the outcome in the words the
-// CLI prints: the presentation created, or why nothing could be. A selection
-// path names the application to use within any of them.
-func createIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, installer Prepared, selection InputSelection, work string) (string, error) {
+// a selected input or a local source, and records the outcome on item: the
+// asset created, or why nothing could be. A selection path names the
+// application to use within any of them.
+func createIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, installer Prepared, selection InputSelection, work string, item *ResourceReport) error {
+	reason, err := writeIcon(ctx, options, root, plan, installer, selection, work)
+	switch {
+	case err != nil:
+	case reason != "":
+		item.Status, item.Reason = StatusSkipped, reason
+	default:
+		item.Status, item.Icon = StatusChanged, icon.Relative(plan.Icon)
+	}
+	return err
+}
+
+// writeIcon writes the asset, or says why there is none to write.
+func writeIcon(ctx context.Context, options IconOptions, root string, plan resourcePlan, installer Prepared, selection InputSelection, work string) (string, error) {
 	name := plan.Icon
 	if installer.Path == "" {
 		return "no installer output", nil
@@ -122,7 +134,7 @@ func createIcon(ctx context.Context, options IconOptions, root string, plan reso
 		return "", err
 	}
 	done = plugin.Stage(ctx, "Presenting icon", plugin.Detail(string(options.Presentation)))
-	data, presentation, err := icon.Present(ctx, subject, icon.Options{Presentation: options.Presentation, Size: options.Size, Workspace: workspace})
+	data, _, err := icon.Present(ctx, subject, icon.Options{Presentation: options.Presentation, Size: options.Size, Workspace: workspace})
 	done(err)
 	if errors.Is(err, icon.ErrNoArtwork) {
 		return "no artwork", nil
@@ -130,10 +142,7 @@ func createIcon(ctx context.Context, options IconOptions, root string, plan reso
 	if err != nil {
 		return "", err
 	}
-	if err := icon.Write(root, name, data); err != nil {
-		return "", err
-	}
-	return "created " + string(presentation), nil
+	return "", icon.Write(root, name, data)
 }
 
 func inputIconSubject(ctx context.Context, input plugin.Artifact, selection, workspace string, presentation icon.Presentation) (result icon.Subject, err error) {
@@ -238,8 +247,9 @@ func inputIconSubject(ctx context.Context, input plugin.Artifact, selection, wor
 func (e *execution) inputIcon(ctx context.Context) error {
 	key := e.roots[0]
 	plan := e.plans[key]
-	if outcome := iconOutcome(e.opts.Icons, e.session.root, plan); outcome != "" {
-		e.report.Resources = append(e.report.Resources, ResourceReport{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Key: key, Icon: outcome})
+	if outcome := iconOutcome(e.opts.Icons, e.session.root, plan); outcome != nil {
+		outcome.Name, outcome.Kind, outcome.Key = plan.Resource.Metadata.Name, plan.Resource.Kind, key
+		e.report.Resources = append(e.report.Resources, *outcome)
 		return e.complete(ctx, &e.report.Resources[len(e.report.Resources)-1])
 	}
 	return e.withInput(ctx, func(ctx context.Context, input Prepared, work string, item *ResourceReport) error {
@@ -248,8 +258,7 @@ func (e *execution) inputIcon(ctx context.Context) error {
 			return err
 		}
 		input.Path = leased.Path
-		item.Icon, err = createIcon(ctx, e.opts.Icons, e.session.root, plan, input, e.opts.Input, work)
-		return err
+		return createIcon(ctx, e.opts.Icons, e.session.root, plan, input, e.opts.Input, work, item)
 	})
 }
 
@@ -309,22 +318,21 @@ func iconFrom(ctx context.Context, opts Options, report *Report) error {
 	report.Resources = []ResourceReport{{Name: plan.Resource.Metadata.Name, Kind: plan.Resource.Kind, Key: key}}
 	item := &report.Resources[0]
 	var failure error
-	if item.Icon = iconOutcome(opts.Icons, root, plan); item.Icon == "" {
+	if outcome := iconOutcome(opts.Icons, root, plan); outcome != nil {
+		item.Status, item.Reason, item.Icon = outcome.Status, outcome.Reason, outcome.Icon
+	} else {
 		work, err := os.MkdirTemp("", "stemma-icon-*")
 		if err != nil {
 			return err
 		}
 		defer func() { _ = os.RemoveAll(work) }()
 		local := Prepared{Path: source, Filename: filepath.Base(source), Tree: info.IsDir()}
-		item.Icon, err = createIcon(resourceContext(ctx, plan.Resource), opts.Icons, root, plan, local, InputSelection{Path: opts.Input.Path}, work)
-		if err != nil {
+		if err := createIcon(resourceContext(ctx, plan.Resource), opts.Icons, root, plan, local, InputSelection{Path: opts.Input.Path}, work, item); err != nil {
 			item.Error = err.Error()
 			failure = ResourceError{Resource: key, Err: err}
 		}
 	}
-	if item.Icon == "unchanged" || strings.HasPrefix(item.Icon, "created ") {
-		item.IconPath = icon.Relative(plan.Icon)
-	}
+	item.status("icon")
 	if opts.ResourceDone != nil {
 		if err := opts.ResourceDone(*item); err != nil {
 			return err

@@ -26,7 +26,7 @@ func TestUnchangedSourcesRefreshPayloadRecency(t *testing.T) {
 			if kind != "http304" {
 				resolver := m.resolvers["http"]
 				resolver.Discover = func(context.Context, plugin.Input) (Discovery, error) {
-					found := Discovery{Observation: json.RawMessage(`{"url":"https://example.test/app.pkg"}`), Immutable: true}
+					found := Discovery{Origin: json.RawMessage(`{"url":"https://example.test/app.pkg"}`), Immutable: true}
 					if kind == "declared digest" {
 						found.Content = &locked.Content
 					}
@@ -40,7 +40,7 @@ func TestUnchangedSourcesRefreshPayloadRecency(t *testing.T) {
 					t.Fatal(err)
 				}
 				locked.Resolver, locked.ResolverVersion, locked.Declaration = input.Resolver, version, declaration
-				locked.Observation = json.RawMessage(`{"url":"https://example.test/app.pkg"}`)
+				locked.Origin = json.RawMessage(`{"url":"https://example.test/app.pkg"}`)
 			}
 			old := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 			marker := filepath.Join(m.Store.Dir, "uses", "objects-"+locked.Content.SHA256)

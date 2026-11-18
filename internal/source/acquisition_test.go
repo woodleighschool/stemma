@@ -31,9 +31,9 @@ func TestAcquisitionIsTransientAndRecreatedForLockedFetch(t *testing.T) {
 	resolver := Resolver{
 		Version: "1", Fingerprint: func(plugin.Input) (string, error) { return fingerprint("stable-declaration") },
 		Discover: func(context.Context, plugin.Input) (Discovery, error) {
-			return Discovery{Observation: json.RawMessage(`{"release":"1"}`), Content: &Content{SHA256: digest, Filename: "app.pkg", Mode: 0o644}}, nil
+			return Discovery{Origin: json.RawMessage(`{"release":"1"}`), Content: &Content{SHA256: digest, Filename: "app.pkg", Mode: 0o644}}, nil
 		},
-		Acquire: func(context.Context, plugin.Input, json.RawMessage) (Acquisition, error) {
+		Acquire: func(context.Context, plugin.Input, Entry) (Acquisition, error) {
 			return Acquisition{Download: &Download{URL: server.URL + "/app?signature=" + secret, Headers: map[string]string{"Authorization": "Bearer " + secret}, Filename: "app.pkg", SHA256: digest}}, nil
 		},
 	}
@@ -66,7 +66,9 @@ func TestAcquisitionIsTransientAndRecreatedForLockedFetch(t *testing.T) {
 func TestAcquisitionRejectsAmbiguousResults(t *testing.T) {
 	for _, request := range []Acquisition{{}, {Download: &Download{URL: "https://example.test/app.pkg"}, Artifact: &plugin.Artifact{Path: "unexpected"}}} {
 		m := manager(t)
-		resolver := Resolver{Acquire: func(context.Context, plugin.Input, json.RawMessage) (Acquisition, error) { return request, nil }}
+		resolver := Resolver{Acquire: func(context.Context, plugin.Input, Entry) (Acquisition, error) {
+			return request, nil
+		}}
 		if _, _, err := m.acquire(t.Context(), resolver, plugin.Input{}, Entry{}, nil); err == nil {
 			t.Fatal("accepted ambiguous acquisition")
 		}
@@ -102,9 +104,8 @@ func TestDownloadRejectsHTTPSDowngrade(t *testing.T) {
 func TestHomebrewReplayRejectsDifferentBottle(t *testing.T) {
 	m := manager(t)
 	digest := strings.Repeat("a", 64)
-	observed := homebrewObservation{URL: "https://ghcr.io/v2/homebrew/core/other/blobs/sha256:" + digest, Filename: "app.tar.gz", SHA256: digest, Bottle: true}
-	data, _ := json.Marshal(observed)
-	if _, err := m.acquireHomebrew(t.Context(), homebrewConfig{Formula: "app"}, data); err == nil {
+	data, _ := json.Marshal(homebrewOrigin{URL: "https://ghcr.io/v2/homebrew/core/other/blobs/sha256:" + digest, Bottle: true})
+	if _, err := m.acquireHomebrew(t.Context(), homebrewConfig{Formula: "app"}, Entry{Origin: data, Content: Content{Filename: "app.tar.gz", SHA256: digest, Mode: 0o644}}); err == nil {
 		t.Fatal("accepted another formula's bottle")
 	}
 }

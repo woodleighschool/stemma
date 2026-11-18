@@ -3,11 +3,9 @@ package cas
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync/atomic"
 	"time"
 
-	"github.com/dustin/go-humanize"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -40,14 +38,7 @@ func (s *Store) run(ctx context.Context, policy Policy, offline bool, run func(c
 		if maintenanceErr != nil {
 			logger.WarnContext(ctx, "Cache maintenance incomplete", "error", maintenanceErr)
 		}
-		over := !offline && policy.MaxSize > 0 && after.Retained > policy.MaxSize
-		if reclaimed > 0 || over {
-			message := fmt.Sprintf("Cache: reclaimed %s; %s retained", humanize.IBytes(uint64(max(0, reclaimed))), humanize.IBytes(uint64(max(0, after.Retained))))
-			if over {
-				message += fmt.Sprintf(" (above %s target; recent content protected)", humanize.IBytes(uint64(max(0, policy.MaxSize))))
-			}
-			logger.InfoContext(ctx, message, "cache_maintenance", true)
-		}
+		logger.DebugContext(ctx, "Cache maintained", "reclaimed", reclaimed, "retained", after.Retained, "max_size", policy.MaxSize)
 	}()
 	maintain(ctx)
 	release, err := s.Lease(ctx)

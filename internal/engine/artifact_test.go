@@ -14,7 +14,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/cas"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -52,12 +52,12 @@ spec:
 		}
 		return plugin.ReconcileResponse{}, nil
 	}}}
-	lockPath := lockfile.Path(root)
+	lockPath := lock.Path(root)
 	if _, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "run stemma update") {
 		t.Fatalf("artifact prepared an unreviewed input: %v", err)
 	}
 	if _, err := os.Stat(lockPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("artifact wrote the lockfile")
+		t.Fatal("artifact wrote the lock")
 	}
 	update := options
 	update.Method, update.Resources, update.Handlers = "update", nil, nil
@@ -93,7 +93,7 @@ spec:
 		}
 	}
 	if current, err := testproject.ReadLock(root); err != nil || !bytes.Equal(current, reviewed) {
-		t.Fatalf("artifact changed the lockfile: %v", err)
+		t.Fatalf("artifact changed the lock: %v", err)
 	}
 	options.Output = "uninstaller"
 	if report, err := Run(t.Context(), options); err == nil || !strings.Contains(err.Error(), "no uninstaller output; the resource prepares installer") || report.Artifact != "" {
@@ -103,7 +103,7 @@ spec:
 
 // TestArtifactWithoutInputLocksPreparesTheSourceAsItIs changes a reviewed
 // application: the locked artifact refuses it, and --no-input-lock prepares it
-// without changing the lockfile.
+// without changing the lock.
 func TestArtifactWithoutInputLocksPreparesTheSourceAsItIs(t *testing.T) {
 	root := t.TempDir()
 	app := filepath.Join(root, "Fixture.app")
@@ -156,12 +156,12 @@ spec:
 		t.Fatalf("artifact %s for %+v", report.Artifact, installer)
 	}
 	if current, err := testproject.ReadLock(root); err != nil || !bytes.Equal(current, reviewed) {
-		t.Fatalf("--no-input-lock changed the lockfile: %v", err)
+		t.Fatalf("--no-input-lock changed the lock: %v", err)
 	}
 }
 
 // TestArtifactWithoutInputLocksKeepsPluginsLocked declares a local plugin the
-// lockfile has not reviewed: ignoring input locks must not run it.
+// lock has not reviewed: ignoring input locks must not run it.
 func TestArtifactWithoutInputLocksKeepsPluginsLocked(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("the probe is a shell script")
@@ -176,7 +176,7 @@ func TestArtifactWithoutInputLocksKeepsPluginsLocked(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "plugins", "probe"), []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "artifact", Resources: []string{"MacSoftware/policy"}, Lock: lockfile.Options{IgnoreInputs: true}}
+	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "artifact", Resources: []string{"MacSoftware/policy"}, Lock: lock.Options{IgnoreInputs: true}}
 	_, _ = Run(t.Context(), options)
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("an unreviewed plugin ran: %v", err)

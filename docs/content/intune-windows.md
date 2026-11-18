@@ -85,7 +85,8 @@ stemma plan WindowsSoftware/chrome
 The selected MSI supplies its MSI information, standard silent `msiexec` install
 and uninstall commands, and ProductCode/version detection. Explicit destination
 values override these defaults. The display name, description and publisher are
-always set. `apply` publishes when you are ready.
+always set; `display_version` defaults to the managed version, which plans report
+as the version a publication replaces. `apply` publishes when you are ready.
 
 Windows Installer properties extend the standard install command:
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"maps"
+	"strconv"
 	"strings"
 
 	"github.com/woodleighschool/stemma/plugin"
@@ -16,44 +17,90 @@ import (
 
 // Content identifies bytes and their filesystem representation. Tree bytes are a
 // canonical TAR retaining file and directory modes and confined symlink targets.
+// Root names the directory inside the content that the input uses.
 type Content struct {
-	SHA256   string `json:"sha256" yaml:"sha256"`
-	Filename string `json:"filename" yaml:"filename"`
-	Tree     bool   `json:"tree,omitempty" yaml:"tree,omitempty"`
-	Mode     uint32 `json:"mode" yaml:"mode"`
+	Filename string
+	SHA256   string
+	Mode     uint32
+	Tree     bool
+	Root     string
 }
 
-// Entry is the common lock envelope. Observation belongs to the named resolver;
-// Evidence is reviewed JSON passed to consumers. Both must be nonsecret.
+// contentJSON is how lock documents and the source index record content: the
+// mode as an octal string, written only when it differs from its kind's
+// default.
+type contentJSON struct {
+	Filename string `json:"filename"`
+	SHA256   string `json:"sha256"`
+	Mode     string `json:"mode,omitempty"`
+	Tree     bool   `json:"tree,omitempty"`
+	Root     string `json:"root,omitempty"`
+}
+
+// defaultMode is the mode content of its kind has unless the lock says otherwise.
+func defaultMode(tree bool) uint32 {
+	if tree {
+		return 0o755
+	}
+	return 0o644
+}
+
+func (content Content) MarshalJSON() ([]byte, error) {
+	recorded := contentJSON{Filename: content.Filename, SHA256: content.SHA256, Tree: content.Tree, Root: content.Root}
+	if content.Mode != defaultMode(content.Tree) {
+		recorded.Mode = fmt.Sprintf("%04o", content.Mode)
+	}
+	return json.Marshal(recorded)
+}
+
+func (content *Content) UnmarshalJSON(data []byte) error {
+	var recorded contentJSON
+	if err := decode(data, &recorded); err != nil {
+		return err
+	}
+	*content = Content{Filename: recorded.Filename, SHA256: recorded.SHA256, Mode: defaultMode(recorded.Tree), Tree: recorded.Tree, Root: recorded.Root}
+	if recorded.Mode != "" {
+		mode, err := strconv.ParseUint(recorded.Mode, 8, 32)
+		if err != nil || len(recorded.Mode) != 4 {
+			return fmt.Errorf("content mode %q is not a four-digit octal mode", recorded.Mode)
+		}
+		content.Mode = uint32(mode)
+	}
+	return nil
+}
+
+// Entry is one input's lock entry. Version is the version the resolver states
+// for the content, if any. Origin belongs to the named resolver: what it needs
+// to fetch the same bytes again, never the version or content identity the
+// entry already records. Evidence is reviewed JSON passed to consumers. Both
+// must be nonsecret.
 type Entry struct {
-	Version         int                        `json:"version" yaml:"version"`
-	Resolver        string                     `json:"resolver" yaml:"resolver"`
-	ResolverVersion string                     `json:"resolver_version" yaml:"resolver_version"`
-	Declaration     string                     `json:"declaration" yaml:"declaration"`
-	Observation     json.RawMessage            `json:"observation" yaml:"observation"`
-	Content         Content                    `json:"content" yaml:"content"`
-	InputVersion    string                     `json:"input_version,omitempty" yaml:"input_version,omitempty"`
-	ContentRoot     string                     `json:"content_root,omitempty" yaml:"content_root,omitempty"`
-	Evidence        map[string]json.RawMessage `json:"evidence,omitempty" yaml:"evidence,omitempty"`
+	Version         string                     `json:"version,omitempty"`
+	Content         Content                    `json:"content"`
+	Origin          json.RawMessage            `json:"origin,omitempty"`
+	Resolver        string                     `json:"resolver"`
+	ResolverVersion string                     `json:"resolver_version"`
+	Declaration     string                     `json:"declaration"`
+	Evidence        map[string]json.RawMessage `json:"evidence,omitempty"`
 }
 
-// Validate checks only the shared lock envelope; resolver-owned observations are
+// Validate checks only the shared entry; resolver-owned origins are
 // interpreted by their resolver when content must be fetched again.
 func (entry Entry) Validate() error {
-	if entry.Version != 1 || !plugin.ValidOperationName(entry.Resolver) || entry.ResolverVersion == "" || !validDigest(entry.Declaration) {
-		return errors.New("unsupported or incomplete input lock envelope")
+	if !plugin.ValidOperationName(entry.Resolver) || entry.ResolverVersion == "" || !validDigest(entry.Declaration) {
+		return errors.New("unsupported or incomplete input lock entry")
 	}
 	if !entry.Content.valid() {
 		return errors.New("invalid locked input content")
 	}
-	if entry.ContentRoot != "" && (!fs.ValidPath(entry.ContentRoot) || strings.ContainsAny(entry.ContentRoot, "\\\x00\r\n\t")) {
+	if root := entry.Content.Root; root != "" && (!fs.ValidPath(root) || strings.ContainsAny(root, "\\\x00\r\n\t")) {
 		return errors.New("invalid locked input content root")
 	}
-	if len(entry.Observation) == 0 {
-		return errors.New("missing resolver observation")
-	}
-	if !json.Valid(entry.Observation) {
-		return errors.New("invalid resolver observation")
+	if len(entry.Origin) > 0 {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(entry.Origin, &fields) != nil || len(fields) == 0 {
+			return errors.New("resolver origin must be a nonempty JSON object")
+		}
 	}
 	for name, value := range entry.Evidence {
 		if !json.Valid(value) {
@@ -63,16 +110,23 @@ func (entry Entry) Validate() error {
 	return nil
 }
 
+// expected is the content an entry says its origin fetches, or nil when it
+// does not know yet.
+func (entry Entry) expected() *Content {
+	if entry.Content.SHA256 == "" {
+		return nil
+	}
+	content := entry.Content
+	return &content
+}
+
 func (content Content) valid() bool {
 	return validFilename(content.Filename) && validDigest(content.SHA256) && content.Mode <= 0o777
 }
 
-// Equal compares semantic lock state, including JSON observations and evidence.
+// Equal compares semantic lock state, including JSON origins and evidence.
 func (entry Entry) Equal(other Entry) bool {
-	if entry.InputVersion != other.InputVersion || entry.ContentRoot != other.ContentRoot {
-		return false
-	}
-	if entry.Version != other.Version || entry.Resolver != other.Resolver || entry.ResolverVersion != other.ResolverVersion || entry.Declaration != other.Declaration || entry.Content != other.Content || !sameJSON(entry.Observation, other.Observation) {
+	if entry.Version != other.Version || entry.Content != other.Content || entry.Resolver != other.Resolver || entry.ResolverVersion != other.ResolverVersion || entry.Declaration != other.Declaration || !equalOrigin(entry.Origin, other.Origin) {
 		return false
 	}
 	leftEvidence, err := canonicalEvidence(entry.Evidence)
@@ -81,6 +135,28 @@ func (entry Entry) Equal(other Entry) bool {
 	}
 	rightEvidence, err := canonicalEvidence(other.Evidence)
 	return err == nil && maps.EqualFunc(leftEvidence, rightEvidence, func(a, b json.RawMessage) bool { return bytes.Equal(a, b) })
+}
+
+// canonicalOrigin is a resolver origin as the lock records it: canonical JSON,
+// or nothing when the resolver needs nothing to fetch the bytes again.
+func canonicalOrigin(origin json.RawMessage) (json.RawMessage, error) {
+	if len(origin) == 0 {
+		return nil, nil
+	}
+	canonical, err := canonicalJSON(origin)
+	if err != nil || string(canonical) == "{}" {
+		return nil, err
+	}
+	return canonical, nil
+}
+
+func equalOrigin(a, b json.RawMessage) bool {
+	left, err := canonicalOrigin(a)
+	if err != nil {
+		return false
+	}
+	right, err := canonicalOrigin(b)
+	return err == nil && bytes.Equal(left, right)
 }
 
 // MarshalYAML preserves resolver JSON as ordinary YAML objects, including exact
@@ -123,12 +199,20 @@ func (entry *Entry) UnmarshalYAML(node *yaml.Node) error {
 	return err
 }
 
+// canonicalEvidence is resolver evidence as the lock records it. Each name is
+// one namespace a resolver owns; the host's namespaces are not its to write.
 func canonicalEvidence(evidence map[string]json.RawMessage) (map[string]json.RawMessage, error) {
 	if len(evidence) == 0 {
 		return nil, nil
 	}
 	result := make(map[string]json.RawMessage, len(evidence))
 	for name, value := range evidence {
+		switch {
+		case !plugin.ValidEvidenceName(name):
+			return nil, fmt.Errorf("resolver evidence %q must be one namespace name; nest what it holds", name)
+		case plugin.HostEvidence(name):
+			return nil, fmt.Errorf("resolver evidence %q is a namespace Stemma writes", name)
+		}
 		canonical, err := canonicalJSON(value)
 		if err != nil {
 			return nil, fmt.Errorf("resolver evidence %q: %w", name, err)

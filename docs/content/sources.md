@@ -1,7 +1,7 @@
 # Sources and updates
 
 `MacSoftware` and `WindowsSoftware` each have one `source`. `BuildMacPkg` has named
-`inputs`. Both use the same resolvers and lockfile. Windows accompanying files use
+`inputs`. Both use the same resolvers and lock. Windows accompanying files use
 these resolvers too.
 
 GitHub, Homebrew, WinGet and direct HTTP can identify the same software. Choose the
@@ -20,7 +20,7 @@ source:
 ```
 
 The filename comes from `Content-Disposition`, then the final URL's basename, then
-the original URL's basename. It is pinned in the lockfile. Set `filename` when a
+the original URL's basename. It is pinned in the lock. Set `filename` when a
 vendor endpoint returns an unusable name:
 
 ```yaml
@@ -192,8 +192,8 @@ a missing match never falls back to an older release. Architecture defaults to
 explicit manifest claims. Exactly one installer must match. An absent installer
 locale remains absent; the package description's locale does not fill it.
 
-The lock retains the selected installer and its declared settings under
-`winget.installer` evidence. Stemma does not run the WinGet client or install its
+The lock retains the selected installer's declared settings as
+`evidence.winget.installer`. Stemma does not run the WinGet client or install its
 dependencies. Store-only, authenticated and download-prohibited installers are
 unsupported.
 
@@ -213,7 +213,7 @@ source:
   path: /Applications/GarageBand.app
 ```
 
-Host paths are machine-specific, so the content identity in the lockfile is what
+Host paths are machine-specific, so the content identity in the lock is what
 travels. Symlinks behave as they do everywhere else: a link resolves to its target.
 To snapshot selected files from a directory:
 
@@ -256,24 +256,30 @@ selected. A build can [take it as an input](building-packages.md#wrap-a-selected
 
 ## Understand the lock
 
-| Command          | Input behaviour                                                                                   |
-| ---------------- | ------------------------------------------------------------------------------------------------- |
-| `update`         | Discover current inputs and update their lock documents; does not publish                         |
-| `prepare`        | Require matching locked declarations and local inputs; prepare artifacts                          |
-| `plan` / `apply` | Require matching locked declarations and local inputs; fetch only the recorded remote observation |
+| Command          | Input behaviour                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------ |
+| `update`         | Discover current inputs and update their lock documents; does not publish                  |
+| `prepare`        | Require matching locked declarations and local inputs; prepare artifacts                   |
+| `plan` / `apply` | Require matching locked declarations and local inputs; fetch only from the recorded origin |
 
 The lock is the `stemma.lock/` directory beside the Project. Each resource's
 inputs are locked in a document of their own, `stemma.lock/<Kind>/<name>.yaml`,
 and the plugins in `stemma.lock/plugins.yaml`; a kind of another API group keeps
-its `apiVersion` in the path. A run rewrites only the documents of the resources
-it changed, so a commit can take one software's declaration with its lock
-document, and changes to different resources never edit the same file. Delete a
-resource's lock document with its declaration.
+its `apiVersion` in the path. A run reads and writes only the documents of the
+resources it handles and the plugin document, so another resource's document,
+even one this Stemma cannot read, never affects it. A commit can take one
+software's declaration with its lock document, and changes to different
+resources never edit the same file. `update` replaces a selected resource's
+document that this Stemma cannot use, such as one of an older format; other
+runs name the update to run. Delete a resource's lock document with its
+declaration.
 
-A lock records the resolver and its version, the relevant declaration, a
-resolver-owned observation and content identity. It is not merely a version
-number or download URL. GitHub locks retain the selected release ID, asset ID,
-release tag, download URL, filename and digest. Locked fetches replay that
+A lock entry records the version the source states, the content (filename and
+SHA-256, with its mode or tree root when they differ from the default), the
+resolver's origin, the resolver and its version, a hash of the declaration, and
+any evidence the resolver supplies. The origin holds only what the resolver
+needs to fetch the same bytes again; nothing in an entry repeats another field.
+GitHub origins retain the download URL with the selected release and asset IDs. Locked fetches replay that
 concrete selection without evaluating the asset glob or looking up the latest
 release again. Changing the pattern or release selector makes the declaration
 stale and requires a lock update, even with cached bytes.
@@ -297,7 +303,7 @@ Resources execute independently. Acquisition or preparation failures leave that
 resource's complete reviewed lock entries unchanged; consumers of its outputs
 are reported as blocked, with the resources that blocked them. Successful
 resources can still update their entries. `update` can therefore write the
-lockfile and exit nonzero after reporting every resource. A failed refresh stays
+lock and exit nonzero after reporting every resource. A failed refresh stays
 a failure even when the previous locked bytes remain cached.
 
 `stemma update Kind/name` and `stemma update --profile NAME` refresh the selected

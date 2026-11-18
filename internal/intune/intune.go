@@ -4,7 +4,6 @@ package intune
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"maps"
@@ -112,8 +111,8 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest[Config]) (response 
 			response.Origins["setup_file"] = "installer.entry_point"
 		}
 	}
+	response.Metadata = raw(desired)
 	if req.Method == "validate" {
-		response.Metadata = raw(desired)
 		return response, nil
 	}
 	desired, err = compile(desired)
@@ -125,13 +124,14 @@ func Handle(ctx context.Context, req plugin.ReconcileRequest[Config]) (response 
 	}
 	c, err := newClient(req.Config)
 	if err != nil {
-		return plugin.ReconcileResponse{}, err
+		return response, err
 	}
 	result, err := c.handle(ctx, req, desired, artifact)
-	result.Origins = response.Origins
+	result.Metadata, result.Origins = response.Metadata, response.Origins
 	return result, err
 }
 
+// handle plans or applies the publication of desired Graph metadata.
 func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config], desired object, artifact artifactIdentity) (response plugin.ReconcileResponse, err error) {
 	lifecycle, err := lifecycleMetadata(desired)
 	if err != nil {
@@ -167,70 +167,58 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 			return response, err
 		}
 	}
-	iconChanges, err := c.reconcileIcon(ctx, req, current, false)
+	icon, err := c.reconcileIcon(ctx, req, current, false)
 	if err != nil {
 		return response, err
 	}
-	response.Changes = append(response.Changes, iconChanges...)
 	contentChanged := published.active(current) != artifact.identity
 	if current == nil {
 		if err := validateCreation(desired); err != nil {
 			return response, err
 		}
-		response.Changes = append(response.Changes, plugin.Change{Kind: "destination", Action: "create", Field: "app", After: raw(reported(desired))})
+	}
+	// An app updates in place, so it keeps its version unless the metadata sets one.
+	property := versionProperty(c.appType)
+	planned := outcome{version: text(current[property]), previous: text(current[property]), icon: icon}
+	if version, managed := desired[property]; managed {
+		planned.version = text(version)
 	}
 	if contentChanged {
-		response.Changes = append(response.Changes, plugin.Change{Kind: "content", Field: "payload_sha256", Action: "upload", Filename: uploadFilename(req.Identity.Resource.Name, req.Artifact, artifact), Before: raw(published.active(current)), After: raw(artifact.identity)})
+		planned.installer = &plugin.Upload{Name: plugin.UploadInstaller, Filename: uploadFilename(req.Identity.Resource.Name, req.Artifact, artifact), Before: published.active(current), After: artifact.identity}
 	}
-	_, changes := metadataPatch(current, desired, published)
-	if current != nil {
-		response.Changes = append(response.Changes, changes...)
-	}
+	planned.metadata = metadataFields(current, desired, published)
 	declaredAssignments, assigning := desired["assignments"].([]any)
-	assignmentChanged := false
 	if assigning {
-		change, err := c.planAssignments(ctx, current, declaredAssignments)
-		if err != nil {
+		if planned.assignments, err = c.planAssignments(ctx, current, declaredAssignments); err != nil {
 			return response, err
-		}
-		if assignmentChanged = change != nil; assignmentChanged {
-			response.Changes = append(response.Changes, *change)
 		}
 	}
 	categoryNames, categorizing := desired["categories"].([]any)
-	categoryChanged := false
 	if categorizing {
-		var categoryChanges []plugin.Change
-		if categoryChanges, categoryChanged, err = c.planCategories(ctx, current, categoryNames); err != nil {
+		if planned.categories, err = c.planCategories(ctx, current, categoryNames); err != nil {
 			return response, err
 		}
-		response.Changes = append(response.Changes, categoryChanges...)
 	}
 	relating := lifecycle.Dependencies != nil || lifecycle.Supersedes != nil
 	if relating {
-		change, err := c.planRelationships(ctx, req, tenant, lifecycle, current)
-		if err != nil {
+		if planned.relationships, err = c.planRelationships(ctx, req, tenant, lifecycle, current); err != nil {
 			return response, err
 		}
-		if change != nil {
-			response.Changes = append(response.Changes, *change)
-		}
 	}
-	if req.Method == "plan" {
-		return response, nil
-	}
-	if len(response.Changes) == 0 && current["publishingState"] == "published" {
+	response = planned.response()
+	pending := contentChanged || icon != nil || len(metadataPatch(current, desired, published)) > 0 || len(planned.assignments)+len(planned.categories)+len(planned.relationships) > 0
+	if req.Method == "plan" || !pending && current["publishingState"] == "published" {
 		return response, nil
 	}
 	if contentChanged && req.Artifact.Path == "" {
-		response.Content = &plugin.ContentRequest{Artifact: true}
-		return response, nil
+		return plugin.ReconcileResponse{Content: &plugin.ContentRequest{Artifact: true}}, nil
 	}
+	done := outcome{version: planned.previous, previous: planned.previous}
 	var prepared *preparedArtifact
 	if contentChanged {
 		prepared, err = prepareArtifact(ctx, req.Identity.Resource.Name, req.Artifact, artifact)
 		if err != nil {
-			return response, err
+			return done.response(), err
 		}
 		defer prepared.close()
 	}
@@ -239,8 +227,9 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		// first payload when it is created.
 		published.payload = artifact.identity
 		if current, err = c.create(ctx, desired, published, prepared); err != nil {
-			return response, err
+			return done.response(), err
 		}
+		done.version, done.metadata = planned.version, planned.metadata
 	}
 	appID := text(current["id"])
 	activated := ""
@@ -250,39 +239,43 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 			pending.content = published.content
 		}
 		if activated, err = c.activate(ctx, current, pending, prepared, artifact.setup); err != nil {
-			return response, err
+			return done.response(), err
 		}
 		published = publication{identity: identity, payload: artifact.identity, content: activated}
+		done.installer = planned.installer
 	}
 	// Waiting re-observes the app after potentially long uploads, so nested
 	// omitted fields and notes changed by another administrator are preserved.
 	if err := c.waitPublished(ctx, appID, activated, &current); err != nil {
-		return response, err
+		return done.response(), err
 	}
 	if err := c.applyMetadata(ctx, appID, activated, &current, desired, published); err != nil {
-		return response, err
+		return done.response(), err
 	}
+	done.version, done.metadata = planned.version, planned.metadata
 	// Graph can clear largeIcon while an update publishes, so the icon converges
 	// on the app as it stands afterwards.
-	if _, err := c.reconcileIcon(ctx, req, current, true); err != nil {
-		return response, err
+	if done.icon, err = c.reconcileIcon(ctx, req, current, true); err != nil {
+		return done.response(), err
 	}
-	if assignmentChanged {
+	if planned.assignments != nil {
 		if err := c.applyAssignments(ctx, appID, declaredAssignments); err != nil {
-			return response, err
+			return done.response(), err
 		}
+		done.assignments = planned.assignments
 	}
-	if categoryChanged {
-		if err := c.reconcileCategories(ctx, appID, categoryNames); err != nil {
-			return response, err
+	if planned.categories != nil {
+		if done.categories, err = c.reconcileCategories(ctx, appID, categoryNames); err != nil {
+			return done.response(), err
 		}
 	}
 	if relating {
 		if err := c.applyRelationships(ctx, req, tenant, lifecycle, appID); err != nil {
-			return response, err
+			return done.response(), err
 		}
+		done.relationships = planned.relationships
 	}
-	return response, nil
+	return done.response(), nil
 }
 
 func (c *client) create(ctx context.Context, desired object, published publication, prepared *preparedArtifact) (object, error) {
@@ -322,7 +315,7 @@ func (c *client) activate(ctx context.Context, current object, pending publicati
 }
 
 func (c *client) applyMetadata(ctx context.Context, appID, activated string, current *object, desired object, published publication) error {
-	if patch, _ := metadataPatch(*current, desired, published); len(patch) > 0 {
+	if patch := metadataPatch(*current, desired, published); len(patch) > 0 {
 		patch["@odata.type"] = c.appType
 		if err := c.request(ctx, abs.PATCH, c.app(appID), patch, nil); err != nil {
 			return err
@@ -331,10 +324,10 @@ func (c *client) applyMetadata(ctx context.Context, appID, activated string, cur
 			return err
 		}
 	}
-	if _, residual := metadataPatch(*current, desired, published); len(residual) > 0 {
+	if residual := metadataPatch(*current, desired, published); len(residual) > 0 {
 		fields := make([]string, 0, len(residual))
-		for _, change := range residual {
-			fields = append(fields, change.Field)
+		for _, key := range slices.Sorted(maps.Keys(residual)) {
+			fields = append(fields, reportName(key))
 		}
 		return fmt.Errorf("intune metadata readback differs from requested values: %s", strings.Join(fields, ", "))
 	}
@@ -392,15 +385,9 @@ func withMarker(notes string, p publication) string {
 	return notes + "\n" + marker
 }
 
-func metadataPatch(current, desired object, published publication) (object, []plugin.Change) {
+func metadataPatch(current, desired object, published publication) object {
 	patch := object{}
-	var changes []plugin.Change
-	keys := make([]string, 0, len(desired))
 	for key := range desired {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	for _, key := range keys {
 		if key == "@odata.type" || key == "assignments" || key == "categories" || key == "notes" {
 			continue
 		}
@@ -427,55 +414,11 @@ func metadataPatch(current, desired object, published publication) (object, []pl
 			value = mergeItems(key, previous, value.([]any))
 		}
 		patch[key] = value
-		if slices.Contains(installScripts, key) {
-			action := "set"
-			if value == nil {
-				action = "clear"
-			}
-			changes = append(changes, plugin.Change{Kind: "metadata", Field: reportName(key), Action: action})
-			continue
-		}
-		before, after := current[key], value
-		if key == "minimumSupportedOperatingSystem" {
-			before, after = minimumOSChangeValue(before), minimumOSChangeValue(desired[key])
-		}
-		changes = append(changes, plugin.Change{Kind: "metadata", Field: reportName(key), Action: "set", Before: raw(before), After: raw(after)})
 	}
-	notes := withMarker(noteText(current, desired), published)
-	if notes != text(current["notes"]) {
+	if notes := withMarker(noteText(current, desired), published); notes != text(current["notes"]) {
 		patch["notes"] = notes
-		changes = append(changes, plugin.Change{Kind: "metadata", Field: "notes", Action: "set", Before: raw(current["notes"]), After: raw(notes)})
 	}
-	return patch, changes
-}
-
-// installScripts are the Graph properties that hold a PKG app's scripts.
-var installScripts = []string{"preInstallScript", "postInstallScript"}
-
-// reported returns the app as a creation reports it. Scripts can embed
-// environment values, so the report gives their length instead.
-func reported(app object) object {
-	app = maps.Clone(app)
-	for _, key := range installScripts {
-		script, declared := app[key].(object)
-		if !declared {
-			continue
-		}
-		content, _ := base64.StdEncoding.DecodeString(text(script["scriptContent"]))
-		lines := strings.Count(strings.TrimSuffix(string(content), "\n"), "\n") + 1
-		app[key] = fmt.Sprintf("%d lines", lines)
-		if lines == 1 {
-			app[key] = "1 line"
-		}
-	}
-	return app
-}
-
-func minimumOSChangeValue(value any) any {
-	if selected := selectedOS(value); selected != "" {
-		return strings.ReplaceAll(strings.TrimPrefix(selected, "v"), "_", ".")
-	}
-	return value
+	return patch
 }
 
 // validateCreation checks the fields Graph requires to create an app, named as

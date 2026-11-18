@@ -35,8 +35,16 @@ func retired(family []summary, current string, keep int) []summary {
 	return others[min(keep-1, len(others)):]
 }
 
-// prune deletes the retired packages that nothing in Jamf references; plan
-// reports the same deletions.
+// newest returns the family member created last.
+func newest(family []summary) (summary, bool) {
+	if len(family) == 0 {
+		return summary{}, false
+	}
+	return slices.MaxFunc(family, func(a, b summary) int { return cmp.Compare(a.ID, b.ID) }), true
+}
+
+// prune deletes the retired packages that nothing in Jamf references.
+// Plan reports the same filenames without deleting them.
 func (c *client) prune(ctx context.Context, retiring []summary, patch *patchConfig, installs []*installPolicy, apply bool, response *plugin.ReconcileResponse) error {
 	if len(retiring) == 0 {
 		return nil
@@ -63,7 +71,7 @@ func (c *client) prune(ctx context.Context, retiring []summary, patch *patchConf
 				return fmt.Errorf("jamf retention: delete package %s: %w", id, err)
 			}
 		}
-		response.Changes = append(response.Changes, plugin.Change{Kind: "retention", Field: pkg.FileName, Action: "delete", Before: raw(id)})
+		response.Removed = append(response.Removed, pkg.FileName)
 	}
 	return nil
 }

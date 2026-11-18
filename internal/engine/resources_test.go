@@ -13,8 +13,9 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/cas"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/source"
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -28,7 +29,7 @@ func TestInputsKeepSourceAndResourceVersionsSeparate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := source.Entry{Content: source.Content{SHA256: ref.SHA256}, InputVersion: "2026.3", Evidence: map[string]json.RawMessage{"publisher": json.RawMessage(`"vendor"`)}}
+	entry := source.Entry{Content: source.Content{SHA256: ref.SHA256}, Version: "2026.3", Evidence: map[string]json.RawMessage{"publisher": json.RawMessage(`"vendor"`)}}
 	execution := execution{session: &session{store: store}}
 	input, err := execution.input(plugin.Input{}, entry)
 	if err != nil {
@@ -120,7 +121,7 @@ func TestPreparationTreeLeaseContract(t *testing.T) {
 					t.Fatal(err)
 				}
 				inputs := map[string]Prepared{"source": {Payload: ref, Filename: "Input.app", Tree: true, Mode: 0o750}}
-				_, _, err = prepareResource(t.Context(), store, ops, resourcePlan{Operation: "fixture"}, inputs, t.TempDir(), "")
+				_, err = prepareResource(t.Context(), store, ops, resourcePlan{Operation: "fixture"}, inputs, t.TempDir(), "")
 				if change == "none" && err != nil {
 					t.Fatal(err)
 				}
@@ -173,7 +174,7 @@ func TestPreparationKeepsInputsImmutable(t *testing.T) {
 			}
 			inputs := map[string]Prepared{"source": {Payload: ref, Filename: "input.bin", Mode: 0o640}}
 			work := filepath.Join(t.TempDir(), "work")
-			outputs, _, err := prepareResource(t.Context(), store, ops, resourcePlan{Operation: "fixture"}, inputs, work, "")
+			outputs, err := prepareResource(t.Context(), store, ops, resourcePlan{Operation: "fixture"}, inputs, work, "")
 			if change == "none" {
 				if err != nil {
 					t.Fatal(err)
@@ -265,7 +266,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Resources) != 2 || first.Resources[0].Kind != "BuildMacPkg" || len(first.Resources[1].Destinations) != 1 {
+	if len(first.Resources) != 2 || first.Resources[0].Kind != "BuildMacPkg" || len(first.Resources[1].Publications) != 1 {
 		t.Fatalf("build dependency not prepared: %+v", first)
 	}
 	original := first.Resources[0].Artifacts["installer"].Payload
@@ -283,7 +284,7 @@ spec:
 		t.Fatal(err)
 	}
 	for _, resource := range edited.Resources {
-		if !resource.Cached {
+		if !reused(resource) {
 			t.Fatal("native metadata rebuilt immutable content")
 		}
 	}
@@ -294,7 +295,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cold.Resources[0].Artifacts["installer"].Payload != original || len(cold.Resources[1].Destinations[0].Changes) != 0 {
+	if cold.Resources[0].Artifacts["installer"].Payload != original || cold.Resources[1].Publications[0].Status != StatusUnchanged {
 		t.Fatal("cache loss replayed package publication")
 	}
 	if _, err := os.Stat(filepath.Join(root, "never-run-on-builder")); !os.IsNotExist(err) {
@@ -359,7 +360,7 @@ spec:
 		t.Fatal(err)
 	}
 	resource := report.Resources[0]
-	if resource.Artifacts["installer"].Version != "1.2.3" || len(resource.Destinations) != 0 {
+	if resource.Artifacts["installer"].Version != "1.2.3" || len(resource.Publications) != 0 {
 		t.Fatalf("prepared resource: %+v", resource)
 	}
 	options.Method, options.Resources = "artifact", []string{"WindowsSoftware/vendor"}
@@ -406,8 +407,8 @@ spec:
 			if err != nil {
 				t.Fatal(err)
 			}
-			if report.Summary.Derived != 1 {
-				t.Fatalf("derived %d signatures", report.Summary.Derived)
+			if report.Summary.Changed != 1 {
+				t.Fatalf("derived %d signatures", report.Summary.Changed)
 			}
 		} else if err == nil || !strings.Contains(err.Error(), "unexpected signer") {
 			t.Fatalf("preparation must reject the mismatched signer: %v", err)
@@ -464,12 +465,12 @@ spec:
 	// Only the vendor package has a publisher to declare.
 	var proposed []string
 	for _, resource := range derived.Resources {
-		if resource.Artifacts["installer"].Evidence["signatures"] != nil {
+		if testevidence.Signatures(resource.Artifacts["installer"].Evidence) != nil {
 			proposed = append(proposed, resource.Kind+"/"+resource.Name)
 		}
 	}
-	if !slices.Equal(proposed, []string{"MacSoftware/vendor"}) || derived.Summary.Derived != 1 {
-		t.Fatalf("derived expectations for %v, counted %d", proposed, derived.Summary.Derived)
+	if !slices.Equal(proposed, []string{"MacSoftware/vendor"}) || derived.Summary.Changed != 1 {
+		t.Fatalf("derived expectations for %v, counted %d", proposed, derived.Summary.Changed)
 	}
 	// An expectation declared for the built package is still held to it.
 	options.Method = "prepare"
@@ -483,7 +484,7 @@ spec:
 			t.Fatalf("%s: software was not prepared: %+v", declared, report.Resources)
 		}
 		resource := report.Resources[index]
-		verified := resource.Artifacts["installer"].Evidence["signatures"] != nil
+		verified := testevidence.Signatures(resource.Artifacts["installer"].Evidence) != nil
 		if message == "" && !verified || message != "" && !strings.Contains(resource.Error, message) {
 			t.Fatalf("%s: verified %t, error %q", declared, verified, resource.Error)
 		}
@@ -577,7 +578,7 @@ func TestSuspendedResourcesRunOnlyWhenSelected(t *testing.T) {
 	}
 	locked := func() map[string]map[string]source.Entry {
 		t.Helper()
-		file, err := lockfile.Load(root)
+		file, err := lock.Load(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -608,7 +609,7 @@ func TestSuspendedResourcesRunOnlyWhenSelected(t *testing.T) {
 	}
 	options.Method = "apply"
 	report, err = Run(t.Context(), options)
-	if err != nil || !slices.Equal(keys(report), []string{vendor}) || len(report.Resources[0].Destinations) != 1 || report.LockChanged != nil {
+	if err != nil || !slices.Equal(keys(report), []string{vendor}) || len(report.Resources[0].Publications) != 1 || report.LockChanged != nil {
 		t.Fatalf("implicit apply did not skip suspended resources: %v %+v", err, report)
 	}
 	if err := os.WriteFile(private, []byte("private"), 0o644); err != nil {
@@ -616,7 +617,7 @@ func TestSuspendedResourcesRunOnlyWhenSelected(t *testing.T) {
 	}
 	options.Resources = []string{"MacSoftware/private"}
 	report, err = Run(t.Context(), options)
-	if err != nil || !slices.Equal(keys(report), []string{build, "stemma/v1alpha1/MacSoftware/private"}) || len(report.Resources[1].Destinations) != 1 {
+	if err != nil || !slices.Equal(keys(report), []string{build, "stemma/v1alpha1/MacSoftware/private"}) || len(report.Resources[1].Publications) != 1 {
 		t.Fatalf("explicit selection did not run the suspended closure: %v %+v", err, report)
 	}
 	// A resource the catalog no longer declares still loses its lock implicitly.
@@ -729,7 +730,7 @@ func TestProfiledResourcesRunOnlyWhenSelected(t *testing.T) {
 	}
 	locked := func() map[string]map[string]source.Entry {
 		t.Helper()
-		file, err := lockfile.Load(root)
+		file, err := lock.Load(root)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -754,7 +755,7 @@ func TestProfiledResourcesRunOnlyWhenSelected(t *testing.T) {
 	}
 	options.Method = "apply"
 	report, err = Run(t.Context(), options)
-	if err != nil || !slices.Equal(keys(report), []string{captured}) || len(report.Resources[0].Destinations) != 1 {
+	if err != nil || !slices.Equal(keys(report), []string{captured}) || len(report.Resources[0].Publications) != 1 {
 		t.Fatalf("profile apply did not publish exactly its resources: %v %+v", err, report)
 	}
 	options.Profiles, options.Resources = nil, []string{"MacSoftware/captured"}
@@ -770,7 +771,7 @@ func TestProfiledResourcesRunOnlyWhenSelected(t *testing.T) {
 	}
 	options.Profiles, options.Resources = nil, nil
 	report, err = Run(t.Context(), options)
-	if err != nil || !slices.Equal(keys(report), []string{vendor}) || len(report.Resources[0].Destinations) != 1 {
+	if err != nil || !slices.Equal(keys(report), []string{vendor}) || len(report.Resources[0].Publications) != 1 {
 		t.Fatalf("apply without a profile did not skip profiled resources: %v %+v", err, report)
 	}
 	options.Method = "update"

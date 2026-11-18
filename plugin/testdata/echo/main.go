@@ -61,7 +61,7 @@ func main() {
 		Name: "echo.reconcile", Kind: "reconcile", SideEffects: "remote", Methods: []string{"validate", "plan", "apply"},
 		ConfigSchema: json.RawMessage(`{"type":"object","properties":{"fail":{"type":"boolean"},"wait_url":{"type":"string"}}}`),
 		InputSchema:  json.RawMessage(`{"type":"object","properties":{"identity":{"type":"object"},"config":true,"metadata":true,"peers":{"type":"object"},"subjects":{"type":"object"},"prepared":{"type":"boolean"},"root":{"type":"string"},"artifact":{"type":"object"},"inputs":{"type":"object","additionalProperties":{"type":"object"}},"facts":{"type":"object"}},"additionalProperties":false}`),
-		OutputSchema: json.RawMessage(`{"type":"object","properties":{"changes":{"type":"array"}},"additionalProperties":false}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"fields":{"type":"array"}},"additionalProperties":false}`),
 	}, reconcile); err != nil {
 		os.Exit(1)
 	}
@@ -129,11 +129,11 @@ func reconcile(ctx context.Context, envelope plugin.Request) (plugin.Response, e
 	if envelope.Method == "validate" {
 		return plugin.Response{}, nil
 	}
-	result := plugin.ReconcileResponse{Changes: []plugin.Change{{Kind: "metadata", Field: "applied", Action: "replace"}}}
+	result := plugin.ReconcileResponse{Fields: []plugin.FieldChange{{Field: "applied", After: json.RawMessage(`true`)}}}
 	if envelope.Method == "plan" {
-		result.Changes = []plugin.Change{
-			{Kind: "metadata", Field: "config", Action: "replace", After: request.Config},
-			{Kind: "metadata", Field: "metadata", Action: "replace", After: request.Metadata},
+		result.Fields = []plugin.FieldChange{
+			{Field: "config", After: request.Config},
+			{Field: "metadata", After: request.Metadata},
 		}
 	}
 	output, err := json.Marshal(result)
@@ -173,7 +173,7 @@ func build(_ context.Context, request plugin.ResourceRequest[buildConfig]) (plug
 	}
 	artifact := request.Inputs["vendor"]
 	artifact.Format = "pkg"
-	artifact.Evidence = map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"revision":7,"enabled":false}`)}
+	artifact.Evidence = map[string]json.RawMessage{"vendor": json.RawMessage(`{"revision":7,"enabled":false}`)}
 	maps.Copy(artifact.Evidence, request.Config.Evidence)
 	return plugin.ResourceResult{Artifacts: map[string]plugin.Artifact{"installer": artifact}}, nil
 }
@@ -200,10 +200,10 @@ func download(ctx context.Context, request plugin.ResolveRequest[downloadConfig]
 		}
 		_ = response.Body.Close()
 		observed.Revision = response.Header.Get("X-Fixture-Revision")
-		observation, err := json.Marshal(observed)
-		return plugin.ResolveResponse{Observation: observation, Version: response.Header.Get("X-Fixture-Version"), ContentRoot: response.Header.Get("X-Fixture-Content-Root")}, err
+		origin, err := json.Marshal(observed)
+		return plugin.ResolveResponse{Origin: origin, Version: response.Header.Get("X-Fixture-Version"), ContentRoot: response.Header.Get("X-Fixture-Content-Root")}, err
 	}
-	if err := json.Unmarshal(request.Observation, &observed); err != nil {
+	if err := json.Unmarshal(request.Origin, &observed); err != nil {
 		return plugin.ResolveResponse{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, observed.URL, nil)
@@ -234,7 +234,7 @@ func download(ctx context.Context, request plugin.ResolveRequest[downloadConfig]
 		if err != nil {
 			return plugin.ResolveResponse{}, err
 		}
-		artifact.Evidence = map[string]json.RawMessage{"vendor.release": evidence}
+		artifact.Evidence = map[string]json.RawMessage{"vendor": evidence}
 	}
 	return plugin.ResolveResponse{Artifact: artifact}, nil
 }

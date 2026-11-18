@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/woodleighschool/stemma/internal/cas"
+	"github.com/woodleighschool/stemma/internal/engine"
 )
 
 func TestMain(m *testing.M) {
@@ -33,10 +35,10 @@ func TestMain(m *testing.M) {
 func cacheCLI(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	var out, logs bytes.Buffer
-	cmd, finish := command(&out, &logs)
+	cmd, finish := command(&out, &logs, nil)
 	cmd.SetArgs(args)
 	err := cmd.ExecuteContext(t.Context())
-	finish(err)
+	err = finish(err)
 	return out.String(), logs.String(), err
 }
 
@@ -51,7 +53,7 @@ func TestCachePolicyAndPruneReports(t *testing.T) {
 	}
 	args := []string{"--cache-dir", store.Dir, "--cache-max-size", "1B", "cache"}
 	stdout, stderr, err := cacheCLI(t, append(args, "prune")...)
-	if err != nil || stderr != "" || !strings.Contains(stdout, "Reclaimed 0 B") || !strings.Contains(stdout, "protected") || !store.Has(ref) {
+	if err != nil || stderr != "" || !strings.Contains(stdout, "reclaimed 0 B") || !strings.Contains(stdout, "protected") || !store.Has(ref) {
 		t.Fatalf("recent prune: %s / %s / %v", stdout, stderr, err)
 	}
 	stdout, _, err = cacheCLI(t, append(args, "prune", "--all", "--dry-run", "--json")...)
@@ -60,7 +62,7 @@ func TestCachePolicyAndPruneReports(t *testing.T) {
 		t.Fatalf("dry run: %s / %v", stdout, err)
 	}
 	stdout, _, err = cacheCLI(t, append(args, "prune", "--all")...)
-	if err != nil || !strings.Contains(stdout, "Reclaimed 19 B") || store.Has(ref) {
+	if err != nil || !strings.Contains(stdout, "reclaimed 19 B") || store.Has(ref) {
 		t.Fatalf("all: %s / %v", stdout, err)
 	}
 	t.Setenv("STEMMA_CACHE_MAX_SIZE", "7GiB")
@@ -102,7 +104,7 @@ func TestCommandMaintenanceRunsOnFailureAndSkipsOfflineEviction(t *testing.T) {
 				args = append(args, "--offline")
 			}
 			out, logs, err := cacheCLI(t, args...)
-			if err == nil || out != "" || !strings.Contains(logs, "Cache: reclaimed") {
+			if err == nil || out != "" || strings.Contains(logs, "Cache") {
 				t.Fatalf("failed command: %s / %s / %v", out, logs, err)
 			}
 			if store.Has(ref) != offline {
@@ -113,5 +115,37 @@ func TestCommandMaintenanceRunsOnFailureAndSkipsOfflineEviction(t *testing.T) {
 				t.Fatalf("temporary work: %+v / %v", usage, err)
 			}
 		})
+	}
+}
+
+func TestJSONIncludesCleanupWarnings(t *testing.T) {
+	var out, logs bytes.Buffer
+	display := newCommandOutput(&out, &logs)
+	c := &cli{out: &out, display: display, cacheDir: t.TempDir()}
+	root := &cobra.Command{Use: "stemma", PersistentPreRunE: func(cmd *cobra.Command, _ []string) error { return display.start(cmd) }}
+	cmd := &cobra.Command{Use: "update", RunE: func(_ *cobra.Command, _ []string) error {
+		// Break an empty cache directory after startup maintenance. The command
+		// succeeds; only the cleanup inventory fails.
+		objects := filepath.Join(c.cacheDir, "objects")
+		if err := os.Remove(objects); err != nil {
+			return err
+		}
+		if err := os.WriteFile(objects, []byte("not a directory"), 0o600); err != nil {
+			return err
+		}
+		c.result = func() error {
+			return display.report(&out, "update", engine.Report{Command: "update", Resources: []engine.ResourceReport{}})
+		}
+		return nil
+	}}
+	jsonFlag(cmd)
+	root.AddCommand(cmd)
+	c.maintainCommands(root)
+	root.SetArgs([]string{"update", "--json"})
+	err := root.ExecuteContext(t.Context())
+	err = display.finish(err)
+	var report engine.Report
+	if err != nil || json.Unmarshal(out.Bytes(), &report) != nil || len(report.Warnings) != 1 || !strings.Contains(report.Warnings[0], "Cache maintenance incomplete") || logs.Len() != 0 {
+		t.Fatalf("cleanup result=%s stderr=%s error=%v", out.String(), logs.String(), err)
 	}
 }

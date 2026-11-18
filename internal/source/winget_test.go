@@ -61,9 +61,15 @@ Installers:
 	if metadata != 3 || entry.Content.SHA256 != digest || entry.Content.Filename != "user.exe" {
 		t.Fatalf("metadata=%d entry=%+v", metadata, entry)
 	}
-	var evidence map[string]any
-	if err := json.Unmarshal(entry.Evidence["winget.installer"], &evidence); err != nil {
+	var claims struct {
+		Installer map[string]any `json:"installer"`
+	}
+	if err := json.Unmarshal(entry.Evidence["winget"], &claims); err != nil {
 		t.Fatal(err)
+	}
+	evidence := claims.Installer
+	if evidence["installer_sha256"] != nil || evidence["installer_url"] != nil || evidence["package_version"] != nil {
+		t.Fatalf("evidence repeats the entry: %v", evidence)
 	}
 	switches := evidence["installer_switches"].(map[string]any)
 	if evidence["scope"] != "user" || switches["silent"] != "/user-silent" || switches["log"] != "/root-log" || switches["silent_with_progress"] != nil {
@@ -426,7 +432,7 @@ func TestWingetVersionSelectedBeforeInstaller(t *testing.T) {
 				if err == nil || !strings.Contains(err.Error(), "0 installers match") {
 					t.Fatalf("latest: %v", err)
 				}
-			} else if err != nil || !strings.Contains(string(entry.Observation), `"version":"1.0"`) {
+			} else if err != nil || entry.Version != "1.0" {
 				t.Fatalf("exact version: %+v %v", entry, err)
 			}
 		})
@@ -541,7 +547,7 @@ func TestWingetOpaqueURLUsesInstallerTypeForFilename(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if found.Content.Filename != "Example.Tool-2.0."+extension || !strings.Contains(string(found.Observation), address) {
+			if found.Content.Filename != "Example.Tool-2.0."+extension || !strings.Contains(string(found.Origin), address) {
 				t.Fatalf("discovery = %+v", found)
 			}
 		})

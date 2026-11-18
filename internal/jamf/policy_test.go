@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -28,8 +29,11 @@ func TestInstallPolicyInstallsTheCurrentPackage(t *testing.T) {
 	request.Metadata = raw(map[string]any{"category": "Productivity", "policies": []any{policy}})
 	request.Method = "plan"
 	plan, err := Handle(t.Context(), request)
-	if err != nil || !slices.ContainsFunc(plan.Changes, func(c plugin.Change) bool { return c.Field == "policies[Install Vendor]" && c.Action == "create" }) {
+	if created, ok := changedFields(plan)["policies.0.name"]; err != nil || !ok || created.Before != nil || !equalJSON(created.After, raw("Install Vendor")) {
 		t.Fatalf("new policy plan: %+v: %v", plan, err)
+	}
+	if len(plan.Uploads) != 2 || plan.Uploads[1] != (plugin.Upload{Name: plugin.UploadIcon, Filename: fixtureIconName(t), After: fixtureIcon(t).SHA256}) {
+		t.Fatalf("new policy plan did not upload the icon it shows: %+v", plan.Uploads)
 	}
 	if writes := server.writes(); len(writes) != 0 {
 		t.Fatalf("plan wrote to Jamf: %v", writes)
@@ -86,8 +90,8 @@ func TestInstallPolicyInstallsTheCurrentPackage(t *testing.T) {
 	for _, method := range []string{"plan", "apply"} {
 		request.Method = method
 		response, err := Handle(t.Context(), request)
-		if err != nil || !slices.Equal(deletions(response), []string{"1"}) {
-			t.Fatalf("%s kept the package the policy moves off: %+v: %v", method, response, err)
+		if err != nil || !slices.Equal(response.Removed, []string{"vendor.pkg"}) || len(response.Uploads) != 1 {
+			t.Fatalf("%s kept the package the policy moves off, or uploaded the icon again: %+v: %v", method, response, err)
 		}
 	}
 	if server.native.policies["100"].value("package_configuration", "packages", "package", "id") != "2" || server.exists("1") || len(server.native.icons) != 1 {
@@ -121,7 +125,7 @@ func TestSeveralPoliciesInstallOnePackage(t *testing.T) {
 	for _, method := range []string{"plan", "apply"} {
 		request.Method = method
 		response, err := Handle(t.Context(), request)
-		if err != nil || !slices.Equal(deletions(response), []string{"1"}) {
+		if err != nil || !slices.Equal(response.Removed, []string{"vendor.pkg"}) {
 			t.Fatalf("%s kept the package both policies move off: %+v: %v", method, response, err)
 		}
 	}
@@ -161,13 +165,8 @@ func TestInstallPolicyDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var fields []string
-	for _, change := range plan.Changes {
-		if strings.HasPrefix(change.Field, "policies") {
-			fields = append(fields, change.Field)
-		}
-	}
-	if !slices.Equal(fields, []string{"policies[Vendor]", "policies[Vendor].package"}) {
+	fields := slices.DeleteFunc(fieldPaths(plan), func(path string) bool { return !strings.HasPrefix(path, "policies.") })
+	if !slices.Equal(fields, []string{"policies.0.name", "policies.0.package"}) {
 		t.Fatalf("default policy plan: %v", fields)
 	}
 	request.Method = "apply"
@@ -279,10 +278,7 @@ func TestPolicyPlanShowsWhatChanges(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTruthful(t, plan)
-	fields := map[string]plugin.Change{}
-	for _, change := range plan.Changes {
-		fields[change.Field] = change
-	}
+	fields := changedFields(plan)
 	for field, want := range map[string][2]any{
 		"triggers":              {[]string{"checkin"}, []string{"checkin", "enrollment_complete"}},
 		"frequency":             {"ongoing", "once_per_computer"},
@@ -290,7 +286,7 @@ func TestPolicyPlanShowsWhatChanges(t *testing.T) {
 		"package":               {[]string{"vendor-config.pkg (Cache)"}, []string{"vendor.pkg"}},
 		"self_service.category": {"Productivity (hidden)", "Productivity"},
 	} {
-		change := fields["policies[ALL - Vendor - ALL]."+field]
+		change := fields["policies.0."+field]
 		if !equalJSON(change.Before, raw(want[0])) || !equalJSON(change.After, raw(want[1])) {
 			t.Errorf("%s: %s → %s, want %s → %s", field, change.Before, change.After, raw(want[0]), raw(want[1]))
 		}
@@ -311,17 +307,14 @@ func TestInstallPolicyFoundByNameKeepsUnownedSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTruthful(t, plan)
-	fields := map[string]plugin.Change{}
-	for _, change := range plan.Changes {
-		fields[change.Field] = change
+	fields := changedFields(plan)
+	if _, created := fields["policies.0.name"]; created {
+		t.Fatalf("existing policy planned for creation: %+v", plan.Fields)
 	}
-	if _, created := fields["policies[ALL - Vendor - ALL]"]; created {
-		t.Fatalf("existing policy planned for creation: %+v", plan.Changes)
-	}
-	if change := fields["policies[ALL - Vendor - ALL].event"]; !equalJSON(change.Before, raw("vendor_install")) || !equalJSON(change.After, raw("vendor")) {
+	if change := fields["policies.0.event"]; !equalJSON(change.Before, raw("vendor_install")) || !equalJSON(change.After, raw("vendor")) {
 		t.Fatalf("event change is not in declaration terms: %+v", change)
 	}
-	if change := fields["policies[ALL - Vendor - ALL].self_service"]; !equalJSON(change.Before, raw(false)) || !equalJSON(change.After, raw(true)) {
+	if change := fields["policies.0.self_service"]; !equalJSON(change.Before, raw(false)) || !equalJSON(change.After, raw(true)) {
 		t.Fatalf("Self Service change is not in declaration terms: %+v", change)
 	}
 	request.Method = "apply"
@@ -471,7 +464,7 @@ func assertSettled(t *testing.T, server *fakeServer, request plugin.ReconcileReq
 	writes := len(server.writes())
 	for _, method := range []string{"plan", "apply"} {
 		request.Method = method
-		if response, err := Handle(t.Context(), request); err != nil || len(response.Changes) != 0 {
+		if response, err := Handle(t.Context(), request); err != nil || response.Changed() {
 			t.Fatalf("unchanged %s: %+v: %v", method, response, err)
 		}
 	}
@@ -480,19 +473,19 @@ func assertSettled(t *testing.T, server *fakeServer, request plugin.ReconcileReq
 	}
 }
 
-// assertTruthful checks that every setting a plan changes shows a different
+// assertTruthful checks that every field a plan changes shows a different
 // value before and after.
 func assertTruthful(t *testing.T, plan plugin.ReconcileResponse) {
 	t.Helper()
-	for _, change := range plan.Changes {
-		if change.Action == "set" && equalJSON(change.Before, change.After) {
+	for _, change := range plan.Fields {
+		if equalJSON(change.Before, change.After) {
 			t.Errorf("%s changes but shows %s on both sides", change.Field, change.Before)
 		}
 	}
 }
 
 func selectedApplication(installed string) map[string]json.RawMessage {
-	return map[string]json.RawMessage{"macos.application": raw(plugin.Subject{ID: "app", Kind: "app", Path: "payload" + installed, InstalledPath: installed, App: &plugin.AppFacts{BundleID: "com.example.vendor", Name: "Vendor", Version: "1.0"}})}
+	return map[string]json.RawMessage{"macos": testevidence.MacOS(raw(plugin.Subject{ID: "app", Kind: "app", Path: "payload" + installed, InstalledPath: installed, App: &plugin.AppFacts{BundleID: "com.example.vendor", Name: "Vendor", Version: "1.0"}}))}
 }
 
 func fixtureIcon(t *testing.T) plugin.Artifact {

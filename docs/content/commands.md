@@ -24,16 +24,16 @@ CA file does not extend the native trust store. See
 
 ## Catalog workflow
 
-| Command                           | Purpose                                                                   |
-| --------------------------------- | ------------------------------------------------------------------------- |
-| `stemma validate`                 | Check the catalog as written, without environment values or acquisition   |
-| `stemma update [Kind/name...]`    | Discover current inputs and update their locks                            |
-| `stemma prepare [Kind/name...]`   | Prepare resources from the lockfile without publication                   |
-| `stemma signature [Kind/name...]` | Derive signed or unsigned expectations for each signing subject           |
-| `stemma artifact Kind/name`       | Prepare one resource from the lockfile and print the path of its artifact |
-| `stemma icon [Kind/name...]`      | Create missing declared icons from the software's own artwork             |
-| `stemma plan [Kind/name...]`      | Read destinations and report proposed changes                             |
-| `stemma apply [Kind/name...]`     | Re-read and reconcile destinations once                                   |
+| Command                           | Purpose                                                                 |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| `stemma validate`                 | Check the catalog as written, without environment values or acquisition |
+| `stemma update [Kind/name...]`    | Discover current inputs and update their locks                          |
+| `stemma prepare [Kind/name...]`   | Prepare resources from the lock without publication                     |
+| `stemma signature [Kind/name...]` | Derive signed or unsigned expectations for each signing subject         |
+| `stemma artifact Kind/name`       | Prepare one resource from the lock and print the path of its artifact   |
+| `stemma icon [Kind/name...]`      | Create missing declared icons from the software's own artwork           |
+| `stemma plan [Kind/name...]`      | Read destinations and report proposed changes                           |
+| `stemma apply [Kind/name...]`     | Re-read and reconcile destinations once                                 |
 
 For example, `stemma plan MacSoftware/chrome` selects one document. Required build
 references are prepared first. Use `apiVersion/Kind/name` when needed to resolve an
@@ -52,7 +52,7 @@ an unrelated document that fails its own validation does not block the run. Use
 destination checks the other commands make.
 
 `update` writes the input locks and locks plugin tags and local paths. Every
-other command uses the reviewed lockfile as it is: an input without a current
+other command uses the reviewed lock as it is: an input without a current
 entry fails that resource until `stemma update` records it, and a plugin whose
 entry is missing or stale does not load.
 
@@ -68,7 +68,7 @@ declare which files they read. New resources count as changed, and a changed bui
 the resources that consume it. The command compares the resources a run without
 selectors takes: suspended resources stay out, and profiled resources are
 compared only with `--profile`, which compares that profile in place of the
-rest. The lockfile must hold entries for exactly the declared inputs of the
+rest. The lock must hold entries for exactly the declared inputs of the
 compared resources and the builds they reference, and none for resources the
 catalog no longer declares; entry and environment values are read only for the
 resources the command prepares. Each catalog is interpreted by
@@ -117,7 +117,7 @@ no source or lock entry, and `--path` selects within the local source as it does
 within an input.
 
 Existing icons stay unchanged unless `--force` is set. Only resources needing an
-icon are prepared. The command leaves the lockfile unchanged and does not contact
+icon are prepared. The command leaves the lock unchanged and does not contact
 destinations. Commit the icons so publication sends the same bytes on every host.
 
 `signature` acquires and prepares inputs like `prepare`, records each subject's
@@ -190,7 +190,7 @@ stemma mcp
 standard input and output. `describe` answers what documents can declare, from
 the built-in operations and the catalog's plugins; `inspect` reads a named input's
 static facts before a build; `prepare` tries documents
-against their current sources without the lockfile and reports the inspected
+against their current sources without the lock and reports the inspected
 artifact, its signer and each destination's `publications`; `update`, `icon` and `check` match the commands. A
 relative `from` given to `icon` starts at the catalog root. No tool contacts a
 destination.
@@ -224,7 +224,7 @@ stemma inspect BuildMacPkg/example --input vendor --path Installer.app --json
 
 This reads the locked input without building the selected resource. Omit `--path`
 to inventory the source; add `--no-input-lock` to inspect current sources without
-writing the lockfile. MCP `inspect` takes `resource`, `input` and an optional `path`
+writing the lock. MCP `inspect` takes `resource`, `input` and an optional `path`
 and uses current sources. Both return the subject IDs and static facts used by
 `inputs.<name>.facts` expressions. `--read PATH`, or MCP `read`, returns one file
 inside the input instead; MCP returns UTF-8 text up to 256 KiB, including control
@@ -284,70 +284,113 @@ prepare only the outputs they need, serially.
 
 ## Reports and diagnostics
 
-Outcome commands name their work, write each resource's report to stdout as it
-finishes, then the run's totals. Plan shows proposed changes, including initial values for new
-objects. Apply reports confirmed publication actions. Update shows input changes,
-prepare keeps a completion line for every resource, icon names the artwork file it writes,
-and signature shows derived signers. Multi-line values such as scripts show line
-counts instead of their text. Explicitly selected resources are shown even when
-unchanged. `--all` includes unchanged resources in human
-reports. Preparation shows filenames for newly prepared artifacts; cached resources
-use one line unless explicitly selected or expanded with `--all`. Totals always
-describe the whole run. JSON includes all resources in the
-selected scope, regardless of `--all`. For each prepared resource, `publications`
-has an entry for every destination, made with no connection to it. Built-in
-destinations return `metadata` with the declared settings and values derived from
-the artifact, and null or an empty value for a field the
-destination clears. It describes the fields this publication manages, not the
-complete remote item; `plan` compares them with the destination's current state.
-Artifact versions describe prepared files; destination versions remain in their managed
-metadata, such as `pkginfo.version` or an included application's version.
-`origins` names where each field's value came from, such as `explicit`,
-`expression`, `artifact.version` or `installer.receipts`. An entry without
-`metadata` is not a preview of the publication, and its `deferred` says why: the
-metadata reads environment values, or a plugin does not return derived metadata.
-Jamf previews retain category, policy and patch-title names; planning resolves
-their server IDs and checks whether the title defines the requested patch version.
-Reconcile prints the reviewed commit's
-publication followed by proposal outcomes, under separate applying and update-checking
-sections.
+Outcome commands (`update`, `prepare`, `signature`, `icon`, `plan`, `apply`)
+write a block to stdout for each resource as it finishes, then a summary line:
+
+```text
+✓ MacSoftware/example:
+  munki: 1.0 → 2.0
+    pkginfo.description: Original description → Revised description
+    upload installer: example-2.0.pkg
+      digest: aaaaaaaaaaaa… → bbbbbbbbbbbb…
+    remove 1.0
+✓ MacSoftware/current: unchanged (intune 3.1.1)
+✗ MacSoftware/another:
+  munki: 1.0 unchanged
+  intune: failed
+    upload failed
+
+3 resources: 1 published, 1 unchanged, 1 failed; 1 older version removed.
+```
+
+Headings use `name: summary`. Children are indented two spaces beneath their
+owner: resources contain named inputs or destinations, which contain changes and
+supporting values. A result without a separate subject belongs to the resource
+heading. Long values move beneath their field label; wrapped lines keep their
+indentation. Terminal output fits the available width; plain output uses 100
+columns. Resources follow each other without blank lines, including unchanged
+resources, which use one line each.
+
+- `update` shows a source's version change, or its filename when unversioned.
+  New bytes under the same version read `file changed`. Every input change
+  includes the changed lock fields. Changed plugin pins and removed lock documents
+  follow the resources.
+- `plan` is a dry run of `apply`: both show the same version transitions,
+  field changes with their before and after values, uploads and removals.
+  Initial fields show their values. The summary distinguishes proposed
+  publications from completed ones. Jamf uses package filenames as its native
+  publication identity.
+- `prepare` shows the installer's version and file, `signature` the signers and
+  fragment to declare, and `icon` the asset it created.
+
+Collections use `-` and `+`; receipts, installs and included apps match by
+identity. Multi-line values such as scripts show line diffs. Human and JSON
+reports include field values; pull requests omit them.
+
+Every selected resource appears, including unchanged and skipped resources.
+A tick marks a successful resource; a cross marks a failed or blocked resource.
+A failure at any destination fails the resource, while its other destination
+results remain visible. Skipped resources use a dash and state the reason.
+Error explanations appear beneath the failed resource or destination.
+The resource title carries the failure mark; error rows do not repeat it.
+The summary counts every selected resource by outcome.
+
+Upload filenames and digests, changed lock fields and additional artifact
+outputs appear in the standard report.
+
+Colour reinforces the text, which reads the same without it: new values are
+green, earlier values and unchanged resources subdued, changes worth a second
+look yellow, failures red and blocked outcomes yellow.
+Collection members added and removed show `+` and `-`.
+Active resource titles are bold magenta. Completed titles, destination names,
+field labels and progress text use the terminal's normal colour. The result mark
+carries the success or failure colour.
+
+`--json` writes one document holding every selected resource: its `status`
+(`changed`, `unchanged`, `failed`, `blocked`, or `skipped` with a `reason`), the
+lock `inputs` it changed (`kind` `added`, `removed`, `updated` or `refreshed`,
+with the entries before and after), its `artifacts` and its `publications`. A
+publication carries the preview preparation makes without connecting:
+`metadata` with the declared and derived values the destination manages,
+`origins` naming where each value came from (`explicit`, `expression`,
+`artifact.version`, `installer.receipts`…), and `deferred` when no preview is
+possible. Plan and apply add `version`, `previous`, `uploads`, `fields`,
+`repairs` (derived destination records rebuilt), `removed` and `error`.
+`summary` has the same keys for every command; update adds `lock_changed`.
+Update saves each resource's inputs before streaming its result. The JSON document
+includes warnings from command cleanup; startup failures can stop before a report
+exists.
 
 ```sh
-stemma plan
-stemma plan --json --all > plan.json
-stemma prepare --all
+stemma plan --json > plan.json
 stemma prepare MacSoftware/foo --json | jq '.resources[].publications'
 ```
 
-Human reports use `➤` for headings, `✓` for successful or unchanged outcomes,
-`✗` for failures and `–` for skipped or blocked work. Notices use `!` for warnings
-and `i` for information. `→` marks proposed actions, before/after changes,
-redirects and publication destinations. Versions follow names in parentheses;
-statuses and field values follow a colon. Details indent by two spaces per level,
-with one space between parts of a line. Blank lines separate sections; compact
-outcomes stay adjacent. Colour
-reinforces these markers; the same text remains readable without it. Diff lines
-retain `+` and `-`, and literal payloads, YAML fragments and machine output retain
-their own syntax.
+Reconcile streams the reviewed commit's publication and then each proposal.
+Pull request links and summaries appear beneath their outcome. Plugin reports,
+cache reports and artifact inspection use the same heading and indentation rules;
+inspection nests subjects beneath the artifact or package that contains them.
 
-Pipeline commands start with their resources. Reconcile separates Applying
-reviewed branch from Proposing updates with neutral section titles. The reviewed
-branch result includes its elapsed time.
+When stderr is a suitable terminal, only resources with running operations
+appear in progress. The live display owns terminal output, including completed
+results entering scrollback. Redirected reports still go to stdout. Prepared
+resources waiting for publication stay offscreen.
+Operations sit beneath their resource or named input or destination. Nested work
+shows its current operation instead of repeating its parent loader; the primary
+source needs no input label. Operations over a collection nest their items beneath
+one label, including when there is only one item. Finished operations remain
+ticked while later work runs. The tree collapses into the resource's result when
+it finishes. Cache hits can mark an operation
+`(cached)`; cache lookups, misses and bookkeeping do not add progress rows.
+Progress bars sit below their operation labels. Known totals show counts and
+percentages; unknown totals show a moving bar and the observed count. Operations
+without measurable progress show a spinner. On short terminals, completed
+operations leave the live region first to keep ongoing work visible.
 
-When stderr is a suitable terminal, a live region shows the resource being worked
-on: its heading, the step that is running, and above it completed transfers and
-other finished steps that took a second or longer. Pipeline steps sit under
-Acquire, Prepare and a section for each destination: Check during preparation,
-Plan during planning, or Publish during application. Phase labels are subdued,
-with a blank line between phases; resource headings stay prominent. Only phases
-with visible work appear. Known-size transfers show a bar and counts. A step
-that runs again within a phase continues its earlier line. Work that belongs to the command
-rather than a resource shows while no resource operation is running. A block taller than the
-terminal scrolls into history instead of being cut. The resource's result
-replaces its live block, and durable results have the same content in terminals
-and pipes. Results remain on stdout even when it is redirected. JSON, generated
-documents, CI and dumb terminals suppress the live display; `--no-progress`
-disables it explicitly. `NO_COLOR` controls colour.
+Outside a terminal, long operations emit a progress line after two seconds and
+at most every thirty seconds afterwards. Results use stdout. JSON and generated
+documents suppress progress. `--no-progress`
+disables both live and plain progress; `NO_COLOR` controls colour.
 Warnings go to stderr as they happen; in JSON mode they are part of the document.
 Resource notices appear once per command, including for cached or unchanged
 resources, and remain visible with `--no-progress`. JSON keeps them in each resource's
@@ -358,8 +401,12 @@ a BuildMacPkg input that supplies an application or package. Declared signers,
 explicit unsigned expectations and resource-built outputs do not.
 A verified Developer ID application signature without a secure timestamp produces a
 warning and stays valid.
-Failed commands retain available results and end with a concise stderr diagnostic.
-Interrupting with Ctrl-C clears activity, preserves completed results and exits 130.
+Failed commands retain available results and exit nonzero. Failures already
+shown in the report are not repeated on stderr; startup and command-wide errors
+go to stderr.
+Interrupting with Ctrl-C clears activity, preserves observed publication results
+and exits 130. A resource interrupted between destinations retains the outcomes
+it received and is counted as failed.
 Press Ctrl-C again to exit immediately if cleanup or a native operation is
 taking too long.
 
@@ -369,10 +416,10 @@ with `blocked_by` resource keys in JSON. The command emits the selected results
 before exiting nonzero. Global configuration or structural failures and context
 cancellation stop the run immediately and can leave a partial report.
 
-Do not infer success solely from an artifact appearing in a report. Update records
-the inputs of successful resources even when it exits nonzero; failed or blocked
-resources keep their reviewed entries. An update report without `lock_changed`
-did not complete the lockfile comparison.
+Do not infer success solely from an artifact appearing in a report. Update retains
+completed saves if a later resource fails or the run stops. A save failure stops
+the run and reports any confirmed changes. An update report without `lock_changed`
+did not reach a lock comparison.
 
 ## Standalone packaging
 

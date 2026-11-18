@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -27,7 +28,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/fileio"
 	"github.com/woodleighschool/stemma/internal/icon"
 	"github.com/woodleighschool/stemma/internal/intunewin"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/mcpserver"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	pluginstore "github.com/woodleighschool/stemma/internal/plugins"
@@ -42,13 +43,13 @@ var date = "unknown"
 var errInterrupted = errors.New("interrupted")
 
 func main() {
-	ctx, cancel := interruptContext()
-	cmd, finish := command(os.Stdout, os.Stderr)
+	ctx, cancel, interrupt := interruptContext()
+	cmd, finish := command(os.Stdout, os.Stderr, interrupt)
 	err := cmd.ExecuteContext(ctx)
 	if errors.Is(context.Cause(ctx), errInterrupted) {
 		err = errInterrupted
 	}
-	finish(err)
+	err = finish(err)
 	cancel()
 	if errors.Is(err, errInterrupted) {
 		os.Exit(130)
@@ -58,10 +59,10 @@ func main() {
 	}
 }
 
-func interruptContext() (context.Context, context.CancelFunc) {
+func interruptContext() (context.Context, context.CancelFunc, context.CancelFunc) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		select {
 		case <-signals:
@@ -73,7 +74,7 @@ func interruptContext() (context.Context, context.CancelFunc) {
 			signal.Stop(signals)
 		}
 	}()
-	return ctx, func() { cancel(context.Canceled) }
+	return ctx, func() { cancel(context.Canceled) }, func() { cancel(errInterrupted) }
 }
 
 // environment holds the process environment values commands start with.
@@ -100,11 +101,13 @@ type cli struct {
 	jobs                          int
 	cachePolicy                   cas.Policy
 	githubToken                   string
+	result                        func() error
 }
 
-func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
+func command(out, errOut io.Writer, interrupt func()) (*cobra.Command, func(error) error) {
 	settings, settingsErr := env.ParseAs[environment]()
 	display := newCommandOutput(out, errOut)
+	display.interrupt = interrupt
 	c := &cli{out: finalWriter{Writer: out, output: display}, display: display, githubToken: settings.githubToken()}
 	root := &cobra.Command{Use: "stemma", Short: "Resolve, prepare and publish reviewed software artifacts", SilenceErrors: true, SilenceUsage: true, Version: version}
 	root.PersistentPreRunE = func(cmd *cobra.Command, _ []string) error {
@@ -121,9 +124,9 @@ func command(out, errOut io.Writer) (*cobra.Command, func(error)) {
 		c.cachePolicy = policy
 		return display.start(cmd)
 	}
-	root.SetVersionTemplate(fmt.Sprintf("stemma %s (commit %s, built %s)\n", version, commit, date))
+	root.SetVersionTemplate(fmt.Sprintf("stemma: %s (commit %s, built %s)\n", version, commit, date))
 	root.PersistentFlags().IntVar(&c.jobs, "jobs", settings.Jobs, "Maximum parallel preparations; acquisition and publication remain serial")
-	root.PersistentFlags().Bool("no-progress", false, "Disable terminal progress")
+	root.PersistentFlags().Bool("no-progress", false, "Disable progress display")
 	root.SetOut(c.out)
 	root.SetErr(errOut)
 	root.PersistentFlags().StringVar(&c.rootDir, "root", "", "Stemma project directory (discovered from the current directory)")
@@ -148,7 +151,7 @@ func (c *cli) versionCommand() *cobra.Command {
 		if *asJSON {
 			return writeJSON(c.out, map[string]string{"version": version, "commit": commit, "date": date})
 		}
-		_, err := fmt.Fprintf(c.out, "stemma %s (commit %s, built %s)\n", version, commit, date)
+		_, err := fmt.Fprintf(c.out, "stemma: %s (commit %s, built %s)\n", version, commit, date)
 		return err
 	}
 	return cmd
@@ -170,7 +173,7 @@ func (c *cli) schemaCommand() *cobra.Command {
 			if resolveErr != nil {
 				return resolveErr
 			}
-			data, err = engine.Schema(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}})
+			data, err = engine.Schema(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lock.Options{Offline: offline}})
 		}
 		if err != nil {
 			return err
@@ -182,7 +185,7 @@ func (c *cli) schemaCommand() *cobra.Command {
 		if err := fileio.Write(output, data, 0o644); err != nil {
 			return err
 		}
-		return printSuccess(c.out, fmt.Sprintf("Wrote %s.", output))
+		return printResult(c.out, output, "written")
 	}}
 	cmd.Flags().StringVar(&output, "output-file", "", "Required output path; - writes to stdout")
 	_ = cmd.MarkFlagRequired("output-file")
@@ -199,10 +202,10 @@ func (c *cli) validateCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		if err := engine.ValidateProject(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}}); err != nil {
+		if err := engine.ValidateProject(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lock.Options{Offline: offline}}); err != nil {
 			return err
 		}
-		return printSuccess(c.out, "Configuration is valid.")
+		return printResult(c.out, filepath.Base(path), "valid")
 	}}
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use cached plugins without contacting a registry")
 	return cmd
@@ -220,7 +223,7 @@ func (c *cli) mcpCommand() *cobra.Command {
 
 var runShort = map[string]string{
 	"update":    "Resolve current sources and update their lock documents",
-	"prepare":   "Prepare resources from the lockfile without publication",
+	"prepare":   "Prepare resources from the lock without publication",
 	"signature": "Derive signed or unsigned expectations for each signing subject",
 	"icon":      "Create declared icon assets from the artwork prepared software carries",
 	"plan":      "Observe destinations and report changes without writing them",
@@ -245,29 +248,21 @@ func (c *cli) runCommand(method string) *cobra.Command {
 				return err
 			}
 		}
-		c.display.selectors = slices.Clone(args)
-		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Jobs: c.jobs, GitHubToken: c.githubToken, Method: method, Resources: args, Profiles: profiles, ChangedSince: changedSince, Icons: icons, Input: input, ResourceDone: func(resource engine.ResourceReport) error {
+		report, runErr := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Jobs: c.jobs, GitHubToken: c.githubToken, Method: method, Resources: args, Profiles: profiles, ChangedSince: changedSince, Icons: icons, Input: input, Started: c.display.started, ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone(method, resource)
-		}, Lock: lockfile.Options{Offline: offline}})
-		if err := c.display.report(c.out, method, report, runErr); err != nil {
-			if runErr != nil {
-				runErr = fmt.Errorf("%s: %w", method, runErr)
+		}, Lock: lock.Options{Offline: offline}})
+		c.result = func() error {
+			if err := c.display.report(c.out, method, report); err != nil {
+				return fmt.Errorf("write report: %w", err)
 			}
-			return errors.Join(runErr, fmt.Errorf("write report: %w", err))
+			return nil
 		}
 		return runErr
-	}
-	cmd.Flags().Bool("all", false, "Include unchanged resources in the human report")
-	if method == "prepare" {
-		cmd.Flags().Lookup("all").Usage = "Include artifact details for cached resources"
-	}
-	if method == "plan" || method == "apply" {
-		cmd.Flags().Bool("details", false, "Show complete initial object fields")
 	}
 	cmd.Flags().BoolVar(&offline, "offline", false, "Use cached locked inputs without source network access")
 	cmd.Flags().StringArrayVar(&profiles, "profile", nil, "Run the resources that declare the profile `NAME` instead of those that declare none; repeat for more")
 	if method == "prepare" {
-		cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the lockfile, then prepare only resources whose preparation changed since the Git revision `REV`")
+		cmd.Flags().StringVar(&changedSince, "changed-since", "", "Check the lock, then prepare only resources whose preparation changed since the Git revision `REV`")
 	}
 	if method == "icon" {
 		cmd.Flags().StringVar(&input.Name, "input", "", "Extract from one resource's locked input without building its output")
@@ -304,14 +299,14 @@ func (w memberOutput) Write(p []byte) (int, error) {
 func (c *cli) artifactCommand() *cobra.Command {
 	var output, outputFile, read string
 	var offline, noInputLock bool
-	cmd := &cobra.Command{Use: "artifact Kind/name", Short: "Prepare one resource from the lockfile and print the path of its artifact", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd := &cobra.Command{Use: "artifact Kind/name", Short: "Prepare one resource from the lock and print the path of its artifact", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		path, err := c.project()
 		if err != nil {
 			return err
 		}
 		report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, GitHubToken: c.githubToken, Method: "artifact", Resources: args, Output: output, OutputFile: outputFile, Read: read, ReadTo: c.readOutput(), ResourceDone: func(resource engine.ResourceReport) error {
 			return c.display.resourceDone("artifact", resource)
-		}, Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
+		}, Lock: lock.Options{Offline: offline, IgnoreInputs: noInputLock}})
 		if err != nil || read != "" {
 			return err
 		}
@@ -332,16 +327,18 @@ func (c *cli) reconcileCommand() *cobra.Command {
 	var stateDir string
 	cmd := &cobra.Command{Use: "reconcile", Short: "Apply the reviewed branch of this checkout and propose lock updates as pull requests", Args: cobra.NoArgs}
 	jsonFlag(cmd)
-	cmd.Flags().Bool("all", false, "Include unchanged resources and proposals in the human report")
 	cmd.Flags().StringVar(&stateDir, "state-dir", os.Getenv("STEMMA_STATE_DIR"), "Directory recording the last reviewed commit applied in full")
 	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
 		path, err := c.project()
 		if err != nil {
 			return err
 		}
-		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: c.cacheDir, StateDir: stateDir, Jobs: c.jobs, GitHubToken: c.githubToken, PhaseStarted: c.display.reconcilePhase, ResourceDone: c.display.resourceDone, ApplyDone: c.display.applyDone, ProposalDone: c.display.proposalDone})
-		if err := c.display.reconciled(c.out, report, runErr); err != nil {
-			return errors.Join(runErr, err)
+		report, runErr := reconcile.Run(cmd.Context(), reconcile.Options{ConfigPath: path, CacheDir: c.cacheDir, StateDir: stateDir, Jobs: c.jobs, GitHubToken: c.githubToken, Started: c.display.started, ResourceDone: c.display.resourceDone, ApplyDone: c.display.applyDone, ProposalDone: c.display.proposalDone})
+		c.result = func() error {
+			if err := c.display.reconciled(c.out, report); err != nil {
+				return fmt.Errorf("write report: %w", err)
+			}
+			return nil
 		}
 		return runErr
 	}
@@ -367,14 +364,14 @@ func (c *cli) inspectCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, GitHubToken: c.githubToken, Method: "inspect", Resources: args, Input: engine.InputSelection{Name: input, Path: selection}, Read: read, ReadTo: c.readOutput(), Lock: lockfile.Options{Offline: offline, IgnoreInputs: noInputLock}})
+			report, err := engine.Run(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, GitHubToken: c.githubToken, Method: "inspect", Resources: args, Input: engine.InputSelection{Name: input, Path: selection}, Read: read, ReadTo: c.readOutput(), Lock: lock.Options{Offline: offline, IgnoreInputs: noInputLock}})
 			if err != nil || read != "" {
 				return err
 			}
 			if *asJSON {
 				return writeJSON(c.out, report.Inspection)
 			}
-			_, err = io.WriteString(c.out, renderInspection(c.display.outStyle, *report.Inspection))
+			_, err = io.WriteString(c.out, renderInspection(newTextStyle(c.out), *report.Inspection))
 			return err
 		}
 		if offline || noInputLock {
@@ -396,7 +393,7 @@ func (c *cli) inspectCommand() *cobra.Command {
 			if *asJSON {
 				return writeJSON(c.out, envelope)
 			}
-			_, err = io.WriteString(c.out, renderEnvelope(c.display.outStyle, filepath.Base(args[0]), envelope))
+			_, err = io.WriteString(c.out, renderEnvelope(newTextStyle(c.out), filepath.Base(args[0]), envelope))
 			return err
 		}
 		inspection, err := engine.Inspect(cmd.Context(), args[0], selection)
@@ -406,7 +403,7 @@ func (c *cli) inspectCommand() *cobra.Command {
 		if *asJSON {
 			return writeJSON(c.out, inspection)
 		}
-		_, err = io.WriteString(c.out, renderInspection(c.display.outStyle, inspection))
+		_, err = io.WriteString(c.out, renderInspection(newTextStyle(c.out), inspection))
 		return err
 	}
 	return cmd
@@ -447,7 +444,7 @@ func (c *cli) pluginsCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		reports, inspectErr := engine.InspectPlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lockfile.Options{Offline: offline}}, verify)
+		reports, inspectErr := engine.InspectPlugins(cmd.Context(), engine.Options{ConfigPath: path, CacheDir: c.cacheDir, Lock: lock.Options{Offline: offline}}, verify)
 		if cmd.Context().Err() != nil {
 			return cmd.Context().Err()
 		}
@@ -475,7 +472,7 @@ func (c *cli) pluginsCommand() *cobra.Command {
 		if *updateJSON {
 			err = writeJSON(c.out, result)
 		} else {
-			err = printPluginUpdate(c.out, result)
+			_, err = io.WriteString(c.out, pluginUpdate(newTextStyle(c.out), result))
 		}
 		if err != nil {
 			return errors.Join(updateErr, fmt.Errorf("write report: %w", err))
@@ -527,7 +524,7 @@ func publishCommand(out io.Writer) *cobra.Command {
 		if *publishJSON {
 			return writeJSON(out, published)
 		}
-		return printSuccess(out, fmt.Sprintf("Published %s (%s) for %s.", published.Image, published.Digest, strings.Join(published.Platforms, ", ")))
+		return printResult(out, published.Image, "published", [2]string{"digest", published.Digest}, [2]string{"platforms", strings.Join(published.Platforms, ", ")})
 	}
 	return cmd
 }
@@ -548,7 +545,7 @@ func packageCommand(out io.Writer) *cobra.Command {
 				Output string `json:"output"`
 			}{Output: args[2], Metadata: result})
 		}
-		return printSuccess(out, fmt.Sprintf("Packaged %s: setup file %s, %s encrypted.", args[2], result.SetupFile, humanize.IBytes(uint64(max(0, result.EncryptedContentSize)))))
+		return printResult(out, args[2], "packaged", [2]string{"setup file", result.SetupFile}, [2]string{"encrypted size", humanize.IBytes(uint64(max(0, result.EncryptedContentSize)))})
 	}
 	cmd.AddCommand(envelope)
 	var options pkgbuild.Options
@@ -563,7 +560,7 @@ func packageCommand(out io.Writer) *cobra.Command {
 		if err := pkgbuild.Build(cmd.Context(), args[0], args[1], options); err != nil {
 			return err
 		}
-		return printSuccess(out, fmt.Sprintf("Packaged %s.", args[1]))
+		return printResult(out, args[1], "packaged")
 	}}
 	pkg.Flags().StringVar(&options.Identifier, "identifier", "", "Package receipt identifier")
 	pkg.Flags().StringVar(&options.Version, "version", "", "Package receipt version")

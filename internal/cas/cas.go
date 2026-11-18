@@ -257,7 +257,7 @@ func (s *Store) Write(ctx context.Context, expected string, write func(io.Writer
 		return Ref{}, err
 	}
 	if expected != "" && expected != ref.SHA256 {
-		return Ref{}, fmt.Errorf("source integrity mismatch: expected %s, received %s; review the source before updating the lockfile", expected, ref.SHA256)
+		return Ref{}, fmt.Errorf("source integrity mismatch: expected %s, received %s; review the source before updating the lock", expected, ref.SHA256)
 	}
 	path, err := s.Path(ref)
 	if err != nil {
@@ -320,7 +320,7 @@ func (s *Store) Materialize(ctx context.Context, ref Ref, path string) error {
 	}
 	defer func() { _ = os.Remove(out.Name()) }()
 	err = s.Read(ctx, ref, func(r io.Reader) error {
-		_, err := io.Copy(out, r)
+		_, err := io.Copy(out, plugin.ProgressReader(ctx, r, ref.Size))
 		return err
 	})
 	if closeErr := out.Close(); err == nil {

@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/classic_api/network_segments"
 	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/constants"
+	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/jamf_pro_api/categories"
 	"github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/jamf_pro_api/computer_groups"
 	titles "github.com/deploymenttheory/go-sdk-jamfpro-v2/jamfpro/jamf_pro_api/patch_software_title_configurations"
 	"github.com/invopop/jsonschema"
@@ -81,6 +83,25 @@ func (c *client) category(ctx context.Context, declared categoryName) (*namedID,
 		return nil, err
 	}
 	return &namedID{id: id, name: declared.name}, nil
+}
+
+// categoryName names the category a package's categoryId selects; nil is none.
+// A category that no longer exists selects none.
+func (c *client) categoryName(ctx context.Context, id string) (*string, error) {
+	if !validID(id) {
+		return nil, nil
+	}
+	result, response, err := categories.NewCategories(c.transport).GetByIDV1(ctx, id)
+	if response != nil && response.StatusCode() == http.StatusNotFound {
+		return nil, nil
+	}
+	if err := requestError(ctx, response, err); err != nil {
+		return nil, fmt.Errorf("jamf category %s: %w", id, err)
+	}
+	if result == nil || result.ID != id {
+		return nil, errors.New("jamf category response does not match requested ID")
+	}
+	return &result.Name, nil
 }
 
 // objectID resolves the name of a category or a scope object.

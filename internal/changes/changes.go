@@ -1,4 +1,5 @@
-// Package changes renders semantic differences for command reports and review descriptions.
+// Package changes turns outcomes into rows that every report surface renders:
+// a change headline and its details as styled spans.
 package changes
 
 import (
@@ -13,55 +14,7 @@ import (
 	"strings"
 
 	"github.com/sergi/go-diff/diffmatchpatch"
-	"github.com/woodleighschool/stemma/plugin"
 )
-
-// Lines describes a destination change without terminal or Markdown formatting.
-func Lines(change plugin.Change) []string {
-	field := Text(change.Field)
-	before, after := decode(change.Before), decode(change.After)
-	switch change.Action {
-	case "create":
-		if _, absent := after.(missing); absent {
-			return []string{"create " + field}
-		}
-		if fields, ok := after.(map[string]any); ok {
-			lines := []string{"create " + field}
-			for _, key := range slices.Sorted(maps.Keys(fields)) {
-				for _, line := range initial(Text(key), fields[key]) {
-					lines = append(lines, "  "+line)
-				}
-			}
-			return lines
-		}
-		return []string{"create " + field + ": " + summary(after)}
-	case "delete":
-		line := "delete " + field
-		if _, absent := before.(missing); !absent {
-			line += ": " + summary(before)
-		}
-		if change.Kind == "retention" {
-			line += " (retention)"
-		}
-		return []string{line}
-	case "reconcile":
-		if _, absent := after.(missing); absent {
-			return []string{"reconcile " + field}
-		}
-		return []string{"reconcile " + field + ": " + summary(after)}
-	case "upload":
-		if change.Filename != "" {
-			return []string{"upload " + field + ": " + Text(change.Filename)}
-		}
-		return []string{"upload " + field}
-	default:
-		lines := difference(field, before, after)
-		if len(lines) == 0 {
-			return []string{Text(change.Action) + " " + field}
-		}
-		return lines
-	}
-}
 
 type missing struct{}
 
@@ -101,13 +54,21 @@ func difference(field string, before, after any) []string {
 		}
 		return lines
 	}
-	a, aText := multiline(before)
-	b, bText := multiline(after)
-	if aText && bText {
-		return []string{field + ": changed (" + lineRange(a, b) + ")"}
-	}
+	_, aText := multiline(before)
+	_, bText := multiline(after)
 	if aText || bText {
-		return []string{field + ": " + summary(before) + " → " + summary(after)}
+		lines := func(v any) []any {
+			text, ok := v.(string)
+			if !ok {
+				return []any{v}
+			}
+			var result []any
+			for line := range strings.SplitSeq(text, "\n") {
+				result = append(result, line)
+			}
+			return result
+		}
+		return append([]string{field + ":"}, lineDiff(lines(before), lines(after))...)
 	}
 	if _, ok := before.(missing); ok && rok {
 		return initial(field+" (added)", right)
@@ -133,44 +94,98 @@ func difference(field string, before, after any) []string {
 	}
 	if a, ok := before.([]any); ok {
 		if b, ok := after.([]any); ok {
-			// Identity comes from the documented receipt/install models, not a
-			// guessed key in arbitrary plugin data. Other arrays retain order.
-			key := ""
-			if field == "receipts" || strings.HasSuffix(field, ".receipts") {
-				key = "packageid"
-			}
-			if field == "installs" || strings.HasSuffix(field, ".installs") {
-				key = "path"
-			}
-			if key != "" {
-				am, aok := indexed(a, key)
-				bm, bok := indexed(b, key)
-				if aok && bok {
-					var result []string
-					keys := maps.Clone(am)
-					maps.Copy(keys, bm)
-					for _, id := range slices.Sorted(maps.Keys(keys)) {
-						left, exists := am[id]
-						if !exists {
-							left = missing{}
-						}
-						right, exists := bm[id]
-						if !exists {
-							right = missing{}
-						}
-						result = append(result, difference(field+"["+Text(id)+"]", left, right)...)
-					}
-					if len(result) > 0 {
-						return result
-					}
-					// Reordering can still be an explicit destination change.
-					// Do not erase it merely because the keyed members match.
-				}
-			}
-			return append([]string{field + ":"}, lineDiff(arrayLines(a), arrayLines(b))...)
+			return append([]string{field + ":"}, members(field, a, b)...)
 		}
 	}
 	return []string{field + ": " + transition(before, after)}
+}
+
+// members compares two collections as a diff, "- " for what goes and "+ " for
+// what comes, one member to a line. Members of the documented receipt,
+// install and included-app models are matched by identity, so a changed
+// member shows only the fields that changed. Other collections keep order.
+func members(field string, before, after []any) []string {
+	if key := identityKey(field); key != "" {
+		am, aok := indexed(before, key)
+		bm, bok := indexed(after, key)
+		if aok && bok {
+			// Removals come first, then changed members, then additions.
+			var removed, changed, added []string
+			ids := maps.Clone(am)
+			maps.Copy(ids, bm)
+			for _, id := range slices.Sorted(maps.Keys(ids)) {
+				left, had := am[id]
+				right, has := bm[id]
+				switch {
+				case !had:
+					added = append(added, "  + "+member(id, right))
+				case !has:
+					removed = append(removed, "  - "+member(id, left))
+				case !reflect.DeepEqual(left, right):
+					old, current := memberPair(id, left, right)
+					changed = append(changed, "  - "+old, "  + "+current)
+				}
+			}
+			if lines := slices.Concat(removed, changed, added); len(lines) > 0 {
+				return lines
+			}
+			// Reordering can still be an explicit destination change.
+		}
+	}
+	return lineDiff(before, after)
+}
+
+// identityKey names the field that identifies a member of a documented
+// collection, not a guessed key in arbitrary plugin data.
+func identityKey(field string) string {
+	switch {
+	case field == "receipts" || strings.HasSuffix(field, ".receipts"):
+		return "packageid"
+	case field == "installs" || strings.HasSuffix(field, ".installs"):
+		return "path"
+	case field == "included_apps":
+		return "id"
+	}
+	return ""
+}
+
+// member renders one collection member on a line: its identity, then its
+// fields in name order.
+func member(id string, fields map[string]any) string {
+	parts := make([]string, 0, len(fields))
+	for _, key := range slices.Sorted(maps.Keys(fields)) {
+		parts = append(parts, Text(key)+": "+value(fields[key]))
+	}
+	text := Text(id)
+	if text != "" && len(parts) > 0 {
+		text += ": "
+	}
+	return text + strings.Join(parts, ", ")
+}
+
+// memberPair renders the two versions of a changed member with only the
+// fields that differ, each pair of values reading differently.
+func memberPair(id string, before, after map[string]any) (string, string) {
+	keys := maps.Clone(before)
+	maps.Copy(keys, after)
+	var old, current []string
+	for _, key := range slices.Sorted(maps.Keys(keys)) {
+		a, had := before[key]
+		b, has := after[key]
+		if had && has && reflect.DeepEqual(a, b) {
+			continue
+		}
+		if !had {
+			a = missing{}
+		}
+		if !has {
+			b = missing{}
+		}
+		x, y := distinct(a, b)
+		old = append(old, Text(key)+": "+x)
+		current = append(current, Text(key)+": "+y)
+	}
+	return Text(id) + ": " + strings.Join(old, ", "), Text(id) + ": " + strings.Join(current, ", ")
 }
 
 func emptyValue(value any) bool {
@@ -182,6 +197,13 @@ func emptyValue(value any) bool {
 }
 
 func initial(field string, v any) []string {
+	if text, ok := multiline(v); ok {
+		rows := []string{field + ":"}
+		for line := range strings.SplitSeq(text, "\n") {
+			rows = append(rows, "  + "+Text(line))
+		}
+		return rows
+	}
 	var rows []string
 	switch v := v.(type) {
 	case map[string]any:
@@ -195,29 +217,12 @@ func initial(field string, v any) []string {
 		if len(v) == 0 {
 			return []string{field + ": []"}
 		}
-		// Reports mark the collection members a change adds or removes with
-		// "+ " and "- ", so members of a whole new or removed value use
-		// another bullet.
-		for _, item := range v {
-			fields, object := item.(map[string]any)
-			if !object || len(fields) == 0 {
-				rows = append(rows, "– "+summary(item))
-				continue
-			}
-			var member []string
-			for _, key := range slices.Sorted(maps.Keys(fields)) {
-				member = append(member, initial(Text(key), fields[key])...)
-			}
-			for i, line := range member {
-				prefix := "  "
-				if i == 0 {
-					prefix = "– "
-				}
-				rows = append(rows, prefix+line)
-			}
+		// A new collection is every member added.
+		for _, line := range members(field, nil, v) {
+			rows = append(rows, strings.TrimPrefix(line, "  "))
 		}
 	default:
-		return []string{field + ": " + summary(v)}
+		return []string{field + ": " + value(v)}
 	}
 	result := []string{field + ":"}
 	for _, row := range rows {
@@ -226,8 +231,8 @@ func initial(field string, v any) []string {
 	return result
 }
 
-func indexed(items []any, key string) (map[string]any, bool) {
-	result := make(map[string]any, len(items))
+func indexed(items []any, key string) (map[string]map[string]any, bool) {
+	result := make(map[string]map[string]any, len(items))
 	for _, item := range items {
 		fields, ok := item.(map[string]any)
 		if !ok {
@@ -247,22 +252,50 @@ func indexed(items []any, key string) (map[string]any, bool) {
 	return result, true
 }
 
-func arrayLines(items []any) string {
-	var text strings.Builder
-	for _, item := range items {
-		data, _ := json.Marshal(item)
-		text.Write(data)
-		text.WriteByte('\n')
+// readable renders one member of a collection without an identity.
+func readable(item any) string {
+	if fields, object := item.(map[string]any); object {
+		if slices.ContainsFunc(slices.Collect(maps.Values(fields)), func(v any) bool { _, ok := multiline(v); return ok }) {
+			var lines []string
+			for _, key := range slices.Sorted(maps.Keys(fields)) {
+				if text, ok := multiline(fields[key]); ok {
+					lines = append(lines, Text(key)+":")
+					for line := range strings.SplitSeq(text, "\n") {
+						lines = append(lines, "  "+Text(line))
+					}
+				} else {
+					lines = append(lines, Text(key)+": "+value(fields[key]))
+				}
+			}
+			return strings.Join(lines, "\n")
+		}
+		return member("", fields)
 	}
-	return text.String()
+	return value(item)
 }
 
-// lineDiff compares collections rendered one member per line.
-func lineDiff(before, after string) []string {
+// lineDiff compares collections member by member: exact renderings decide
+// what changed, and readable ones show it, unless two different members of
+// the change would read the same.
+func lineDiff(before, after []any) []string {
+	shown := map[string]string{}
+	exact := func(items []any) string {
+		var text strings.Builder
+		for _, item := range items {
+			data, _ := json.Marshal(item)
+			shown[string(data)] = readable(item)
+			text.Write(data)
+			text.WriteByte('\n')
+		}
+		return text.String()
+	}
 	dmp := diffmatchpatch.New()
-	a, b, lines := dmp.DiffLinesToChars(before, after)
+	a, b, lines := dmp.DiffLinesToChars(exact(before), exact(after))
 	diffs := dmp.DiffCharsToLines(dmp.DiffMain(a, b, false), lines)
-	var result []string
+	type change struct{ prefix, member string }
+	var changed []change
+	seen := map[string]string{}
+	ambiguous := map[string]bool{}
 	for _, diff := range diffs {
 		if diff.Type == diffmatchpatch.DiffEqual {
 			continue
@@ -272,47 +305,48 @@ func lineDiff(before, after string) []string {
 			prefix = "  - "
 		}
 		for line := range strings.SplitSeq(strings.TrimSuffix(diff.Text, "\n"), "\n") {
-			result = append(result, prefix+Text(line))
+			text := shown[line]
+			if other, ok := seen[text]; ok && other != line {
+				ambiguous[text] = true
+			}
+			seen[text] = line
+			changed = append(changed, change{prefix, line})
+		}
+	}
+	result := make([]string, 0, len(changed))
+	for _, c := range changed {
+		text := shown[c.member]
+		if ambiguous[text] {
+			text = Text(c.member)
+		}
+		for line := range strings.SplitSeq(text, "\n") {
+			result = append(result, c.prefix+line)
 		}
 	}
 	return result
 }
 
-// multiline reports whether v is text spanning lines. Reports describe such
-// values by size: they are usually scripts, which can embed environment values.
 func multiline(v any) (string, bool) {
 	text, ok := v.(string)
 	return text, ok && strings.Contains(text, "\n")
 }
 
-func lineCount(text string) int {
-	return strings.Count(strings.TrimSuffix(text, "\n"), "\n") + 1
-}
-
-func lineRange(before, after string) string {
-	a, b := lineCount(before), lineCount(after)
-	if a == b {
-		return plural(b, "line")
-	}
-	return strconv.Itoa(a) + " → " + plural(b, "line")
-}
-
+// plural counts a noun; an empty noun leaves the count and its space.
 func plural(count int, noun string) string {
-	if count != 1 {
+	if count != 1 && noun != "" {
 		noun += "s"
 	}
 	return strconv.Itoa(count) + " " + noun
 }
 
-// summary renders a value, describing multi-line text by its length.
-func summary(v any) string {
-	if text, ok := multiline(v); ok {
-		return plural(lineCount(text), "line")
-	}
-	return value(v)
+func transition(before, after any) string {
+	a, b := distinct(before, after)
+	return a + " → " + b
 }
 
-func transition(before, after any) string {
+// distinct renders two values so that different ones read differently:
+// shortened when that keeps them apart, in full, or exactly as JSON.
+func distinct(before, after any) (string, string) {
 	a, b := value(before), value(after)
 	if a == b && !reflect.DeepEqual(before, after) {
 		a, b = fullValue(before), fullValue(after)
@@ -322,7 +356,7 @@ func transition(before, after any) string {
 			a, b = Text(string(left)), Text(string(right))
 		}
 	}
-	return a + " → " + b
+	return a, b
 }
 
 func value(v any) string {

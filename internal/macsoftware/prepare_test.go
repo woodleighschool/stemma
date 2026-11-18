@@ -24,6 +24,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
 	"github.com/woodleighschool/stemma/internal/testutil/testdiskimage"
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -77,7 +78,7 @@ func TestUnsignedScriptApplicationExpectations(t *testing.T) {
 				t.Fatal(err)
 			}
 			var evidence []signature.Observation
-			if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &evidence); err != nil {
+			if err := json.Unmarshal(testevidence.Signatures(outputs["installer"].Evidence), &evidence); err != nil {
 				t.Fatal(err)
 			}
 			if len(evidence) != 1 || evidence[0].State != "unsigned" {
@@ -132,18 +133,18 @@ func TestResolvedApplicationRootPublishesOnlyItsApplication(t *testing.T) {
 func TestZIPApplicationIsPublishedInADiskImage(t *testing.T) {
 	filename := filepath.Join(t.TempDir(), "Example.zip")
 	testarchive.Zip(t, filename, applicationFixture(t))
-	input := plugin.Artifact{Path: filename, Filename: "Example.zip", Format: "zip", Evidence: map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"release":"preview"}`)}}
+	input := plugin.Artifact{Path: filename, Filename: "Example.zip", Format: "zip", Evidence: map[string]json.RawMessage{"vendor": json.RawMessage(`{"release":"preview"}`)}}
 	spec := Spec{Application: &Application{Path: "Example.app", VersionKey: "CFBundleVersion"}}
 	outputs, err := Prepare(t.Context(), spec, Request{Input: input, Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	installer := outputs["installer"]
-	if string(installer.Evidence["vendor.probe"]) != string(input.Evidence["vendor.probe"]) {
+	if string(installer.Evidence["vendor"]) != string(input.Evidence["vendor"]) {
 		t.Fatal("upstream evidence lost")
 	}
 	var app plugin.Subject
-	if err := json.Unmarshal(installer.Evidence["macos.application"], &app); err != nil {
+	if err := json.Unmarshal(testevidence.Application(installer.Evidence), &app); err != nil {
 		t.Fatal(err)
 	}
 	if installer.Format != "dmg" || installer.Filename != "Example.dmg" || installer.Version != "123" || app.Path != "Example.app" || app.InstalledPath != "/Applications/Example.app" || len(outputs) != 1 {
@@ -243,7 +244,7 @@ func TestPackagePublishesTheSelectedApplication(t *testing.T) {
 		installer := outputs["installer"]
 		digests[installer.SHA256] = true
 		var app plugin.Subject
-		if err := json.Unmarshal(installer.Evidence["macos.application"], &app); err != nil {
+		if err := json.Unmarshal(testevidence.Application(installer.Evidence), &app); err != nil {
 			t.Fatal(err)
 		}
 		if installer.Format != "pkg" || installer.Filename != "Example.pkg" || installer.Version != "1.2" || app.InstalledPath != "/Applications/Example.app" || !signature.BuiltUnsigned(installer) {
@@ -311,11 +312,11 @@ func TestPackageSignatureVerifiesTheApplication(t *testing.T) {
 	}
 	installer := outputs["installer"]
 	var evidence []signature.Observation
-	if err := json.Unmarshal(installer.Evidence["signatures"], &evidence); err != nil {
+	if err := json.Unmarshal(testevidence.Signatures(installer.Evidence), &evidence); err != nil {
 		t.Fatal(err)
 	}
 	var app plugin.Subject
-	if err := json.Unmarshal(installer.Evidence["macos.application"], &app); err != nil {
+	if err := json.Unmarshal(testevidence.Application(installer.Evidence), &app); err != nil {
 		t.Fatal(err)
 	}
 	if len(evidence) != 1 || evidence[0].Signer != signer || evidence[0].Subject.Path != app.Path || !signature.BuiltUnsigned(installer) {
@@ -348,7 +349,7 @@ func TestPackageSignatureVerifiesTheApplication(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := json.Unmarshal(outputs["installer"].Evidence["macos.application"], &app); err != nil {
+			if err := json.Unmarshal(testevidence.Application(outputs["installer"].Evidence), &app); err != nil {
 				t.Fatal(err)
 			}
 			if app.Path != named.Signatures[0].Subject.Path || app.InstalledPath != named.Application.InstalledPath {
@@ -402,7 +403,7 @@ func TestZIPSignatureVerifiesTheApplication(t *testing.T) {
 	}
 	installer := outputs["installer"]
 	var evidence []signature.Observation
-	if err := json.Unmarshal(installer.Evidence["signatures"], &evidence); err != nil {
+	if err := json.Unmarshal(testevidence.Signatures(installer.Evidence), &evidence); err != nil {
 		t.Fatal(err)
 	}
 	if installer.Format != "dmg" || evidence[0].Signer != signer || evidence[0].Target != "WoodSweep.app" {
@@ -440,7 +441,7 @@ func TestDMGApplicationRetainsVendorBytes(t *testing.T) {
 	}
 	installer := outputs["installer"]
 	var app plugin.Subject
-	if err := json.Unmarshal(installer.Evidence["macos.application"], &app); err != nil {
+	if err := json.Unmarshal(testevidence.Application(installer.Evidence), &app); err != nil {
 		t.Fatal(err)
 	}
 	if installer.Format != "dmg" || installer.SHA256 != hex.EncodeToString(hash[:]) || app.Path != "Example.app" || app.InstalledPath != "/Applications/Renamed.app" {
@@ -473,16 +474,15 @@ func TestPackageApplicationDetectionIsExplicit(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := plugin.Artifact{Path: filename, Filename: "Installer.pkg", Format: "pkg", Version: "1.8", Evidence: map[string]json.RawMessage{
-		"source":            json.RawMessage(`{"version":"2026.3"}`),
-		"macos.application": json.RawMessage(`{"id":"old","app":{"bundle_id":"org.example.stale"}}`),
-		"macos.version_key": json.RawMessage(`"CFBundleVersion"`),
+		"source": json.RawMessage(`{"version":"2026.3"}`),
+		"macos":  json.RawMessage(`{"application":{"id":"old","app":{"bundle_id":"org.example.stale"}},"version_key":"CFBundleVersion"}`),
 	}}
 	outputs, err := Prepare(t.Context(), Spec{}, Request{Input: input, Workspace: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
 	installer := outputs["installer"]
-	if installer.Version != "2.0" || string(installer.Evidence["source"]) != `{"version":"2026.3"}` || installer.Evidence["macos.application"] != nil || installer.Evidence["macos.version_key"] != nil || len(topLevel(installer.Facts)) != 1 {
+	if installer.Version != "2.0" || string(installer.Evidence["source"]) != `{"version":"2026.3"}` || testevidence.Application(installer.Evidence) != nil || testevidence.VersionKey(installer.Evidence) != nil || len(topLevel(installer.Facts)) != 1 {
 		t.Fatalf("installer evidence = %+v", installer)
 	}
 	derived, err := munki.Derive(plugin.ReconcileRequest[json.RawMessage]{Prepared: true, Identity: plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "Installer"}}, Artifact: installer})
@@ -529,7 +529,7 @@ func TestPackageWithMultipleApplicationsRetainsInstallerEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	installer := outputs["installer"]
-	if installer.Version != "2.0" || installer.Format != "pkg" || len(topLevel(installer.Facts)) != 2 || installer.Evidence["macos.application"] != nil {
+	if installer.Version != "2.0" || installer.Format != "pkg" || len(topLevel(installer.Facts)) != 2 || testevidence.Application(installer.Evidence) != nil {
 		t.Fatalf("installer evidence = %+v", installer)
 	}
 	if published, err := os.ReadFile(installer.Path); err != nil || !bytes.Equal(published, data) {
@@ -550,7 +550,7 @@ func TestPackageWithMultipleApplicationsRetainsInstallerEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	var selected plugin.Subject
-	if err := json.Unmarshal(outputs["installer"].Evidence["macos.application"], &selected); err != nil || selected.Path != "Payload/Applications/Main.app" || outputs["installer"].Version != "1.2" {
+	if err := json.Unmarshal(testevidence.Application(outputs["installer"].Evidence), &selected); err != nil || selected.Path != "Payload/Applications/Main.app" || outputs["installer"].Version != "1.2" {
 		t.Fatalf("selected application = %+v: %v", selected, err)
 	}
 	if _, err := Prepare(t.Context(), Spec{Signatures: []signature.Expectation{{Subject: plugin.SubjectSelector{Path: "."}, Signer: "apple:developer-id:SMLKBTR495"}}}, Request{Input: input, Workspace: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "not signed") {
@@ -566,7 +566,7 @@ func TestPackageWithMultipleApplicationsRetainsInstallerEvidence(t *testing.T) {
 			t.Fatal(err)
 		}
 		var observed []signature.Observation
-		if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &observed); err != nil || len(observed) != 1 || observed[0].State != "unsigned" || observed[0].Subject.Path != "." {
+		if err := json.Unmarshal(testevidence.Signatures(outputs["installer"].Evidence), &observed); err != nil || len(observed) != 1 || observed[0].State != "unsigned" || observed[0].Subject.Path != "." {
 			t.Fatalf("unsigned observations: %+v, %v", observed, err)
 		}
 	}
@@ -678,7 +678,7 @@ func TestPackageIsPublishedAsALocalFile(t *testing.T) {
 				t.Fatal(err)
 			}
 			var app plugin.Subject
-			if err := json.Unmarshal(outputs["installer"].Evidence["macos.application"], &app); err != nil || outputs["installer"].Format != "pkg" || app.InstalledPath != "/Applications/SignedFixture.app" {
+			if err := json.Unmarshal(testevidence.Application(outputs["installer"].Evidence), &app); err != nil || outputs["installer"].Format != "pkg" || app.InstalledPath != "/Applications/SignedFixture.app" {
 				t.Fatalf("application in package: %+v, %v", app, err)
 			}
 		})
@@ -733,7 +733,7 @@ func TestDMGSignatureVerifiesInsideTheImage(t *testing.T) {
 				t.Fatal(err)
 			}
 			var evidence []signature.Observation
-			if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &evidence); err != nil {
+			if err := json.Unmarshal(testevidence.Signatures(outputs["installer"].Evidence), &evidence); err != nil {
 				t.Fatal(err)
 			}
 			if evidence[0].Signer != signer || evidence[0].Name != "Woodleigh School" || evidence[0].Target != "SignedFixture.app" {
@@ -749,7 +749,7 @@ func TestDMGSignatureVerifiesInsideTheImage(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := json.Unmarshal(derived["installer"].Evidence["signatures"], &evidence); err != nil || evidence[0].Signer != signer {
+			if err := json.Unmarshal(testevidence.Signatures(derived["installer"].Evidence), &evidence); err != nil || evidence[0].Signer != signer {
 				t.Fatalf("derived evidence: %+v: %v", evidence, err)
 			}
 		})
@@ -772,7 +772,7 @@ func TestDMGSignatureVerifiesEveryApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 	var evidence []signature.Observation
-	if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &evidence); err != nil || evidence[0].Signer != signer || len(evidence) != 2 || evidence[0].Subject.Path != "Suite/Companion.app" || evidence[1].Subject.Path != "Suite/Main.app" {
+	if err := json.Unmarshal(testevidence.Signatures(outputs["installer"].Evidence), &evidence); err != nil || evidence[0].Signer != signer || len(evidence) != 2 || evidence[0].Subject.Path != "Suite/Companion.app" || evidence[1].Subject.Path != "Suite/Main.app" {
 		t.Fatalf("signature evidence: %+v, %v", evidence, err)
 	}
 	// A new independently signed companion still needs an explicit assertion.
@@ -789,7 +789,7 @@ func TestDMGSignatureVerifiesEveryApplication(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &evidence); err != nil || len(evidence) != 3 {
+	if err := json.Unmarshal(testevidence.Signatures(outputs["installer"].Evidence), &evidence); err != nil || len(evidence) != 3 {
 		t.Fatalf("derived observations: %+v, %v", evidence, err)
 	}
 }
@@ -887,7 +887,7 @@ func TestPackagePathOpensOneOfSeveralDiskImages(t *testing.T) {
 	}
 	// The path is spent on the image; the application selector applies inside it.
 	installer, err = prepare(Spec{PackagePath: "Vendor.dmg", Application: &Application{BundleID: "org.example.app"}})
-	if err != nil || installer.Format != "pkg" || installer.Evidence["macos.application"] == nil {
+	if err != nil || installer.Format != "pkg" || testevidence.Application(installer.Evidence) == nil {
 		t.Fatalf("package in the selected image = %+v, %v", installer, err)
 	}
 	if _, err := prepare(Spec{PackagePath: "Vendor.dmg"}); err == nil || !strings.Contains(err.Error(), "Vendor.dmg: found 2") {

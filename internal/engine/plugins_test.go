@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
@@ -55,7 +55,7 @@ spec:
 	if _, err := Run(t.Context(), opts); err == nil || !strings.Contains(err.Error(), "plugin provider did not load") {
 		t.Fatalf("prepare with an unlocked plugin: %v", err)
 	}
-	if locked, err := lockfile.Load(root); err == nil && len(locked.Plugins) != 0 {
+	if locked, err := lock.Load(root); err == nil && len(locked.Plugins) != 0 {
 		t.Fatalf("prepare locked a plugin: %+v", locked.Plugins)
 	}
 
@@ -105,7 +105,7 @@ spec:
 		t.Fatalf("prepare with changed plugin files: %v", err)
 	}
 	if current, err := testproject.ReadLock(root); err != nil || !bytes.Equal(current, reviewed) {
-		t.Fatalf("prepare changed the lockfile: %v", err)
+		t.Fatalf("prepare changed the lock: %v", err)
 	}
 	opts.Method = "update"
 	report, err := Run(t.Context(), opts)
@@ -113,12 +113,12 @@ spec:
 		t.Fatalf("stemma update did not relock changed plugin files: %+v %v", report.Plugins, err)
 	}
 
-	file, err := lockfile.Load(root)
+	file, err := lock.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	file.Plugins["retired"] = plugins.Entry{Declaration: "retired", Digest: locked}
-	if err := lockfile.Save(root, file); err != nil {
+	if err := lock.Save(root, file); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("STEMMA_ECHO_STALE_KIND", "reconcile")
@@ -217,5 +217,30 @@ func writeEchoPlugin(t *testing.T, filename string) {
 	}
 	if err := os.WriteFile(filename, echoPlugin.data, 0o755); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPluginUpdateRemovesUnreadableDocumentWithoutDeclarations(t *testing.T) {
+	for _, data := range []string{"invalid: [", "version: -1\nplugins: {}\n"} {
+		root := t.TempDir()
+		filename := filepath.Join(root, "stemma.yaml")
+		testproject.Write(t, filename, "apiVersion: stemma/v1alpha1\nkind: Project\nmetadata: {name: fixture}\nspec: {imports: ['*.software.yaml']}\n")
+		locked := filepath.Join(root, "stemma.lock", "plugins.yaml")
+		if err := os.MkdirAll(filepath.Dir(locked), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(locked, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		result, err := UpdatePlugins(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir()}, nil)
+		if err != nil || !result.LockChanged {
+			t.Fatalf("repair: %+v, %v", result, err)
+		}
+		if _, err := os.Stat(locked); !os.IsNotExist(err) {
+			t.Fatalf("unusable document survived: %v", err)
+		}
+		if _, err := lock.LoadPlugins(root); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

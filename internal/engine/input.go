@@ -66,7 +66,7 @@ func (e *execution) withInput(ctx context.Context, consume func(context.Context,
 		var entry source.Entry
 		if declaration.Resource == nil {
 			var err error
-			entry, _, err = e.locked.ReadInput(ctx, e.inputOwner, e.opts.Input.Name)
+			entry, err = e.locked.ReadInput(ctx, e.inputOwner, e.opts.Input.Name)
 			if err != nil {
 				return err
 			}

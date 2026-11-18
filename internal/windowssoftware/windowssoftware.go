@@ -162,7 +162,7 @@ func Prepare(ctx context.Context, spec Spec, inputs map[string]plugin.Artifact, 
 			// An entry point that can carry a signature has none expected of
 			// it, so one can be recommended. A wrapper script has none to derive.
 			unverified := []signature.Unverified{{Subject: plugin.SubjectSelector{Path: result.Facts.Subjects[0].Path}}}
-			err = record(&result, signature.UnverifiedEvidence, unverified)
+			err = record(&result, signature.Evidence{Unverified: unverified})
 		}
 	}
 	if err != nil {
@@ -180,16 +180,11 @@ func setupFile(artifact plugin.Artifact) string {
 	return artifact.Path
 }
 
-func record(artifact *plugin.Artifact, name string, value any) error {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
+func record(artifact *plugin.Artifact, signing signature.Evidence) error {
 	if artifact.Evidence == nil {
 		artifact.Evidence = map[string]json.RawMessage{}
 	}
-	artifact.Evidence[name] = data
-	return nil
+	return signing.Write(artifact.Evidence)
 }
 
 func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact, derive bool) error {
@@ -201,14 +196,14 @@ func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact, 
 	setup := setupFile(*artifact)
 	// describe inspects only the selected entry point, not auxiliary executables.
 	subject := artifact.Facts.Subjects[0]
-	observations, err := signature.Verify(ctx, spec.Signatures, []plugin.Subject{subject}, derive, func(plugin.Subject) (signature.Result, error) {
+	observations, err := signature.Verify(ctx, artifact.Filename, spec.Signatures, []plugin.Subject{subject}, derive, func(plugin.Subject) (signature.Result, error) {
 		result, err := authenticode.Verify(ctx, setup, signature.Signer{})
 		return result, err
 	})
 	if err != nil {
 		return err
 	}
-	return record(artifact, "signatures", observations)
+	return record(artifact, signature.Evidence{Observed: observations})
 }
 
 // assemble writes the setup tree at root. An archive source is extracted in
@@ -216,7 +211,7 @@ func verifySignature(ctx context.Context, spec Spec, artifact *plugin.Artifact, 
 func assemble(ctx context.Context, root string, source plugin.Artifact, archived bool, content *Content, inputs map[string]plugin.Artifact) error {
 	tree := source
 	if archived {
-		done := plugin.Stage(ctx, "Extracting archive", plugin.Detail(source.Filename))
+		done := plugin.Stage(ctx, "Extracting archive", plugin.Item(source.Filename))
 		err := archive.Extract(ctx, source.Path, root)
 		done(err)
 		if err != nil {
@@ -287,9 +282,8 @@ func describe(ctx context.Context, artifact plugin.Artifact, setup, versionFile 
 	}
 	artifact.Facts = facts
 	artifact.Evidence = maps.Clone(artifact.Evidence)
-	delete(artifact.Evidence, "windows.installer")
-	delete(artifact.Evidence, "signatures")
-	delete(artifact.Evidence, signature.UnverifiedEvidence)
+	delete(artifact.Evidence, plugin.EvidenceWindows)
+	delete(artifact.Evidence, plugin.EvidenceSigning)
 	for _, subject := range facts.Subjects {
 		if subject.Parent != "" || subject.MSI == nil {
 			continue
@@ -298,14 +292,14 @@ func describe(ctx context.Context, artifact plugin.Artifact, setup, versionFile 
 			artifact.Evidence = map[string]json.RawMessage{}
 		}
 		subject.Path = setup
-		artifact.Evidence["windows.installer"], err = json.Marshal(subject)
+		artifact.Evidence[plugin.EvidenceWindows], err = json.Marshal(plugin.WindowsEvidence{Installer: &subject})
 		if err != nil {
 			return artifact, err
 		}
 		artifact.Version = subject.MSI.ProductVersion
 	}
 	if versionFile != "" {
-		if len(artifact.Evidence["windows.installer"]) == 0 {
+		if len(artifact.Evidence[plugin.EvidenceWindows]) == 0 {
 			return artifact, errors.New("version_file requires an MSI setup file")
 		}
 		if artifact.Version, err = msi.FileVersion(installer, versionFile); err != nil {

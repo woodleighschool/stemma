@@ -16,9 +16,9 @@ import (
 // misreads. Stemma uses a plugin's operations of a kind only while the plugin
 // implements that kind at the host's version.
 const (
-	ResolveInterface   = 3
-	ResourceInterface  = 3
-	ReconcileInterface = 3
+	ResolveInterface   = 4
+	ResourceInterface  = 4
+	ReconcileInterface = 4
 )
 
 // interfaces maps each operation kind to the version this SDK implements.
@@ -83,6 +83,8 @@ type Artifact struct {
 // false and empty collections; Config contains provider-owned connection settings.
 // Validate requests omit Config: they check desired state without connecting,
 // and plan and apply check the settings they connect with.
+// Each method validates its request independently. Prepared content goes directly
+// to plan or apply; validate serves declaration checks and prepare.
 //
 // A destination keeps no state between runs: it identifies what it manages from
 // Identity and the destination itself. Peers holds declared metadata for each
@@ -109,7 +111,7 @@ type MinimumOS struct {
 	Origin  string `json:"origin"`
 }
 
-// ReconcileResponse carries the changes a run planned or made.
+// ReconcileResponse answers each method.
 //
 // Content requests bytes needed to complete this method. Return it before any
 // writes. The engine retries the method once with verified private copies of
@@ -119,14 +121,39 @@ type MinimumOS struct {
 // Consumers verify the bytes they publish against the artifact identity and
 // the destination's transfer integrity contract.
 //
-// Validate may return Metadata in the declaration's shape, including derived
+// Each method may return Metadata in the declaration's shape, including derived
 // values and nulls for cleared fields. It excludes destination-assigned values
-// and preserved remote state. Origins names each managed field's source.
+// and preserved remote state. Origins names each managed field's source, keyed
+// by the field's path in the declared metadata.
+//
+// Plan and apply describe the publication. Version is what clients get from
+// the destination, using its native version or filename, and Previous labels
+// what it held before: empty when the software is new to the
+// destination, equal to Version for an update in place. Uploads are the bytes
+// the method puts in the destination. Fields are the managed metadata that
+// differ from the object the publication replaces: the previous version's
+// object where the destination keeps one object per version, the current
+// object where it updates in place, and nothing for new software, whose
+// fields carry only After. Version clears remain explicit fields. Removed names
+// what retention deletes, by version where the destination records one and by
+// the item's own name otherwise. Destinations determine writes from native pending
+// work; a failed apply's partial response reports confirmed effects.
 type ReconcileResponse struct {
 	Content  *ContentRequest   `json:"content,omitempty"`
-	Changes  []Change          `json:"changes,omitempty"`
-	Origins  map[string]string `json:"origins,omitempty"`
 	Metadata json.RawMessage   `json:"metadata,omitempty"`
+	Origins  map[string]string `json:"origins,omitempty"`
+	Version  string            `json:"version,omitempty"`
+	Previous string            `json:"previous,omitempty"`
+	Uploads  []Upload          `json:"uploads,omitempty"`
+	Fields   []FieldChange     `json:"fields,omitempty"`
+	// Repairs names derived destination records the method rebuilds.
+	Repairs []string `json:"repairs,omitempty"`
+	Removed []string `json:"removed,omitempty"`
+}
+
+// Changed reports whether the publication changes the destination.
+func (r ReconcileResponse) Changed() bool {
+	return r.Version != "" && r.Version != r.Previous || len(r.Uploads) > 0 || len(r.Fields) > 0 || len(r.Removed) > 0 || len(r.Repairs) > 0
 }
 
 // ContentRequest selects the primary artifact and named inputs to materialize.
@@ -135,19 +162,30 @@ type ContentRequest struct {
 	Inputs   []string `json:"inputs,omitempty"`
 }
 
-// Change is a semantic destination change; an empty Changes list needs no write.
-type Change struct {
-	// Review groups compound initial values using the destination's domain.
-	// Scalar creations and ordinary field differences need no extra review.
-	// Before and After retain the complete values for detailed review.
-	Review []string `json:"review,omitempty"`
-	// Filename identifies uploaded content separately from its before/after identity.
-	Filename string          `json:"filename,omitempty"`
-	Kind     string          `json:"kind"`
-	Field    string          `json:"field"`
-	Action   string          `json:"action"`
-	Before   json.RawMessage `json:"before,omitempty"`
-	After    json.RawMessage `json:"after,omitempty"`
+// Uploads a publication can make.
+const (
+	UploadInstaller = "installer"
+	UploadIcon      = "icon"
+)
+
+// Upload is bytes a publication puts in the destination. Before is the SHA-256
+// of the bytes the destination held, if any.
+type Upload struct {
+	Name     string `json:"name"`
+	Filename string `json:"filename"`
+	Before   string `json:"before,omitempty"`
+	After    string `json:"after"`
+}
+
+// FieldChange is one managed metadata field a publication sets. Field is its
+// path in the declared metadata, the key Origins uses, and values name things
+// as the declaration does rather than by destination IDs. Before is absent
+// for a field the replaced object lacks; After is absent for a field the
+// publication removes, and null clears it.
+type FieldChange struct {
+	Field  string          `json:"field"`
+	Before json.RawMessage `json:"before,omitempty"`
+	After  json.RawMessage `json:"after,omitempty"`
 }
 
 // FactsVersion identifies the model used for observed artifact evidence.

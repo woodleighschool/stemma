@@ -34,7 +34,7 @@ func TestPublicationCreatesMarkedPackageAndConvergesWithoutState(t *testing.T) {
 	request.Metadata = raw(map[string]any{"priority": 5, "info": "Initial info", "reboot_required": true})
 	request.Method = "plan"
 	plan, err := Handle(t.Context(), request)
-	if err != nil || len(plan.Changes) != 4 {
+	if err != nil || len(plan.Uploads) != 1 || !slices.Equal(fieldPaths(plan), []string{"filename", "info", "priority", "reboot_required"}) {
 		t.Fatalf("first plan: %+v: %v", plan, err)
 	}
 	if writes := server.writes(); len(writes) != 0 {
@@ -61,7 +61,7 @@ func TestPublicationCreatesMarkedPackageAndConvergesWithoutState(t *testing.T) {
 	for _, method := range []string{"plan", "apply"} {
 		request.Method = method
 		response, err := Handle(t.Context(), request)
-		if err != nil || len(response.Changes) != 0 {
+		if err != nil || response.Changed() {
 			t.Fatalf("unchanged %s: %+v: %v", method, response, err)
 		}
 	}
@@ -82,7 +82,7 @@ func TestPublicationCreatesMarkedPackageAndConvergesWithoutState(t *testing.T) {
 	server.set("info", raw("now owned remotely"))
 	request.Metadata = raw(map[string]any{"priority": 7})
 	response, err := Handle(t.Context(), request)
-	if err != nil || len(response.Changes) != 0 {
+	if err != nil || response.Changed() {
 		t.Fatalf("omitted fields should be left unchanged: %+v: %v", response, err)
 	}
 	if stringField(server.record("1"), "info") != "now owned remotely" {
@@ -107,7 +107,7 @@ func TestNotesKeepMarkerBelowExplicitOrRemoteText(t *testing.T) {
 	}
 	server.set("notes", raw("Operator note\n"+fixtureMarker))
 	response, err := Handle(t.Context(), request)
-	if err != nil || len(response.Changes) != 0 {
+	if err != nil || response.Changed() {
 		t.Fatalf("omitted notes were rewritten: %+v: %v", response, err)
 	}
 	for _, step := range []struct {
@@ -135,7 +135,7 @@ func TestNotesKeepMarkerBelowExplicitOrRemoteText(t *testing.T) {
 			if got := stringField(server.record("1"), "notes"); got != step.want {
 				t.Fatalf("notes = %q, want %q", got, step.want)
 			}
-			if response, err := Handle(t.Context(), request); err != nil || len(response.Changes) != 0 {
+			if response, err := Handle(t.Context(), request); err != nil || response.Changed() {
 				t.Fatalf("notes did not settle: %+v: %v", response, err)
 			}
 		})
@@ -150,11 +150,13 @@ func TestChangedBytesUnderSameFileNameUploadIntoSameRecord(t *testing.T) {
 	if _, err := Handle(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
+	first := request.Artifact.SHA256
 	request.Artifact = fixtureArtifact(t, "rebuilt package bytes")
 	request.Method = "plan"
 	writes := len(server.writes())
 	plan, err := Handle(t.Context(), request)
-	if err != nil || len(plan.Changes) != 1 || plan.Changes[0].Kind != "content" || plan.Changes[0].Action != "upload" {
+	want := plugin.Upload{Name: plugin.UploadInstaller, Filename: "vendor.pkg", Before: first, After: request.Artifact.SHA256}
+	if err != nil || len(plan.Uploads) != 1 || plan.Uploads[0] != want || len(plan.Fields) != 0 {
 		t.Fatalf("drift plan: %+v: %v", plan, err)
 	}
 	if len(server.writes()) != writes {
@@ -214,7 +216,7 @@ func TestNewFileNameCreatesAnotherFamilyRecord(t *testing.T) {
 	}
 	request.Artifact = first
 	writes := len(server.writes())
-	if response, err := Handle(t.Context(), request); err != nil || len(response.Changes) != 0 {
+	if response, err := Handle(t.Context(), request); err != nil || response.Changed() {
 		t.Fatalf("returning to the earlier file name: %+v: %v", response, err)
 	}
 	if len(server.writes()) != writes {
@@ -274,7 +276,7 @@ func TestPackageIDAdoptsMarksAndConverges(t *testing.T) {
 	}
 	request.Metadata = raw(map[string]any{"priority": 0})
 	writes := len(server.writes())
-	if response, err := Handle(t.Context(), request); err != nil || len(response.Changes) != 0 {
+	if response, err := Handle(t.Context(), request); err != nil || response.Changed() {
 		t.Fatalf("adopted package left the family: %+v: %v", response, err)
 	}
 	if len(server.writes()) != writes {
@@ -376,7 +378,7 @@ func TestUnfinishedContentIsUploadedAgain(t *testing.T) {
 			server.seed(map[string]any{"fileName": "vendor.pkg", "packageName": "vendor.pkg", "notes": fixtureMarker, "cloudTransferStatus": status})
 			request.Method = "plan"
 			plan, err := Handle(t.Context(), request)
-			if err != nil || len(plan.Changes) != 1 || plan.Changes[0].Action != "upload" {
+			if err != nil || len(plan.Uploads) != 1 || len(plan.Fields) != 0 {
 				t.Fatalf("unfinished content plan: %+v: %v", plan, err)
 			}
 			request.Method = "apply"
@@ -446,8 +448,12 @@ func TestPublicationRecoversUnrefreshedUpload(t *testing.T) {
 				t.Fatal("plan refreshed cloud inventory")
 			}
 			request.Method = "apply"
-			if _, err := Handle(t.Context(), request); err != nil {
+			result, err := Handle(t.Context(), request)
+			if err != nil {
 				t.Fatal(err)
+			}
+			if len(result.Uploads) != 0 {
+				t.Fatalf("recovery reported a transfer: %+v", result)
 			}
 			if server.count("POST "+packagePath+"/1/upload") != 0 || server.count("POST "+packagePath) != 0 {
 				t.Fatalf("completed upload was repeated: %v", server.writes())
@@ -525,7 +531,7 @@ func TestPendingUploadIsNotRepeatedWhenProcessingTimesOut(t *testing.T) {
 		ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 		defer cancel()
 		start := time.Now()
-		_, err := c.publishPackage(ctx, &observed{Fields: server.record("1")}, map[string]json.RawMessage{"fileName": raw("vendor.pkg")}, request.Identity.Digest(), request.Artifact.Path, content)
+		_, err := c.publishPackage(ctx, &observed{Fields: server.record("1")}, map[string]json.RawMessage{"fileName": raw("vendor.pkg")}, request.Identity.Digest(), request.Artifact.Path, content, &plugin.ReconcileResponse{})
 		if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) != time.Second {
 			t.Fatalf("publication did not honor its shorter deadline: elapsed=%s, err=%v", time.Since(start), err)
 		}
@@ -539,9 +545,12 @@ func (f jamfRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { r
 func TestFailedUploadLeavesRecordForNextRun(t *testing.T) {
 	server, request := newFixture(t)
 	server.failUpload = true
-	_, err := Handle(t.Context(), request)
+	response, err := Handle(t.Context(), request)
 	if err == nil {
 		t.Fatal("failed upload was published")
+	}
+	if response.Changed() {
+		t.Fatalf("failed upload reported its uncompleted plan: %+v", response)
 	}
 	if strings.Contains(err.Error(), "test-client-secret") {
 		t.Fatal("credential leaked in HTTP error")
@@ -691,6 +700,12 @@ func TestCategoryResolvesByExactName(t *testing.T) {
 		t.Fatalf("categoryId = %q, want 7", got)
 	}
 	request.Metadata = raw(map[string]any{"category": nil})
+	request.Method = "plan"
+	plan, err := Handle(t.Context(), request)
+	if change := changedFields(plan)["category"]; err != nil || !equalJSON(change.Before, raw("Productivity")) || !equalJSON(change.After, raw(nil)) {
+		t.Fatalf("category plan is not in declaration terms: %+v: %v", plan.Fields, err)
+	}
+	request.Method = "apply"
 	if _, err := Handle(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -879,6 +894,15 @@ func (s *fakeServer) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.native != nil && s.native.handle(s, w, r) {
+		return
+	}
+	if id, ok := strings.CutPrefix(r.URL.Path, "/api/v1/categories/"); ok && r.Method == http.MethodGet {
+		name, exists := s.categories[id]
+		if !exists {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		writeJSON(s.t, w, map[string]string{"id": id, "name": name})
 		return
 	}
 	if r.URL.Path == "/api/v1/categories" && r.Method == http.MethodGet {
@@ -1111,6 +1135,25 @@ func (s *fakeServer) record(id string) map[string]json.RawMessage {
 	}
 	return record
 }
+
+// fieldPaths lists the fields a response reports, in order.
+func fieldPaths(response plugin.ReconcileResponse) []string {
+	var paths []string
+	for _, field := range response.Fields {
+		paths = append(paths, field.Field)
+	}
+	return paths
+}
+
+// changedFields indexes the fields a response reports by path.
+func changedFields(response plugin.ReconcileResponse) map[string]plugin.FieldChange {
+	fields := map[string]plugin.FieldChange{}
+	for _, field := range response.Fields {
+		fields[field.Field] = field
+	}
+	return fields
+}
+
 func writeJSON(t testing.TB, w http.ResponseWriter, value any) {
 	t.Helper()
 	if err := json.NewEncoder(w).Encode(value); err != nil {

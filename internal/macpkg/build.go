@@ -159,7 +159,7 @@ func (s *sources) inventory(ctx context.Context, name string) (plugin.Facts, err
 	if err != nil {
 		return plugin.Facts{}, err
 	}
-	done := plugin.Stage(ctx, "Inspecting input", plugin.Detail(name))
+	done := plugin.Stage(ctx, "Inspecting input", plugin.Item(name))
 	facts, err := inspect.Source(ctx, source)
 	done(err)
 	if err != nil {

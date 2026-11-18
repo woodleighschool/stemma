@@ -14,6 +14,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/archive"
 	"github.com/woodleighschool/stemma/internal/signature"
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -40,7 +41,7 @@ func TestSetupTreePreservesFilesAndSelectsMSIEvidence(t *testing.T) {
 	source := t.TempDir()
 	writeFixture(t, source, "bin/vendor.msi", msi, 0o640)
 	companion := writeFixture(t, t.TempDir(), "settings.ini", []byte("[Install]\nSilent=1\n"), 0o604)
-	inputs := map[string]plugin.Artifact{"source": {Path: source, Tree: true, EntryPoint: "bin/vendor.msi", Version: "stale", Evidence: map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"channel":"stable"}`)}}, "file:settings.ini": {Path: companion, Mode: 0o604}}
+	inputs := map[string]plugin.Artifact{"source": {Path: source, Tree: true, EntryPoint: "bin/vendor.msi", Version: "stale", Evidence: map[string]json.RawMessage{"vendor": json.RawMessage(`{"channel":"stable"}`)}}, "file:settings.ini": {Path: companion, Mode: 0o604}}
 	spec := Spec{Content: &Content{Files: map[string]plugin.Input{"settings.ini": {}}}}
 	outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false)
 	if err != nil {
@@ -51,10 +52,10 @@ func TestSetupTreePreservesFilesAndSelectsMSIEvidence(t *testing.T) {
 		t.Fatalf("prepared installer: %#v", artifact)
 	}
 	var selected plugin.Subject
-	if err := json.Unmarshal(artifact.Evidence["windows.installer"], &selected); err != nil {
+	if err := json.Unmarshal(testevidence.Installer(artifact.Evidence), &selected); err != nil {
 		t.Fatal(err)
 	}
-	if selected.MSI == nil || selected.Path != "bin/vendor.msi" || selected.MSI.ProductCode != "{8B2D32B7-0BE9-4CF9-B1E7-42C27753A6B8}" || string(artifact.Evidence["vendor.probe"]) != `{"channel":"stable"}` {
+	if selected.MSI == nil || selected.Path != "bin/vendor.msi" || selected.MSI.ProductCode != "{8B2D32B7-0BE9-4CF9-B1E7-42C27753A6B8}" || string(artifact.Evidence["vendor"]) != `{"channel":"stable"}` {
 		t.Fatal("incorrect selected MSI evidence")
 	}
 	for name, original := range map[string]string{"bin/vendor.msi": filepath.Join(source, "bin", "vendor.msi"), "settings.ini": companion} {
@@ -193,7 +194,7 @@ func TestVersionFileSelectsTheManagedVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	var selected plugin.Subject
-	if err := json.Unmarshal(outputs["installer"].Evidence["windows.installer"], &selected); err != nil {
+	if err := json.Unmarshal(testevidence.Installer(outputs["installer"].Evidence), &selected); err != nil {
 		t.Fatal(err)
 	}
 	if outputs["installer"].Version != "7.2.1.48556" || selected.MSI == nil || selected.MSI.ProductVersion != "1.2.3" {
@@ -243,17 +244,17 @@ func TestCompanionScriptReplacesSelectedMSIEvidence(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "executed")
 	script := []byte("#!/bin/sh\ntouch " + marker + "\nexit 91\n")
 	command := writeFixture(t, t.TempDir(), "install.cmd", script, 0o755)
-	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: "vendor.msi", Mode: 0o644, Version: "1.2.3", Evidence: map[string]json.RawMessage{"windows.installer": json.RawMessage(`{"msi":{"productCode":"stale"}}`), "vendor.probe": json.RawMessage(`true`)}}, "file:install.cmd": {Path: command, Mode: 0o755}}
+	inputs := map[string]plugin.Artifact{"source": {Path: vendor, Filename: "vendor.msi", Mode: 0o644, Version: "1.2.3", Evidence: map[string]json.RawMessage{"windows": json.RawMessage(`{"installer":{"msi":{"productCode":"stale"}}}`), "vendor": json.RawMessage(`true`)}}, "file:install.cmd": {Path: command, Mode: 0o755}}
 	spec := Spec{SetupFile: "install.cmd", Content: &Content{Files: map[string]plugin.Input{"install.cmd": {}}}}
 	outputs, err := Prepare(t.Context(), spec, inputs, t.TempDir(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	artifact := outputs["installer"]
-	if _, exists := artifact.Evidence["windows.installer"]; exists {
+	if testevidence.Installer(artifact.Evidence) != nil {
 		t.Fatal("wrapper inherited stale selected MSI evidence")
 	}
-	if artifact.EntryPoint != "install.cmd" || artifact.Version != "" || string(artifact.Evidence["vendor.probe"]) != "true" {
+	if artifact.EntryPoint != "install.cmd" || artifact.Version != "" || string(artifact.Evidence["vendor"]) != "true" {
 		t.Fatal("wrapper evidence lost ownership boundary")
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
@@ -362,7 +363,7 @@ func TestUnsignedSetupExpectationsUsePreparedPaths(t *testing.T) {
 				t.Fatal(err)
 			}
 			var observed []signature.Observation
-			if err := json.Unmarshal(outputs["installer"].Evidence["signatures"], &observed); err != nil || len(observed) != 1 || observed[0].State != "unsigned" || observed[0].Subject.Path != subjectPath {
+			if err := json.Unmarshal(testevidence.Signatures(outputs["installer"].Evidence), &observed); err != nil || len(observed) != 1 || observed[0].State != "unsigned" || observed[0].Subject.Path != subjectPath {
 				t.Fatalf("observations: %+v, %v", observed, err)
 			}
 			spec.Signatures[0].Unsigned = false
@@ -389,7 +390,7 @@ func TestSetupWithoutAnExpectationIsListedUnverified(t *testing.T) {
 	writeFixture(t, root, "bin/setup.msi", installer, 0o644)
 	writeFixture(t, root, "install.cmd", []byte("@echo off\r\n"), 0o644)
 	// What a source's own evidence lists describes that source's inputs.
-	tree := plugin.Artifact{Path: root, Filename: "setup", Tree: true, Evidence: map[string]json.RawMessage{signature.UnverifiedEvidence: json.RawMessage(`[{"input":"vendor","subject":{"path":"Other.exe"}}]`)}}
+	tree := plugin.Artifact{Path: root, Filename: "setup", Tree: true, Evidence: map[string]json.RawMessage{"signing": json.RawMessage(`{"unverified":[{"input":"vendor","subject":{"path":"Other.exe"}}]}`)}}
 	for name, test := range map[string]struct {
 		source plugin.Artifact
 		spec   Spec
@@ -408,7 +409,7 @@ func TestSetupWithoutAnExpectationIsListedUnverified(t *testing.T) {
 				t.Fatal(err)
 			}
 			var unverified []signature.Unverified
-			if data, listed := outputs["installer"].Evidence[signature.UnverifiedEvidence]; listed {
+			if data := testevidence.Unverified(outputs["installer"].Evidence); data != nil {
 				if err := json.Unmarshal(data, &unverified); err != nil {
 					t.Fatal(err)
 				}

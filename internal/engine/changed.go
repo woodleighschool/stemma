@@ -10,7 +10,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/git"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -27,10 +27,10 @@ type preparation struct {
 	Locked    map[string]source.Entry `json:"locked,omitempty"`
 }
 
-// catalog is a composed project with its reviewed lockfile.
+// catalog is a composed project with its reviewed lock.
 type catalog struct {
 	project config.Project
-	lock    lockfile.File
+	lock    lock.File
 	ops     *operations
 	changed []string
 }
@@ -79,7 +79,7 @@ func (s *session) catalogAt(ctx context.Context, opts Options) (_ catalog, err e
 		err = nil
 	}
 	if err == nil {
-		result.lock, err = lockfile.Load(base)
+		result.lock, err = lock.Load(base)
 		if errors.Is(err, fs.ErrNotExist) {
 			err = nil
 		}
@@ -94,12 +94,12 @@ func (s *session) catalogAt(ctx context.Context, opts Options) (_ catalog, err e
 // changedSince narrows roots to the resources whose preparation differs from
 // the catalog at the session's base revision, and the resources that consume
 // them. It reads both catalogs as written, so only the resources it returns
-// need environment values, and checks the lockfile's shape against the roots
+// need environment values, and checks the lock's shape against the roots
 // and everything they consume.
 func changedSince(ctx context.Context, s *session, rev string, roots, profiles []string) (_ []string, err error) {
 	done := plugin.Stage(ctx, "Comparing with catalog", plugin.Detail(rev))
 	defer func() { done(err) }()
-	locked, err := lockfile.Load(s.root)
+	locked, err := lock.Load(s.root)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func changedSince(ctx context.Context, s *session, rev string, roots, profiles [
 			return nil, err
 		}
 	}
-	if err := lockfile.Check(s.root, inputs, unselected(s.project.Resources, sortedKeys(current))); err != nil {
+	if err := lock.Check(s.root, inputs, unselected(s.project.Resources, sortedKeys(current))); err != nil {
 		return nil, err
 	}
 	for key, prepared := range current {
@@ -189,7 +189,7 @@ func changedSince(ctx context.Context, s *session, rev string, roots, profiles [
 // preparationOf reads a resource's preparation as written: environment values
 // are the same on both sides of a comparison, and destination metadata never
 // shapes what is prepared.
-func preparationOf(ctx context.Context, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, r config.Resource, lock lockfile.File) (preparation, error) {
+func preparationOf(ctx context.Context, ops *operations, kinds map[plugin.ResourceKind]plugin.Operation, r config.Resource, lock lock.File) (preparation, error) {
 	op, ok := kinds[plugin.ResourceKind{APIVersion: r.APIVersion, Kind: r.Kind}]
 	if !ok {
 		return preparation{}, ops.missing("no installed operation registers this apiVersion and kind")

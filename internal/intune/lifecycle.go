@@ -20,6 +20,14 @@ type relationshipReference struct {
 	Install  bool
 }
 
+// target names the referenced app the way the declaration does.
+func (r relationshipReference) target() object {
+	if r.Resource != nil {
+		return object{"resource": r.Resource}
+	}
+	return object{"app_id": r.AppID}
+}
+
 func lifecycleMetadata(m object) (lifecycle, error) {
 	var result lifecycle
 	for _, category := range []string{"dependencies", "supersedes"} {

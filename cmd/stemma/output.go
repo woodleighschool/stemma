@@ -19,19 +19,20 @@ import (
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// commandOutput owns what a command shows. Human reports stream to stdout as
-// each resource completes; in a terminal a live region of unfinished work sits
-// below them on stderr. JSON reports are one document written at the end.
+// commandOutput owns reports and activity. Interactive output shares one
+// terminal writer; redirected reports use stdout. JSON is one final document.
 type commandOutput struct {
-	activityEnabled      bool
-	mu                   sync.Mutex
-	out, errOut          io.Writer
-	outStyle, errStyle   textStyle
-	interactive          bool
-	progress             *terminalProgress
-	asJSON, all, details bool
-	reconciling          bool
-	selectors            []string
+	activityEnabled bool
+	mu              sync.Mutex
+	out, errOut     io.Writer
+	interactive     bool
+	progress        *terminalProgress
+	interrupt       func()
+	asJSON          bool
+	reconciling     bool
+	// namedInputs identifies resources that need an input scope in their report.
+	namedInputs map[string]bool
+	streamed    bool
 	// resultOnly commands print their result without a resource report.
 	resultOnly bool
 	ctx        context.Context
@@ -48,17 +49,20 @@ type finalWriter struct {
 	output *commandOutput
 }
 
-func (w finalWriter) Write(data []byte) (int, error) { w.output.stop(); return w.Writer.Write(data) }
+func (w finalWriter) Write(data []byte) (int, error) {
+	if err := w.output.stop(); err != nil {
+		return 0, err
+	}
+	return w.Writer.Write(data)
+}
 
 func newCommandOutput(out, errOut io.Writer) *commandOutput {
-	return &commandOutput{out: out, errOut: errOut, outStyle: newTextStyle(out), errStyle: newTextStyle(errOut)}
+	return &commandOutput{out: out, errOut: errOut}
 }
 
 func (o *commandOutput) start(cmd *cobra.Command) error {
 	o.ctx = cmd.Context()
 	o.asJSON, _ = cmd.Flags().GetBool("json")
-	o.all, _ = cmd.Flags().GetBool("all")
-	o.details, _ = cmd.Flags().GetBool("details")
 	switch cmd.Name() {
 	case "schema":
 		o.asJSON = true
@@ -75,15 +79,17 @@ func (o *commandOutput) start(cmd *cobra.Command) error {
 	return nil
 }
 
-func (o *commandOutput) stop() {
+func (o *commandOutput) stop() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	o.interactive = false
 	o.activityEnabled = false
 	if o.progress != nil {
-		o.progress.stop()
+		err := o.progress.stop()
 		o.progress = nil
+		return err
 	}
+	return nil
 }
 
 // emit writes persistent report text to stdout, above the live region while it
@@ -96,17 +102,9 @@ func (o *commandOutput) emit(text string) error {
 	return err
 }
 
-func (o *commandOutput) reconcilePhase(method string) error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.asJSON {
-		return nil
-	}
-	title, prefix := "Applying reviewed branch", ""
-	if method == "update" {
-		title, prefix = "Proposing updates", "\n"
-	}
-	return o.emit(prefix + o.outStyle.paint(title, color.Bold) + "\n\n")
+func (o *commandOutput) block(text string) error {
+	o.streamed = true
+	return o.emit(text)
 }
 
 // notice writes a diagnostic line to stderr, above the live region while it is
@@ -119,11 +117,13 @@ func (o *commandOutput) notice(line string) {
 	_, _ = io.WriteString(o.errOut, line)
 }
 
-func (o *commandOutput) finish(err error) {
+func (o *commandOutput) finish(err error) error {
 	if o.ctx != nil && errors.Is(context.Cause(o.ctx), errInterrupted) {
 		err = errInterrupted
 	}
-	o.stop()
+	if stopErr := o.stop(); stopErr != nil {
+		err = errors.Join(err, stopErr)
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	for _, warning := range o.warnings {
@@ -133,38 +133,41 @@ func (o *commandOutput) finish(err error) {
 	switch {
 	case err == nil:
 	case errors.Is(err, errInterrupted):
-		_, _ = fmt.Fprintln(o.errOut, o.errStyle.paint("– Interrupted.", color.FgHiYellow))
+		_, _ = fmt.Fprintln(o.errOut, newTextStyle(o.errOut).paint("– Interrupted.", color.FgHiYellow))
 	default:
 		text := commandError(err)
 		if o.resultOnly {
 			// No report shows a failed resource, so the error must.
 			text = failureText(err)
 		}
-		if text == "" {
-			text = strings.SplitN(failureText(err), "\n", 2)[0]
-		}
 		if text != "" {
 			var message strings.Builder
-			writeError(&message, o.errStyle, "", text)
+			writeError(&message, newTextStyle(o.errOut), "", text)
 			_, _ = io.WriteString(o.errOut, message.String())
 		}
 	}
+	return err
 }
 
-func (o *commandOutput) warning(text string) string {
-	return o.errStyle.paint("!", color.FgHiYellow) + " " + changes.Text(text) + "\n"
+func (o *commandOutput) warning(message string) string {
+	var text strings.Builder
+	newTextStyle(o.errOut).writeHeading(&text, "", changes.Line{{Role: changes.Notable, Text: "!"}, {Role: changes.Strong, Text: " Warning"}}, nil)
+	newTextStyle(o.errOut).writeLine(&text, "  ", changes.Line{{Role: changes.Plain, Text: changes.Text(message)}})
+	return text.String()
 }
 
 func (o *commandOutput) resourceNotice(resource string, notice plugin.Notice) string {
-	marker := o.errStyle.paint("!", color.FgHiYellow)
+	marker, role := "!", changes.Notable
 	if notice.Level == "info" {
-		marker = o.errStyle.paint("i", color.Faint)
+		marker, role = "i", changes.Old
 	}
-	text := marker + " " + changes.Text(resource) + ": " + changes.Text(notice.Message) + "\n"
+	var text strings.Builder
+	newTextStyle(o.errOut).writeHeading(&text, "", changes.Line{{Role: role, Text: marker}, {Role: changes.Strong, Text: " " + changes.Text(resource)}}, nil)
+	newTextStyle(o.errOut).writeLine(&text, "  ", changes.Line{{Role: changes.Plain, Text: changes.Text(notice.Message)}})
 	if notice.Hint != "" {
-		text += "  " + changes.Text(notice.Hint) + "\n"
+		newTextStyle(o.errOut).writeLine(&text, "  ", changes.Line{{Role: changes.Plain, Text: changes.Text(notice.Hint)}})
 	}
-	return text
+	return text.String()
 }
 
 // commandError is the part of a failure the report did not show. Each failed
@@ -232,17 +235,6 @@ func (h *activityHandler) Handle(_ context.Context, record slog.Record) error {
 	o := h.output
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	var maintenance bool
-	record.Attrs(func(attr slog.Attr) bool {
-		if attr.Key == "cache_maintenance" {
-			maintenance = attr.Value.Bool()
-		}
-		return true
-	})
-	if maintenance {
-		o.notice(o.errStyle.paint("i", color.Faint) + " " + changes.Text(record.Message) + "\n")
-		return nil
-	}
 	if record.Level >= slog.LevelWarn && !a.status {
 		note := a.label
 		if a.scope != "" {
@@ -265,16 +257,24 @@ func (h *activityHandler) Handle(_ context.Context, record slog.Record) error {
 		if !a.stage {
 			return nil
 		}
-		o.progress = newTerminalProgress(o.errOut)
-		if !o.interactive {
-			o.progress.startPlain()
-		}
+		o.progress = newTerminalProgress(o.ctx, o.errOut, o.interactive, o.interrupt)
 	}
 	o.progress.update(a)
 	return nil
 }
 
-// resourceDone clears a resource's activity and streams its selected outcome.
+func (o *commandOutput) started(selection engine.Selection) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.namedInputs == nil {
+		o.namedInputs = map[string]bool{}
+	}
+	for _, name := range selection.NamedInputs {
+		o.namedInputs[name] = true
+	}
+}
+
+// resourceDone clears a resource's activity and streams its rows.
 // Reconcile reports proposal verification through proposal outcomes.
 func (o *commandOutput) resourceDone(method string, resource engine.ResourceReport) error {
 	o.mu.Lock()
@@ -297,17 +297,14 @@ func (o *commandOutput) resourceDone(method string, resource engine.ResourceRepo
 			}
 		}
 	}
-	full := o.all || slices.Contains(o.selectors, resource.Key) || slices.Contains(o.selectors, resourceName(resource)) || slices.Contains(o.selectors, resource.Name)
 	switch {
 	case o.asJSON || o.resultOnly:
 		return nil
 	case o.reconciling && method != "apply":
 		// Proposal outcomes carry the lookup and preparation results.
 		return nil
-	case full || selected(method, resource):
-		return o.emit(renderResourceDetail(o.outStyle, method, resource, o.details || method == "prepare" && full))
 	}
-	return nil
+	return o.block(renderRows(newTextStyle(o.out), resourceName(resource), resource.Status, resourceRows(method, resource, o.namedInputs[resourceName(resource)])))
 }
 
 // applyDone streams the reviewed commit's publication outcome.
@@ -317,17 +314,26 @@ func (o *commandOutput) applyDone(report reconcile.Report) error {
 	if o.asJSON {
 		return nil
 	}
-	return o.emit(renderReviewed(o.outStyle, report))
+	head, row := reviewedRow(report)
+	status := engine.StatusChanged
+	if report.Apply.Failed() {
+		status = engine.StatusFailed
+	}
+	return o.block(renderRows(newTextStyle(o.out), head, status, []changes.Row{row}))
 }
 
 // proposalDone streams selected proposal outcomes.
 func (o *commandOutput) proposalDone(proposal reconcile.Proposal) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.asJSON || !o.all && proposal.Action == "unchanged" && proposal.Error == "" {
+	if o.asJSON {
 		return nil
 	}
-	return o.emit(renderProposal(o.outStyle, proposal))
+	status := engine.StatusChanged
+	if proposal.Error != "" || proposal.Action == "blocked" {
+		status = engine.StatusFailed
+	}
+	return o.block(renderRows(newTextStyle(o.out), proposal.Name, status, []changes.Row{proposalRow(proposal)}))
 }
 
 func (o *commandOutput) takeWarnings() []string {
@@ -340,11 +346,10 @@ func (o *commandOutput) takeWarnings() []string {
 
 // report ends an outcome command: the JSON document, or the human summary
 // below the blocks already streamed.
-func (o *commandOutput) report(out io.Writer, method string, report engine.Report, runErr error) error {
-	if o.ctx != nil && errors.Is(context.Cause(o.ctx), errInterrupted) {
-		runErr = errInterrupted
+func (o *commandOutput) report(out io.Writer, method string, report engine.Report) error {
+	if err := o.stop(); err != nil {
+		return err
 	}
-	o.stop()
 	report.Warnings = append(report.Warnings, o.takeWarnings()...)
 	if report.Resources == nil && report.LockChanged == nil && len(report.Warnings) == 0 {
 		return nil
@@ -352,20 +357,24 @@ func (o *commandOutput) report(out io.Writer, method string, report engine.Repor
 	if o.asJSON {
 		return writeJSON(out, report)
 	}
-	return printReportEnd(out, method, report, runErr)
+	_, err := io.WriteString(out, reportEnd(newTextStyle(out), method, report, o.streamed))
+	return err
 }
 
-func (o *commandOutput) reconciled(out io.Writer, report reconcile.Report, runErr error) error {
-	if o.ctx != nil && errors.Is(context.Cause(o.ctx), errInterrupted) {
-		runErr = errInterrupted
+func (o *commandOutput) reconciled(out io.Writer, report reconcile.Report) error {
+	if err := o.stop(); err != nil {
+		return err
 	}
-	o.stop()
 	report.Warnings = append(report.Warnings, o.takeWarnings()...)
 	if report.Head == "" && len(report.Warnings) == 0 {
 		return nil
 	}
-	if !o.asJSON {
-		return printReconcileEnd(out, report, runErr)
+	if o.asJSON {
+		return writeJSON(out, report)
 	}
-	return writeJSON(out, report)
+	if report.Update == nil {
+		return nil
+	}
+	_, err := io.WriteString(out, proposalsEnd(newTextStyle(out), report.Update))
+	return err
 }

@@ -19,8 +19,9 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/diskimage"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/testutil/testarchive"
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 	"howett.net/plist"
@@ -72,12 +73,12 @@ func TestPublicationInvokesRequestedMethod(t *testing.T) {
 			filename := filepath.Join(t.TempDir(), "stemma.yaml")
 			testproject.Write(t, filename, policyProject)
 			var calls []string
-			change := plugin.Change{Kind: "metadata", Field: "description", Action: "set"}
+			change := plugin.FieldChange{Field: "description", Before: json.RawMessage(`"original"`), After: json.RawMessage(`"edited"`)}
 			handler := func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
-				if request.Method != "validate" {
+				if request.Prepared {
 					calls = append(calls, request.Method+"/"+request.Identity.Destination)
 				}
-				return plugin.ReconcileResponse{Changes: []plugin.Change{change}, Origins: map[string]string{"description": "explicit"}}, nil
+				return plugin.ReconcileResponse{Metadata: request.Metadata, Fields: []plugin.FieldChange{change}, Origins: map[string]string{"description": "explicit"}}, nil
 			}
 			report, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: method, Handlers: map[string]reconcileHandler{"munki": handler}})
 			if err != nil {
@@ -86,12 +87,47 @@ func TestPublicationInvokesRequestedMethod(t *testing.T) {
 			if !slices.Equal(calls, []string{method + "/first", method + "/second"}) {
 				t.Fatalf("publication calls: %v", calls)
 			}
-			for _, destination := range report.Resources[0].Destinations {
-				if !reflect.DeepEqual(destination.Changes, []plugin.Change{change}) || destination.Origins["description"] != "explicit" || destination.Applied != (method == "apply") {
-					t.Fatalf("publication report: %+v", destination)
+			for _, publication := range report.Resources[0].Publications {
+				if len(publication.Metadata) == 0 || publication.Deferred != "" || !reflect.DeepEqual(publication.Fields, []plugin.FieldChange{change}) || publication.Origins["description"] != "explicit" || publication.Status != StatusChanged {
+					t.Fatalf("publication report: %+v", publication)
 				}
 			}
 		})
+	}
+}
+
+func TestInterruptedPublicationRetainsCompletedDestinations(t *testing.T) {
+	filename := filepath.Join(t.TempDir(), "stemma.yaml")
+	testproject.Write(t, filename, policyProject)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var streamed []ResourceReport
+	report, err := Run(ctx, Options{
+		ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply",
+		Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
+			if request.Method != "apply" {
+				return plugin.ReconcileResponse{}, nil
+			}
+			if request.Identity.Destination == "second" {
+				cancel()
+				return plugin.ReconcileResponse{}, ctx.Err()
+			}
+			return plugin.ReconcileResponse{Version: "2", Previous: "1"}, nil
+		}},
+		ResourceDone: func(resource ResourceReport) error {
+			streamed = append(streamed, resource)
+			return nil
+		},
+	})
+	if !errors.Is(err, context.Canceled) || len(report.Resources) != 1 || len(streamed) != 1 {
+		t.Fatalf("interrupted report=%+v streamed=%+v error=%v", report, streamed, err)
+	}
+	resource := report.Resources[0]
+	if resource.Status != StatusFailed || resource.Error == "" || report.Summary.Failed != 1 {
+		t.Fatalf("unfinished resource reported success: %+v", report)
+	}
+	if publication := resource.Publications[0]; publication.Destination != "first" || publication.Status != StatusChanged || publication.Version != "2" {
+		t.Fatalf("completed publication lost: %+v", resource)
 	}
 }
 
@@ -104,7 +140,7 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(report.Resources) != 1 || len(report.Resources[0].Artifacts) != 0 || len(report.Resources[0].Destinations) != 2 {
+	if len(report.Resources) != 1 || len(report.Resources[0].Artifacts) != 0 || len(report.Resources[0].Publications) != 2 {
 		t.Fatalf("incomplete sourcefree result: %+v", report)
 	}
 	options.Method = "plan"
@@ -116,12 +152,8 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 	}
 	testproject.Write(t, filename, strings.Replace(policyProject, "description: original", "description: edited", 1))
 	options.Method = "apply"
-	report, err = Run(t.Context(), options)
-	if err != nil {
+	if _, err = Run(t.Context(), options); err != nil {
 		t.Fatal(err)
-	}
-	if !report.Resources[0].Cached {
-		t.Fatal("metadata invalidated sourcefree preparation")
 	}
 	applied := []string{}
 	options.Handlers = map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
@@ -130,12 +162,13 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 		}
 		if request.Method == "apply" {
 			applied = append(applied, request.Identity.Destination)
+			return plugin.ReconcileResponse{Version: "1"}, nil
 		}
 		return plugin.ReconcileResponse{}, nil
 	}}
 	var completed []ResourceReport
 	options.ResourceDone = func(result ResourceReport) error {
-		if len(result.Destinations) != 2 || len(applied) != 1 {
+		if len(result.Publications) != 2 || len(applied) != 1 {
 			t.Fatalf("resource completed before independent destinations: %+v", result)
 		}
 		completed = append(completed, result)
@@ -144,7 +177,7 @@ func TestSourceFreePublicationAndIndependentFailures(t *testing.T) {
 	var logs bytes.Buffer
 	ctx := plugin.WithLogger(t.Context(), slog.New(slog.NewJSONHandler(&logs, nil)))
 	report, err = Run(ctx, options)
-	if err == nil || len(applied) != 1 || applied[0] != "second" || !report.Resources[0].Destinations[1].Applied {
+	if err == nil || len(applied) != 1 || applied[0] != "second" || report.Resources[0].Publications[1].Status != StatusChanged {
 		t.Fatalf("independent destination was blocked: %+v %v", report, err)
 	}
 	if !reflect.DeepEqual(completed, report.Resources) {
@@ -179,7 +212,7 @@ func TestPartialFailureReportsCompletedChangesWithoutSuccess(t *testing.T) {
 	failure := errors.New("upload failed")
 	options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply", Handlers: map[string]reconcileHandler{"munki": func(_ context.Context, request plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 		if request.Method == "apply" {
-			return plugin.ReconcileResponse{Changes: []plugin.Change{{Kind: "metadata", Field: "description", Action: "set"}}}, failure
+			return plugin.ReconcileResponse{Fields: []plugin.FieldChange{{Field: "description", After: json.RawMessage(`"edited"`)}}}, failure
 		}
 		return plugin.ReconcileResponse{}, nil
 	}}}
@@ -187,9 +220,9 @@ func TestPartialFailureReportsCompletedChangesWithoutSuccess(t *testing.T) {
 	if !errors.Is(err, failure) {
 		t.Fatal(err)
 	}
-	for _, destination := range report.Resources[0].Destinations {
-		if destination.Applied || len(destination.Changes) != 1 || destination.Error == "" {
-			t.Fatalf("failed apply lost its completed changes or reported success: %+v", destination)
+	for _, publication := range report.Resources[0].Publications {
+		if len(publication.Fields) != 1 || publication.Error == "" || publication.Status != StatusFailed {
+			t.Fatalf("failed apply lost its completed changes or reported success: %+v", publication)
 		}
 	}
 }
@@ -206,7 +239,7 @@ func TestNativeValidationBeforeAcquisition(t *testing.T) {
 	}
 }
 
-// TestOpenReleasesAPartialSessionOnFailure covers a project whose lockfile
+// TestOpenReleasesAPartialSessionOnFailure covers a project whose lock
 // cannot be read while its plugins load: opening fails before any operation
 // runs and releases what it had acquired instead of panicking.
 func TestOpenReleasesAPartialSessionOnFailure(t *testing.T) {
@@ -214,17 +247,17 @@ func TestOpenReleasesAPartialSessionOnFailure(t *testing.T) {
 	filename := filepath.Join(root, "stemma.yaml")
 	manifest := strings.Replace(policyProject, "  imports:\n", "  plugins:\n    missing:\n      path: plugins/missing\n  imports:\n", 1)
 	testproject.Write(t, filename, manifest)
-	if err := errors.Join(os.Mkdir(lockfile.Path(root), 0o755), os.WriteFile(filepath.Join(lockfile.Path(root), "plugins.yaml"), []byte("version: [\n"), 0o644)); err != nil {
+	if err := errors.Join(os.Mkdir(lock.Path(root), 0o755), os.WriteFile(filepath.Join(lock.Path(root), "plugins.yaml"), []byte("version: [\n"), 0o644)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "apply"})
-	if err == nil || !strings.Contains(err.Error(), "lockfile") {
-		t.Fatalf("unreadable lockfile: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "lock") {
+		t.Fatalf("unreadable lock: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".stemma", "project.lock")); err != nil {
 		t.Fatalf("project lock was not created: %v", err)
 	}
-	if unlock, err := lockfile.Lock(t.Context(), root); err != nil {
+	if unlock, err := lock.Lock(t.Context(), root); err != nil {
 		t.Fatalf("project lock still held after the failed open: %v", err)
 	} else {
 		_ = unlock()
@@ -232,11 +265,15 @@ func TestOpenReleasesAPartialSessionOnFailure(t *testing.T) {
 }
 
 func TestOpenEvidencePreservesNativeTypes(t *testing.T) {
-	effective, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"count": "{{ evidence['vendor.probe'].count }}", "enabled": "{{ evidence['vendor.probe'].enabled }}"}, plugin.Facts{}, map[string]json.RawMessage{"vendor.probe": json.RawMessage(`{"count":4,"enabled":false}`)})
+	effective, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"count": "{{ evidence.vendor.count }}", "enabled": "{{ evidence.vendor.enabled }}"}, plugin.Facts{}, map[string]json.RawMessage{"vendor": json.RawMessage(`{"count":4,"enabled":false}`)})
 	if err != nil || effective["count"] != float64(4) || effective["enabled"] != false {
 		t.Fatalf("evidence handoff: %+v %v", effective, err)
 	}
-	if _, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"value": "{{ evidence['vendor.missing'].value }}"}, plugin.Facts{}, nil); err == nil {
+	nested, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"minimum": "{{ evidence.homebrew.cask.macos }}"}, plugin.Facts{}, map[string]json.RawMessage{"homebrew": json.RawMessage(`{"cask":{"macos":"27"}}`)})
+	if err != nil || nested["minimum"] != "27" {
+		t.Fatalf("nested evidence path: %+v %v", nested, err)
+	}
+	if _, _, err := resolveMetadata(plugin.ResourceResult{}, map[string]any{"value": "{{ evidence.missing.value }}"}, plugin.Facts{}, nil); err == nil {
 		t.Fatal("missing evidence accepted")
 	}
 }
@@ -288,36 +325,16 @@ spec:
 		acquired := false
 		for line := range bytes.SplitSeq(bytes.TrimSpace(logs.Bytes()), []byte{'\n'}) {
 			var record struct {
-				Message     string `json:"msg"`
-				Resource    string `json:"resource"`
-				Phase       string `json:"phase"`
-				Destination string `json:"destination"`
-				Input       string `json:"input"`
-				Start       bool   `json:"stage"`
-				End         bool   `json:"stage_result"`
+				Message  string `json:"msg"`
+				Resource string `json:"resource"`
+				Start    bool   `json:"stage"`
+				End      bool   `json:"stage_result"`
 			}
 			if err := json.Unmarshal(line, &record); err != nil {
 				t.Fatal(err)
 			}
 			if bytes.Count(line, []byte(`"resource":`)) > 1 {
 				t.Fatalf("%s repeated the resource scope: %s", method, line)
-			}
-			if record.Message == "Applying destination" {
-				t.Fatalf("aggregate apply stage obscures destination operations: %s", line)
-			}
-			if record.Resource != "" && (record.Start || record.End) {
-				want := "Prepare"
-				switch {
-				case method == "update":
-					want = ""
-				case record.Destination != "":
-					want = map[string]string{"prepare": "Check", "plan": "Plan", "apply": "Publish"}[method]
-				case record.Input != "":
-					want = "Acquire"
-				}
-				if record.Phase != want || bytes.Count(line, []byte(`"phase":`)) > 1 {
-					t.Fatalf("%s: expected phase %q: %s", method, want, line)
-				}
 			}
 			switch {
 			case record.Resource == "" && record.Start:
@@ -406,7 +423,7 @@ spec:
 			mu.Lock()
 			defer mu.Unlock()
 			if cancelDuringValidation {
-				if !errors.Is(err, context.Canceled) || len(report.Resources) != 1 || report.LockChanged != nil {
+				if !errors.Is(err, context.Canceled) || len(report.Resources) != 0 || report.Summary.NotReached != 2 || report.LockChanged != nil {
 					t.Fatalf("cancellation did not stop the run: %+v %v", report, err)
 				}
 				if got := strings.Join(events, ", "); got != "acquire /a.pkg, validate a" {
@@ -416,7 +433,7 @@ spec:
 					t.Fatalf("cancellation logged ordinary failures: %s", logs.String())
 				}
 				if after, err := testproject.ReadLock(root); err != nil || !bytes.Equal(after, locked) {
-					t.Fatalf("cancelled run changed the lockfile: %v", err)
+					t.Fatalf("cancelled run changed the lock: %v", err)
 				}
 			} else {
 				if err != nil {
@@ -611,7 +628,7 @@ spec:
 		t.Fatal(err)
 	}
 	installer := report.Resources[0].Artifacts["installer"]
-	if installer.Format != "dmg" || installer.Filename != "woodsweep-1.2.3.dmg" || installer.Evidence["signatures"] == nil {
+	if installer.Format != "dmg" || installer.Filename != "woodsweep-1.2.3.dmg" || testevidence.Signatures(installer.Evidence) == nil {
 		t.Fatalf("installer = %+v", installer)
 	}
 	pkginfos, err := filepath.Glob(filepath.Join(root, "repo/pkgsinfo/*.plist"))
@@ -648,5 +665,67 @@ spec:
 	defer func() { _ = published.Close() }()
 	if info, err := fs.Stat(published, "WoodSweep.app"); err != nil || !info.IsDir() {
 		t.Fatalf("published image lacks the application: %v", err)
+	}
+}
+
+func TestUpdateReportsOnlySavedInputs(t *testing.T) {
+	for _, partial := range []bool{false, true} {
+		t.Run(fmt.Sprintf("partial=%t", partial), func(t *testing.T) {
+			root := t.TempDir()
+			filename := filepath.Join(root, "stemma.yaml")
+			parts := strings.Split(policyProject, "\n---\n")
+			manifest := parts[0]
+			for _, name := range []string{"a", "b", "c"} {
+				if err := os.WriteFile(filepath.Join(root, name+".pkg"), []byte("fixture "+name), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				resource := strings.Replace(parts[1], "name: policy", "name: "+name, 1)
+				resource = strings.Replace(resource, "spec:\n", "spec:\n  source: {path: "+name+".pkg}\n", 1)
+				manifest += "\n---\n" + resource
+			}
+			testproject.Write(t, filename, manifest)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			options := Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: "update"}
+			options.Started = func(Selection) {
+				if partial {
+					if err := os.MkdirAll(filepath.Join(root, "stemma.lock", "MacSoftware", "b.yaml"), 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			var streamed []ResourceReport
+			options.ResourceDone = func(item ResourceReport) error {
+				streamed = append(streamed, item)
+				if item.Status == StatusChanged {
+					data, err := os.ReadFile(filepath.Join(root, "stemma.lock", "MacSoftware", item.Name+".yaml"))
+					if err != nil || !bytes.Contains(data, []byte(item.Inputs[0].After.Content.SHA256)) {
+						t.Fatalf("success preceded persistence: %s, %v", data, err)
+					}
+					if item.Name == "a" {
+						if _, err := os.Stat(filepath.Join(root, "stemma.lock", "MacSoftware", "b.yaml")); !partial && !os.IsNotExist(err) {
+							t.Fatalf("later resource saved before first result streamed: %v", err)
+						}
+					}
+				}
+				if !partial {
+					cancel()
+				}
+				return nil
+			}
+			report, err := Run(ctx, options)
+			if partial {
+				if err == nil || report.Summary.Changed != 1 || report.Summary.Failed != 1 || report.Summary.NotReached != 1 || len(streamed) != 2 || len(report.Resources[1].Inputs) != 0 {
+					t.Fatalf("partial save: %+v, %v", report, err)
+				}
+			} else {
+				if !errors.Is(err, context.Canceled) || report.Summary.Changed != 1 || report.Summary.NotReached != 2 || len(streamed) != 1 {
+					t.Fatalf("cancel after save: %+v, %v", report, err)
+				}
+				if locked, err := lock.Load(root); err != nil || len(locked.Inputs) != 1 {
+					t.Fatalf("saved inputs lost: %+v, %v", locked, err)
+				}
+			}
+		})
 	}
 }

@@ -42,7 +42,7 @@ var macFields = map[string]field{
 }
 
 // pkgFields apply only to a Mac PKG app. Scripts can embed environment
-// values, so reports name these fields without their values.
+// values, so reports give their length instead of their text.
 var pkgFields = map[string]field{
 	"pre_install_script":  {"preInstallScript", installScript},
 	"post_install_script": {"postInstallScript", installScript},
@@ -66,6 +66,7 @@ var win32Fields = map[string]field{
 	"detection":               {"rules", detection},
 	"return_codes":            {"returnCodes", returnCodes},
 	"msi":                     {"msiInformation", msiInformation},
+	"display_version":         {"displayVersion", displayVersion},
 }
 
 // Graph properties that only derivation supplies still need names in reports.
@@ -195,6 +196,9 @@ func compile(desired object) (object, error) {
 		case "setup_file":
 			m["setupFilePath"] = value
 			continue
+		case "display_version":
+			m["displayVersion"] = value
+			continue
 		case "minimum_os":
 			m["minimumSupportedOperatingSystem"] = object{"v" + strings.ReplaceAll(text(value), ".", "_"): true}
 			continue
@@ -290,6 +294,16 @@ func text10k(value any) (any, error) {
 		return nil, errors.New("must be a string of at most 10000 bytes")
 	}
 	return s, nil
+}
+
+// displayVersion requires a version. A publication's version is never one of
+// its fields, so a declaration cannot clear it; derivation clears it when the
+// installer has no managed version.
+func displayVersion(value any) (any, error) {
+	if s, ok := value.(string); !ok || s == "" || len(s) > 10000 {
+		return nil, errors.New("must be a nonempty string of at most 10000 bytes")
+	}
+	return value, nil
 }
 
 func notesText(value any) (any, error) {
@@ -588,32 +602,4 @@ func returnCodes(value any) (any, error) {
 		result = append(result, object{"returnCode": n, "type": kind})
 	}
 	return result, nil
-}
-
-// reportName names a Graph property path the way declarations do, so plans
-// read in the catalog's terms.
-func reportName(property string) string {
-	head, rest, nested := strings.Cut(property, ".")
-	name := head
-	if derived, ok := derivedNames[property]; ok {
-		return derived
-	}
-	for _, table := range []map[string]field{commonFields, macFields, pkgFields, lobFields, win32Fields} {
-		for declared, spec := range table {
-			if spec.graph == head {
-				name = declared
-			}
-		}
-	}
-	if !nested {
-		return name
-	}
-	for _, table := range []map[string]string{msiFields, experienceFields} {
-		for declared, graph := range table {
-			if graph == rest {
-				return name + "." + declared
-			}
-		}
-	}
-	return name + "." + rest
 }

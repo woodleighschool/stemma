@@ -154,7 +154,9 @@ func (c *client) currentAssignments(ctx context.Context, appID string) ([]any, e
 	return existing, nil
 }
 
-func (c *client) planAssignments(ctx context.Context, current object, declared []any) (*plugin.Change, error) {
+// planAssignments reports the assignment collection the app holds and the one
+// applying writes, when they differ.
+func (c *client) planAssignments(ctx context.Context, current object, declared []any) ([]plugin.FieldChange, error) {
 	var existing []any
 	if current != nil {
 		var err error
@@ -166,7 +168,37 @@ func (c *client) planAssignments(ctx context.Context, current object, declared [
 	if !changed {
 		return nil, nil
 	}
-	return &plugin.Change{Kind: "assignments", Field: "assignments", Action: "replace", Before: raw(existing), After: raw(assignments)}, nil
+	field := plugin.FieldChange{Field: "assignments", After: raw(items(assignments, declaredAssignment))}
+	if current != nil {
+		field.Before = raw(items(existing, declaredAssignment))
+	}
+	return []plugin.FieldChange{field}, nil
+}
+
+// declaredAssignment names a Graph assignment the way declarations do. Other
+// targets pass through unchanged.
+func declaredAssignment(assignment object) any {
+	target, _ := assignment["target"].(object)
+	declared := object{"intent": declaredChoice(assignment["intent"], intents)}
+	switch target["@odata.type"] {
+	case "#microsoft.graph.groupAssignmentTarget":
+		declared["group"] = target["groupId"]
+	case "#microsoft.graph.exclusionGroupAssignmentTarget":
+		declared["exclude_group"] = target["groupId"]
+	case "#microsoft.graph.allDevicesAssignmentTarget":
+		declared["all_devices"] = true
+	case "#microsoft.graph.allLicensedUsersAssignmentTarget":
+		declared["all_users"] = true
+	default:
+		return assignment
+	}
+	if mode := target["deviceAndAppManagementAssignmentFilterType"]; mode != "none" && text(target["deviceAndAppManagementAssignmentFilterId"]) != "" {
+		declared["filter"] = object{"id": target["deviceAndAppManagementAssignmentFilterId"], "mode": declaredChoice(mode, filterModes)}
+	}
+	if settings, _ := assignment["settings"].(object); settings["notifications"] != nil {
+		declared["notifications"] = declaredChoice(settings["notifications"], notifications)
+	}
+	return declared
 }
 
 // applyAssignments replaces the app's assignments with the declared ones,

@@ -1467,7 +1467,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
+              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lock."
             }
           },
           "propertyNames": {
@@ -1575,7 +1575,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
+              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lock."
             }
           },
           "propertyNames": {
@@ -4189,6 +4189,20 @@
                 }
               ],
               "description": "Company Portal name. Required for creation."
+            },
+            "display_version": {
+              "anyOf": [
+                {
+                  "maxLength": 10000,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "pattern": "\\{\\{[\\s\\S]+\\}\\}",
+                  "type": "string"
+                }
+              ],
+              "description": "Version Intune shows for the app. Defaults to the managed version; an installer without one clears it."
             },
             "featured": {
               "anyOf": [
@@ -8841,7 +8855,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
+              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lock."
             }
           },
           "propertyNames": {
@@ -8946,7 +8960,7 @@
                   "type": "string"
                 }
               ],
-              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lockfile."
+              "description": "Stable HTTP download URL. Redirects are followed without retaining temporary URLs in the lock."
             }
           },
           "propertyNames": {

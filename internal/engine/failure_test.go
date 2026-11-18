@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/icon"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -174,7 +174,7 @@ spec:
 `
 	testproject.Write(t, filename, manifest)
 	// A changed input and a resource without entries each fail on their own
-	// and leave the lockfile to update.
+	// and leave the lock to update.
 	opts.Method = "prepare"
 	report, err := Run(t.Context(), opts)
 	if err == nil || len(report.Resources) != 3 || !strings.Contains(report.Resources[0].Error, "run stemma update") || len(report.Resources[1].BlockedBy) != 1 || !strings.Contains(report.Resources[2].Error, "run stemma update") || report.LockChanged != nil {
@@ -182,11 +182,11 @@ spec:
 	}
 	after, err := testproject.ReadLock(root)
 	if err != nil || string(before) != string(after) {
-		t.Fatalf("preparation wrote the lockfile: %v", err)
+		t.Fatalf("preparation wrote the lock: %v", err)
 	}
 }
 
-func TestRunAbortsOnCancellationOrReportFailure(t *testing.T) {
+func TestUpdateReportFailureKeepsCommittedResults(t *testing.T) {
 	for _, canceled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
 			parts := strings.Split(policyProject, "\n---\n")
@@ -205,8 +205,8 @@ func TestRunAbortsOnCancellationOrReportFailure(t *testing.T) {
 				}
 				return failure
 			}})
-			if !errors.Is(err, failure) || len(report.Resources) != 1 || report.LockChanged != nil {
-				t.Fatalf("global failure did not abort immediately: %+v, %v", report, err)
+			if !errors.Is(err, failure) || len(report.Resources) != 1 || report.Summary.NotReached != 1 || report.LockChanged == nil {
+				t.Fatalf("saved results lost after reporting stopped: %+v, %v", report, err)
 			}
 		})
 	}
@@ -242,7 +242,7 @@ spec:
 `)
 	for _, method := range []string{"icon", "inspect"} {
 		t.Run(method, func(t *testing.T) {
-			report, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: method, Resources: []string{"MacSoftware/consumer"}, Input: InputSelection{Name: "source"}, Icons: IconOptions{Presentation: icon.Raw}, Lock: lockfile.Options{IgnoreInputs: true}})
+			report, err := Run(t.Context(), Options{ConfigPath: filename, CacheDir: t.TempDir(), Method: method, Resources: []string{"MacSoftware/consumer"}, Input: InputSelection{Name: "source"}, Icons: IconOptions{Presentation: icon.Raw}, Lock: lock.Options{IgnoreInputs: true}})
 			if err == nil || len(report.Resources) != 2 {
 				t.Fatalf("report=%+v error=%v", report, err)
 			}

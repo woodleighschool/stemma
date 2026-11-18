@@ -1,11 +1,11 @@
 package intune
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/woodleighschool/stemma/internal/changes"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -25,26 +25,19 @@ func TestMinimumOSChangeReportsSelection(t *testing.T) {
 			published := publication{identity: strings.Repeat("a", 64)}
 			current := object{"notes": withMarker("", published), "minimumSupportedOperatingSystem": test.current}
 			desired := object{"minimumSupportedOperatingSystem": object{"v26_0": true}}
-			patch, reported := metadataPatch(current, desired, published)
+			patch, reported := metadataPatch(current, desired, published), metadataFields(current, desired, published)
 			if len(test.patch) == 0 {
 				if len(patch) != 0 || len(reported) != 0 {
-					t.Fatalf("unchanged selection produced patch %s and changes %+v", raw(patch), reported)
+					t.Fatalf("unchanged selection produced patch %s and fields %+v", raw(patch), reported)
 				}
 				return
 			}
 			if !reflect.DeepEqual(patch, object{"minimumSupportedOperatingSystem": test.patch}) {
 				t.Fatalf("patch = %s, want %s", raw(patch), raw(test.patch))
 			}
-			if len(reported) != 1 {
-				t.Fatalf("changes = %+v, want one minimum OS change", reported)
-			}
-			change := reported[0]
-			if change.Kind != "metadata" || change.Field != "minimum_os" || change.Action != "set" || string(change.Before) != test.before || string(change.After) != `"26.0"` {
-				t.Fatalf("unexpected semantic change: %+v", change)
-			}
-			want := "minimum_os: " + strings.Trim(test.before, `"`) + " → 26.0"
-			if got := strings.Join(changes.Lines(change), "\n"); got != want {
-				t.Fatalf("report = %q, want %q", got, want)
+			want := []plugin.FieldChange{{Field: "minimum_os", Before: json.RawMessage(test.before), After: json.RawMessage(`"26.0"`)}}
+			if !reflect.DeepEqual(reported, want) {
+				t.Fatalf("fields = %+v, want %+v", reported, want)
 			}
 		})
 	}
@@ -106,13 +99,14 @@ func TestClearedDerivedFieldReplacesAnEarlierInstallersValue(t *testing.T) {
 	published := publication{identity: strings.Repeat("a", 64)}
 	current := object{"notes": withMarker("", published), "msiInformation": object{"productCode": "product-code", "upgradeCode": "earlier-upgrade-code"}}
 	desired := object{"msiInformation": object{"productCode": "product-code", "upgradeCode": nil}}
-	patch, changes := metadataPatch(current, desired, published)
+	patch := metadataPatch(current, desired, published)
 	info, _ := patch["msiInformation"].(object)
-	if value, sent := info["upgradeCode"]; !sent || value != nil || len(changes) != 1 {
+	want := []plugin.FieldChange{{Field: "msi.upgrade_code", Before: json.RawMessage(`"earlier-upgrade-code"`), After: json.RawMessage(`null`)}}
+	if value, sent := info["upgradeCode"]; !sent || value != nil || !reflect.DeepEqual(metadataFields(current, desired, published), want) {
 		t.Fatalf("stale UpgradeCode was not cleared: %s", raw(patch))
 	}
 	current["msiInformation"].(object)["upgradeCode"] = nil
-	if patch, _ := metadataPatch(current, desired, published); len(patch) != 0 {
+	if patch := metadataPatch(current, desired, published); len(patch) != 0 {
 		t.Fatalf("cleared UpgradeCode is rewritten every run: %s", raw(patch))
 	}
 }

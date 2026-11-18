@@ -2,9 +2,11 @@ package intune
 
 import (
 	"encoding/json"
+	"maps"
 	"strings"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -29,8 +31,11 @@ func TestSelectedMSIDefaultsAndNativeOverrides(t *testing.T) {
 			t.Fatalf("MSI facts supplied descriptive fields: %+v", metadata)
 		}
 	}
+	// Without a selected MSI only the display version derives, cleared for an
+	// installer without a managed version.
+	versionOnly := map[string]string{"display_version": "artifact.version"}
 	req.Artifact.Evidence = nil
-	if metadata, origins, err := derive(req); err != nil || len(origins) != 0 {
+	if metadata, origins, err := derive(req); err != nil || !maps.Equal(origins, versionOnly) || metadata["display_version"] != nil {
 		t.Fatalf("destination selected an MSI itself: %s, %v", raw(metadata), err)
 	}
 	req.Artifact.Evidence = selectedMSI(msi)
@@ -45,7 +50,7 @@ func TestSelectedMSIDefaultsAndNativeOverrides(t *testing.T) {
 	req.Artifact.Filename = "setup.exe"
 	req.Metadata = raw(object{"type": "win32"})
 	metadata, origins, err = derive(req)
-	if err != nil || len(origins) != 0 {
+	if err != nil || !maps.Equal(origins, versionOnly) {
 		t.Fatalf("EXE acquired guessed policy: %s, %v", raw(metadata), err)
 	}
 }
@@ -86,5 +91,5 @@ func TestMSIPropertiesExtendTheDerivedInstallCommand(t *testing.T) {
 // selectedMSI records the setup MSI a WindowsSoftware preparation selected.
 func selectedMSI(msi *plugin.MSIFacts) map[string]json.RawMessage {
 	evidence, _ := json.Marshal(plugin.Subject{Kind: "msi", MSI: msi})
-	return map[string]json.RawMessage{"windows.installer": evidence}
+	return map[string]json.RawMessage{"windows": testevidence.Windows(evidence)}
 }

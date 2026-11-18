@@ -8,7 +8,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -44,7 +44,7 @@ func open(ctx context.Context, opts Options, resolvePlugins bool) (_ *session, e
 	if err != nil {
 		return nil, err
 	}
-	unlock, err := lockfile.Lock(ctx, s.root)
+	unlock, err := lock.Lock(ctx, s.root)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (s *session) close(ctx context.Context) {
 	}
 }
 
-// declarations selects the inputs the lockfile owns for each resource.
+// declarations selects the inputs the lock owns for each resource.
 func declarations(plans map[string]resourcePlan, selected []string) map[string]map[string]plugin.Input {
 	result := map[string]map[string]plugin.Input{}
 	for _, key := range selected {

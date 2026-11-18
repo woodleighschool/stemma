@@ -143,7 +143,7 @@ func TestDeclaredHTTPURLStaysOutOfTheLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(entry.Observation) != "{}" || strings.Contains(string(locked), token) {
+	if len(entry.Origin) != 0 || strings.Contains(string(locked), token) {
 		t.Fatalf("lock entry records the declared URL:\n%s", locked)
 	}
 	if _, err := m.Store.Prune(t.Context(), cas.Policy{}, cas.PruneOptions{All: true}); err != nil {
@@ -169,13 +169,13 @@ func TestMatchedHTTPLockRequiresItsDiscoveredURL(t *testing.T) {
 	m := manager(t)
 	input := plugin.Input{Resolver: "http", Config: map[string]any{"url": server.URL + "/downloads", "match": `/downloads/app-[0-9.]+\.pkg`}}
 	entry, err := m.Resolve(t.Context(), input)
-	if err != nil || observation(t, entry).URL != server.URL+"/downloads/app-1.0.pkg" {
-		t.Fatalf("discovery: observation=%s error=%v", entry.Observation, err)
+	if err != nil || origin(t, entry).URL != server.URL+"/downloads/app-1.0.pkg" {
+		t.Fatalf("discovery: observation=%s error=%v", entry.Origin, err)
 	}
 	if _, err := m.Store.Prune(t.Context(), cas.Policy{}, cas.PruneOptions{All: true}); err != nil {
 		t.Fatal(err)
 	}
-	entry.Observation = json.RawMessage(`{}`)
+	entry.Origin = json.RawMessage(`{}`)
 	before := requests.Load()
 	if _, err := m.FetchLocked(t.Context(), input, entry); err == nil || requests.Load() != before {
 		t.Fatalf("locked fetch without the discovered URL: requests=%d error=%v", requests.Load()-before, err)
@@ -341,7 +341,7 @@ func TestHTTPDiscoveryResolvesURLReferences(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if observation(t, entry).URL != test.want || entry.Content.Filename != "App.pkg" {
+			if origin(t, entry).URL != test.want || entry.Content.Filename != "App.pkg" {
 				t.Fatalf("unexpected resolved input: %+v", entry)
 			}
 			cached, err := store.Path(cas.Ref{SHA256: entry.Content.SHA256})

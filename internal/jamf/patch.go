@@ -148,58 +148,60 @@ func (c *client) getTitle(ctx context.Context, id string) (*titles.ResourcePatch
 	return result, nil
 }
 
-func titlePackage(title *titles.ResourcePatchSoftwareTitleConfiguration, version string) (string, error) {
-	var found string
-	for _, pkg := range title.Packages {
+// titleLink returns the title's package association for version, if any.
+func titleLink(title *titles.ResourcePatchSoftwareTitleConfiguration, version string) (*titles.SubsetPackage, error) {
+	var found *titles.SubsetPackage
+	for i, pkg := range title.Packages {
 		if pkg.Version != version {
 			continue
 		}
-		if found != "" {
-			return "", errors.New("jamf title has multiple package associations for one version")
+		if found != nil {
+			return nil, errors.New("jamf title has multiple package associations for one version")
 		}
-		found = pkg.PackageID
+		found = &title.Packages[i]
 	}
 	return found, nil
 }
 
 // settings are the values Stemma owns in the patch policy: the target version,
 // the declared settings, and the Self Service notification and icon an update
-// offered there uses. The target waits while the title lacks the version.
-func (patch *patchConfig) settings(c *client, icon *selfServiceIcon) []setting {
-	const root = "patch_policy"
+// offered there uses. The target waits while the title lacks the version; it
+// follows the artifact when it is the version the package publishes.
+func (patch *patchConfig) settings(c *client, pub publication) []setting {
+	const root, prefix = "patch_policy", "patch.policy."
 	p := patch.Policy
 	var settings []setting
 	if !patch.waiting {
-		settings = append(settings, setting{field: "target_version", value: *patch.Version, fragment: fragment(root, *patch.Version, "general", "target_version"), current: text("general", "target_version")})
+		settings = append(settings, setting{field: "patch.version", value: *patch.Version, fragment: fragment(root, *patch.Version, "general", "target_version"), current: text("general", "target_version")})
 	}
 	if p.Enabled != nil {
-		settings = append(settings, setting{field: "enabled", value: *p.Enabled, fragment: fragment(root, *p.Enabled, "general", "enabled"), current: flag("general", "enabled")})
+		settings = append(settings, setting{field: prefix + "enabled", value: *p.Enabled, fragment: fragment(root, *p.Enabled, "general", "enabled"), current: flag("general", "enabled"), live: true})
 	}
 	if p.Distribution != nil {
-		settings = append(settings, setting{field: "distribution", value: *p.Distribution, fragment: fragment(root, distributions[*p.Distribution], "general", "distribution_method"), current: choice(distributions, "general", "distribution_method")})
+		settings = append(settings, setting{field: prefix + "distribution", value: *p.Distribution, fragment: fragment(root, distributions[*p.Distribution], "general", "distribution_method"), current: choice(distributions, "general", "distribution_method")})
 	}
 	if p.GraceMinutes != nil {
-		settings = append(settings, setting{field: "grace_minutes", value: *p.GraceMinutes, fragment: fragment(root, *p.GraceMinutes, "user_interaction", "grace_period", "grace_period_duration"), current: number("user_interaction", "grace_period", "grace_period_duration")})
+		settings = append(settings, setting{field: prefix + "grace_minutes", value: *p.GraceMinutes, fragment: fragment(root, *p.GraceMinutes, "user_interaction", "grace_period", "grace_period_duration"), current: number("user_interaction", "grace_period", "grace_period_duration")})
 	}
 	if p.DeadlineDays.set {
-		settings = append(settings, daysSetting(root, "deadline_days", p.DeadlineDays.count, []string{"user_interaction", "deadlines"}, "deadline_enabled", "deadline_period"))
+		settings = append(settings, daysSetting(root, prefix+"deadline_days", p.DeadlineDays.count, []string{"user_interaction", "deadlines"}, "deadline_enabled", "deadline_period"))
 	}
 	if p.PatchUnknown != nil {
-		settings = append(settings, setting{field: "patch_unknown", value: *p.PatchUnknown, fragment: fragment(root, *p.PatchUnknown, "general", "patch_unknown"), current: flag("general", "patch_unknown")})
+		settings = append(settings, setting{field: prefix + "patch_unknown", value: *p.PatchUnknown, fragment: fragment(root, *p.PatchUnknown, "general", "patch_unknown"), current: flag("general", "patch_unknown")})
 	}
 	if p.AllowDowngrade != nil {
-		settings = append(settings, setting{field: "allow_downgrade", value: *p.AllowDowngrade, fragment: fragment(root, *p.AllowDowngrade, "general", "allow_downgrade"), current: flag("general", "allow_downgrade")})
+		settings = append(settings, setting{field: prefix + "allow_downgrade", value: *p.AllowDowngrade, fragment: fragment(root, *p.AllowDowngrade, "general", "allow_downgrade"), current: flag("general", "allow_downgrade")})
 	}
 	if p.Distribution != nil && *p.Distribution == "self_service" {
 		settings = append(settings,
-			setting{field: "notifications", value: true, fragment: fragment(root, true, "user_interaction", "notifications", "notification_enabled"), current: flag("user_interaction", "notifications", "notification_enabled")},
-			daysSetting(root, "reminder_days", p.ReminderDays.count, []string{"user_interaction", "notifications", "reminders"}, "notification_reminders_enabled", "notification_reminder_frequency"),
+			setting{field: prefix + "notifications", value: true, fragment: fragment(root, true, "user_interaction", "notifications", "notification_enabled"), current: flag("user_interaction", "notifications", "notification_enabled")},
+			daysSetting(root, prefix+"reminder_days", p.ReminderDays.count, []string{"user_interaction", "notifications", "reminders"}, "notification_reminders_enabled", "notification_reminder_frequency"),
 		)
-		if icon != nil {
-			settings = append(settings, icon.setting(c, root, "user_interaction"))
+		if pub.icon != nil {
+			settings = append(settings, pub.icon.setting(c, root, prefix+"self_service.icon", "user_interaction"))
 		}
 	}
-	return append(settings, scopeSettings(root, p.Scope, patch.scope)...)
+	return append(settings, scopeSettings(root, "patch.policy", p.Scope, patch.scope)...)
 }
 
 // daysSetting sets a number of days at path, where the element enabled turns
@@ -217,10 +219,10 @@ func daysSetting(root, field string, count *int, path []string, enabled, period 
 	}}
 }
 
-// planPatch checks the title defines the version and reports the association
-// and policy changes. packageID is empty while the package has yet to be
+// planPatch checks the title defines the version and reports the package link
+// and policy fields. The package ID is empty while the package has yet to be
 // created.
-func (c *client) planPatch(ctx context.Context, patch *patchConfig, packageID string, icon *selfServiceIcon, response *plugin.ReconcileResponse) error {
+func (c *client) planPatch(ctx context.Context, patch *patchConfig, pub publication, response *plugin.ReconcileResponse) error {
 	title, err := c.getTitle(ctx, patch.titleID)
 	if err != nil {
 		return fmt.Errorf("jamf patch title: %w", err)
@@ -239,19 +241,17 @@ func (c *client) planPatch(ctx context.Context, patch *patchConfig, packageID st
 		plugin.Logger(ctx).WarnContext(ctx, fmt.Sprintf("Jamf patch title %q does not define version %s, so its package link and patch policy target wait for it%s", patch.Title, *patch.Version, recentDefinitions(available)))
 		patch.waiting = true
 	} else {
-		linked, err := titlePackage(title, *patch.Version)
+		link, err := titleLink(title, *patch.Version)
 		if err != nil {
 			return err
 		}
-		if linked == "" || linked != packageID {
-			change := plugin.Change{Kind: "metadata", Field: "patch.packages", Action: "associate"}
-			if linked != "" {
-				change.Before = raw(linked)
+		if link == nil || link.PackageID != pub.packageID {
+			// The title names a linked package by its display name.
+			change := plugin.FieldChange{Field: "patch.package", After: raw(pub.filename)}
+			if link != nil {
+				change.Before = raw(link.DisplayName)
 			}
-			if packageID != "" {
-				change.After = raw(packageID)
-			}
-			response.Changes = append(response.Changes, change)
+			response.Fields = append(response.Fields, change)
 		}
 	}
 	if patch.Policy == nil {
@@ -262,34 +262,41 @@ func (c *client) planPatch(ctx context.Context, patch *patchConfig, packageID st
 	if err != nil {
 		return err
 	}
-	icon.observe(policy, "user_interaction")
+	pub.icon.observe(policy, "user_interaction")
 	if policy == nil {
 		// A new policy needs its target version, so it waits with the link.
 		if patch.waiting {
 			return nil
 		}
-		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: "patch.policy", Action: "create", After: raw(name)})
+		response.Fields = append(response.Fields, plugin.FieldChange{Field: "patch.policy.name", After: raw(name)})
 	}
-	response.Changes = append(response.Changes, changes("patch.policy", policy, patch.settings(c, icon))...)
+	settings := patch.settings(c, pub)
+	pub.icon.want(policy, settings)
+	response.Fields = append(response.Fields, fieldChanges(policy, settings)...)
 	return nil
 }
 
-func (c *client) applyPatch(ctx context.Context, patch *patchConfig, packageID string, icon *selfServiceIcon) error {
+func (c *client) applyPatch(ctx context.Context, patch *patchConfig, pub publication, completed *plugin.ReconcileResponse) error {
 	if !patch.waiting {
 		title, err := c.getTitle(ctx, patch.titleID)
 		if err != nil {
 			return err
 		}
-		linked, err := titlePackage(title, *patch.Version)
+		link, err := titleLink(title, *patch.Version)
 		if err != nil {
 			return err
 		}
-		if linked != packageID {
+		if link == nil || link.PackageID != pub.packageID {
 			links := slices.DeleteFunc(slices.Clone(title.Packages), func(p titles.SubsetPackage) bool { return p.Version == *patch.Version })
-			links = append(links, titles.SubsetPackage{PackageID: packageID, Version: *patch.Version})
+			links = append(links, titles.SubsetPackage{PackageID: pub.packageID, Version: *patch.Version})
 			if err := c.setTitlePackages(ctx, title.ID, links); err != nil {
 				return err
 			}
+			field := plugin.FieldChange{Field: "patch.package", After: raw(pub.filename)}
+			if link != nil {
+				field.Before = raw(link.DisplayName)
+			}
+			completed.Fields = append(completed.Fields, field)
 		}
 	}
 	if patch.Policy == nil {
@@ -300,16 +307,24 @@ func (c *client) applyPatch(ctx context.Context, patch *patchConfig, packageID s
 	if err != nil {
 		return err
 	}
-	settings := patch.settings(c, icon)
+	settings := patch.settings(c, pub)
 	if policy == nil {
 		if patch.waiting {
 			return nil
 		}
+		start := len(completed.Fields)
+		defer func() {
+			for i := start; i < len(completed.Fields); i++ {
+				completed.Fields[i].Before = nil
+			}
+		}()
 		if id, policy, err = c.createPatchPolicy(ctx, patch, name, settings); err != nil {
 			return err
 		}
+		completed.Fields = append(completed.Fields, plugin.FieldChange{Field: "patch.policy.name", After: raw(name)})
+		completed.Fields = append(completed.Fields, createdSettings(policy, settings)...)
 	}
-	return c.update(ctx, patchPolicies, id, policy, settings)
+	return c.update(ctx, patchPolicies, id, policy, settings, completed)
 }
 
 // createPatchPolicy creates the policy disabled and unscoped; enablement,
@@ -322,7 +337,7 @@ func (c *client) createPatchPolicy(ctx context.Context, patch *patchConfig, name
 		"software_title_configuration_id": patch.titleID,
 	})
 	for _, s := range settings {
-		if s.write == nil && s.field != "enabled" && !strings.HasPrefix(s.field, "scope.") {
+		if s.write == nil && !s.live {
 			mergeXML(initial, s.fragment)
 		}
 	}

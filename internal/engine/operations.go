@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -18,7 +17,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/expression"
 	"github.com/woodleighschool/stemma/internal/intune"
 	"github.com/woodleighschool/stemma/internal/jamf"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/munkirepo"
 	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
@@ -47,7 +46,7 @@ func ProjectContracts(ctx context.Context, opts Options) (result Contracts, err 
 	if err != nil {
 		return Contracts{}, err
 	}
-	done := plugin.Stage(ctx, "Loading operation contracts")
+	done := plugin.Stage(ctx, "Loading available operations")
 	defer func() { done(err) }()
 	ops, cleanup, err := projectOperations(ctx, p, opts)
 	if err != nil {
@@ -327,20 +326,21 @@ func loadOperations(ctx context.Context, p config.Project, manager *source.Manag
 	if err != nil || len(p.Plugins) == 0 {
 		return ops, err
 	}
-	locked, err := lockfile.Load(manager.Root)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	// A run that resolves plugins replaces a plugin document it cannot read.
+	locked, err := lock.LoadPlugins(manager.Root)
+	if err != nil && !resolve {
 		return nil, err
 	}
-	ops.plugins = maps.Clone(locked.Plugins)
+	ops.plugins = maps.Clone(locked)
 	if resolve {
 		ops.plugins = map[string]plugins.Entry{}
 	}
 	store := plugins.New(manager.Store, manager.Offline)
 	for _, name := range slices.Sorted(maps.Keys(p.Plugins)) {
-		loaded := loadPlugin(ctx, store, manager.Root, name, p.Plugins[name], locked.Plugins[name], resolve)
+		loaded := loadPlugin(ctx, store, manager.Root, name, p.Plugins[name], locked[name], resolve)
 		entry := loaded.entry
 		if !ops.add(loaded) {
-			entry = locked.Plugins[name]
+			entry = locked[name]
 			if resolve {
 				plugin.Logger(ctx).WarnContext(ctx, "Plugin "+name+" did not load", "error", ops.failed[name])
 			}

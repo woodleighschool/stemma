@@ -2,6 +2,7 @@ package source
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -69,8 +70,8 @@ func TestRefreshAsksHTTPConditionallyWhateverTheLock(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(previous.Observation) != "{}" {
-				t.Fatalf("lock observation carries transport state: %s", previous.Observation)
+			if len(previous.Origin) != 0 {
+				t.Fatalf("lock origin carries transport state: %s", previous.Origin)
 			}
 			for _, locked := range []Entry{previous, {}} {
 				same, cached, err := m.Refresh(t.Context(), input, locked)
@@ -189,8 +190,8 @@ func TestRefreshRediscoversMatchedURLBeforeAskingTheServer(t *testing.T) {
 	if err != nil || updated.Content.SHA256 == previous.Content.SHA256 || bodies.Load() != 2 || conditionals.Load() != 1 {
 		t.Fatalf("new link was asked conditionally with the old validator: %v", err)
 	}
-	if observation(t, updated).URL != server.URL+"/downloads/app-2.0.pkg" {
-		t.Fatalf("observation URL: %s", observation(t, updated).URL)
+	if origin(t, updated).URL != server.URL+"/downloads/app-2.0.pkg" {
+		t.Fatalf("observation URL: %s", origin(t, updated).URL)
 	}
 }
 
@@ -228,8 +229,8 @@ func TestRefreshReusesGitHubAssetsByIdentity(t *testing.T) {
 	m = New(m.Store, m.Root, false)
 	m.Client.Transport = transport
 	replaced, _, err := m.Refresh(t.Context(), input, previous)
-	if err != nil || downloads.Load() != 2 || observation(t, replaced).AssetID != 35 {
-		t.Fatalf("replaced asset: %v %+v", err, observation(t, replaced))
+	if err != nil || downloads.Load() != 2 || origin(t, replaced).AssetID != 35 {
+		t.Fatalf("replaced asset: %v %+v", err, origin(t, replaced))
 	}
 	// Back on a lock that records the new asset, the cache still knows the old one.
 	assetID.Store(34)
@@ -274,9 +275,9 @@ func TestRefreshTrustsTheSourceIndexOfOneResolverBuild(t *testing.T) {
 			Fingerprint: func(input plugin.Input) (string, error) { return fingerprint(input.Config) },
 			Version:     "1", Identity: identity,
 			Discover: func(context.Context, plugin.Input) (Discovery, error) {
-				return Discovery{Observation: json.RawMessage(`{"release":"1.0"}`), Immutable: true}, nil
+				return Discovery{Origin: json.RawMessage(`{"release":"1.0"}`), Immutable: true}, nil
 			},
-			Acquire: func(context.Context, plugin.Input, json.RawMessage) (Acquisition, error) {
+			Acquire: func(context.Context, plugin.Input, Entry) (Acquisition, error) {
 				fetches.Add(1)
 				return Acquisition{Artifact: &plugin.Artifact{Path: filename, Filename: "input.pkg"}}, nil
 			},
@@ -362,4 +363,44 @@ func (c countingReader) Read(p []byte) (int, error) {
 	n, err := c.Reader.Read(p)
 	c.n.Add(int64(n))
 	return n, err
+}
+
+// TestStatedContentOutranksTheSourceIndex covers origins that no longer carry
+// a digest: one URL can serve different pinned bytes over time, and the
+// content a resolver states must win over whatever the index remembers for
+// that URL.
+func TestStatedContentOutranksTheSourceIndex(t *testing.T) {
+	bodies := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, bodies["current"])
+	}))
+	defer server.Close()
+	digest := func(body string) string { return fmt.Sprintf("%x", sha256.Sum256([]byte(body))) }
+	m := manager(t)
+	m.resolvers["vendor"] = Resolver{Version: "1", Fingerprint: func(input plugin.Input) (string, error) { return fingerprint(input.Config) },
+		Discover: func(context.Context, plugin.Input) (Discovery, error) {
+			return Discovery{Origin: json.RawMessage(`{"url":"` + server.URL + `/app.dmg"}`), Immutable: true, Content: &Content{SHA256: digest(bodies["current"]), Filename: "app.dmg", Mode: 0o644}}, nil
+		},
+		Acquire: func(_ context.Context, _ plugin.Input, entry Entry) (Acquisition, error) {
+			return Acquisition{Download: &Download{URL: server.URL + "/app.dmg", Filename: entry.Content.Filename, SHA256: entry.Content.SHA256}}, nil
+		},
+	}
+	input := plugin.Input{Resolver: "vendor"}
+	bodies["current"] = "first build"
+	first, err := m.Resolve(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fetching the locked bytes remembers them in the index under the origin.
+	if _, err := m.FetchLocked(t.Context(), input, first); err != nil {
+		t.Fatal(err)
+	}
+	bodies["current"] = "second build"
+	second, _, err := m.Refresh(t.Context(), input, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Content.SHA256 != digest("second build") || !equalOrigin(first.Origin, second.Origin) {
+		t.Fatalf("refresh locked %s for the same origin, want the stated %s", second.Content.SHA256, digest("second build"))
+	}
 }

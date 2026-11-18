@@ -63,8 +63,8 @@ func (c *client) readXML(ctx context.Context, path, root string) (*xmlNode, erro
 }
 
 // A setting is one value Stemma owns in a Classic API document. Plans name it
-// by its declaration field and show value; fragment holds the elements that
-// set it, rooted at the document element.
+// by its path in the declared metadata and show value; fragment holds the
+// elements that set it, rooted at the document element.
 type setting struct {
 	field    string
 	value    any
@@ -74,6 +74,9 @@ type setting struct {
 	// write supplies the fragment to write when it differs from the one
 	// compared, such as an icon that must be uploaded first.
 	write func(context.Context) (*xmlNode, error)
+	// live marks enablement and scope, which a new policy takes only once its
+	// other settings are in place.
+	live bool
 }
 
 // fragment builds the elements that set value at path under the document root.
@@ -146,11 +149,12 @@ func pending(doc *xmlNode, settings []setting) []setting {
 	return slices.DeleteFunc(slices.Clone(settings), func(s setting) bool { return doc != nil && containsXML(doc, s.fragment) })
 }
 
-// changes reports the pending settings as plan changes under prefix.
-func changes(prefix string, doc *xmlNode, settings []setting) []plugin.Change {
-	var found []plugin.Change
+// fieldChanges reports the pending settings; those of a document yet to be
+// created carry only their values.
+func fieldChanges(doc *xmlNode, settings []setting) []plugin.FieldChange {
+	var found []plugin.FieldChange
 	for _, s := range pending(doc, settings) {
-		change := plugin.Change{Kind: "metadata", Field: prefix + "." + s.field, Action: "set", After: raw(s.value)}
+		change := plugin.FieldChange{Field: s.field, After: raw(s.value)}
 		if doc != nil && s.current != nil {
 			change.Before = raw(s.current(doc))
 		}
@@ -159,10 +163,17 @@ func changes(prefix string, doc *xmlNode, settings []setting) []plugin.Change {
 	return found
 }
 
+// createdSettings reports settings observed after creating a document.
+func createdSettings(actual *xmlNode, settings []setting) []plugin.FieldChange {
+	confirmed := slices.DeleteFunc(slices.Clone(settings), func(s setting) bool { return !containsXML(actual, s.fragment) })
+	return fieldChanges(nil, confirmed)
+}
+
 // update writes the settings a document lacks over its latest read and
 // verifies every setting by readback.
-func (c *client) update(ctx context.Context, kind classic, id string, doc *xmlNode, settings []setting) error {
+func (c *client) update(ctx context.Context, kind classic, id string, doc *xmlNode, settings []setting, completed *plugin.ReconcileResponse) error {
 	writes := pending(doc, settings)
+	changes := fieldChanges(doc, writes)
 	if len(writes) == 0 {
 		return nil
 	}
@@ -189,13 +200,20 @@ func (c *client) update(ctx context.Context, kind classic, id string, doc *xmlNo
 		}
 		return fmt.Errorf("jamf %s update could not be read back", kind.noun)
 	}
+	var verifyErr error
 	for _, s := range settings {
 		if !containsXML(actual, s.fragment) {
-			if putErr != nil {
-				return putErr
-			}
-			return fmt.Errorf("jamf %s %s did not match readback", kind.noun, s.field)
+			verifyErr = errors.Join(verifyErr, fmt.Errorf("jamf %s %s did not match readback", kind.noun, s.field))
+			continue
 		}
+		for _, change := range changes {
+			if change.Field == s.field {
+				completed.Fields = append(completed.Fields, change)
+			}
+		}
+	}
+	if verifyErr != nil {
+		return errors.Join(putErr, verifyErr)
 	}
 	return nil
 }

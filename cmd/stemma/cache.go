@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"math"
+	"strings"
 
 	"github.com/dustin/go-humanize"
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/changes"
+	"github.com/woodleighschool/stemma/internal/engine"
 )
 
 func parseCachePolicy(value string) (cas.Policy, error) {
@@ -39,7 +42,17 @@ func (c *cli) maintainCommands(root *cobra.Command) {
 				return run(cmd, args)
 			}
 			offline, _ := cmd.Flags().GetBool("offline")
-			return cas.Run(cmd.Context(), c.cacheDir, c.cachePolicy, offline, func(ctx context.Context) error { cmd.SetContext(ctx); return run(cmd, args) })
+			c.result = nil
+			err := cas.Run(cmd.Context(), c.cacheDir, c.cachePolicy, offline, func(ctx context.Context) error { cmd.SetContext(ctx); return run(cmd, args) })
+			if c.result != nil {
+				if resultErr := c.result(); resultErr != nil {
+					if err != nil {
+						err = fmt.Errorf("%s: %w", cmd.Name(), err)
+					}
+					err = errors.Join(err, resultErr)
+				}
+			}
+			return err
 		}
 	}
 }
@@ -77,7 +90,13 @@ func (c *cli) cacheCommand() *cobra.Command {
 		if c.cachePolicy.MaxSize == 0 {
 			budget = "disabled"
 		}
-		_, err = fmt.Fprintf(c.out, "%s\n  Path: %s\n  Budget: %s\n  Recent-use protection: %g hours\n  Retained: %s\n    Objects: %s\n    Materialized copies: %s\n    Metadata: %s\n  Temporary work: %s\n", newTextStyle(c.out).heading("Cache"), changes.Text(store.Dir), budget, cas.Grace.Hours(), humanize.IBytes(uint64(max(0, usage.Retained))), humanize.IBytes(uint64(max(0, usage.Objects))), humanize.IBytes(uint64(max(0, usage.Materialized))), humanize.IBytes(uint64(max(0, usage.Metadata))), humanize.IBytes(uint64(max(0, usage.Work))))
+		var text strings.Builder
+		style := newTextStyle(c.out)
+		writeFields(&text, style, "", "Cache", [][2]string{{"Path", store.Dir}, {"Budget", budget}, {"Recent-use protection", fmt.Sprintf("%g hours", cas.Grace.Hours())}})
+		style.writeHeading(&text, "  ", changes.Line{{Role: changes.Plain, Text: "Retained"}}, changes.Line{{Role: changes.Plain, Text: humanize.IBytes(uint64(max(0, usage.Retained)))}})
+		writeFields(&text, style, "    ", "", [][2]string{{"Objects", humanize.IBytes(uint64(max(0, usage.Objects)))}, {"Materialized copies", humanize.IBytes(uint64(max(0, usage.Materialized)))}, {"Metadata", humanize.IBytes(uint64(max(0, usage.Metadata)))}})
+		writeFields(&text, style, "  ", "", [][2]string{{"Temporary work", humanize.IBytes(uint64(max(0, usage.Work)))}})
+		_, err = io.WriteString(c.out, text.String())
 		return err
 	}
 	var all, dryRun bool
@@ -97,21 +116,22 @@ func (c *cli) cacheCommand() *cobra.Command {
 		if *pruneJSON {
 			return writeJSON(c.out, result)
 		}
-		verb := "Reclaimed"
-		style := newTextStyle(c.out)
-		marker := style.paint("✓", color.FgHiGreen)
+		verb := "reclaimed"
 		if dryRun {
-			verb = "Would reclaim"
-			marker = style.paint("→", color.FgHiYellow)
+			verb = "would reclaim"
 		}
 		noun := "entries"
 		if result.Removed == 1 {
 			noun = "entry"
 		}
-		_, err = fmt.Fprintf(c.out, "%s %s %s (%d %s); %s retained.\n", marker, verb, humanize.IBytes(uint64(max(0, result.Reclaimed))), result.Removed, noun, humanize.IBytes(uint64(max(0, result.After.Retained))))
-		if err == nil && c.cachePolicy.MaxSize > 0 && result.After.Retained > c.cachePolicy.MaxSize {
-			_, err = fmt.Fprintf(c.out, "  Above %s target; recently used content remains protected.\n", humanize.IBytes(uint64(max(0, c.cachePolicy.MaxSize))))
+		row := changes.Row{
+			Summary: changes.Line{{Role: changes.New, Text: fmt.Sprintf("%s %s (%d %s)", verb, humanize.IBytes(uint64(max(0, result.Reclaimed))), result.Removed, noun)}},
+			Details: []changes.Line{{{Role: changes.Label, Text: "retained: "}, {Role: changes.Plain, Text: humanize.IBytes(uint64(max(0, result.After.Retained)))}}},
 		}
+		if c.cachePolicy.MaxSize > 0 && result.After.Retained > c.cachePolicy.MaxSize {
+			row.Details = append(row.Details, changes.Line{{Role: changes.Notable, Text: fmt.Sprintf("Above %s target; recently used content remains protected.", humanize.IBytes(uint64(max(0, c.cachePolicy.MaxSize))))}})
+		}
+		_, err = io.WriteString(c.out, renderRows(newTextStyle(c.out), "Cache", engine.StatusChanged, []changes.Row{row}))
 		return err
 	}
 	verify := &cobra.Command{Use: "verify", Short: "Check every cached object against its digest and discard any that changed", Args: cobra.NoArgs}
@@ -134,12 +154,13 @@ func (c *cli) cacheCommand() *cobra.Command {
 		if *verifyJSON {
 			err = writeJSON(c.out, result)
 		} else {
-			style := newTextStyle(c.out)
-			marker := style.paint("✓", color.FgHiGreen)
+			status := engine.StatusUnchanged
+			row := changes.Row{Summary: changes.Line{{Role: changes.Plain, Text: fmt.Sprintf("checked %s (%s)", objects(result.Objects), humanize.IBytes(uint64(max(0, result.Bytes))))}}}
 			if len(result.Discarded) > 0 {
-				marker = style.paint("✗", color.FgHiRed)
+				status = engine.StatusFailed
+				row.Details = append(row.Details, changes.Line{{Role: changes.Label, Text: "discarded: "}, {Role: changes.Failure, Text: objects(len(result.Discarded))}})
 			}
-			_, err = fmt.Fprintf(c.out, "%s Checked %s (%s); discarded %d.\n", marker, objects(result.Objects), humanize.IBytes(uint64(max(0, result.Bytes))), len(result.Discarded))
+			_, err = io.WriteString(c.out, renderRows(newTextStyle(c.out), "Cache", status, []changes.Row{row}))
 		}
 		if err == nil && len(result.Discarded) > 0 {
 			err = fmt.Errorf("discarded %s that no longer matched; the next run acquires or rebuilds them", objects(len(result.Discarded)))

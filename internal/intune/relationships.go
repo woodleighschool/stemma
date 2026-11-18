@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 
 	abs "github.com/microsoft/kiota-abstractions-go"
@@ -273,7 +274,9 @@ func validateRelationshipGraph(root string, edges []relationshipEdge) error {
 	return nil
 }
 
-func (c *client) planRelationships(ctx context.Context, req plugin.ReconcileRequest[Config], tenant *tenantApps, l lifecycle, current object) (*plugin.Change, error) {
+// planRelationships reports each owned relationship category whose outgoing
+// relationships differ from the declared ones.
+func (c *client) planRelationships(ctx context.Context, req plugin.ReconcileRequest[Config], tenant *tenantApps, l lifecycle, current object) ([]plugin.FieldChange, error) {
 	appID := text(current["id"])
 	wanted, err := c.desiredRelationships(ctx, req, tenant, l, appID)
 	if err != nil {
@@ -292,7 +295,58 @@ func (c *client) planRelationships(ctx context.Context, req plugin.ReconcileRequ
 	if err := c.checkRelationships(ctx, appID, relationships, existing); err != nil {
 		return nil, err
 	}
-	return &plugin.Change{Kind: "relationships", Field: "relationships", Action: "replace", Before: raw(existing), After: raw(relationships)}, nil
+	// desiredRelationships returns one relationship per reference, in order.
+	targets := map[string]object{}
+	for i, ref := range slices.Concat(l.Dependencies, l.Supersedes) {
+		targets[text(wanted[i]["targetId"])] = ref.target()
+	}
+	outgoing, _ := outgoingRelationships(existing)
+	var fields []plugin.FieldChange
+	for _, category := range []struct {
+		name  string
+		owned bool
+	}{{"dependencies", l.Dependencies != nil}, {"supersedes", l.Supersedes != nil}} {
+		before, after := inCategory(outgoing, category.name), inCategory(wanted, category.name)
+		if !category.owned || sameRelationships(before, after) {
+			continue
+		}
+		field := plugin.FieldChange{Field: category.name, After: raw(declaredRelationships(after, targets))}
+		if current != nil {
+			field.Before = raw(declaredRelationships(before, targets))
+		}
+		fields = append(fields, field)
+	}
+	return fields, nil
+}
+
+func inCategory(items []object, category string) []object {
+	var result []object
+	for _, item := range items {
+		if relationshipCategory(item) == category {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// declaredRelationships names relationships the way declarations do: a target
+// this software references by its resource, any other by its app ID.
+func declaredRelationships(items []object, targets map[string]object) []any {
+	result := make([]any, 0, len(items))
+	for _, item := range items {
+		id := text(item["targetId"])
+		declared := maps.Clone(targets[id])
+		if declared == nil {
+			declared = object{"app_id": id}
+		}
+		if item["@odata.type"] == dependencyType {
+			declared["auto_install"] = item["dependencyType"] == "autoInstall"
+		} else {
+			declared["uninstall_previous"] = item["supersedenceType"] == "replace"
+		}
+		result = append(result, declared)
+	}
+	return result
 }
 
 // applyRelationships writes the declared relationships over the app's and

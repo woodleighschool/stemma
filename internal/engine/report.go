@@ -5,51 +5,85 @@ import (
 	"errors"
 	"maps"
 	"slices"
-	"strings"
 
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/signature"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
-// Report distinguishes source, preparation and each destination's work.
+// Report is one command's outcome: what happened to each resource it
+// selected, as every surface renders it.
 type Report struct {
-	// LockChanged reports whether update wrote the lockfile.
-	LockChanged *bool `json:"lock_changed,omitempty"`
-	// RemovedInputs are lock entries of resources the catalog no longer declares.
-	RemovedInputs []lockfile.InputChange `json:"removed_inputs,omitempty"`
+	Command   string           `json:"command"`
+	Summary   Summary          `json:"summary"`
+	Resources []ResourceReport `json:"resources"`
 	// Plugins are the plugin lock entries an update changed.
-	Plugins   []lockfile.PluginChange `json:"plugins,omitempty"`
-	Warnings  []string                `json:"warnings,omitempty"`
-	Summary   Summary                 `json:"summary"`
-	Error     string                  `json:"error,omitempty"`
-	Resources []ResourceReport        `json:"resources"`
+	Plugins []lock.PluginChange `json:"plugins,omitempty"`
+	// Removed are lock entries of resources the catalog no longer declares.
+	Removed []lock.InputChange `json:"removed,omitempty"`
+	// LockChanged reports whether update wrote the lock.
+	LockChanged *bool    `json:"lock_changed,omitempty"`
+	Warnings    []string `json:"warnings,omitempty"`
+	Error       string   `json:"error,omitempty"`
 	// Artifact is where the artifact method materialized the selected output.
 	Artifact string `json:"artifact,omitempty"`
 	// Inspection is the static evidence of the selected resource input.
 	Inspection *Inspection `json:"inspection,omitempty"`
 }
 
-// ResourceReport separates immutable outputs from destination reconciliation.
+// Status is what a command did to a resource or a publication.
+type Status string
+
+const (
+	// StatusChanged is the command's work done: inputs updated, an artifact
+	// prepared, an icon created, signers derived, a publication planned or applied.
+	StatusChanged Status = "changed"
+	// StatusUnchanged is nothing to do: inputs current, the artifact cached,
+	// the icon present, the destination current.
+	StatusUnchanged Status = "unchanged"
+	StatusFailed    Status = "failed"
+	// StatusBlocked is a resource whose required outputs failed.
+	StatusBlocked Status = "blocked"
+	// StatusSkipped is a resource the command does not apply to; Reason says why.
+	StatusSkipped Status = "skipped"
+)
+
+// ResourceReport is one resource's outcome.
 type ResourceReport struct {
-	Notices        []plugin.Notice `json:"notices,omitempty"`
-	Name           string          `json:"name"`
-	Kind           string          `json:"kind"`
-	Key            string          `json:"key"`
-	InputCacheHits map[string]bool `json:"input_cache_hits,omitempty"`
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Key    string `json:"key"`
+	Status Status `json:"status"`
+	Reason string `json:"reason,omitempty"`
 	// Inputs are the lock changes this run commits for the resource, or would
 	// commit when it ignores input locks.
-	Inputs       []lockfile.InputChange `json:"inputs,omitempty"`
-	Artifacts    map[string]Prepared    `json:"artifacts,omitempty"`
-	Cached       bool                   `json:"cached"`
-	Destinations []DestinationReport    `json:"destinations,omitempty"`
-	Publications []Publication          `json:"publications,omitempty"`
-	// Icon reports what the icon method did for the resource's declared asset.
-	Icon     string `json:"icon,omitempty"`
-	IconPath string `json:"icon_path,omitempty"`
-	Error    string `json:"error,omitempty"`
-	// BlockedBy names the resources whose unavailable outputs prevented execution.
-	BlockedBy []string `json:"blocked_by,omitempty"`
+	Inputs       []lock.InputChange  `json:"inputs,omitempty"`
+	Artifacts    map[string]Prepared `json:"artifacts,omitempty"`
+	Publications []Publication       `json:"publications,omitempty"`
+	// Icon is the asset path the icon method created or found.
+	Icon      string          `json:"icon,omitempty"`
+	Notices   []plugin.Notice `json:"notices,omitempty"`
+	Error     string          `json:"error,omitempty"`
+	BlockedBy []string        `json:"blocked_by,omitempty"`
+}
+
+// Publication is a resource's publication to one destination. Preparation
+// previews its managed Metadata without reading the destination, and
+// Deferred says why a preview is absent; plan and apply add what the
+// destination reported.
+type Publication struct {
+	Destination string               `json:"destination"`
+	Status      Status               `json:"status,omitempty"`
+	Version     string               `json:"version,omitempty"`
+	Previous    string               `json:"previous,omitempty"`
+	Uploads     []plugin.Upload      `json:"uploads,omitempty"`
+	Fields      []plugin.FieldChange `json:"fields,omitempty"`
+	Repairs     []string             `json:"repairs,omitempty"`
+	Removed     []string             `json:"removed,omitempty"`
+	Metadata    json.RawMessage      `json:"metadata,omitempty"`
+	Origins     map[string]string    `json:"origins,omitempty"`
+	Deferred    string               `json:"deferred,omitempty"`
+	Error       string               `json:"error,omitempty"`
 }
 
 // signatureNotices returns the advisories that the signing evidence of a
@@ -61,61 +95,6 @@ func signatureNotices(resource plugin.ResourceReference, artifacts map[string]Pr
 		notices = append(notices, signature.Notices(resource, artifacts[name].Evidence)...)
 	}
 	return notices
-}
-
-// Publication reports managed metadata without reading destination state.
-// Deferred says why Metadata is absent.
-type Publication struct {
-	Destination string            `json:"destination"`
-	Metadata    json.RawMessage   `json:"metadata,omitempty"`
-	Origins     map[string]string `json:"origins,omitempty"`
-	Deferred    string            `json:"deferred,omitempty"`
-}
-
-// DestinationReport describes semantic drift independently of cache hits.
-type DestinationReport struct {
-	Artifact string            `json:"artifact,omitempty"`
-	Name     string            `json:"name"`
-	Origins  map[string]string `json:"origins,omitempty"`
-	Changes  []plugin.Change   `json:"changes"`
-	Applied  bool              `json:"reconciled"`
-	Error    string            `json:"error,omitempty"`
-}
-
-// MarshalJSON keeps preparation cache state out of unrelated command results.
-func (r ResourceReport) MarshalJSON() ([]byte, error) {
-	type resource ResourceReport
-	var cached *bool
-	if len(r.Artifacts) > 0 && r.Icon == "" {
-		cached = &r.Cached
-	}
-	return json.Marshal(struct {
-		resource
-
-		Cached *bool `json:"cached,omitempty"`
-	}{resource: resource(r), Cached: cached})
-}
-
-// MarshalJSON distinguishes planned drift, successful reconciliation and failure.
-func (r DestinationReport) MarshalJSON() ([]byte, error) {
-	type destination DestinationReport
-	if r.Changes == nil {
-		r.Changes = []plugin.Change{}
-	}
-	status := "planned"
-	switch {
-	case r.Error != "":
-		status = "failed"
-	case len(r.Changes) == 0:
-		status = "unchanged"
-	case r.Applied:
-		status = "applied"
-	}
-	return json.Marshal(struct {
-		destination
-
-		Status string `json:"status"`
-	}{destination: destination(r), Status: status})
 }
 
 // ResourceError identifies a resource failure independently of command-wide failures.
@@ -147,114 +126,85 @@ func Unreported(err error) error {
 	return errors.Join(rest...)
 }
 
-// Summary counts the entire run, including resources omitted from its presentation.
+// Summary counts the resources a run selected by status, including those its
+// presentation omits. NotReached are the selected resources a stopped run
+// never finished; Removed counts what retention deletes.
 type Summary struct {
-	method                string
-	Resources             int `json:"resources"`
-	InputChanges          int `json:"input_changes,omitempty"`
-	Changed               int `json:"changed,omitempty"`
-	Unchanged             int `json:"unchanged,omitempty"`
-	Failed                int `json:"failed,omitempty"`
-	Blocked               int `json:"blocked,omitempty"`
-	Skipped               int `json:"skipped,omitempty"`
-	Destinations          int `json:"destinations,omitempty"`
-	DestinationOperations int `json:"destination_operations,omitempty"`
-	Applied               int `json:"applied,omitempty"`
-	Resolved              int `json:"resolved,omitempty"`
-	Prepared              int `json:"prepared,omitempty"`
-	Cached                int `json:"cached,omitempty"`
-	Created               int `json:"created,omitempty"`
-	Derived               int `json:"derived,omitempty"`
+	Resources  int `json:"resources"`
+	Changed    int `json:"changed"`
+	Unchanged  int `json:"unchanged"`
+	Failed     int `json:"failed"`
+	Blocked    int `json:"blocked"`
+	Skipped    int `json:"skipped"`
+	NotReached int `json:"not_reached"`
+	Removed    int `json:"removed"`
 }
 
-// Summarize records totals before any presentation filter is applied.
-func (r *Report) Summarize(method string) {
-	s := Summary{method: method, Resources: len(r.Resources), InputChanges: len(r.RemovedInputs)}
-	destinations := map[string]bool{}
+// Summarize counts the report's resources against the number the run selected.
+func (r *Report) Summarize(selected int) {
+	s := Summary{Resources: max(selected, len(r.Resources))}
 	for _, resource := range r.Resources {
-		s.InputChanges += len(resource.Inputs)
-		switch {
-		case len(resource.BlockedBy) > 0:
-			s.Blocked++
-		case resource.Error != "":
-			s.Failed++
-		case method == "update":
-			s.Resolved++
-		case method == "icon":
-			switch {
-			case strings.HasPrefix(resource.Icon, "created "):
-				s.Created++
-			case resource.Icon == "unchanged":
-			default:
-				s.Skipped++
-			}
-		case method == "signature":
-			if derivedSignatures(resource) {
-				s.Derived++
-			}
-		case resource.Cached:
-			s.Cached++
-		default:
-			s.Prepared++
-		}
-		changed := len(resource.Inputs) > 0
-		for _, destination := range resource.Destinations {
-			s.DestinationOperations++
-			destinations[destination.Name] = true
-			if len(destination.Changes) > 0 {
-				changed = true
-				if destination.Applied {
-					s.Applied++
-				}
-			}
-		}
-		if method == "icon" {
-			changed = strings.HasPrefix(resource.Icon, "created ")
-		}
-		if changed {
+		switch resource.Status {
+		case StatusChanged:
 			s.Changed++
-		} else if resource.Error == "" && len(resource.BlockedBy) == 0 && (method != "icon" || resource.Icon == "unchanged") {
+		case StatusUnchanged:
 			s.Unchanged++
+		case StatusFailed:
+			s.Failed++
+		case StatusBlocked:
+			s.Blocked++
+		case StatusSkipped:
+			s.Skipped++
+		}
+		for _, publication := range resource.Publications {
+			s.Removed += len(publication.Removed)
 		}
 	}
-	s.Destinations = len(destinations)
+	s.NotReached = s.Resources - len(r.Resources)
 	r.Summary = s
 }
 
-// derivedSignatures reports whether derivation observed a signing subject of
-// the resource. A package its builder left unsigned has none to declare.
-func derivedSignatures(resource ResourceReport) bool {
-	for _, artifact := range resource.Artifacts {
-		var observations []json.RawMessage
-		if json.Unmarshal(artifact.Evidence["signatures"], &observations) == nil && len(observations) > 0 {
-			return true
-		}
+// status settles a finished resource's status from what the command did.
+func (r *ResourceReport) status(method string) {
+	switch {
+	case len(r.BlockedBy) > 0:
+		r.Status = StatusBlocked
+		return
+	case r.Error != "":
+		r.Status = StatusFailed
+		return
+	case r.Status != "":
+		// The icon method settles its own outcome.
+		return
 	}
-	return false
-}
-
-// MarshalJSON exposes predictable counters relevant to the command that ran.
-func (s Summary) MarshalJSON() ([]byte, error) {
-	counts := map[string]int{"resources": s.Resources, "failed": s.Failed, "blocked": s.Blocked}
-	switch s.method {
-	case "":
-		type summary Summary
-		return json.Marshal(summary(s))
-	case "icon":
-		counts["created"], counts["unchanged"], counts["skipped"] = s.Created, s.Unchanged, s.Skipped
+	r.Status = StatusUnchanged
+	switch method {
 	case "update":
-		counts["resolved"], counts["input_changes"], counts["unchanged"] = s.Resolved, s.InputChanges, s.Unchanged
+		if len(r.Inputs) > 0 {
+			r.Status = StatusChanged
+		}
 	case "signature":
-		counts["derived"] = s.Derived
+		r.Status = StatusSkipped
+		r.Reason = "nothing to declare"
+		for _, artifact := range r.Artifacts {
+			if len(signature.Read(artifact.Evidence).Observed) > 0 {
+				r.Status, r.Reason = StatusChanged, ""
+			}
+		}
+	case "icon":
+		// The icon method settled its targets above; this resource was only
+		// prepared for another's icon.
+	case "plan", "apply":
+		for _, publication := range r.Publications {
+			if publication.Status == StatusChanged {
+				r.Status = StatusChanged
+			}
+		}
 	default:
-		counts["prepared"], counts["cached"] = s.Prepared, s.Cached
-		if s.method == "plan" || s.method == "apply" {
-			counts["changed"], counts["unchanged"] = s.Changed, s.Unchanged
-			counts["destinations"], counts["destination_operations"] = s.Destinations, s.DestinationOperations
-			if s.method == "apply" {
-				counts["applied"] = s.Applied
+		for _, artifact := range r.Artifacts {
+			if !artifact.Cached {
+				r.Status = StatusChanged
 			}
 		}
 	}
-	return json.Marshal(counts)
 }

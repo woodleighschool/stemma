@@ -256,7 +256,7 @@ sources cannot express cleanly. When a built-in gains equivalent behaviour,
 catalogs can remove the plugin instead of preserving a compatibility layer.
 
 Register an operation with `kind: resolve`, methods `validate`, `discover` and
-`run`, and a `ResolverKind` containing the observation contract's version. Set
+`run`, and a `ResolverKind` containing the origin contract's version. Set
 `local: true` when consuming a lock must also check current local files.
 
 Every method validates its configuration. `discover` and `run` are independent
@@ -264,38 +264,44 @@ requests; the host does not call `validate` before them. Typed registration owns
 these checks, including the config's `Validate` method.
 
 `ResolveRequest[Config]` supplies declaration `config`, resource-relative `base`
-and project `root`. `discover` returns the current `observation` without
-downloading anything. `run` receives an `observation` and a workspace and
-returns a transient `download` request or the `artifact` it names, reproducing that observation instead of asking
-for the latest release. Stemma owns the surrounding versioned lock, declaration
-fingerprint and content verification; your resolver owns the observation body.
-Keep credentials out of observations and identify credential configuration
-fields with `writeOnly: true`.
+and project `root`. `discover` returns the current `origin`, the `version` the
+source states and, when known, the `content`, without downloading anything.
+`run` receives the `origin`, the `version` and expected `content` when the lock
+or discovery states them, and a workspace, and returns a transient `download` request or the
+`artifact` it names, reproducing that origin instead of asking for the latest
+release. Stemma owns the surrounding lock entry, declaration fingerprint and
+content verification; your resolver owns the origin body. An origin holds only
+what `run` needs to fetch the same bytes again: never the version, filename or
+digest the entry already records, and never credentials. Identify credential
+configuration fields with `writeOnly: true`.
 
-Set `immutable` when an observation always fetches the same bytes, such as a
-vendor release ID. Stemma then reuses what it fetched for that observation, or
-what the lock records for it, instead of calling `run`. Reuse from the cache is
-per plugin build; the lock's answer holds across builds. Change the version
-when an observation's meaning changes.
+Set `immutable` when an origin always fetches the same bytes, such as a vendor
+release ID. Stemma then reuses what it fetched for that origin, or what the lock
+records for it, instead of calling `run`. Reuse from the cache is per plugin
+build; the lock's answer holds across builds. Change the version when an
+origin's meaning changes.
 
 When discovery identifies the bytes, return `content` with `sha256`, `filename`,
 `mode` and optional `tree`. No size is required: these are expected bytes, not a
 verified artifact. To delegate HTTP acquisition, return `download` from `run`
 with `url`, optional `headers`, `filename` and an optional expected `sha256`.
 These requests may contain current credentials or signed URLs; they are never
-written to locks. Reconstruct and validate the request from the saved observation
-and current configuration on every `run`. Return exactly one download request or
+written to locks. Reconstruct and validate the request from the saved origin,
+the expected content and current configuration on every `run`. Return exactly one download request or
 an artifact inside the leased workspace. Discovery must not return either.
 
 The host confines credentials and custom headers to the request origin, rejects HTTPS downgrades,
 acquires mutable content conditionally, and checks acquired content against
-the lock. The resolver owns observation validation, filename selection, and
+the lock. The resolver owns origin validation, filename selection, and
 provider authentication. All downloads use the same transfer and cache lifecycle.
 
-Return registry metadata in namespaced discovery `evidence`, for example
-`{"vendor.release":{"version":"1.2"}}`. Evidence is reviewed in the source lock
-and passed to resource inputs; destination metadata can reference it with
-`{{ evidence['vendor.release'].version }}`. A builder reads the same evidence
+Return registry metadata as discovery `evidence` under one namespace name,
+nesting what it holds, for example `{"vendor":{"release":{"channel":"stable"}}}`.
+A name has no dots, and `source`, `signing`, `macos` and `windows` belong to
+Stemma. Evidence never repeats the version or digest; the entry records those.
+Evidence is reviewed in the source lock and passed to resource inputs;
+destination metadata can reference it with
+`{{ evidence.vendor.release.channel }}`. A builder reads the same evidence
 through `inputs.<name>.evidence`. Fresh discovery evidence replaces the prior
 evidence independently of cached bytes. Changing evidence invalidates preparation
 even when the bytes are unchanged.
@@ -307,12 +313,12 @@ omitted `path`. Keep source-format knowledge here and installation layout in the
 consuming resource. Both values are reviewed in the lock and reused on frozen
 runs. They do not replace the digest of the original bytes.
 
-Observation remains private to the resolver. A locked fetch verifies bytes and
+The origin remains private to the resolver. A locked fetch verifies bytes and
 uses the lock's saved evidence, ignoring evidence returned by the fetch. Resolver
 artifact formats and typed facts are not persisted; resource kinds own
 their interpretation of the downloaded content. Supply the input version during
 discovery. Keep credentials and temporary URLs out of evidence as well as
-observations.
+origins.
 
 ## Destinations
 
@@ -326,13 +332,15 @@ the value.
 
 `validate` checks metadata, and the prepared artifact when there is one, without
 connecting: it receives no `Config`. `plan` and `apply` receive the connection
-settings with their environment values evaluated.
+settings with their environment values evaluated. Each method validates its
+request independently. Prepared content goes directly to `plan` or `apply`;
+`validate` serves declaration checks and `prepare`.
 
-For a prepared artifact, `validate` also answers with what it will publish.
+For a prepared artifact, each method also answers with the metadata it manages.
 `Metadata` is the request's metadata in the declaration's own shape, with every
 value the destination derives from the artifact and null or an empty value for
 each field it clears; `Origins` maps each field to where its value came from. Leave out anything the destination assigns, such as a
-stored file's location. `stemma prepare --json` reports both, so return
+stored file's location. `prepare`, `plan` and `apply` report both, so return
 `Metadata` only when the derived state reads in the declaration's terms.
 
 Artifact identity, size, format, facts and evidence are available without `Path`.
@@ -347,10 +355,23 @@ re-observe remote state and request content if an upload becomes necessary after
 plan. Verify bytes against their declared identity when publishing, and use the
 storage service's transfer checksum.
 
-`plan` reads the destination and returns semantic `Change` records without
-mutations. `apply` re-observes and performs the necessary changes. Preserve absent,
-null, false and empty collection values when decoding native metadata; they have
-different meanings. Return the changes already made alongside an error.
+`plan` reads the destination and describes the publication without mutations;
+`apply` re-observes, makes the publication and describes what it did. Both
+return `version`, the native version or filename of the publication,
+and `previous`, what the destination held before: empty for software new to the
+destination, equal to `version` for an update in place. `uploads` list the bytes
+the method puts in the destination (`installer` or `icon`, with the SHA-256
+before and after). `fields` list the managed metadata that differs from the
+object the publication replaces: the previous version's object where the
+destination keeps one per version, the current object where it updates in place,
+and initial values only for new software. Name each field by its path in the
+declared metadata, the key `origins` uses, and give values as the declaration
+names things rather than as destination IDs. Version clears remain explicit
+fields. `repairs` names derived records rebuilt, such as Munki catalogs. `removed`
+names what retention deletes, by version where the destination records one.
+Determine writes from native pending work, and report confirmed effects on apply. Preserve
+absent, null, false and empty collection values when decoding native metadata;
+they have different meanings. Return what apply already did alongside an error.
 
 Identify publications from native keys or a marker in a remote field. Re-running
 with an empty local cache must find existing objects and skip completed uploads.
@@ -370,7 +391,7 @@ resource's `ResourceReference.Key()` to its declared metadata for this connectio
 including unselected peers. The key defaults the API version to `stemma/v1alpha1`.
 Resolve native IDs from that metadata and the resource identity; missing peers are
 errors. Never reinterpret resource names as native strings or remote search terms.
-`ReconcileResponse` reports changes and origins; it does not discover dependencies.
+`ReconcileResponse` reports the publication and origins; it does not discover dependencies.
 
 `ResourceOutputReference` adds an output selector to resource identity for immutable
 preparation inputs. It is distinct from publication references, which have no
@@ -416,21 +437,22 @@ any Stemma can report what a plugin built for another one offers.
 Other requests add `operation`, `input` and optionally `log_level`.
 
 Reserve stdout for the protocol. Use `plugin.Logger(ctx)` for structured diagnostics
-and `plugin.Stage(ctx, "Downloading installer", plugin.Detail(filename))` for
-progress; call the returned function with the operation error, and optionally
-`plugin.Detail(version)`, when the stage finishes. A detail names what the stage
-works on, then what it found. Supply plain labels and details without status
-markers, colour codes or alignment padding; the host formats their presentation.
+and `plugin.Stage(ctx, "Verifying signature", plugin.Item(filename))` for work
+over a collection. Each item nests beneath the operation, even when it is the
+only item. Call the returned function with the operation error and optionally
+`plugin.Detail(result)` when it finishes; the item keeps its name alongside the
+result. Use `plugin.Detail` alone for a single overall step. Supply plain labels,
+items and details without status markers, colour codes or alignment padding;
+the host formats their presentation.
 The host supplies resource, phase and destination context; plugins report the
-operations they perform. The live display shows the innermost running
-stage. Completed transfers and other finished stages that ran for a second or
-longer stay listed until the resource's result is written, unless other stages
-ran inside them. Finish a transfer stage before starting finalization so each
-keeps its own timing and the completed transfer retains its byte count. Its line shows
-both details, or the second alone when it contains the first. A stage that
-starts again in the same phase with the same message and detail continues that line and adds to
-its time. Wrap transfers in
-`plugin.ProgressReader` to show their bytes. Raw subprocess stderr is discarded
+operations they perform. The live display expands the resource's stages and
+replaces them with its final result. Finish a transfer stage before starting
+finalization so their progress remains separate. Wrap transfers in
+`plugin.ProgressReader` to report bytes. A known total produces a percentage bar;
+an unknown total produces a moving bar and the observed count. Other operations
+can log `progress: true`, `current`, `unit` and an optional `total` within their
+stage. Throttle progress events to roughly four per second.
+Raw subprocess stderr is discarded
 by the host, so report operational failures through the protocol. Do not log
 credentials, query strings or request bodies.
 

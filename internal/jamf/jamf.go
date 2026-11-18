@@ -25,10 +25,9 @@ type Config struct {
 
 // Handle validates, plans or applies one software's publication. It converges
 // the package holding the artifact's file name, then the install policies,
-// patch deployment and retention; plan reports the same changes without
+// patch deployment and retention; plan reports the same publication without
 // writing.
-func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugin.ReconcileResponse, error) {
-	var response plugin.ReconcileResponse
+func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (response plugin.ReconcileResponse, err error) {
 	config := request.Config
 	// Validation also runs before connection settings are available.
 	if request.Method != "validate" {
@@ -41,6 +40,10 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	if err != nil {
 		return response, err
 	}
+	preview := response
+	defer func() {
+		response.Metadata, response.Origins = preview.Metadata, preview.Origins
+	}()
 	if request.Method == "validate" {
 		if request.Artifact.SHA256 != "" {
 			_, err = describePayload(request.Identity, request.Artifact)
@@ -95,22 +98,36 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 	if err != nil {
 		return response, err
 	}
-	desired := metadata.fields
-	response.Changes = plan(current, desired, content, identity)
-	pub := publication{filename: content.filename, icon: icon}
+	pub := publication{filename: content.filename, version: request.Artifact.Version, icon: icon}
+	response.Version = content.filename
+	// Jamf identifies a package by filename; its marker identifies the family.
+	// Compare metadata with the current package, or the newest family member.
+	replaced := current
 	if current != nil {
 		pub.packageID = stringField(current.Fields, "id")
+		response.Previous = stringField(current.Fields, "fileName")
+	} else if latest, ok := newest(family); ok {
+		response.Previous = latest.FileName
+		if replaced, err = c.get(ctx, latest.id()); err != nil {
+			return response, err
+		}
 	}
+	if response.Uploads, response.Fields, err = c.planPackage(ctx, current, replaced, metadata, content); err != nil {
+		return plugin.ReconcileResponse{}, err
+	}
+	packageFields, packageUploads := response.Fields, response.Uploads
 	for _, policy := range metadata.policies {
 		if err := c.planPolicy(ctx, policy, pub, &response); err != nil {
-			return response, err
+			return plugin.ReconcileResponse{}, err
 		}
 	}
 	if metadata.patch != nil {
-		if err := c.planPatch(ctx, metadata.patch, pub.packageID, icon, &response); err != nil {
-			return response, err
+		if err := c.planPatch(ctx, metadata.patch, pub, &response); err != nil {
+			return plugin.ReconcileResponse{}, err
 		}
 	}
+	iconUploads := icon.upload()
+	response.Uploads = append(response.Uploads, iconUploads...)
 	// The current record is never retired, so creating it below leaves this
 	// selection as planned.
 	var retiring []summary
@@ -118,22 +135,37 @@ func Handle(ctx context.Context, request plugin.ReconcileRequest[Config]) (plugi
 		retiring = retired(family, pub.packageID, metadata.retention.Keep)
 	}
 	if request.Method == "plan" {
-		return response, c.prune(ctx, retiring, metadata.patch, metadata.policies, false, &response)
-	}
-	if pub.packageID, err = c.publishPackage(ctx, current, desired, identity, request.Artifact.Path, content); err != nil {
+		err = c.prune(ctx, retiring, metadata.patch, metadata.policies, false, &response)
 		return response, err
 	}
+	response = plugin.ReconcileResponse{Metadata: response.Metadata, Origins: response.Origins, Version: response.Previous, Previous: response.Previous}
+	defer func() {
+		if icon != nil && icon.uploaded {
+			response.Uploads = append(response.Uploads, plugin.Upload{Name: plugin.UploadIcon, Filename: icon.filename(), After: icon.artifact.SHA256})
+		}
+	}()
+	pub.packageID, err = c.publishPackage(ctx, current, metadata.fields, identity, request.Artifact.Path, content, &response)
+	for i := range response.Uploads {
+		if response.Uploads[i].Name == plugin.UploadInstaller && len(packageUploads) > 0 {
+			response.Uploads[i].Before = packageUploads[0].Before
+		}
+	}
+	if err != nil {
+		return response, err
+	}
+	response.Fields = append(response.Fields, packageFields...)
 	for _, policy := range metadata.policies {
-		if err := c.applyPolicy(ctx, policy, pub); err != nil {
+		if err := c.applyPolicy(ctx, policy, pub, &response); err != nil {
 			return response, err
 		}
 	}
 	if metadata.patch != nil {
-		if err := c.applyPatch(ctx, metadata.patch, pub.packageID, icon); err != nil {
+		if err := c.applyPatch(ctx, metadata.patch, pub, &response); err != nil {
 			return response, err
 		}
 	}
-	return response, c.prune(ctx, retiring, metadata.patch, metadata.policies, true, &response)
+	err = c.prune(ctx, retiring, metadata.patch, metadata.policies, true, &response)
+	return response, err
 }
 
 // Validate checks the server origin and credentials.

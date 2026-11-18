@@ -25,6 +25,9 @@ type selfServiceIcon struct {
 	artifact plugin.Artifact
 	// id is an existing or newly uploaded icon, shared by policies this run.
 	id string
+	// wanted reports that planning found a policy yet to show the icon.
+	wanted   bool
+	uploaded bool
 }
 
 func newSelfServiceIcon(artifact plugin.Artifact) (*selfServiceIcon, error) {
@@ -57,13 +60,30 @@ func (i *selfServiceIcon) observe(doc *xmlNode, path ...string) {
 	}
 }
 
+// want records whether doc lacks the setting that shows the icon, the only
+// setting with a write.
+func (i *selfServiceIcon) want(doc *xmlNode, settings []setting) {
+	if i != nil && slices.ContainsFunc(pending(doc, settings), func(s setting) bool { return s.write != nil }) {
+		i.wanted = true
+	}
+}
+
+// upload is the icon apply puts in Jamf: none unless a policy is to show it
+// and none shows an uploaded copy to reuse. Each upload is a new icon object.
+func (i *selfServiceIcon) upload() []plugin.Upload {
+	if i == nil || !i.wanted || i.id != "" {
+		return nil
+	}
+	return []plugin.Upload{{Name: plugin.UploadIcon, Filename: i.filename(), After: strings.ToLower(i.artifact.SHA256)}}
+}
+
 // setting shows the icon at self_service_icon under path, uploading it when
-// no reusable ID has been observed.
-func (i *selfServiceIcon) setting(c *client, root string, path ...string) setting {
+// no reusable ID has been observed. Field is the setting's declaration path.
+func (i *selfServiceIcon) setting(c *client, root, field string, path ...string) setting {
 	path = slices.Concat(path, []string{"self_service_icon"})
 	filename := slices.Concat(path, []string{"filename"})
 	return setting{
-		field:    "self_service.icon",
+		field:    field,
 		value:    i.filename(),
 		fragment: fragment(root, i.filename(), filename...),
 		current:  text(filename...),
@@ -74,6 +94,7 @@ func (i *selfServiceIcon) setting(c *client, root string, path ...string) settin
 					return nil, err
 				}
 				i.id = id
+				i.uploaded = true
 			}
 			return whole(fragment(root, map[string]string{"id": i.id}, path...), path...), nil
 		},

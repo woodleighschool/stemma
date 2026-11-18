@@ -132,7 +132,7 @@ func (e *execution) acquire(ctx context.Context, key string) *preparationTask {
 		acquireCtx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("phase", "Acquire"))
 	}
 	var entries map[string]source.Entry
-	entries, p.item.InputCacheHits, p.failure = e.locked.Acquire(acquireCtx, key)
+	entries, p.failure = e.locked.Acquire(acquireCtx, key)
 	if p.failure == nil && e.opts.Method != "update" {
 		p.inputs, p.failure = e.inputs(plan, entries)
 	}
@@ -151,7 +151,7 @@ func (e *execution) build(ctx context.Context, p *preparationTask) {
 	if e.opts.Method == "signature" {
 		derive = "signature"
 	}
-	p.result.outputs, p.item.Cached, p.failure = prepareResource(ctx, e.session.store, e.session.ops, plan, p.inputs, p.result.work, derive)
+	p.result.outputs, p.failure = prepareResource(ctx, e.session.store, e.session.ops, plan, p.inputs, p.result.work, derive)
 }
 
 func (e *execution) recordPreparation(ctx context.Context, p *preparationTask) error {
@@ -176,7 +176,7 @@ func (e *execution) recordPreparation(ctx context.Context, p *preparationTask) e
 		plugin.Logger(ctx).DebugContext(ctx, "Inputs resolved", "elapsed", time.Since(p.started).Round(time.Millisecond))
 	case p.failure == nil:
 		artifact := p.result.outputs["installer"]
-		plugin.Logger(ctx).DebugContext(ctx, "Prepared", "artifact", artifact.Filename, "version", artifact.Version, "cached", p.item.Cached, "elapsed", time.Since(p.started).Round(time.Millisecond))
+		plugin.Logger(ctx).DebugContext(ctx, "Prepared", "artifact", artifact.Filename, "version", artifact.Version, "cached", artifact.Cached, "elapsed", time.Since(p.started).Round(time.Millisecond))
 	case len(p.item.BlockedBy) > 0:
 		plugin.Logger(ctx).DebugContext(ctx, "Resource blocked", "blocked_by", p.item.BlockedBy)
 	default:

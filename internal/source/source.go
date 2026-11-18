@@ -21,22 +21,24 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Discovery is a resolver's current observation. Immutable promises that the
-// observation always fetches the same bytes.
+// Discovery is what a resolver finds now: the origin to fetch, the version it
+// states and, when it knows it in advance, the content. Immutable promises
+// that the origin always fetches the same bytes.
 type Discovery struct {
 	Content     *Content
 	Version     string
 	ContentRoot string
 	Evidence    map[string]json.RawMessage
-	Observation json.RawMessage
+	Origin      json.RawMessage
 	Immutable   bool
 }
 
-// Resolver owns its declaration and stable observation. Local resolvers are
-// reobserved even with a warm cache. Fingerprint must exclude credentials.
-// Identity names the implementation in the source index and defaults to
-// Version. Acquire keeps returned artifact paths available until the manager
-// returns.
+// Resolver owns its declaration and origin. Local resolvers are read again
+// even with a warm cache. Fingerprint must exclude credentials. Identity names
+// the implementation in the source index and defaults to Version. Acquire
+// fetches what an entry's origin names; the entry also carries the version and,
+// when the lock or the discovery states it, the content. Acquire keeps
+// returned artifact paths available until the manager returns.
 type Resolver struct {
 	Version     string
 	Identity    string
@@ -44,12 +46,12 @@ type Resolver struct {
 	Fingerprint func(plugin.Input) (string, error)
 	Discover    func(context.Context, plugin.Input) (Discovery, error)
 	Schema      *jsonschema.Schema
-	Acquire     func(context.Context, plugin.Input, json.RawMessage) (Acquisition, error)
+	Acquire     func(ctx context.Context, input plugin.Input, entry Entry) (Acquisition, error)
 	Changed     func(plugin.Input, []string) (bool, error)
 }
 
-// record is what the source index keeps for one observation: the content a
-// fetch produced and, for HTTP, the validators to ask about it again.
+// record is what the source index keeps for one origin: the content a fetch
+// produced and, for HTTP, the validators to ask about it again.
 type record struct {
 	Content      Content                    `json:"content"`
 	Evidence     map[string]json.RawMessage `json:"evidence,omitempty"`
@@ -139,11 +141,10 @@ func (m *Manager) Resolve(ctx context.Context, input plugin.Input) (Entry, error
 }
 
 // Refresh observes a declaration again and reports whether the cache already
-// held its content. An immutable observation takes its content from the
-// source index, or from the reviewed entry when it records the same
-// observation; anything else is fetched, and a mutable HTTP source is asked
-// conditionally with the validators the index kept. Local inputs are read in
-// full every time.
+// held its content. An immutable origin takes its content from the source
+// index, or from the reviewed entry when it records the same origin; anything
+// else is fetched, and a mutable HTTP source is asked conditionally with the
+// validators the index kept. Local inputs are read in full every time.
 func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry) (Entry, bool, error) {
 	version, declaration, err := m.Declaration(input)
 	if err != nil {
@@ -157,17 +158,21 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 	if err != nil {
 		return Entry{}, false, err
 	}
-	entry := Entry{Version: 1, Resolver: input.Resolver, ResolverVersion: version, Declaration: declaration, InputVersion: found.Version, ContentRoot: found.ContentRoot}
+	entry := Entry{Version: found.Version, Resolver: input.Resolver, ResolverVersion: version, Declaration: declaration}
 	entry.Evidence, err = canonicalEvidence(found.Evidence)
 	if err != nil {
 		return Entry{}, false, err
 	}
-	entry.Observation, err = canonicalJSON(found.Observation)
+	entry.Origin, err = canonicalOrigin(found.Origin)
 	if err != nil {
-		return Entry{}, false, fmt.Errorf("resolver observation: %w", err)
+		return Entry{}, false, fmt.Errorf("resolver origin: %w", err)
 	}
+	// A resolver that states the content up front never reads the source
+	// index, which is keyed by origin alone, so two objects behind one origin
+	// cannot be confused.
 	if found.Content != nil && !resolver.Local {
 		entry.Content = *found.Content
+		entry.Content.Root = found.ContentRoot
 		if err := entry.Validate(); err != nil {
 			return Entry{}, false, err
 		}
@@ -179,6 +184,7 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 			return Entry{}, false, err
 		}
 		entry.Content = current.Content
+		entry.Content.Root = found.ContentRoot
 		if found.Evidence == nil {
 			entry.Evidence = current.Evidence
 		}
@@ -193,12 +199,14 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 	switch {
 	case found.Immutable && recalled:
 		entry.Content = known.Content
+		entry.Content.Root = found.ContentRoot
 		if found.Evidence == nil {
 			entry.Evidence = known.Evidence
 		}
 		return entry, m.Store.Reuse(ctx, entry.Content.SHA256), entry.Validate()
-	case found.Immutable && locked.Validate() == nil && locked.Resolver == entry.Resolver && locked.ResolverVersion == version && locked.Declaration == declaration && sameJSON(locked.Observation, entry.Observation):
+	case found.Immutable && locked.Validate() == nil && locked.Resolver == entry.Resolver && locked.ResolverVersion == version && locked.Declaration == declaration && equalOrigin(locked.Origin, entry.Origin):
 		entry.Content = locked.Content
+		entry.Content.Root = found.ContentRoot
 		if found.Evidence == nil {
 			entry.Evidence = locked.Evidence
 		}
@@ -216,6 +224,7 @@ func (m *Manager) Refresh(ctx context.Context, input plugin.Input, locked Entry)
 		return Entry{}, false, err
 	}
 	entry.Content = current.Content
+	entry.Content.Root = found.ContentRoot
 	if found.Evidence == nil {
 		entry.Evidence = current.Evidence
 	}
@@ -278,34 +287,25 @@ func (m *Manager) FetchLocked(ctx context.Context, input plugin.Input, entry Ent
 }
 
 func entrySourceKey(name string, resolver Resolver, declaration string, entry Entry) (string, error) {
-	return sourceKey(name, resolver, declaration, entry.Observation)
+	return sourceKey(name, resolver, declaration, entry.Origin)
 }
 
-// sourceKey identifies an observation in the source index. The resolver
+// sourceKey identifies an origin in the source index. The resolver
 // implementation is part of it, so a new plugin build fetches again rather
 // than trusting what an older build fetched.
-func sourceKey(name string, resolver Resolver, declaration string, observation json.RawMessage) (string, error) {
+func sourceKey(name string, resolver Resolver, declaration string, origin json.RawMessage) (string, error) {
 	identity := resolver.Identity
 	if identity == "" {
 		identity = resolver.Version
 	}
-	canonical, err := canonicalJSON(observation)
+	canonical, err := canonicalOrigin(origin)
 	if err != nil {
 		return "", err
 	}
 	return fingerprint(struct {
 		Resolver, Identity, Declaration string
-		Observation                     json.RawMessage
+		Origin                          json.RawMessage
 	}{name, identity, declaration, canonical})
-}
-
-func sameJSON(a, b json.RawMessage) bool {
-	left, err := canonicalJSON(a)
-	if err != nil {
-		return false
-	}
-	right, err := canonicalJSON(b)
-	return err == nil && bytes.Equal(left, right)
 }
 
 func (m *Manager) importArtifact(ctx context.Context, artifact plugin.Artifact) (Content, error) {
@@ -376,6 +376,16 @@ func decode(data []byte, value any) error {
 	}
 	return nil
 }
+
+// decodeOrigin reads a resolver origin, which a lock omits when the resolver
+// needs nothing to fetch the bytes again.
+func decodeOrigin(data json.RawMessage, value any) error {
+	if len(data) == 0 {
+		return nil
+	}
+	return decode(data, value)
+}
+
 func fingerprint(value any) (string, error) {
 	data, err := json.Marshal(value)
 	if err != nil {

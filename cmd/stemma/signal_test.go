@@ -17,7 +17,7 @@ func TestInterruptCancelsThenExits(t *testing.T) {
 		t.Skip("process interrupts are not supported on Windows")
 	}
 	if os.Getenv("STEMMA_SIGNAL_TEST") == "1" {
-		ctx, stop := interruptContext()
+		ctx, stop, _ := interruptContext()
 		defer stop()
 		fmt.Println("ready")
 		<-ctx.Done()

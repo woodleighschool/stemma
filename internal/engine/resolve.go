@@ -8,17 +8,17 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/plugins"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
 // Candidate is one whole-catalog resolution held in memory. Callers decide
-// which resources become lockfile changes; Resolve never writes the lockfile.
+// which resources become lock changes; Resolve never writes the lock.
 type Candidate struct {
-	// Lock is the reviewed lockfile the catalog was resolved against.
-	Lock lockfile.File `json:"lock"`
+	// Lock is the reviewed lock the catalog was resolved against.
+	Lock lock.File `json:"lock"`
 	// Plugins are the locked plugin entries whose code performed the resolution.
 	Plugins   map[string]plugins.Entry     `json:"plugins,omitempty"`
 	Resources map[string]CandidateResource `json:"resources"`
@@ -68,10 +68,10 @@ func (c Candidate) Dependents(key string) []string {
 // Resolve observes every declared input of the catalog once and reports each
 // resource independently, so one unreachable source cannot hide the others.
 // ResourceDone receives each resource's input changes as it finishes. Plugins
-// load from the lockfile: their code runs before anything is observed.
+// load from the lock: their code runs before anything is observed.
 func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr error) {
 	// Observing inputs is an update that publishes nothing and commits nothing.
-	opts.Method, opts.Lock = "update", lockfile.Options{Refresh: true}
+	opts.Method, opts.Lock = "update", lock.Options{Refresh: true}
 	s, err := open(ctx, opts, false)
 	if err != nil {
 		return candidate, err
@@ -81,7 +81,7 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 	if err := e.begin(ctx); err != nil {
 		return candidate, err
 	}
-	candidate.Lock, err = lockfile.Load(s.root)
+	candidate.Lock, err = lock.Load(s.root)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return candidate, err
 	}
@@ -103,7 +103,7 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 			resource.Error = "blocked by " + strings.Join(resource.BlockedBy, ", ")
 		} else {
 			ctx := resourceContext(ctx, plan.Resource)
-			entries, hits, err := e.locked.Acquire(ctx, key)
+			entries, err := e.locked.Acquire(ctx, key)
 			if ctx.Err() != nil {
 				return candidate, ctx.Err()
 			}
@@ -114,11 +114,12 @@ func Resolve(ctx context.Context, opts Options) (candidate Candidate, runErr err
 				if len(entries) > 0 {
 					resource.Inputs = entries
 				}
-				report.Inputs, report.InputCacheHits = e.locked.Changes(key), hits
+				report.Inputs = e.locked.Changes(key)
 			}
 		}
 		candidate.Resources[key] = resource
 		report.Error = resource.Error
+		report.status("update")
 		if opts.ResourceDone != nil {
 			if err := opts.ResourceDone(report); err != nil {
 				return candidate, err

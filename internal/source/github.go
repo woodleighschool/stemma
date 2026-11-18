@@ -1,6 +1,7 @@
 package source
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,13 +28,22 @@ type githubConfig struct {
 	Token              string `json:"token,omitempty" jsonschema_description:"Optional bearer token for release discovery and acquisition. Without one, discovery uses GH_TOKEN, then GITHUB_TOKEN, then reconcile's GitHub App when its origin is github.com. Fallback tokens are used only for API discovery."`
 }
 
-type githubObservation struct {
+// githubOrigin locates one asset of one published release. The download URL
+// carries the release tag and asset name.
+type githubOrigin struct {
 	URL       string `json:"url"`
-	Release   string `json:"release"`
 	ReleaseID int64  `json:"release_id"`
 	AssetID   int64  `json:"asset_id"`
-	SHA256    string `json:"sha256,omitempty"`
-	Filename  string `json:"filename"`
+}
+
+// githubAsset is the asset discovery selected, with the digest GitHub reports
+// for it, when it reports one.
+type githubAsset struct {
+	githubOrigin
+
+	Release  string
+	Filename string
+	SHA256   string
 }
 
 func (githubConfig) JSONSchemaExtend(schema *jsonschema.Schema) {
@@ -77,75 +87,98 @@ func (m *Manager) githubResolver() Resolver {
 }
 
 func (m *Manager) discoverGitHub(ctx context.Context, s githubConfig) (Discovery, error) {
-	var observed githubObservation
-	if err := m.github(ctx, s, &observed); err != nil {
+	var asset githubAsset
+	if err := m.github(ctx, s, &asset); err != nil {
 		return Discovery{}, err
 	}
-	data, err := json.Marshal(observed)
+	origin, err := json.Marshal(asset.githubOrigin)
 	if err != nil {
 		return Discovery{}, err
 	}
-	request, err := acquireGitHub(ctx, s, data)
+	digest := s.SHA256
+	if asset.SHA256 != "" {
+		if digest != "" && digest != asset.SHA256 {
+			return Discovery{}, errors.New("declared sha256 disagrees with registry digest")
+		}
+		digest = asset.SHA256
+	}
+	found := Discovery{Origin: origin, Immutable: true, Version: asset.Release}
+	if digest != "" {
+		found.Content = &Content{SHA256: digest, Filename: cmp.Or(s.Filename, asset.Filename), Mode: 0o644}
+	}
+	release, name, err := s.locate(asset.githubOrigin)
 	if err != nil {
 		return Discovery{}, err
 	}
-	found := Discovery{Observation: data, Immutable: true, Version: observed.Release}
-	if request.Download.SHA256 != "" {
-		found.Content = &Content{SHA256: request.Download.SHA256, Filename: request.Download.Filename, Mode: 0o644}
+	if release != asset.Release || name != asset.Filename {
+		return Discovery{}, errors.New("GitHub URL does not identify the selected release asset")
+	}
+	if err := s.selects(release, name); err != nil {
+		return Discovery{}, err
 	}
 	return found, nil
 }
 
-func acquireGitHub(_ context.Context, s githubConfig, observation json.RawMessage) (Acquisition, error) {
-	var observed githubObservation
-	if err := decode(observation, &observed); err != nil {
-		return Acquisition{}, fmt.Errorf("GitHub observation: %w", err)
+func acquireGitHub(_ context.Context, s githubConfig, entry Entry) (Acquisition, error) {
+	var located githubOrigin
+	if err := decode(entry.Origin, &located); err != nil {
+		return Acquisition{}, fmt.Errorf("GitHub origin: %w", err)
 	}
-	if err := validateHTTPURL(observed.URL); err != nil {
-		return Acquisition{}, fmt.Errorf("GitHub observation URL: %w", err)
+	release, name, err := s.locate(located)
+	if err != nil {
+		return Acquisition{}, err
 	}
-	u, _ := url.Parse(observed.URL)
-	if u.Scheme != "https" || u.Host != "github.com" || !strings.HasPrefix(u.Path, "/"+s.Repository+"/releases/download/") {
-		return Acquisition{}, errors.New("observed asset does not belong to the configured GitHub repository")
-	}
-	if observed.ReleaseID <= 0 || observed.AssetID <= 0 || observed.Release == "" || !validFilename(observed.Filename) {
-		return Acquisition{}, errors.New("GitHub observation requires a release tag, release and asset IDs, and asset filename")
-	}
-	if s.Release != "" && s.Release != "latest" && !doublestar.MatchUnvalidated(s.Release, observed.Release) {
-		return Acquisition{}, errors.New("observed release does not match the configured GitHub release")
-	}
-	if !doublestar.MatchUnvalidated(s.Asset, observed.Filename) {
-		return Acquisition{}, errors.New("observed asset does not match the configured GitHub asset")
-	}
-	if u.Path != "/"+s.Repository+"/releases/download/"+observed.Release+"/"+observed.Filename || path.Clean(u.Path) != u.Path || u.RawQuery != "" {
-		return Acquisition{}, errors.New("observed GitHub URL does not identify the selected release asset")
+	if err := s.selects(release, name); err != nil {
+		return Acquisition{}, err
 	}
 	digest := s.SHA256
-	if observed.SHA256 != "" {
-		if !validDigest(observed.SHA256) {
-			return Acquisition{}, errors.New("GitHub observation contains an invalid sha256 digest")
+	if expected := entry.expected(); expected != nil {
+		if digest != "" && digest != expected.SHA256 {
+			return Acquisition{}, errors.New("declared sha256 disagrees with the locked content")
 		}
-		if digest != "" && digest != observed.SHA256 {
-			return Acquisition{}, errors.New("declared sha256 disagrees with registry digest")
-		}
-		digest = observed.SHA256
-	}
-	filename := s.Filename
-	if filename == "" {
-		filename = observed.Filename
+		digest = expected.SHA256
 	}
 	var headers map[string]string
 	if s.Token != "" {
 		headers = map[string]string{"Authorization": "Bearer " + s.Token}
 	}
-	return Acquisition{Download: &Download{URL: observed.URL, Headers: headers, Filename: filename, SHA256: digest}}, nil
+	return Acquisition{Download: &Download{URL: located.URL, Headers: headers, Filename: cmp.Or(s.Filename, name), SHA256: digest}}, nil
+}
+
+// locate reads the release tag and asset name from an origin's download URL,
+// which must belong to the configured repository.
+func (s githubConfig) locate(located githubOrigin) (release, name string, err error) {
+	if err := validateHTTPURL(located.URL); err != nil {
+		return "", "", fmt.Errorf("GitHub origin URL: %w", err)
+	}
+	u, _ := url.Parse(located.URL)
+	rest, ok := strings.CutPrefix(u.Path, "/"+s.Repository+"/releases/download/")
+	if u.Scheme != "https" || u.Host != "github.com" || !ok || path.Clean(u.Path) != u.Path || u.RawQuery != "" {
+		return "", "", errors.New("GitHub origin does not identify a release asset of the configured repository")
+	}
+	slash := strings.LastIndex(rest, "/")
+	if slash <= 0 || located.ReleaseID <= 0 || located.AssetID <= 0 || !validFilename(rest[slash+1:]) {
+		return "", "", errors.New("GitHub origin requires a release asset URL and release and asset IDs")
+	}
+	return rest[:slash], rest[slash+1:], nil
+}
+
+// selects reports whether the declaration selects a release and asset.
+func (s githubConfig) selects(release, name string) error {
+	if s.Release != "" && s.Release != "latest" && !doublestar.MatchUnvalidated(s.Release, release) {
+		return errors.New("origin release does not match the configured GitHub release")
+	}
+	if !doublestar.MatchUnvalidated(s.Asset, name) {
+		return errors.New("origin asset does not match the configured GitHub asset")
+	}
+	return nil
 }
 
 // github identifies one asset of one published release. The downloader
 // transfers its bytes.
-func (m *Manager) github(ctx context.Context, s githubConfig, observed *githubObservation) (err error) {
+func (m *Manager) github(ctx context.Context, s githubConfig, selected *githubAsset) (err error) {
 	done := plugin.Stage(ctx, "Discovering GitHub release", plugin.Detail(s.Repository))
-	defer func() { done(err, plugin.Detail(observed.Release)) }()
+	defer func() { done(err, plugin.Detail(selected.Release)) }()
 	if s.Token == "" {
 		s.Token = m.GitHubToken
 	}
@@ -192,12 +225,12 @@ func (m *Manager) github(ctx context.Context, s githubConfig, observed *githubOb
 		return fmt.Errorf("GitHub release %s has %d assets matching %q; expected exactly one%s", release.TagName, len(matches), s.Asset, assetNames("matched assets", names))
 	}
 	asset := matches[0]
-	*observed = githubObservation{URL: asset.GetBrowserDownloadURL(), Release: release.TagName, ReleaseID: release.ID, AssetID: asset.GetID(), Filename: asset.GetName()}
+	*selected = githubAsset{URL: asset.GetBrowserDownloadURL(), ReleaseID: release.ID, AssetID: asset.GetID(), Release: release.TagName, Filename: asset.GetName()}
 	if digest, ok := strings.CutPrefix(asset.GetDigest(), "sha256:"); ok {
 		if !validDigest(digest) {
 			return errors.New("GitHub asset returned an invalid sha256 digest")
 		}
-		observed.SHA256 = digest
+		selected.SHA256 = digest
 	}
 	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ func TestRetentionKeepsNewestFamilyMembersByNumericID(t *testing.T) {
 	request.Metadata = raw(map[string]any{"retention": map[string]int{"keep": 2}})
 	request.Method = "plan"
 	plan, err := Handle(t.Context(), request)
-	if err != nil || !slices.Equal(deletions(plan), []string{"9"}) {
+	if err != nil || !slices.Equal(plan.Removed, []string{"vendor-0.8.pkg"}) {
 		t.Fatalf("retention plan: %+v: %v", plan, err)
 	}
 	if writes := server.writes(); len(writes) != 0 {
@@ -36,7 +37,7 @@ func TestRetentionKeepsNewestFamilyMembersByNumericID(t *testing.T) {
 	}
 	request.Method = "apply"
 	response, err := Handle(t.Context(), request)
-	if err != nil || !slices.Equal(deletions(response), []string{"9"}) {
+	if err != nil || !slices.Equal(response.Removed, []string{"vendor-0.8.pkg"}) {
 		t.Fatalf("retention apply: %+v: %v", response, err)
 	}
 	if server.exists("9") || !server.exists("10") || !server.exists("12") {
@@ -44,13 +45,13 @@ func TestRetentionKeepsNewestFamilyMembersByNumericID(t *testing.T) {
 	}
 	request.Metadata = raw(map[string]any{"retention": map[string]int{"keep": 1}})
 	response, err = Handle(t.Context(), request)
-	if err != nil || !slices.Equal(deletions(response), []string{"10"}) {
+	if err != nil || !slices.Equal(response.Removed, []string{"vendor-0.9.pkg"}) {
 		t.Fatalf("narrowed retention: %+v: %v", response, err)
 	}
 	if !server.exists("8") || !server.exists("11") || !server.exists("12") {
 		t.Fatal("retention deleted a package outside the family or the current record")
 	}
-	if response, err = Handle(t.Context(), request); err != nil || len(response.Changes) != 0 {
+	if response, err = Handle(t.Context(), request); err != nil || response.Changed() {
 		t.Fatalf("retention was not idempotent: %+v: %v", response, err)
 	}
 }
@@ -73,7 +74,7 @@ func TestRetentionProtectsEveryNativeReference(t *testing.T) {
 			for _, method := range []string{"plan", "apply"} {
 				request.Method = method
 				response, err := Handle(t.Context(), request)
-				if err != nil || !slices.Equal(deletions(response), []string{"2"}) {
+				if err != nil || !slices.Equal(response.Removed, []string{"vendor-0.9.pkg"}) {
 					t.Fatalf("%s with a referenced package: %+v: %v", method, response, err)
 				}
 			}
@@ -120,7 +121,7 @@ func TestPatchPublicationAdvancesAssociationAndPolicy(t *testing.T) {
 	writes := len(server.writes())
 	for _, method := range []string{"plan", "apply"} {
 		request.Method = method
-		if response, err := Handle(t.Context(), request); err != nil || len(response.Changes) != 0 {
+		if response, err := Handle(t.Context(), request); err != nil || response.Changed() {
 			t.Fatalf("unchanged patch %s: %+v: %v", method, response, err)
 		}
 	}
@@ -151,10 +152,11 @@ func TestPatchPublicationAdvancesAssociationAndPolicy(t *testing.T) {
 
 func TestPatchAssociationReplacesExistingLink(t *testing.T) {
 	server, request := newPatchFixture(t)
-	server.native.titles["5"].Packages = []titles.SubsetPackage{{PackageID: "99", Version: "1.0"}, {PackageID: "98", Version: "2.0"}}
+	server.native.titles["5"].Packages = []titles.SubsetPackage{{PackageID: "99", Version: "1.0", DisplayName: "Vendor (administrator)"}, {PackageID: "98", Version: "2.0"}}
 	request.Method = "plan"
 	plan, err := Handle(t.Context(), request)
-	if err != nil || !slices.ContainsFunc(plan.Changes, func(c plugin.Change) bool { return c.Action == "associate" && equalJSON(c.Before, raw("99")) }) {
+	want := plugin.FieldChange{Field: "patch.package", Before: raw("Vendor (administrator)"), After: raw("vendor.pkg")}
+	if link := changedFields(plan)["patch.package"]; err != nil || !reflect.DeepEqual(link, want) {
 		t.Fatalf("plan did not report the replaced association: %+v: %v", plan, err)
 	}
 	request.Method = "apply"
@@ -230,8 +232,15 @@ func TestLostPolicyCreateResponseIsFoundByName(t *testing.T) {
 func TestFailedPolicyUpdateConvergesOnRetry(t *testing.T) {
 	server, request := newPatchFixture(t)
 	server.native.failPolicyUpdate = true
-	if _, err := Handle(t.Context(), request); err == nil {
+	result, err := Handle(t.Context(), request)
+	if err == nil {
 		t.Fatal("unapplied policy settings were published")
+	}
+	if len(result.Uploads) != 1 || !slices.ContainsFunc(result.Fields, func(field plugin.FieldChange) bool { return field.Field == "patch.package" }) || len(server.native.titles["5"].Packages) != 1 {
+		t.Fatalf("confirmed package publication lost: %+v", result)
+	}
+	if slices.ContainsFunc(result.Fields, func(field plugin.FieldChange) bool { return field.Field == "patch.policy.enabled" }) {
+		t.Fatalf("failed policy activation reported complete: %+v", result)
 	}
 	server.native.failPolicyUpdate = false
 	if _, err := Handle(t.Context(), request); err != nil {
@@ -252,7 +261,7 @@ func TestOmittedPatchLeavesDeploymentAlone(t *testing.T) {
 	}
 	writes := len(server.writes())
 	request.Metadata = raw(map[string]any{})
-	if response, err := Handle(t.Context(), request); err != nil || len(response.Changes) != 0 {
+	if response, err := Handle(t.Context(), request); err != nil || response.Changed() {
 		t.Fatalf("omitted patch: %+v: %v", response, err)
 	}
 	if len(server.writes()) != writes || len(server.native.titles["5"].Packages) != 1 || server.native.patchPolicies["10"] == nil {
@@ -289,15 +298,12 @@ func TestUndefinedPatchVersionStillUpdatesTheExistingPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fields := map[string]plugin.Change{}
-	for _, change := range plan.Changes {
-		fields[change.Field] = change
-	}
+	fields := changedFields(plan)
 	if _, ok := fields["patch.policy.enabled"]; !ok || fields["patch.policy.scope.computer_groups"].Field == "" {
-		t.Fatalf("waiting plan held back the policy's settings: %+v", plan.Changes)
+		t.Fatalf("waiting plan held back the policy's settings: %+v", plan.Fields)
 	}
-	if _, ok := fields["patch.policy.target_version"]; ok || fields["patch.packages"].Field != "" {
-		t.Fatalf("waiting plan moved the target or the link: %+v", plan.Changes)
+	if _, ok := fields["patch.version"]; ok || fields["patch.package"].Field != "" {
+		t.Fatalf("waiting plan moved the target or the link: %+v", plan.Fields)
 	}
 	request.Method = "apply"
 	if _, err := Handle(t.Context(), request); err != nil {
@@ -312,7 +318,7 @@ func TestUndefinedPatchVersionStillUpdatesTheExistingPolicy(t *testing.T) {
 	}
 	assertSettled(t, server, request)
 	request.Metadata = raw(map[string]any{"patch": map[string]any{"title": "Test title", "policy": map[string]any{"name": "Pilot rollout", "enabled": true}}})
-	if response, err := Handle(t.Context(), request); err != nil || len(response.Changes) != 0 || len(server.native.patchPolicies) != 1 {
+	if response, err := Handle(t.Context(), request); err != nil || response.Changed() || len(server.native.patchPolicies) != 1 {
 		t.Fatalf("a new policy did not wait for the title: %+v: %v", response, err)
 	}
 }
@@ -327,7 +333,7 @@ func TestRetentionKeepsAPackageAWaitingLinkHolds(t *testing.T) {
 	for _, method := range []string{"plan", "apply"} {
 		request.Method = method
 		response, err := Handle(t.Context(), request)
-		if err != nil || len(deletions(response)) != 0 {
+		if err != nil || len(response.Removed) != 0 {
 			t.Fatalf("%s retired the package a waiting link holds: %+v: %v", method, response, err)
 		}
 	}
@@ -368,7 +374,7 @@ func TestRepublishedVersionRetiresItsSupersededPackage(t *testing.T) {
 	for _, method := range []string{"plan", "apply"} {
 		request.Method = method
 		response, err := Handle(t.Context(), request)
-		if err != nil || !slices.Equal(deletions(response), []string{"1"}) {
+		if err != nil || !slices.Equal(response.Removed, []string{"vendor.pkg"}) {
 			t.Fatalf("%s kept the package its own association releases: %+v: %v", method, response, err)
 		}
 	}
@@ -386,7 +392,7 @@ func TestNativePatchPresenceAndScopeCollections(t *testing.T) {
 		t.Fatal(err)
 	}
 	patch.titleID, patch.Version, patch.scope = "5", new("2.0"), map[string][]string{"computer_groups": {}}
-	settings := patch.settings(nil, nil)
+	settings := patch.settings(nil, publication{})
 	for _, s := range pending(current, settings) {
 		mergeXML(current, s.fragment)
 	}
@@ -398,7 +404,7 @@ func TestNativePatchPresenceAndScopeCollections(t *testing.T) {
 	}
 	// Jamf returns each scope object with its name, and may count the list.
 	patch.scope["computer_groups"] = []string{"3"}
-	settings = patch.settings(nil, nil)
+	settings = patch.settings(nil, publication{})
 	current.child("scope").set(xmlNode{XMLName: xml.Name{Local: "computer_groups"}, Children: []xmlNode{
 		{XMLName: xml.Name{Local: "size"}, Text: "1"},
 		{XMLName: xml.Name{Local: "computer_group"}, Children: []xmlNode{{XMLName: xml.Name{Local: "id"}, Text: "3"}, {XMLName: xml.Name{Local: "name"}, Text: "Managed Macs"}}},
@@ -471,15 +477,12 @@ func TestPatchDistributionSettlesAsJamfReadsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertTruthful(t, plan)
-	fields := map[string]plugin.Change{}
-	for _, change := range plan.Changes {
-		fields[change.Field] = change
-	}
+	fields := changedFields(plan)
 	if change := fields["patch.policy.distribution"]; !equalJSON(change.Before, raw("automatic")) || !equalJSON(change.After, raw("self_service")) {
-		t.Fatalf("distribution plan is not in declaration terms: %+v", plan.Changes)
+		t.Fatalf("distribution plan is not in declaration terms: %+v", plan.Fields)
 	}
 	if _, ok := fields["patch.policy.self_service.icon"]; !ok || fields["patch.policy.deadline_days"].After == nil {
-		t.Fatalf("self service plan: %+v", plan.Changes)
+		t.Fatalf("self service plan: %+v", plan.Fields)
 	}
 	request.Method = "apply"
 	if _, err := Handle(t.Context(), request); err != nil {
@@ -602,19 +605,6 @@ func newPatchFixture(t *testing.T) (*fakeServer, plugin.ReconcileRequest[Config]
 	return server, request
 }
 
-// deletions returns the package IDs that retention reported deleting.
-func deletions(response plugin.ReconcileResponse) []string {
-	var ids []string
-	for _, change := range response.Changes {
-		if change.Kind == "retention" && change.Action == "delete" {
-			var id string
-			_ = json.Unmarshal(change.Before, &id)
-			ids = append(ids, id)
-		}
-	}
-	return ids
-}
-
 type nativeServer struct {
 	titles                map[string]*titles.ResourcePatchSoftwareTitleConfiguration
 	patchPolicies         map[string]*xmlNode
@@ -726,11 +716,15 @@ func (n *nativeServer) handle(s *fakeServer, w http.ResponseWriter, r *http.Requ
 				s.t.Error(err)
 			}
 		}
-		titleData := map[string]any{"id": title.ID, "displayName": title.DisplayName, "softwareTitleId": title.SoftwareTitleID, "packages": title.Packages}
-		if title.Packages == nil {
-			titleData["packages"] = []any{}
+		// Jamf names each linked package by its display name.
+		links := []titles.SubsetPackage{}
+		for _, link := range title.Packages {
+			if pkg := s.packages[link.PackageID]; pkg != nil && link.DisplayName == "" {
+				link.DisplayName = stringField(pkg, "packageName")
+			}
+			links = append(links, link)
 		}
-		writeJSON(s.t, w, titleData)
+		writeJSON(s.t, w, map[string]any{"id": title.ID, "displayName": title.DisplayName, "softwareTitleId": title.SoftwareTitleID, "packages": links})
 	case r.URL.Path == "/api/v1/buildings" || r.URL.Path == "/api/v1/departments" || r.URL.Path == "/api/v4/computers-inventory":
 		objects := map[string]map[string]string{
 			"/api/v1/buildings":           {"21": "Senior Campus", "22": "Junior Campus"},

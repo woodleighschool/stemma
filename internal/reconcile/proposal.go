@@ -11,7 +11,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/git"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/reconcile/sourcecontrol"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/plugin"
@@ -154,7 +154,7 @@ func (r *runner) propose(ctx context.Context, head string, set changeset, candid
 		file.Inputs = map[string]map[string]source.Entry{}
 	}
 	if file.Version == 0 {
-		file.Version = lockfile.Version
+		file.Version = lock.Version
 		file.Plugins = candidate.Plugins
 	}
 	for key, c := range set.changes {
@@ -171,7 +171,7 @@ func (r *runner) propose(ctx context.Context, head string, set changeset, candid
 			return proposal, err
 		}
 	}
-	data, err := lockfile.Encode(file)
+	data, err := lock.Encode(file)
 	if err != nil {
 		return proposal, err
 	}
@@ -220,7 +220,7 @@ func (r *runner) propose(ctx context.Context, head string, set changeset, candid
 	defer func() { _ = worktree.Remove() }()
 	reviewed, err := r.locked(head)
 	if err == nil {
-		err = lockfile.Save(filepath.Join(worktree.Dir, r.project), file)
+		err = lock.Save(filepath.Join(worktree.Dir, r.project), file)
 	}
 	if err != nil {
 		done(err)

@@ -2,8 +2,6 @@ package engine
 
 import (
 	"cmp"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -27,14 +25,12 @@ func minimumOS(artifact plugin.Artifact, declared string) (*plugin.MinimumOS, er
 			candidates = append(candidates, plugin.MinimumOS{Version: subject.Installer.MinimumOS, Origin: "installer.minimum_os"})
 		}
 	}
-	if data, ok := artifact.Evidence["macos.application"]; ok {
-		var app plugin.Subject
-		if err := json.Unmarshal(data, &app); err != nil || app.App == nil {
-			return nil, errors.New("macos.application evidence requires an application subject")
-		}
-		if app.App.MinimumOS != "" {
-			candidates = append(candidates, plugin.MinimumOS{Version: app.App.MinimumOS, Origin: "app.minimum_os"})
-		}
+	macos, err := plugin.ReadMacOS(artifact.Evidence)
+	if err != nil {
+		return nil, err
+	}
+	if app := macos.Application; app != nil && app.App.MinimumOS != "" {
+		candidates = append(candidates, plugin.MinimumOS{Version: app.App.MinimumOS, Origin: "app.minimum_os"})
 	}
 	var result *plugin.MinimumOS
 	for _, candidate := range candidates {

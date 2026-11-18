@@ -106,18 +106,18 @@ func TestHomebrewDowngradeRemainsBlocked(t *testing.T) {
 				_, err = m.Resolve(t.Context(), plugin.Input{Resolver: "homebrew", Config: map[string]any{"cask": "example"}})
 			} else {
 				config := homebrewConfig{Cask: "example"}
-				observation := homebrewObservation{URL: "https://vendor.test/app.dmg", Filename: "app.dmg"}
+				located := homebrewOrigin{URL: "https://vendor.test/app.dmg"}
+				var expected Content
 				if kind == "bottle" {
 					config = homebrewConfig{Formula: "example"}
-					observation.Bottle = true
-					observation.SHA256 = strings.Repeat("a", 64)
-					observation.URL = "https://ghcr.io/v2/homebrew/core/example/blobs/sha256:" + observation.SHA256
+					expected = Content{Filename: "app.tar.gz", SHA256: strings.Repeat("a", 64), Mode: 0o644}
+					located = homebrewOrigin{URL: "https://ghcr.io/v2/homebrew/core/example/blobs/sha256:" + expected.SHA256, Bottle: true}
 				}
-				data, marshalErr := json.Marshal(observation)
+				data, marshalErr := json.Marshal(located)
 				if marshalErr != nil {
 					t.Fatal(marshalErr)
 				}
-				acquisition, acquireErr := m.acquireHomebrew(t.Context(), config, data)
+				acquisition, acquireErr := m.acquireHomebrew(t.Context(), config, Entry{Origin: data, Content: expected})
 				if acquireErr != nil {
 					t.Fatal(acquireErr)
 				}

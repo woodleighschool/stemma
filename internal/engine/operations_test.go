@@ -25,7 +25,7 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/cas"
 
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -54,9 +54,9 @@ func TestBuiltinPreparationUsesOperationVersion(t *testing.T) {
 	if err := registerKinds(previous); err != nil {
 		t.Fatal(err)
 	}
-	first, cached, err := prepareResource(t.Context(), store, previous, plan, inputs, t.TempDir(), "")
-	if err != nil || cached {
-		t.Fatalf("initial preparation cached=%v: %v", cached, err)
+	first, err := prepareResource(t.Context(), store, previous, plan, inputs, t.TempDir(), "")
+	if err != nil || first["installer"].Cached {
+		t.Fatalf("initial preparation cached=%v: %v", first["installer"].Cached, err)
 	}
 	for _, test := range []struct {
 		name, operation string
@@ -93,9 +93,9 @@ func TestBuiltinPreparationUsesOperationVersion(t *testing.T) {
 				spec.Package.Version = "2.0"
 				plan.Config = schemaJSON(spec)
 			}
-			outputs, cached, err := prepareResource(t.Context(), store, ops, plan, inputs, t.TempDir(), "")
-			if err != nil || cached != test.cached {
-				t.Fatalf("preparation cached=%v, want %v: %v", cached, test.cached, err)
+			outputs, err := prepareResource(t.Context(), store, ops, plan, inputs, t.TempDir(), "")
+			if err != nil || outputs["installer"].Cached != test.cached {
+				t.Fatalf("preparation cached=%v, want %v: %v", outputs["installer"].Cached, test.cached, err)
 			}
 			installer := outputs["installer"]
 			if installer.Version != spec.Package.Version {
@@ -158,7 +158,7 @@ spec:
   destinations:
     repo:
       pkginfo:
-        version: "{{ evidence['vendor.release'].version }}"
+        version: "{{ evidence.vendor.version }}"
 `, server.URL))
 	wantVersion := "1.2"
 	validated := false
@@ -200,37 +200,37 @@ spec:
 		}
 	}
 	update()
-	locked, err := lockfile.Load(root)
-	if err != nil || locked.Inputs["stemma/v1alpha1/MacSoftware/fixture"]["source"].InputVersion != "1.2" {
+	locked, err := lock.Load(root)
+	if err != nil || locked.Inputs["stemma/v1alpha1/MacSoftware/fixture"]["source"].Version != "1.2" {
 		t.Fatalf("resolver version was not reviewed: %+v %v", locked, err)
 	}
 	first := run()
 	installer := first.Artifacts["installer"]
-	if got := string(installer.Evidence["vendor.release"]); got != `{"version":"1.2"}` {
+	if got := string(installer.Evidence["vendor"]); got != `{"version":"1.2"}` {
 		t.Fatalf("MacSoftware dropped resolver evidence: %s", got)
 	}
 	version.Store("2.0")
-	opts.Lock = lockfile.Options{Offline: true}
-	if warm := run(); !warm.Cached || downloads.Load() != 1 {
+	opts.Lock = lock.Options{Offline: true}
+	if warm := run(); !reused(warm) || downloads.Load() != 1 {
 		t.Fatal("warm offline preparation did not reuse reviewed evidence")
 	}
 	if err := os.RemoveAll(opts.CacheDir); err != nil {
 		t.Fatal(err)
 	}
 	opts.Lock.Offline = false
-	if cold := run(); cold.Cached || downloads.Load() != 2 || cold.Artifacts["installer"].InputsHash != installer.InputsHash {
+	if cold := run(); reused(cold) || downloads.Load() != 2 || cold.Artifacts["installer"].InputsHash != installer.InputsHash {
 		t.Fatal("cold fetch changed reviewed preparation inputs")
 	}
 	wantVersion = "2.0"
 	update()
 	refreshed := run()
 	updated := refreshed.Artifacts["installer"]
-	if refreshed.Cached || updated.InputsHash == installer.InputsHash || updated.Payload != installer.Payload {
+	if reused(refreshed) || updated.InputsHash == installer.InputsHash || updated.Payload != installer.Payload {
 		t.Fatal("evidence refresh did not invalidate preparation while retaining byte identity")
 	}
 	revision.Store("second")
 	update()
-	if observed := run(); !observed.Cached || observed.Artifacts["installer"].InputsHash != updated.InputsHash {
+	if observed := run(); !reused(observed) || observed.Artifacts["installer"].InputsHash != updated.InputsHash {
 		t.Fatal("private observation change invalidated preparation")
 	}
 }
@@ -379,11 +379,11 @@ spec:
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(first.Resources) != 2 || !first.Resources[1].Destinations[0].Applied {
+			if len(first.Resources) != 2 || first.Resources[1].Publications[0].Status != StatusChanged {
 				t.Fatalf("external artifact was not published by native consumer: %+v", first)
 			}
 			installer := first.Resources[0].Artifacts["installer"]
-			if !bytes.Contains(installer.Evidence["vendor.probe"], []byte(`"revision":7`)) {
+			if !bytes.Contains(installer.Evidence["vendor"], []byte(`"revision":7`)) {
 				t.Fatal("external evidence was dropped")
 			}
 			write(strings.Replace(manifest, "description: original", "description: edited", 1))
@@ -392,7 +392,7 @@ spec:
 				t.Fatal(err)
 			}
 			for _, item := range second.Resources {
-				if !item.Cached {
+				if !reused(item) {
 					t.Fatalf("metadata invalidated %s", item.Kind)
 				}
 			}
@@ -411,7 +411,7 @@ spec:
 			if err != nil {
 				t.Fatal(err)
 			}
-			if third.Resources[0].Artifacts["installer"].Payload != installer.Payload || len(third.Resources[1].Destinations[0].Changes) != 0 {
+			if third.Resources[0].Artifacts["installer"].Payload != installer.Payload || third.Resources[1].Publications[0].Status != StatusUnchanged {
 				t.Fatal("cache loss changed immutable output or replayed publication")
 			}
 			if downloads.Load() != 2 {

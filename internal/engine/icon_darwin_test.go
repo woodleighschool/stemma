@@ -18,7 +18,7 @@ func TestIconFromDrawsAnInstalledApplication(t *testing.T) {
 	// Font Book declares its icon in an asset catalog, which only the system renderer reads.
 	options := Options{ConfigPath: filename, Method: "icon", Resources: []string{"MacSoftware/branding"}, Icons: IconOptions{Presentation: icon.Glassy, Size: 256, From: "/System/Applications/Font Book.app"}}
 	report, err := Run(t.Context(), options)
-	if err != nil || len(report.Resources) != 1 || report.Resources[0].Icon != "created glassy" {
+	if err != nil || len(report.Resources) != 1 || report.Resources[0].Status != StatusChanged {
 		t.Fatalf("icon from an installed application: %+v, %v", report.Resources, err)
 	}
 	data, err := icon.Read(root, "shared-artwork")

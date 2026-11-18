@@ -120,7 +120,7 @@ func TestDeveloperIDCodeWithoutATimestampRaisesANotice(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		notices := Notices(plugin.ResourceReference{}, map[string]json.RawMessage{"signatures": evidence})
+		notices := Notices(plugin.ResourceReference{}, map[string]json.RawMessage{"signing": json.RawMessage(`{"observed":` + string(evidence) + `}`)})
 		if len(notices) != len(test.hints) {
 			t.Errorf("%s: %+v", name, notices)
 			continue
@@ -148,7 +148,7 @@ func TestUnverifiedSubjectsRaiseOneRecommendationPerSource(t *testing.T) {
 		"build inputs":            {"BuildMacPkg", `[{"input":"vendor","subject":{"path":"A.app"}},{"input":"vendor","subject":{"path":"B.app"}},{"input":"tools","subject":{"path":"."}}]`, []plugin.Notice{recommend("BuildMacPkg", `Input "vendor"`), recommend("BuildMacPkg", `Input "tools"`)}},
 		"nothing left unverified": {"BuildMacPkg", `[]`, nil},
 	} {
-		notices := Notices(plugin.ResourceReference{Kind: test.kind, Name: "example"}, map[string]json.RawMessage{UnverifiedEvidence: json.RawMessage(test.evidence), BuildEvidence: json.RawMessage(`"unsigned"`)})
+		notices := Notices(plugin.ResourceReference{Kind: test.kind, Name: "example"}, map[string]json.RawMessage{plugin.EvidenceSigning: json.RawMessage(`{"build":"unsigned","unverified":` + test.evidence + `}`)})
 		if !slices.Equal(notices, test.want) {
 			t.Errorf("%s: %+v, want %+v", name, notices, test.want)
 		}
@@ -224,12 +224,12 @@ func TestVerifyCoverageAndStates(t *testing.T) {
 		}
 		return Result{Signer: b.Signer}, nil
 	}
-	if observed, err := Verify(t.Context(), []Expectation{a, b}, subjects, false, check); err != nil || len(observed) != 2 || observed[0].Signer == observed[1].Signer {
+	if observed, err := Verify(t.Context(), "Example.dmg", []Expectation{a, b}, subjects, false, check); err != nil || len(observed) != 2 || observed[0].Signer == observed[1].Signer {
 		t.Fatalf("independent signers: %+v, %v", observed, err)
 	}
 	for name, expectations := range map[string][]Expectation{"missing": {a}, "duplicate": {a, a, b}, "unmatched": {{Subject: plugin.SubjectSelector{Path: "missing"}, Unsigned: true}, b}} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Verify(t.Context(), expectations, subjects, false, func(plugin.Subject) (Result, error) {
+			if _, err := Verify(t.Context(), "Example.dmg", expectations, subjects, false, func(plugin.Subject) (Result, error) {
 				t.Fatal("verified before resolving coverage")
 				return Result{}, nil
 			}); err == nil {
@@ -240,16 +240,16 @@ func TestVerifyCoverageAndStates(t *testing.T) {
 	// An entry that names no subject covers a scope's only subject, and names
 	// the candidates where there are several. A path it does name is literal.
 	only := Expectation{Signer: a.Signer}
-	if observed, err := Verify(t.Context(), []Expectation{only}, subjects[:1], false, check); err != nil || len(observed) != 1 || observed[0].Subject.Path != first.Path {
+	if observed, err := Verify(t.Context(), "Example.dmg", []Expectation{only}, subjects[:1], false, check); err != nil || len(observed) != 1 || observed[0].Subject.Path != first.Path {
 		t.Fatalf("an entry without subject over one application: %+v, %v", observed, err)
 	}
-	if _, err := Verify(t.Context(), []Expectation{{Signer: b.Signer}}, subjects[:1], false, check); !errors.Is(err, ErrMismatch) {
+	if _, err := Verify(t.Context(), "Example.dmg", []Expectation{{Signer: b.Signer}}, subjects[:1], false, check); !errors.Is(err, ErrMismatch) {
 		t.Fatalf("an entry without subject accepted another signer: %v", err)
 	}
-	if _, err := Verify(t.Context(), []Expectation{only}, subjects, false, check); err == nil || !strings.Contains(err.Error(), "signing subjects: Suite/A.app, Suite/B.app") {
+	if _, err := Verify(t.Context(), "Example.dmg", []Expectation{only}, subjects, false, check); err == nil || !strings.Contains(err.Error(), "signing subjects: Suite/A.app, Suite/B.app") {
 		t.Fatalf("an entry without subject over applications: %v", err)
 	}
-	if _, err := Verify(t.Context(), []Expectation{{Subject: plugin.SubjectSelector{Path: "."}, Signer: a.Signer}}, subjects[:1], false, check); err == nil || !strings.Contains(err.Error(), "signing subjects: Suite/A.app") {
+	if _, err := Verify(t.Context(), "Example.dmg", []Expectation{{Subject: plugin.SubjectSelector{Path: "."}, Signer: a.Signer}}, subjects[:1], false, check); err == nil || !strings.Contains(err.Error(), "signing subjects: Suite/A.app") {
 		t.Fatalf("the root path selected an application: %v", err)
 	}
 	unsigned := Expectation{Subject: a.Subject, Unsigned: true}
@@ -270,7 +270,7 @@ func TestVerifyCoverageAndStates(t *testing.T) {
 		{name: "derive invalid", err: errors.New("invalid signature"), derive: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := Verify(t.Context(), []Expectation{test.expected}, subjects[:1], test.derive, func(plugin.Subject) (Result, error) { return test.result, test.err })
+			_, err := Verify(t.Context(), "Example.dmg", []Expectation{test.expected}, subjects[:1], test.derive, func(plugin.Subject) (Result, error) { return test.result, test.err })
 			if (err == nil) != test.success {
 				t.Fatalf("verification: %v", err)
 			}
@@ -278,7 +278,7 @@ func TestVerifyCoverageAndStates(t *testing.T) {
 	}
 }
 
-func TestSignatureProgressKeepsDistinctSubjectsAndOmitsLoneRoot(t *testing.T) {
+func TestSignatureProgressIdentifiesSubjectsAndResults(t *testing.T) {
 	for _, paths := range [][]string{{"."}, {"A.app"}, {".", "B.app"}} {
 		t.Run(strings.Join(paths, ","), func(t *testing.T) {
 			var logs bytes.Buffer
@@ -287,7 +287,7 @@ func TestSignatureProgressKeepsDistinctSubjectsAndOmitsLoneRoot(t *testing.T) {
 			for i, path := range paths {
 				subjects[i] = plugin.Subject{ID: path, Path: path}
 			}
-			observed, err := Verify(ctx, nil, subjects, true, func(plugin.Subject) (Result, error) {
+			observed, err := Verify(ctx, "Example.dmg", nil, subjects, true, func(plugin.Subject) (Result, error) {
 				return Result{Name: "Example Publisher"}, nil
 			})
 			if err != nil {
@@ -301,21 +301,25 @@ func TestSignatureProgressKeepsDistinctSubjectsAndOmitsLoneRoot(t *testing.T) {
 				for _, start := range []bool{true, false} {
 					var record struct {
 						Start  bool   `json:"stage"`
+						Item   string `json:"item"`
 						Detail string `json:"detail"`
 						Input  string `json:"input"`
 					}
 					if err := decoder.Decode(&record); err != nil {
 						t.Fatal(err)
 					}
-					want := "Example Publisher"
-					if start {
-						want = path
-						if path == "." && len(paths) == 1 {
-							want = ""
-						}
+					if record.Start != start || record.Input != "vendor" {
+						t.Fatalf("signature activity: %+v", record)
 					}
-					if record.Start != start || record.Detail != want || record.Input != "vendor" {
-						t.Fatalf("signature activity: %+v, want %q", record, want)
+					item := path
+					if item == "." {
+						item = "Example.dmg"
+					}
+					if start && record.Item != item {
+						t.Fatalf("signature activity lost subject %q: %+v", item, record)
+					}
+					if !start && !strings.Contains(record.Detail, "Example Publisher") {
+						t.Fatalf("signature activity lost publisher: %+v", record)
 					}
 				}
 			}

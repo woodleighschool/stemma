@@ -22,7 +22,7 @@ func TestHomebrewSelectsMetadataWithoutDownloading(t *testing.T) {
 		if req.URL.String() != "https://formulae.brew.sh/api/cask/example.json" {
 			t.Fatalf("unexpected request %s", req.URL)
 		}
-		body := `{"token":"example","version":"2.0","url":"https://vendor.test/Example-arm.dmg","sha256":"` + strings.Repeat("a", 64) + `","supported_platforms":["arm64_golden_gate","golden_gate"],"variations":{"golden_gate":{"url":"https://vendor.test/Example-intel.dmg","sha256":"` + strings.Repeat("b", 64) + `"}}}`
+		body := `{"token":"example","version":"2.0,12345","url":"https://vendor.test/Example-arm.dmg","sha256":"` + strings.Repeat("a", 64) + `","supported_platforms":["arm64_golden_gate","golden_gate"],"variations":{"golden_gate":{"url":"https://vendor.test/Example-intel.dmg","sha256":"` + strings.Repeat("b", 64) + `"}}}`
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	})
 	input := plugin.Input{Resolver: "homebrew", Config: map[string]any{"cask": "example"}}
@@ -30,7 +30,7 @@ func TestHomebrewSelectsMetadataWithoutDownloading(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if entry.Content.SHA256 != strings.Repeat("a", 64) || entry.Content.Filename != "Example-arm.dmg" || entry.InputVersion != "2.0" || entry.ContentRoot != "" || requests != 1 {
+	if entry.Content.SHA256 != strings.Repeat("a", 64) || entry.Content.Filename != "Example-arm.dmg" || entry.Version != "2.0,12345" || entry.Content.Root != "" || requests != 1 {
 		t.Fatalf("entry %+v requests=%d", entry, requests)
 	}
 	input.Config["architecture"] = "x86_64"
@@ -90,7 +90,7 @@ func TestHomebrewBottleConstraintsAndFrozenReplay(t *testing.T) {
 			if test.name == "bottle rebuild" {
 				version = "1.0.0.3"
 			}
-			if entry.InputVersion != version || entry.ContentRoot != root {
+			if entry.Version != version || entry.Content.Root != root {
 				t.Fatalf("incorrect bottle identity/root: %+v", entry)
 			}
 			if _, err = m.FetchLocked(t.Context(), input, entry); err != nil {
@@ -132,7 +132,7 @@ func TestHomebrewLanguagesAndMutableCasks(t *testing.T) {
 	if downloads != 2 || first.Content.SHA256 == second.Content.SHA256 {
 		t.Fatal("mutable cask reused metadata as content identity")
 	}
-	if !strings.Contains(string(second.Evidence["homebrew.cask"]), `"language":"fr"`) {
+	if !strings.Contains(string(second.Evidence["homebrew"]), `"language":"fr"`) {
 		t.Fatal("language missing from evidence")
 	}
 	input.Config["language"] = "unknown"
@@ -164,11 +164,11 @@ func TestHomebrewDownloadRequirements(t *testing.T) {
 				t.Fatal(err)
 			}
 			if !strings.HasPrefix(func() string {
-				var o homebrewObservation
-				_ = json.Unmarshal(entry.Observation, &o)
+				var o homebrewOrigin
+				_ = json.Unmarshal(entry.Origin, &o)
 				return o.Headers["User-Agent"]
 			}(), "Mozilla/") {
-				t.Fatalf("browser request requirement lost: %+v", entry.Observation)
+				t.Fatalf("browser request requirement lost: %+v", entry.Origin)
 			}
 		})
 	}

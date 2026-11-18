@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 )
 
@@ -138,8 +138,8 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(lockfile.Path(root)); !os.IsNotExist(err) {
-		t.Fatal("candidate resolution wrote the lockfile")
+	if _, err := os.Stat(lock.Path(root)); !os.IsNotExist(err) {
+		t.Fatal("candidate resolution wrote the lock")
 	}
 	if candidate.Lock.Version != 0 || len(candidate.Resources) != 6 {
 		t.Fatalf("unexpected candidate: %+v", candidate)
@@ -180,7 +180,7 @@ spec:
 	if _, err := Run(t.Context(), options); err != nil {
 		t.Fatal(err)
 	}
-	reviewed, err := lockfile.Load(root)
+	reviewed, err := lock.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again.Lock.Version != lockfile.Version || !again.Resources[alpha].Inputs["source"].Equal(reviewed.Inputs[alpha]["source"]) || len(reported[alpha].Inputs) != 0 {
+	if again.Lock.Version != lock.Version || !again.Resources[alpha].Inputs["source"].Equal(reviewed.Inputs[alpha]["source"]) || len(reported[alpha].Inputs) != 0 {
 		t.Fatalf("unchanged bytes changed the candidate entry: %+v", again.Resources[alpha].Inputs["source"])
 	}
 }

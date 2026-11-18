@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"os"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -90,8 +91,10 @@ func TestReferenceRetryDoesNotUploadAgain(t *testing.T) {
 	fake.relatedApps["runtime-app"] = object{"id": "runtime-app", "@odata.type": win32Type, "publishingState": "published"}
 	fake.failRelationships = true
 	fake.mu.Unlock()
-	if _, err := reconcileFixture(t, c, req, desired); err == nil {
-		t.Fatal("expected relationship failure")
+	// The failed apply reports the upload it completed and not the references.
+	response, err := reconcileFixture(t, c, req, desired)
+	if err == nil || len(response.Uploads) != 1 || response.Uploads[0].Name != plugin.UploadInstaller || len(response.Fields) != 0 {
+		t.Fatalf("failed reference update: %+v, %v", response, err)
 	}
 	fake.mu.Lock()
 	if fake.versions != 2 {
@@ -100,9 +103,10 @@ func TestReferenceRetryDoesNotUploadAgain(t *testing.T) {
 	fake.failRelationships = false
 	fake.mu.Unlock()
 	// The tenant records the activated content, so the retry only finishes the rest.
-	response, err := reconcileFixture(t, c, req, desired)
-	if err != nil || slices.ContainsFunc(response.Changes, func(change plugin.Change) bool { return change.Kind == "content" }) {
-		t.Fatalf("reference retry: %+v, %v", response.Changes, err)
+	response, err = reconcileFixture(t, c, req, desired)
+	want := []plugin.FieldChange{{Field: "dependencies", Before: json.RawMessage(`[]`), After: raw([]any{object{"resource": object{"kind": "WindowsSoftware", "name": "runtime"}, "auto_install": true}})}}
+	if err != nil || len(response.Uploads) != 0 || !reflect.DeepEqual(response.Fields, want) {
+		t.Fatalf("reference retry: %+v, %v", response, err)
 	}
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
@@ -143,8 +147,8 @@ func TestRelationshipsPreserveOmittedCategoriesAndInboundReferences(t *testing.T
 	}
 	fake.mu.Unlock()
 	response, err := reconcileFixture(t, c, req, desired)
-	if err != nil || len(response.Changes) != 0 {
-		t.Fatalf("unchanged references did not settle: %+v, %v", response.Changes, err)
+	if err != nil || response.Changed() {
+		t.Fatalf("unchanged references did not settle: %+v, %v", response, err)
 	}
 	desired["dependencies"] = []any{}
 	if _, err = reconcileFixture(t, c, req, desired); err != nil {

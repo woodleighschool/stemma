@@ -68,7 +68,7 @@ func TestGitHubReleaseRetainsRawTag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observation(t, entry).Release != "v1.2.3" || observation(t, entry).ReleaseID != 12 || observation(t, entry).AssetID != 34 {
+	if entry.Version != "v1.2.3" || origin(t, entry).ReleaseID != 12 || origin(t, entry).AssetID != 34 {
 		t.Fatalf("release identity changed: %+v", entry)
 	}
 	if _, err := m.FetchLocked(t.Context(), s, entry); err != nil {
@@ -101,7 +101,7 @@ func TestDownloadPagePinsUniqueURLAndColdRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if observation(t, entry).URL != "https://cdn.example/App.pkg?version=1&arch=arm64" || entry.Content.Filename != "App.pkg" {
+	if origin(t, entry).URL != "https://cdn.example/App.pkg?version=1&arch=arm64" || entry.Content.Filename != "App.pkg" {
 		t.Fatalf("unexpected discovery: %+v", entry)
 	}
 	filename, err := store.Path(cas.Ref{SHA256: entry.Content.SHA256})
@@ -186,7 +186,7 @@ func TestDownloadPageMatchesLinksNotSourceText(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := observation(t, entry).URL; got != tc.want {
+			if got := origin(t, entry).URL; got != tc.want {
 				t.Fatalf("discovered %q, want %q", got, tc.want)
 			}
 		})
@@ -304,8 +304,8 @@ func TestDownloadPageSelectsTheHighestVersion(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := observation(t, entry).URL; got != tc.url || entry.InputVersion != tc.version {
-				t.Fatalf("selected %q at version %q, want %q at %q", got, entry.InputVersion, tc.url, tc.version)
+			if got := origin(t, entry).URL; got != tc.url || entry.Version != tc.version {
+				t.Fatalf("selected %q at version %q, want %q at %q", got, entry.Version, tc.url, tc.version)
 			}
 		})
 	}
@@ -362,8 +362,8 @@ func TestStableQueryRetainsOriginalURLAcrossRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(entry.Observation) != "{}" {
-		t.Fatalf("lock recorded a URL: %s", entry.Observation)
+	if len(entry.Origin) != 0 {
+		t.Fatalf("lock recorded a URL: %s", entry.Origin)
 	}
 	if _, err := store.Prune(t.Context(), cas.Policy{}, cas.PruneOptions{All: true}); err != nil {
 		t.Fatal(err)
@@ -373,19 +373,16 @@ func TestStableQueryRetainsOriginalURLAcrossRedirects(t *testing.T) {
 	}
 }
 
-type observedSource struct {
+type originFields struct {
 	URL       string `json:"url,omitempty"`
-	Release   string `json:"release,omitempty"`
 	ReleaseID int64  `json:"release_id,omitempty"`
 	AssetID   int64  `json:"asset_id,omitempty"`
-	SHA256    string `json:"sha256,omitempty"`
-	Filename  string `json:"filename,omitempty"`
 }
 
-func observation(t *testing.T, entry Entry) observedSource {
+func origin(t *testing.T, entry Entry) originFields {
 	t.Helper()
-	var value observedSource
-	if err := json.Unmarshal(entry.Observation, &value); err != nil {
+	var value originFields
+	if err := json.Unmarshal(entry.Origin, &value); err != nil {
 		t.Fatal(err)
 	}
 	return value

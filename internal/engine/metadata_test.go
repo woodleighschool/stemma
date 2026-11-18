@@ -360,18 +360,18 @@ spec:
 		return fields
 	}
 
-	planned := run("plan")
-	if !reflect.DeepEqual(planned.Publications[0], prepared) || !reflect.DeepEqual(planned.Destinations[0].Origins, prepared.Origins) {
-		t.Fatalf("plan reports %+v with origins %v, preparation %+v", planned.Publications[0], planned.Destinations[0].Origins, prepared)
+	planned := run("plan").Publications[0]
+	if !reflect.DeepEqual(planned.Metadata, prepared.Metadata) || !reflect.DeepEqual(planned.Origins, prepared.Origins) {
+		t.Fatalf("plan reports %s with origins %v, preparation %s with %v", planned.Metadata, planned.Origins, prepared.Metadata, prepared.Origins)
 	}
-	var created map[string]any
-	for _, change := range planned.Destinations[0].Changes {
-		if change.Field == "pkginfo" && change.Action == "create" {
-			created = document(change.After)
+	// New software reports every field it writes, and its version apart.
+	created := map[string]any{"version": planned.Version}
+	for _, field := range planned.Fields {
+		var value any
+		if field.Before != nil || json.Unmarshal(field.After, &value) != nil {
+			t.Fatalf("new software field %+v", field)
 		}
-	}
-	if created == nil {
-		t.Fatalf("plan = %+v", planned.Destinations[0].Changes)
+		created[strings.TrimPrefix(field.Field, "pkginfo.")] = value
 	}
 	published(created, "installer_item_location")
 	run("apply")
@@ -402,9 +402,9 @@ spec:
 		t.Fatal(err)
 	}
 	var cleared []string
-	for _, change := range run("plan").Destinations[0].Changes {
-		if change.Action == "clear" {
-			cleared = append(cleared, change.Field)
+	for _, field := range run("plan").Publications[0].Fields {
+		if field.After == nil {
+			cleared = append(cleared, strings.TrimPrefix(field.Field, "pkginfo."))
 		}
 	}
 	if slices.Sort(cleared); !slices.Equal(cleared, []string{"RestartAction", "minimum_os_version"}) {

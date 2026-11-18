@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/internal/testutil/testproject"
 	"github.com/woodleighschool/stemma/plugin"
 )
@@ -18,7 +19,7 @@ func TestMinimumOSIsDeclaredOrTheLatestRequirement(t *testing.T) {
 	}
 	withApp := func(artifact plugin.Artifact, version string) plugin.Artifact {
 		evidence, _ := json.Marshal(plugin.Subject{ID: "Example.app", Kind: "app", App: &plugin.AppFacts{BundleID: "org.example.app", MinimumOS: version}})
-		artifact.Evidence = map[string]json.RawMessage{"macos.application": evidence}
+		artifact.Evidence = map[string]json.RawMessage{"macos": testevidence.MacOS(evidence)}
 		return artifact
 	}
 	for _, test := range []struct {
@@ -115,7 +116,7 @@ func TestDeclaredMinimumOSReusesPreparation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !report.Resources[0].Cached {
+		if !reused(report.Resources[0]) {
 			t.Fatal("changing minimum_os invalidated preparation")
 		}
 		if received == nil || *received != test.want {

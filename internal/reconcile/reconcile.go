@@ -16,7 +16,7 @@ import (
 	"github.com/woodleighschool/stemma/internal/config"
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/git"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/reconcile/sourcecontrol"
 	"github.com/woodleighschool/stemma/internal/reconcile/sourcecontrol/github"
 	"github.com/woodleighschool/stemma/plugin"
@@ -41,8 +41,8 @@ type Options struct {
 	// GitHubToken authenticates release lookups of GitHub sources that declare
 	// no token, ahead of the configured github.com App.
 	GitHubToken string
-	// PhaseStarted announces apply or update before its work begins.
-	PhaseStarted func(method string) error
+	// Started receives what each engine run selected, before it acquires anything.
+	Started func(engine.Selection)
 	// ResourceDone streams each engine run's results with the run's method;
 	// the catalog lookup reports as update.
 	ResourceDone func(method string, resource engine.ResourceReport) error
@@ -156,11 +156,6 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 		err = fmt.Errorf("%s@%s: %w", r.base, short(head), err)
 		return report, errors.Join(err, r.reject(ctx, head))
 	}
-	if opts.PhaseStarted != nil {
-		if err := opts.PhaseStarted("apply"); err != nil {
-			return report, err
-		}
-	}
 	apply := r.apply(ctx, head, reviewed)
 	report.Apply = &apply
 	if err := ctx.Err(); err != nil {
@@ -168,11 +163,6 @@ func Run(ctx context.Context, opts Options) (report Report, runErr error) {
 	}
 	if opts.ApplyDone != nil {
 		if err := opts.ApplyDone(report); err != nil {
-			return report, err
-		}
-	}
-	if opts.PhaseStarted != nil {
-		if err := opts.PhaseStarted("update"); err != nil {
 			return report, err
 		}
 	}
@@ -230,7 +220,7 @@ func newRunner(ctx context.Context, opts Options) (*runner, error) {
 		return nil, err
 	}
 	r := &runner{opts: opts, repo: repo, host: host, githubAppToken: host.PublicReleaseTokenSource(), project: project, config: filepath.Base(configPath), stateDir: opts.StateDir}
-	r.lockPath = path.Join(filepath.ToSlash(project), filepath.Base(lockfile.Path("")))
+	r.lockPath = path.Join(filepath.ToSlash(project), filepath.Base(lock.Path("")))
 	if r.stateDir == "" {
 		r.stateDir = filepath.Join(root, ".stemma", "state")
 	}
@@ -278,21 +268,21 @@ func (r *runner) configIn(worktree *git.Worktree) string {
 }
 
 func (r *runner) engineOptions(method, configPath string, resources []string) engine.Options {
-	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Jobs: r.opts.Jobs, GitHubToken: r.opts.GitHubToken, GitHubAppToken: r.githubAppToken, Method: method, Resources: resources}
+	opts := engine.Options{ConfigPath: configPath, CacheDir: r.opts.CacheDir, Jobs: r.opts.Jobs, GitHubToken: r.opts.GitHubToken, GitHubAppToken: r.githubAppToken, Method: method, Resources: resources, Started: r.opts.Started}
 	if r.opts.ResourceDone != nil {
 		opts.ResourceDone = func(resource engine.ResourceReport) error { return r.opts.ResourceDone(method, resource) }
 	}
 	return opts
 }
 
-// load reads what both phases share: the reviewed project and its lockfile. A
-// missing lockfile loads, since the update phase proposes one.
+// load reads what both phases share: the reviewed project and its lock. A
+// missing lock loads, since the update phase proposes one.
 func (r *runner) load(reviewed *git.Worktree) error {
 	configPath := r.configIn(reviewed)
 	if _, err := config.Load(configPath); err != nil {
 		return err
 	}
-	_, err := lockfile.Load(filepath.Dir(configPath))
+	_, err := lock.Load(filepath.Dir(configPath))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}

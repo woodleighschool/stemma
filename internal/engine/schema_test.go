@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/woodleighschool/stemma/internal/config"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -56,7 +56,7 @@ spec:
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	data, err := Schema(t.Context(), Options{ConfigPath: filename, Lock: lockfile.Options{Offline: true}, Handlers: map[string]reconcileHandler{"intune": func(context.Context, plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
+	data, err := Schema(t.Context(), Options{ConfigPath: filename, Lock: lock.Options{Offline: true}, Handlers: map[string]reconcileHandler{"intune": func(context.Context, plugin.ReconcileRequest[json.RawMessage]) (plugin.ReconcileResponse, error) {
 		t.Fatal("schema generation invoked a destination")
 		return plugin.ReconcileResponse{}, nil
 	}}})

@@ -34,7 +34,7 @@ import (
 	githttp "github.com/go-git/go-git/v6/plumbing/transport/http"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/woodleighschool/stemma/internal/engine"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/pkgbuild"
 	"github.com/woodleighschool/stemma/internal/source"
 	"github.com/woodleighschool/stemma/internal/testutil/testgit"
@@ -247,7 +247,7 @@ func (o origin) commitBranch(t *testing.T, branch string, files map[string]strin
 }
 
 // lock reads the lock a branch holds.
-func (o origin) lock(t *testing.T, branch string) lockfile.File {
+func (o origin) lock(t *testing.T, branch string) lock.File {
 	t.Helper()
 	return lockAt(t, o.commitObject(t, o.tip(branch)))
 }
@@ -275,13 +275,13 @@ func lockDocuments(t *testing.T, commit *object.Commit) map[string]string {
 }
 
 // lockAt decodes the lock a commit holds.
-func lockAt(t *testing.T, commit *object.Commit) lockfile.File {
+func lockAt(t *testing.T, commit *object.Commit) lock.File {
 	t.Helper()
 	documents := map[string][]byte{}
 	for name, contents := range lockDocuments(t, commit) {
 		documents[name] = []byte(contents)
 	}
-	locked, err := lockfile.Decode(documents)
+	locked, err := lock.Decode(documents)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,11 +291,11 @@ func lockAt(t *testing.T, commit *object.Commit) lockfile.File {
 // lockFiles reads a project's lock documents as files to commit.
 func lockFiles(t *testing.T, root string) map[string]string {
 	t.Helper()
-	locked, err := lockfile.Load(root)
+	locked, err := lock.Load(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	documents, err := lockfile.Encode(locked)
+	documents, err := lock.Encode(locked)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -608,7 +608,7 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	head := o.tip("main")
 
 	// An unlocked catalog cannot be applied, but the missing lock is proposed.
-	first := run("lockfile")
+	first := run("lock: missing")
 	if first.Branch != "main" || first.Head != head || first.Apply == nil || first.Apply.Error == "" || gh.status(head, applyContext)["state"] != "failure" {
 		t.Fatalf("apply failure not reported: %+v", first)
 	}
@@ -636,7 +636,7 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 		t.Fatalf("proposed lock: %+v", locked)
 	}
 	pulls := gh.open()
-	if len(pulls) != 1 || pulls[0].Head.Ref != branch || pulls[0].Title != "Update MacSoftware/fixture to 1.0" || !strings.Contains(pulls[0].Body, "| Source | `source` added: `fixture.pkg` |") || !strings.Contains(pulls[0].Body, "| repo | Upload ") {
+	if len(pulls) != 1 || pulls[0].Head.Ref != branch || pulls[0].Title != "Update MacSoftware/fixture to 1.0" || !strings.Contains(pulls[0].Body, "| Source | new fixture.pkg |") || !strings.Contains(pulls[0].Body, "| repo | new 1.0; update ") {
 		t.Fatalf("pull request: %+v", pulls)
 	}
 	if status := gh.status(tip, planContext); status["state"] != "success" || !strings.Contains(status["description"], "MacSoftware/fixture 1.0") {
@@ -648,7 +648,7 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	assertUndisturbed(t, cloned, checkout, head)
 
 	// Nothing changed: the proposal stays exactly as pushed.
-	second := run("lockfile")
+	second := run("lock: missing")
 	if second.Update.Proposals[0].Action != "unchanged" || o.tip(branch) != tip || len(gh.open()) != 1 {
 		t.Fatalf("idempotent run rewrote the proposal: %+v", second.Update.Proposals)
 	}
@@ -688,7 +688,7 @@ func TestRunProposesAppliesAndRetires(t *testing.T) {
 	if len(fifth.Update.Proposals) != 1 || fifth.Update.Proposals[0].Action != "created" || gh.open()[0].Title != "Update MacSoftware/fixture to 2.0" {
 		t.Fatalf("release proposal: %+v %+v", fifth.Update.Proposals, gh.open())
 	}
-	if pull := gh.open()[0]; !strings.Contains(pull.Body, "| Source | `source`: new content for `fixture.pkg` |") || !strings.Contains(pull.Body, "| Prepared | `fixture-2.0.pkg` (2.0) |") {
+	if pull := gh.open()[0]; !strings.Contains(pull.Body, "| Source | fixture.pkg file changed |") || !strings.Contains(pull.Body, "| Prepared | `fixture-2.0.pkg` (2.0) |") {
 		t.Fatalf("release body: %s", pull.Body)
 	}
 
@@ -840,20 +840,20 @@ func TestRunReadsSourceControlSettingsWhenConnecting(t *testing.T) {
 
 // entry is a lock entry for content under a declaration.
 func entry(content, declaration, filename string) source.Entry {
-	return source.Entry{Version: 1, Resolver: "http", ResolverVersion: "2", Declaration: strings.Repeat(declaration, 64), Observation: []byte(`{}`), Content: source.Content{SHA256: strings.Repeat(content, 64), Filename: filename}}
+	return source.Entry{Resolver: "http", ResolverVersion: "2", Declaration: strings.Repeat(declaration, 64), Content: source.Content{SHA256: strings.Repeat(content, 64), Filename: filename}}
 }
 
 func key(name string) string { return "stemma/v1alpha1/MacSoftware/" + name }
 
 // TestChangesetsSplitUpdatesFromTheLockRefresh covers which branch a lock
-// difference lands on: new content is reviewed per resource, everything that
+// difference lands on: file changed is reviewed per resource, everything that
 // keeps the reviewed content shares the lock refresh.
 func TestChangesetsSplitUpdatesFromTheLockRefresh(t *testing.T) {
 	locked := func(e source.Entry) map[string]source.Entry { return map[string]source.Entry{"source": e} }
 	moved := entry("b", "2", "moved.pkg")
-	moved.InputVersion = "1.0"
+	moved.Version = "1.0"
 	candidate := engine.Candidate{
-		Lock: lockfile.File{Version: lockfile.Version, Inputs: map[string]map[string]source.Entry{
+		Lock: lock.File{Version: lock.Version, Inputs: map[string]map[string]source.Entry{
 			key("released"):  locked(entry("a", "1", "released-1.pkg")),
 			key("moved"):     locked(entry("b", "1", "moved.pkg")),
 			key("retired"):   locked(entry("c", "1", "retired.pkg")),
@@ -905,26 +905,26 @@ func TestProposalBodySummarisesWithoutValues(t *testing.T) {
 		after:  map[string]source.Entry{"source": entry("b", "1", "App 2.pkg")},
 	}}}
 	plan := planned{report: &engine.Report{Resources: []engine.ResourceReport{
-		{Kind: "MacSoftware", Name: "consumer", Key: key("consumer"), Destinations: []engine.DestinationReport{{Name: "woodstar"}}},
-		{Kind: "MacSoftware", Name: "app", Key: key("app"), Artifacts: map[string]engine.Prepared{"installer": {Filename: "App-2.pkg", Version: "2"}}, Destinations: []engine.DestinationReport{
-			{Name: "woodstar", Changes: []plugin.Change{
-				{Kind: "content", Field: "package.installer", Action: "upload", Filename: "App-2.pkg"},
-				{Kind: "metadata", Field: "package.postinstall_script", Action: "set", Before: json.RawMessage(`"exit 0\n"`), After: json.RawMessage(secret)},
-				{Kind: "metadata", Field: "package.version", Action: "set", Before: json.RawMessage(`"1"`), After: json.RawMessage(`"2"`)},
-				{Kind: "retention", Field: "package", Action: "delete", Before: json.RawMessage(`"0.9"`)},
-				{Kind: "metadata", Field: "token", Action: "delete", Before: json.RawMessage(`"s3cr3t"`)},
-			}},
-			{Name: "munki", Error: "upload rejected: Authorization: s3cr3t"},
+		{Kind: "MacSoftware", Name: "consumer", Key: key("consumer"), Publications: []engine.Publication{{Destination: "woodstar", Status: engine.StatusUnchanged}}},
+		{Kind: "MacSoftware", Name: "app", Key: key("app"), Artifacts: map[string]engine.Prepared{"installer": {Filename: "App-2.pkg", Version: "2"}}, Publications: []engine.Publication{
+			{Destination: "woodstar", Status: engine.StatusChanged, Version: "2", Previous: "1", Removed: []string{"0.9"},
+				Uploads: []plugin.Upload{{Name: plugin.UploadInstaller, Filename: "App-2.pkg", After: "b"}},
+				Fields: []plugin.FieldChange{
+					{Field: "package.postinstall_script", Before: json.RawMessage(`"exit 0\n"`), After: json.RawMessage(secret)},
+					{Field: "package.installed_size", Before: json.RawMessage(`1`), After: json.RawMessage(`2`)},
+					{Field: "token", Before: json.RawMessage(`"s3cr3t"`)},
+				}},
+			{Destination: "munki", Status: engine.StatusFailed, Error: "upload rejected: Authorization: s3cr3t"},
 		}},
 	}}}
 	text := body(update, plan)
 	for _, want := range []string{
 		"Stemma found an update for `MacSoftware/app`.",
-		"| Source | `source`: `App 1.pkg` → `App 2.pkg` |",
+		"| Source | App 1.pkg → App 2.pkg |",
 		"| Prepared | `App-2.pkg` (2) |",
-		"| woodstar | Upload `App-2.pkg`; update `package.postinstall_script`, `package.version`; delete `package` (retention), `token` |",
-		"| munki | Planning failed |",
-		"| woodstar (`MacSoftware/consumer`) | No changes |",
+		"| woodstar | 1 → 2; update `package.postinstall_script`, `package.installed_size`, `token`; upload `installer`: `App-2.pkg`; remove 0.9 |",
+		"| munki | planning failed |",
+		"| woodstar (`MacSoftware/consumer`) | no changes |",
 		"Close this PR and Stemma won't propose these inputs again.",
 	} {
 		if !strings.Contains(text, want) {
@@ -977,7 +977,7 @@ func TestRefreshBodyRowsOnlyWhatMergingAffects(t *testing.T) {
 	upgraded := entry("b", "1", "upgraded.pkg")
 	upgraded.ResolverVersion = "3"
 	versioned := entry("c", "1", "versioned.pkg")
-	versioned.InputVersion = "s3cr3t"
+	versioned.Version = "s3cr3t"
 	refresh := changeset{branch: refreshBranch, changes: map[string]change{
 		key("moved"):     member("moved", entry("a", "1", "moved.pkg"), entry("a", "2", "moved.pkg")),
 		key("upgraded"):  member("upgraded", entry("b", "1", "upgraded.pkg"), upgraded),
@@ -986,27 +986,28 @@ func TestRefreshBodyRowsOnlyWhatMergingAffects(t *testing.T) {
 		key("silent"):    member("silent", entry("e", "1", "silent-1.pkg"), entry("e", "1", "silent.pkg")),
 		key("retired"):   {kind: "MacSoftware", name: "retired", before: map[string]source.Entry{"source": entry("f", "1", "retired.pkg")}, removed: true},
 	}}
-	unchanged := []engine.DestinationReport{{Name: "munki"}, {Name: "woodstar"}}
-	report := func(name string, destinations ...engine.DestinationReport) engine.ResourceReport {
-		return engine.ResourceReport{Kind: "MacSoftware", Name: name, Key: key(name), Destinations: destinations}
+	unchanged := []engine.Publication{{Destination: "munki", Status: engine.StatusUnchanged}, {Destination: "woodstar", Status: engine.StatusUnchanged}}
+	report := func(name string, publications ...engine.Publication) engine.ResourceReport {
+		return engine.ResourceReport{Kind: "MacSoftware", Name: name, Key: key(name), Publications: publications}
 	}
+	bumped := engine.Publication{Destination: "woodstar", Status: engine.StatusChanged, Version: "2", Previous: "1"}
 	plan := planned{err: errors.New("woodstar: Authorization: s3cr3t"), report: &engine.Report{Resources: []engine.ResourceReport{
-		report("moved", engine.DestinationReport{Name: "munki", Changes: []plugin.Change{{Kind: "metadata", Field: "description", Action: "set", After: json.RawMessage(`"s3cr3t"`)}}}, engine.DestinationReport{Name: "woodstar"}),
-		report("upgraded", engine.DestinationReport{Name: "munki"}, engine.DestinationReport{Name: "woodstar", Error: "Authorization: s3cr3t"}),
-		report("versioned", engine.DestinationReport{Name: "woodstar", Changes: []plugin.Change{{Kind: "metadata", Field: "version", Action: "set"}}}),
+		report("moved", engine.Publication{Destination: "munki", Status: engine.StatusChanged, Fields: []plugin.FieldChange{{Field: "description", After: json.RawMessage(`"s3cr3t"`)}}, Origins: map[string]string{"description": "explicit"}}, engine.Publication{Destination: "woodstar", Status: engine.StatusUnchanged}),
+		report("upgraded", engine.Publication{Destination: "munki", Status: engine.StatusUnchanged}, engine.Publication{Destination: "woodstar", Status: engine.StatusFailed, Error: "Authorization: s3cr3t"}),
+		report("versioned", bumped),
 		report("quiet", unchanged...),
 		report("silent", unchanged...),
-		report("consumer", engine.DestinationReport{Name: "woodstar", Changes: []plugin.Change{{Kind: "metadata", Field: "version", Action: "set"}}}),
+		report("consumer", bumped),
 		report("bystander", unchanged...),
 	}}}
 	text := body(refresh, plan)
 	for _, want := range []string{
 		"Stemma refreshed the lock for 5 resources and removed 1 the catalog no longer declares. Every input resolves to the content already locked.\n",
-		"| `MacSoftware/moved` | Declaration changed | `munki`: update `description`<br>`woodstar`: no changes |",
+		"| `MacSoftware/moved` | Declaration changed | `munki`: updated; update `description`<br>`woodstar`: no changes |",
 		"| `MacSoftware/upgraded` | Resolver changed | `munki`: no changes<br>`woodstar`: planning failed |",
-		"| `MacSoftware/versioned` | Metadata refreshed | `woodstar`: update `version` |",
+		"| `MacSoftware/versioned` | Metadata refreshed | `woodstar`: 1 → 2 |",
 		"| `MacSoftware/retired` | Removed |  |",
-		"| `MacSoftware/consumer` | Unchanged | `woodstar`: update `version` |",
+		"| `MacSoftware/consumer` | Unchanged | `woodstar`: 1 → 2 |",
 		"| 2 others | Metadata refreshed | No changes |",
 		"The reviewed branch can't apply until this merges.",
 		"<summary>2 others</summary>\n\n`MacSoftware/quiet`, `MacSoftware/silent`\n",
@@ -1038,7 +1039,7 @@ func TestRefreshBodyRowsOnlyWhatMergingAffects(t *testing.T) {
 	if !strings.HasPrefix(text, "Stemma refreshed the lock for 2 resources. Every input resolves to the content already locked, and no destination changes.\n\n<details>\n<summary>2 resources</summary>\n\n`MacSoftware/quiet`, `MacSoftware/silent`\n\n</details>\n\n---\n") {
 		t.Errorf("quiet body:\n%s", text)
 	}
-	if summary := planSummary(quiet, passed); summary != "2 locks refreshed: 0 planned changes across 2 destinations" {
+	if summary := planSummary(quiet, passed); summary != "2 locks refreshed: 0 publications across 2 destinations" {
 		t.Errorf("status %q", summary)
 	}
 }
@@ -1050,7 +1051,7 @@ func TestDiffAndBranchNames(t *testing.T) {
 	if kind, name := splitKey("stemma/v1alpha1/MacSoftware/chrome"); kind != "MacSoftware" || name != "chrome" {
 		t.Fatalf("split %s %s", kind, name)
 	}
-	if !equalEntries(nil, nil) || equalEntries(nil, map[string]source.Entry{"source": {Version: 1}}) {
+	if !equalEntries(nil, nil) || equalEntries(nil, map[string]source.Entry{"source": {Resolver: "http"}}) {
 		t.Fatal("entry comparison")
 	}
 }
@@ -1072,8 +1073,8 @@ spec:
 
 func TestDiffKeepsSkippedResourcesLocked(t *testing.T) {
 	const key = "stemma/v1alpha1/MacSoftware/private"
-	entries := map[string]source.Entry{"source": {Version: 1}}
-	candidate := engine.Candidate{Lock: lockfile.File{Version: lockfile.Version, Inputs: map[string]map[string]source.Entry{key: entries}}, Resources: map[string]engine.CandidateResource{key: {Name: "private", Kind: "MacSoftware", Skipped: true}}}
+	entries := map[string]source.Entry{"source": {Resolver: "http"}}
+	candidate := engine.Candidate{Lock: lock.File{Version: lock.Version, Inputs: map[string]map[string]source.Entry{key: entries}}, Resources: map[string]engine.CandidateResource{key: {Name: "private", Kind: "MacSoftware", Skipped: true}}}
 	if changes := diff(candidate); len(changes) != 0 {
 		t.Fatalf("skipped resource was proposed: %+v", changes)
 	}
@@ -1212,7 +1213,7 @@ func TestRunRefreshesLocksInOneProposal(t *testing.T) {
 	}
 
 	// Two downloads move without changing their bytes, one document goes and
-	// one resource releases new content.
+	// one resource releases file changed.
 	o.commit(t, "move downloads and retire c", map[string]string{
 		"a.software.yaml": strings.Replace(document("a"), "/a.pkg", "/a-moved.pkg", 1),
 		"b.software.yaml": strings.Replace(document("b"), "/b.pkg", "/b-moved.pkg", 1),
@@ -1276,7 +1277,7 @@ func TestRunRefreshesLocksInOneProposal(t *testing.T) {
 		}
 	}
 	tip := o.tip(refreshBranch)
-	if status := gh.status(tip, planContext); status["state"] != "success" || status["description"] != "2 locks refreshed, 1 removed: 0 planned changes across 1 destination" {
+	if status := gh.status(tip, planContext); status["state"] != "success" || status["description"] != "2 locks refreshed, 1 removed: 0 publications across 1 destination" {
 		t.Fatalf("refresh status: %v", status)
 	}
 
@@ -1354,7 +1355,7 @@ func TestRunStopsOnceWhenTheReviewedProjectDoesNotLoad(t *testing.T) {
 	}
 	head := o.tip("main")
 	report, err := Run(t.Context(), Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir()})
-	want := "main@" + short(head) + ": lockfile: stemma.lock/MacSoftware/fixture.yaml: version 2 is not supported; delete it and run stemma update"
+	want := "main@" + short(head) + ": lock: stemma.lock/MacSoftware/fixture.yaml: version 2 is not supported; run stemma update"
 	if err == nil || errors.Is(err, ErrFailed) || err.Error() != want || report.Error != want {
 		t.Fatalf("run error %v, want %q", err, want)
 	}
@@ -1415,7 +1416,7 @@ spec:
 	if err != nil {
 		t.Fatal(err)
 	}
-	reviewed, err := lockfile.Load(o.dir)
+	reviewed, err := lock.Load(o.dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1426,17 +1427,8 @@ spec:
 		t.Fatal(err)
 	}
 	methods := map[string]int{}
-	var phases []string
 	opts := Options{ConfigPath: filepath.Join(checkout, "stemma.yaml"), CacheDir: t.TempDir(), StateDir: t.TempDir(),
-		PhaseStarted: func(method string) error { phases = append(phases, method); return nil },
 		ResourceDone: func(method string, _ engine.ResourceReport) error {
-			phase := "update"
-			if method == "apply" {
-				phase = "apply"
-			}
-			if len(phases) == 0 || phases[len(phases)-1] != phase {
-				t.Fatalf("%s resource reported before its phase: %v", method, phases)
-			}
 			methods[method]++
 			return nil
 		},
@@ -1445,9 +1437,6 @@ spec:
 	report, err := Run(t.Context(), opts)
 	if !errors.Is(err, ErrFailed) || !report.Apply.Failed() || report.Update.Failed() {
 		t.Fatalf("mismatch should fail publication but allow proposals: %+v, %v", report, err)
-	}
-	if !slices.Equal(phases, []string{"apply", "update"}) {
-		t.Fatalf("phases: %v", phases)
 	}
 	if m, err := readMarker(opts.StateDir); err != nil || m.Applied != "" {
 		t.Fatalf("partial apply advanced marker: %+v, %v", m, err)
@@ -1469,7 +1458,7 @@ spec:
 				t.Fatalf("consumer not blocked: %+v", resource)
 			}
 		case "policy":
-			if resource.Error != "" || len(resource.Destinations) != 1 {
+			if resource.Error != "" || len(resource.Publications) != 1 {
 				t.Fatalf("independent publication failed: %+v", resource)
 			}
 		}
@@ -1511,7 +1500,7 @@ spec:
 	if len(entries) != 1 {
 		t.Fatalf("proposal wrote destinations: %v", entries)
 	}
-	if current, err := lockfile.Load(o.dir); err != nil || !reflect.DeepEqual(current, reviewed) {
+	if current, err := lock.Load(o.dir); err != nil || !reflect.DeepEqual(current, reviewed) {
 		t.Fatalf("reviewed lock changed: %v", err)
 	}
 

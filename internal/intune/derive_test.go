@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/woodleighschool/stemma/internal/testutil/testevidence"
 	"github.com/woodleighschool/stemma/plugin"
 )
 
@@ -14,7 +15,7 @@ func macRequest(metadata object, selected *plugin.Subject, subjects ...plugin.Su
 	artifact := plugin.Artifact{Facts: plugin.Facts{Version: plugin.FactsVersion, Subjects: subjects}}
 	if selected != nil {
 		evidence, _ := json.Marshal(selected)
-		artifact.Evidence = map[string]json.RawMessage{"macos.application": evidence}
+		artifact.Evidence = map[string]json.RawMessage{"macos": testevidence.MacOS(evidence)}
 	}
 	identity := plugin.Identity{Resource: plugin.ResourceReference{Kind: "MacSoftware", Name: "example"}}
 	return plugin.ReconcileRequest[Config]{Method: "validate", Identity: identity, Prepared: true, Metadata: raw(metadata), Artifact: artifact, MinimumOS: &plugin.MinimumOS{Version: "13.0", Origin: "software.minimum_os"}}
@@ -112,7 +113,7 @@ func TestPackageDetectionUsesTheSelectedApplicationOrReceipts(t *testing.T) {
 	}
 	// Without a selection, the receipts detect the PKG, not the applications it
 	// carries. A package without a payload leaves no receipt.
-	delete(req.Artifact.Evidence, "macos.application")
+	delete(req.Artifact.Evidence, "macos")
 	for _, subjects := range [][]plugin.Subject{{root, receipt, receipt}, {root, receipt, scripts}, {root, receipt, helper, updater}} {
 		req.Artifact.Facts.Subjects = subjects
 		m, origins, err = derive(req)
@@ -180,7 +181,7 @@ func lobRequest(metadata object, selected *plugin.Subject, subjects ...plugin.Su
 	if req.Artifact.Evidence == nil {
 		req.Artifact.Evidence = map[string]json.RawMessage{}
 	}
-	req.Artifact.Evidence["signatures"] = json.RawMessage(`[{"subject":{"path":"."},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/4"}]`)
+	req.Artifact.Evidence["signing"] = json.RawMessage(`{"observed":[{"subject":{"path":"."},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/4"}]}`)
 	return req
 }
 
@@ -272,7 +273,7 @@ func TestLineOfBusinessUploadRequirements(t *testing.T) {
 		{"disk image", object{"type": "lob"}, nil, []plugin.Subject{root, receipt}, "requires a flat PKG", func(req *plugin.ReconcileRequest[Config]) {
 			req.Artifact.Filename, req.Artifact.Format = "exporter.dmg", "dmg"
 		}},
-		{"unsigned", object{"type": "lob"}, nil, []plugin.Subject{root, receipt}, "Developer ID Installer signature", func(req *plugin.ReconcileRequest[Config]) { delete(req.Artifact.Evidence, "signatures") }},
+		{"unsigned", object{"type": "lob"}, nil, []plugin.Subject{root, receipt}, "Developer ID Installer signature", func(req *plugin.ReconcileRequest[Config]) { delete(req.Artifact.Evidence, "signing") }},
 		{"oversized", object{"type": "lob"}, nil, []plugin.Subject{root, receipt}, "at most 2 GiB", func(req *plugin.ReconcileRequest[Config]) { req.Artifact.Size = lobLimit + 1 }},
 		{"no payload", object{"type": "lob"}, nil, []plugin.Subject{root, scripts}, "requires a payload", nil},
 		{"no application", object{"type": "lob"}, nil, []plugin.Subject{root, receipt}, "application under /Applications", nil},
@@ -392,13 +393,13 @@ func TestLOBRequiresThePublishedRootInstallerObservation(t *testing.T) {
 		`[{"subject":{"path":"Companion.app"},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Application","verifier":"stemma.signature/4"}]`,
 		`[{"subject":{"path":"PackageInfo"},"state":"signed","signer":"apple:developer-id:ABCDE12345","authority":"Developer ID Installer","verifier":"stemma.signature/4"}]`,
 	} {
-		artifact := plugin.Artifact{SHA256: strings.Repeat("a", 64), Filename: "upload.pkg", Evidence: map[string]json.RawMessage{"signatures": json.RawMessage(evidence)}}
+		artifact := plugin.Artifact{SHA256: strings.Repeat("a", 64), Filename: "upload.pkg", Evidence: map[string]json.RawMessage{"signing": json.RawMessage(`{"observed":` + evidence + `}`)}}
 		if err := validateLOB(artifact, nil, false); err == nil || !strings.Contains(err.Error(), "published PKG root") {
 			t.Fatalf("accepted wrong signature evidence: %v", err)
 		}
 	}
 	req := lobRequest(object{"type": "pkg"}, nil, plugin.Subject{ID: "receipt", Kind: "package", Package: &plugin.PackageFacts{Identifier: "org.example.autopkg", Version: "1.0", HasPayload: true}})
-	req.Artifact.Evidence = map[string]json.RawMessage{"signatures": json.RawMessage(`[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/4"}]`)}
+	req.Artifact.Evidence = map[string]json.RawMessage{"signing": json.RawMessage(`{"observed":[{"subject":{"path":"."},"state":"unsigned","verifier":"stemma.signature/4"}]}`)}
 	if _, _, err := derive(req); err != nil {
 		t.Fatalf("ordinary PKG rejected unsigned root: %v", err)
 	}

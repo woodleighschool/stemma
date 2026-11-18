@@ -89,14 +89,14 @@ func (c *client) resolveScope(ctx context.Context, s *policyScope) (map[string][
 }
 
 // scopeSettings are the declared scope values of a document rooted at root,
-// with their objects as resolved IDs.
-func scopeSettings(root string, s *policyScope, resolved map[string][]string) []setting {
+// with their objects as resolved IDs, under the declaration path prefix.
+func scopeSettings(root, prefix string, s *policyScope, resolved map[string][]string) []setting {
 	if s == nil {
 		return nil
 	}
 	var settings []setting
 	if s.AllComputers != nil {
-		settings = append(settings, setting{field: "scope.all_computers", value: *s.AllComputers, fragment: fragment(root, *s.AllComputers, "scope", "all_computers"), current: flag("scope", "all_computers")})
+		settings = append(settings, setting{field: prefix + ".scope.all_computers", value: *s.AllComputers, fragment: fragment(root, *s.AllComputers, "scope", "all_computers"), current: flag("scope", "all_computers"), live: true})
 	}
 	lists := s.lists()
 	for _, path := range slices.Sorted(maps.Keys(lists)) {
@@ -110,10 +110,11 @@ func scopeSettings(root string, s *policyScope, resolved map[string][]string) []
 		}
 		steps := append([]string{"scope"}, strings.Split(path, "/")...)
 		settings = append(settings, setting{
-			field:    strings.Join(steps, "."),
+			field:    prefix + "." + strings.Join(steps, "."),
 			value:    declaredNames(*list.names),
 			fragment: fragment(root, objects, steps...),
 			current:  names(steps...),
+			live:     true,
 		})
 	}
 	return settings

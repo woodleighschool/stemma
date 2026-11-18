@@ -1,7 +1,6 @@
 package jamf
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -28,8 +27,8 @@ func deriveMetadata(request plugin.ReconcileRequest[Config]) (metadata, plugin.R
 		declared["filename"] = m.fields["fileName"]
 		response.Origins["filename"] = "artifact.filename"
 	}
-	for i, policy := range m.policies {
-		prefix := fmt.Sprintf("policies.%d.", i)
+	for _, policy := range m.policies {
+		prefix := policy.path + "."
 		if !policy.Category.set && m.category.set {
 			policy.Category = m.category
 			response.Origins[prefix+"category"] = "category"
@@ -80,10 +79,11 @@ func deriveMetadata(request plugin.ReconcileRequest[Config]) (metadata, plugin.R
 
 // applicationName is the selected application's name without its extension.
 func applicationName(artifact plugin.Artifact) (string, string) {
-	var selected plugin.Subject
-	if json.Unmarshal(artifact.Evidence["macos.application"], &selected) != nil || selected.App == nil {
+	macos, err := plugin.ReadMacOS(artifact.Evidence)
+	if err != nil || macos.Application == nil {
 		return "", ""
 	}
+	selected := *macos.Application
 	location, origin := selected.InstalledPath, "app.installed_path"
 	if location == "" {
 		location, origin = selected.Path, "app.path"

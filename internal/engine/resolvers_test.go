@@ -39,7 +39,7 @@ func TestResolverAcquisitionContract(t *testing.T) {
 				download := &plugin.Download{URL: server.URL + "/app.pkg?signature=runtime-only", Headers: map[string]string{"Authorization": "Bearer runtime-only"}, Filename: "app.pkg", SHA256: digest}
 				if r.Method == "discover" {
 					discoveries++
-					result := plugin.ResolveResponse{Observation: json.RawMessage(`{"release":"1"}`), Content: &plugin.SourceContent{SHA256: digest, Filename: "app.pkg", Mode: 0o644}}
+					result := plugin.ResolveResponse{Origin: json.RawMessage(`{"release":"1"}`), Content: &plugin.SourceContent{SHA256: digest, Filename: "app.pkg", Mode: 0o644}}
 					if kind == "discovery" {
 						result.Download = download
 					}

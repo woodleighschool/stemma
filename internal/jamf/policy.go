@@ -31,6 +31,8 @@ type installPolicy struct {
 	SelfService     *selfService `json:"self_service,omitempty" jsonschema_description:"Offer the policy in Self Service: true, false, or its Self Service settings."`
 	Scope           *policyScope `json:"scope,omitempty" jsonschema_description:"Scope objects named exactly as in Jamf. Each name must match exactly one object, and supplied lists replace their collections."`
 
+	// path is the policy's place in the declared metadata, such as policies.0.
+	path string
 	// category, selfServiceCategory and scope hold the objects the declaration
 	// names, resolved against Jamf before planning; a nil category is unmanaged.
 	category            *namedID
@@ -109,7 +111,7 @@ func decodePolicies(metadata map[string]json.RawMessage) ([]*installPolicy, erro
 		return nil, fmt.Errorf("jamf policies: %w", err)
 	}
 	seen := map[string]bool{}
-	for _, policy := range declared {
+	for i, policy := range declared {
 		if err := policy.validate(); err != nil {
 			return nil, err
 		}
@@ -117,6 +119,7 @@ func decodePolicies(metadata map[string]json.RawMessage) ([]*installPolicy, erro
 			return nil, fmt.Errorf("jamf policy %q is declared more than once", policy.Name)
 		}
 		seen[policy.Name] = true
+		policy.path = fmt.Sprintf("policies.%d", i)
 	}
 	return declared, nil
 }
@@ -171,26 +174,26 @@ func (c *client) resolvePolicy(ctx context.Context, policy *installPolicy) error
 	return err
 }
 
-// publication is what a policy installs and shows for one software.
+// publication is what a policy installs and shows for one software: the
+// package, the version it publishes and the icon.
 type publication struct {
 	packageID string
 	filename  string
+	version   string
 	icon      *selfServiceIcon
 }
-
-// field names the policy in plans.
-func (p *installPolicy) field() string { return "policies[" + p.Name + "]" }
 
 // settings are the values Stemma owns in the policy: the package it installs,
 // and the declared settings with their derived Self Service defaults.
 func (p *installPolicy) settings(c *client, pub publication) []setting {
 	const root = "policy"
+	prefix := p.path + "."
 	var settings []setting
 	if p.Enabled != nil {
-		settings = append(settings, setting{field: "enabled", value: *p.Enabled, fragment: fragment(root, *p.Enabled, "general", "enabled"), current: flag("general", "enabled")})
+		settings = append(settings, setting{field: prefix + "enabled", value: *p.Enabled, fragment: fragment(root, *p.Enabled, "general", "enabled"), current: flag("general", "enabled"), live: true})
 	}
 	if p.category != nil {
-		settings = append(settings, setting{field: "category", value: p.category.name, fragment: whole(fragment(root, p.category.id, "general", "category", "id"), "general", "category"), current: func(doc *xmlNode) any {
+		settings = append(settings, setting{field: prefix + "category", value: p.category.name, fragment: whole(fragment(root, p.category.id, "general", "category", "id"), "general", "category"), current: func(doc *xmlNode) any {
 			if doc.value("general", "category", "id") == "-1" {
 				return nil
 			}
@@ -203,7 +206,7 @@ func (p *installPolicy) settings(c *client, pub publication) []setting {
 		for trigger, native := range policyTriggers {
 			flags[native] = slices.Contains(declared, trigger)
 		}
-		settings = append(settings, setting{field: "triggers", value: declared, fragment: fragment(root, flags, "general"), current: func(doc *xmlNode) any {
+		settings = append(settings, setting{field: prefix + "triggers", value: declared, fragment: fragment(root, flags, "general"), current: func(doc *xmlNode) any {
 			enabled := []string{}
 			for trigger, native := range policyTriggers {
 				if doc.value("general", native) == "true" {
@@ -215,51 +218,52 @@ func (p *installPolicy) settings(c *client, pub publication) []setting {
 		}})
 	}
 	if p.Frequency != nil {
-		settings = append(settings, setting{field: "frequency", value: *p.Frequency, fragment: fragment(root, frequencies[*p.Frequency], "general", "frequency"), current: choice(frequencies, "general", "frequency")})
+		settings = append(settings, setting{field: prefix + "frequency", value: *p.Frequency, fragment: fragment(root, frequencies[*p.Frequency], "general", "frequency"), current: choice(frequencies, "general", "frequency")})
 	}
 	if p.Retries != nil {
 		retry := map[string]any{"retry_event": "none", "retry_attempts": -1}
 		if *p.Retries > 0 {
 			retry = map[string]any{"retry_event": "check-in", "retry_attempts": *p.Retries}
 		}
-		settings = append(settings, setting{field: "retries", value: *p.Retries, fragment: fragment(root, retry, "general"), current: retries})
+		settings = append(settings, setting{field: prefix + "retries", value: *p.Retries, fragment: fragment(root, retry, "general"), current: retries})
 	}
 	if p.Event != nil {
-		settings = append(settings, setting{field: "event", value: *p.Event, fragment: fragment(root, *p.Event, "general", "trigger_other"), current: text("general", "trigger_other")})
+		settings = append(settings, setting{field: prefix + "event", value: *p.Event, fragment: fragment(root, *p.Event, "general", "trigger_other"), current: text("general", "trigger_other")})
 	}
-	settings = append(settings, setting{field: "package", value: []string{pub.filename}, fragment: fragment(root, []map[string]string{{"id": pub.packageID, "action": "Install"}}, "package_configuration", "packages"), current: policyPackages})
+	settings = append(settings, setting{field: prefix + "package", value: []string{pub.filename}, fragment: fragment(root, []map[string]string{{"id": pub.packageID, "action": "Install"}}, "package_configuration", "packages"), current: policyPackages})
 	if p.UpdateInventory != nil {
-		settings = append(settings, setting{field: "update_inventory", value: *p.UpdateInventory, fragment: fragment(root, *p.UpdateInventory, "maintenance", "recon"), current: flag("maintenance", "recon")})
+		settings = append(settings, setting{field: prefix + "update_inventory", value: *p.UpdateInventory, fragment: fragment(root, *p.UpdateInventory, "maintenance", "recon"), current: flag("maintenance", "recon")})
 	}
 	if s := p.SelfService; s != nil {
-		settings = append(settings, setting{field: "self_service", value: s.enabled, fragment: fragment(root, s.enabled, "self_service", "use_for_self_service"), current: flag("self_service", "use_for_self_service")})
+		settings = append(settings, setting{field: prefix + "self_service", value: s.enabled, fragment: fragment(root, s.enabled, "self_service", "use_for_self_service"), current: flag("self_service", "use_for_self_service")})
 		if s.enabled {
 			settings = append(settings, p.selfServiceSettings(c, pub)...)
 		}
 	}
-	return append(settings, scopeSettings(root, p.Scope, p.scope)...)
+	return append(settings, scopeSettings(root, p.path, p.Scope, p.scope)...)
 }
 
 func (p *installPolicy) selfServiceSettings(c *client, pub publication) []setting {
 	const root = "policy"
+	prefix := p.path + ".self_service."
 	s := p.SelfService
 	name := *s.DisplayName
-	settings := []setting{{field: "self_service.display_name", value: name, fragment: fragment(root, name, "self_service", "self_service_display_name"), current: text("self_service", "self_service_display_name")}}
+	settings := []setting{{field: prefix + "display_name", value: name, fragment: fragment(root, name, "self_service", "self_service_display_name"), current: text("self_service", "self_service_display_name")}}
 	if s.Description != nil {
-		settings = append(settings, setting{field: "self_service.description", value: *s.Description, fragment: fragment(root, *s.Description, "self_service", "self_service_description"), current: text("self_service", "self_service_description")})
+		settings = append(settings, setting{field: prefix + "description", value: *s.Description, fragment: fragment(root, *s.Description, "self_service", "self_service_description"), current: text("self_service", "self_service_description")})
 	}
 	if category := p.selfServiceCategory; category != nil {
 		listed := []map[string]any{}
 		if category.name != nil {
 			listed = append(listed, map[string]any{"id": category.id, "display_in": true, "feature_in": false})
 		}
-		settings = append(settings, setting{field: "self_service.category", value: category.name, fragment: fragment(root, listed, "self_service", "self_service_categories"), current: selfServiceCategories})
+		settings = append(settings, setting{field: prefix + "category", value: category.name, fragment: fragment(root, listed, "self_service", "self_service_categories"), current: selfServiceCategories})
 	}
 	if s.Featured != nil {
-		settings = append(settings, setting{field: "self_service.featured", value: *s.Featured, fragment: fragment(root, *s.Featured, "self_service", "feature_on_main_page"), current: flag("self_service", "feature_on_main_page")})
+		settings = append(settings, setting{field: prefix + "featured", value: *s.Featured, fragment: fragment(root, *s.Featured, "self_service", "feature_on_main_page"), current: flag("self_service", "feature_on_main_page")})
 	}
 	if pub.icon != nil {
-		settings = append(settings, pub.icon.setting(c, root, "self_service"))
+		settings = append(settings, pub.icon.setting(c, root, prefix+"icon", "self_service"))
 	}
 	return settings
 }
@@ -326,8 +330,9 @@ func selfServiceCategories(doc *xmlNode) any {
 	return shown
 }
 
-// planPolicy reports the policy changes publishing needs. The package ID is
-// empty while the package has yet to be created.
+// planPolicy reports the policy fields publishing sets; a policy it creates
+// gains its name. The package ID is empty while the package has yet to be
+// created.
 func (c *client) planPolicy(ctx context.Context, p *installPolicy, pub publication, response *plugin.ReconcileResponse) error {
 	id, doc, err := c.findPolicy(ctx, p.Name)
 	if err != nil {
@@ -336,25 +341,35 @@ func (c *client) planPolicy(ctx context.Context, p *installPolicy, pub publicati
 	p.id = id
 	pub.icon.observe(doc, "self_service")
 	if doc == nil {
-		response.Changes = append(response.Changes, plugin.Change{Kind: "metadata", Field: p.field(), Action: "create"})
+		response.Fields = append(response.Fields, plugin.FieldChange{Field: p.path + ".name", After: raw(p.Name)})
 	}
-	response.Changes = append(response.Changes, changes(p.field(), doc, p.settings(c, pub))...)
+	settings := p.settings(c, pub)
+	pub.icon.want(doc, settings)
+	response.Fields = append(response.Fields, fieldChanges(doc, settings)...)
 	return nil
 }
 
-func (c *client) applyPolicy(ctx context.Context, p *installPolicy, pub publication) error {
+func (c *client) applyPolicy(ctx context.Context, p *installPolicy, pub publication, completed *plugin.ReconcileResponse) error {
 	id, doc, err := c.findPolicy(ctx, p.Name)
 	if err != nil {
 		return err
 	}
 	settings := p.settings(c, pub)
 	if doc == nil {
+		start := len(completed.Fields)
+		defer func() {
+			for i := start; i < len(completed.Fields); i++ {
+				completed.Fields[i].Before = nil
+			}
+		}()
 		if id, doc, err = c.createPolicy(ctx, p.Name, settings); err != nil {
 			return err
 		}
+		completed.Fields = append(completed.Fields, plugin.FieldChange{Field: p.path + ".name", After: raw(p.Name)})
+		completed.Fields = append(completed.Fields, createdSettings(doc, settings)...)
 	}
 	p.id = id
-	return c.update(ctx, policies, id, doc, settings)
+	return c.update(ctx, policies, id, doc, settings, completed)
 }
 
 // findPolicy returns the policy named name, or a nil document when the name is free.
@@ -430,7 +445,7 @@ func (c *client) createPolicy(ctx context.Context, name string, settings []setti
 		"scope":       map[string]any{"all_computers": false},
 	})
 	for _, s := range settings {
-		if s.write == nil && s.field != "enabled" && !strings.HasPrefix(s.field, "scope.") {
+		if s.write == nil && !s.live {
 			mergeXML(initial, s.fragment)
 		}
 	}

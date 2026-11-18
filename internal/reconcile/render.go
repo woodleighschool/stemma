@@ -9,10 +9,9 @@ import (
 
 	"github.com/woodleighschool/stemma/internal/changes"
 	"github.com/woodleighschool/stemma/internal/engine"
-	"github.com/woodleighschool/stemma/internal/lockfile"
+	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/reconcile/sourcecontrol"
 	"github.com/woodleighschool/stemma/internal/source"
-	"github.com/woodleighschool/stemma/plugin"
 )
 
 const (
@@ -34,22 +33,17 @@ const (
 // when the apply stopped without a resource to name.
 func applySummary(report engine.Report, err error) (state, summary string) {
 	var failed []string
-	changes, blocked := 0, 0
+	blocked := 0
 	for _, resource := range report.Resources {
 		if len(resource.BlockedBy) > 0 {
 			blocked++
 		} else if resource.Error != "" {
 			failed = append(failed, resource.Name)
 		}
-		for _, destination := range resource.Destinations {
-			if destination.Applied {
-				changes += len(destination.Changes)
-			}
-		}
 	}
 	switch {
 	case err == nil:
-		return sourcecontrol.Success, fmt.Sprintf("%s, %s", plural(len(report.Resources), "resource"), plural(changes, "destination change"))
+		return sourcecontrol.Success, strings.TrimSuffix(changes.Summary("apply", report.Summary).String(), ".")
 	case len(failed) > 0:
 		summary := fmt.Sprintf("%s failed: %s", plural(len(failed), "resource"), strings.Join(failed, ", "))
 		if blocked > 0 {
@@ -171,12 +165,12 @@ func writeUpdate(text *strings.Builder, set changeset, plan planned) {
 			fmt.Fprintf(text, "| %s | %s |\n", name, reason)
 			continue
 		}
-		for _, destination := range resource.Destinations {
-			area := cell(destination.Name)
+		for _, publication := range resource.Publications {
+			area := cell(publication.Destination)
 			if !own {
 				area += " (" + name + ")"
 			}
-			fmt.Fprintf(text, "| %s | %s |\n", area, sentence(destinationChange(destination)))
+			fmt.Fprintf(text, "| %s | %s |\n", area, destinationChange(publication))
 		}
 	}
 }
@@ -193,7 +187,7 @@ func writeRefresh(text *strings.Builder, set changeset, plan planned) {
 	for _, key := range slices.Sorted(maps.Keys(set.changes)) {
 		c := set.changes[key]
 		name := code(c.kind + "/" + c.name)
-		lock, rejected := lockChange(c)
+		locked, rejected := lockChange(c)
 		stale = stale || rejected
 		merge := ""
 		report, ok := reports[key]
@@ -202,7 +196,7 @@ func writeRefresh(text *strings.Builder, set changeset, plan planned) {
 			delete(reports, key)
 		}
 		if c.removed || rejected || ok && merge != noChanges {
-			rows = append(rows, fmt.Sprintf("| %s | %s | %s |\n", name, lock, merge))
+			rows = append(rows, fmt.Sprintf("| %s | %s | %s |\n", name, locked, merge))
 			continue
 		}
 		quiet = append(quiet, name)
@@ -264,7 +258,7 @@ func lockChange(c change) (text string, stale bool) {
 	for name, after := range c.after {
 		before := c.before[name]
 		redeclared = redeclared || before.Declaration != after.Declaration
-		reresolved = reresolved || before.Version != after.Version || before.Resolver != after.Resolver || before.ResolverVersion != after.ResolverVersion
+		reresolved = reresolved || before.Resolver != after.Resolver || before.ResolverVersion != after.ResolverVersion
 	}
 	switch {
 	case redeclared:
@@ -282,9 +276,9 @@ func onMerge(resource engine.ResourceReport) string {
 	}
 	var parts []string
 	quiet := true
-	for _, destination := range resource.Destinations {
-		quiet = quiet && destination.Error == "" && len(destination.Changes) == 0
-		parts = append(parts, code(destination.Name)+": "+destinationChange(destination))
+	for _, publication := range resource.Publications {
+		quiet = quiet && publication.Status == engine.StatusUnchanged
+		parts = append(parts, code(publication.Destination)+": "+destinationChange(publication))
 	}
 	if quiet {
 		return noChanges
@@ -302,7 +296,7 @@ func stopped(resource engine.ResourceReport) string {
 			names[i] = code(name)
 		}
 		return "Blocked by " + strings.Join(names, ", ")
-	case resource.Error != "" && len(resource.Destinations) == 0:
+	case resource.Error != "" && len(resource.Publications) == 0:
 		return "Preparation failed"
 	}
 	return ""
@@ -329,23 +323,17 @@ func boolOrder(a, b bool) int {
 	}
 }
 
-// sourceChange summarises an update's lock difference by input.
+// sourceChange is an update's lock difference, one input per line, in the
+// rows every report shows.
 func sourceChange(c change) string {
+	inputs := lock.DiffInputs(map[string]map[string]source.Entry{"": c.before}, map[string]map[string]source.Entry{"": c.after})
 	var parts []string
-	for _, input := range lockfile.DiffInputs(map[string]map[string]source.Entry{"": c.before}, map[string]map[string]source.Entry{"": c.after}) {
-		name := code(input.Input)
-		switch {
-		case input.Before == nil:
-			parts = append(parts, name+" added: "+code(input.After.Content.Filename))
-		case input.After == nil:
-			parts = append(parts, name+" removed")
-		case !input.ContentChanged:
-			parts = append(parts, name+": lock metadata refreshed")
-		case input.Before.Content.Filename != input.After.Content.Filename:
-			parts = append(parts, name+": "+code(input.Before.Content.Filename)+" → "+code(input.After.Content.Filename))
-		default:
-			parts = append(parts, name+": new content for "+code(input.After.Content.Filename))
+	for _, row := range changes.InputRows(inputs, len(c.after) > 1 || len(c.before) > 1) {
+		part := cell(row.Summary.String())
+		if row.Subject != "" {
+			part = code(row.Subject) + ": " + part
 		}
+		parts = append(parts, part)
 	}
 	return strings.Join(parts, "<br>")
 }
@@ -363,49 +351,34 @@ func artifacts(resource engine.ResourceReport) string {
 	return strings.Join(parts, "<br>")
 }
 
-func destinationChange(destination engine.DestinationReport) string {
-	switch {
-	case destination.Error != "":
+// destinationChange is a publication's headline, with the names of the
+// fields it changes but none of their values: pull requests outlive the run,
+// and metadata values can carry environment values.
+func destinationChange(publication engine.Publication) string {
+	if publication.Status == engine.StatusFailed {
 		return "planning failed"
-	case len(destination.Changes) == 0:
+	}
+	if publication.Status != engine.StatusChanged {
 		return "no changes"
 	}
-	return effects(destination.Changes)
-}
-
-// effects names uploaded files and affected fields without metadata values.
-func effects(items []plugin.Change) string {
-	var verbs []string
-	fields := map[string][]string{}
-	for _, change := range items {
-		verb, field := change.Action, code(change.Field)
-		if verb == "upload" && change.Filename != "" {
-			field = code(change.Filename)
-		}
-		if verb == "delete" && change.Kind == "retention" {
-			field += " (retention)"
-		}
-		switch verb {
-		case "create", "upload", "delete":
-		default:
-			verb = "update"
-		}
-		if !slices.Contains(verbs, verb) {
-			verbs = append(verbs, verb)
-		}
-		if !slices.Contains(fields[verb], field) {
-			fields[verb] = append(fields[verb], field)
-		}
+	parts := []string{cell(changes.PublicationHeadline(publication).String())}
+	var fields []string
+	for _, field := range publication.Fields {
+		fields = append(fields, code(field.Field))
 	}
-	phrases := make([]string, 0, len(verbs))
-	for _, verb := range verbs {
-		if names := fields[verb]; verb == "update" && len(names) > 3 {
-			phrases = append(phrases, "update "+plural(len(names), "field"))
-		} else {
-			phrases = append(phrases, verb+" "+strings.Join(names, ", "))
-		}
+	if len(fields) > 0 {
+		parts = append(parts, "update "+strings.Join(fields, ", "))
 	}
-	return strings.Join(phrases, "; ")
+	for _, upload := range publication.Uploads {
+		parts = append(parts, "upload "+code(upload.Name)+": "+code(upload.Filename))
+	}
+	for _, repair := range publication.Repairs {
+		parts = append(parts, "rebuild "+cell(repair))
+	}
+	if len(publication.Removed) > 0 {
+		parts = append(parts, "remove "+cell(strings.Join(publication.Removed, ", ")))
+	}
+	return strings.Join(parts, "; ")
 }
 
 // failures names what did not plan, without error text.
@@ -416,12 +389,12 @@ func failures(plan planned) []string {
 		switch {
 		case len(resource.BlockedBy) > 0:
 			parts = append(parts, name+" is blocked by "+strings.Join(blockers(resource), ", "))
-		case resource.Error != "" && len(resource.Destinations) == 0:
+		case resource.Error != "" && len(resource.Publications) == 0:
 			parts = append(parts, name+" could not be prepared")
 		}
-		for _, destination := range resource.Destinations {
-			if destination.Error != "" {
-				parts = append(parts, destination.Name+" could not plan "+name)
+		for _, publication := range resource.Publications {
+			if publication.Error != "" {
+				parts = append(parts, publication.Destination+" could not plan "+name)
 			}
 		}
 	}
@@ -454,20 +427,17 @@ func planSummary(set changeset, plan planned) string {
 	if plan.report == nil {
 		return label
 	}
-	changes := 0
+	planned := 0
 	destinations := map[string]bool{}
 	for _, resource := range plan.resources() {
-		for _, destination := range resource.Destinations {
-			destinations[destination.Name] = true
-			changes += len(destination.Changes)
+		for _, publication := range resource.Publications {
+			destinations[publication.Destination] = true
+			if publication.Status == engine.StatusChanged {
+				planned++
+			}
 		}
 	}
-	return fmt.Sprintf("%s: %s across %s", label, plural(changes, "planned change"), plural(len(destinations), "destination"))
-}
-
-// sentence capitalises a phrase that fills a table cell.
-func sentence(text string) string {
-	return strings.ToUpper(text[:1]) + text[1:]
+	return fmt.Sprintf("%s: %s across %s", label, plural(planned, "publication"), plural(len(destinations), "destination"))
 }
 
 // code formats text as a Markdown code span inside a table cell.

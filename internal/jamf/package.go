@@ -59,21 +59,65 @@ func defaults(filename, identity string) map[string]json.RawMessage {
 	return map[string]json.RawMessage{"fileName": raw(filename), "packageName": raw(filename), "notes": raw(marker(identity)), "categoryId": raw("-1"), "priority": raw(10), "fillUserTemplate": raw(false), "osInstall": raw(false), "rebootRequired": raw(false), "suppressEula": raw(false), "suppressFromDock": raw(false), "suppressRegistration": raw(false), "suppressUpdates": raw(false)}
 }
 
-func plan(current *observed, desired map[string]json.RawMessage, content payload, identity string) []plugin.Change {
-	desired = markedFields(current, desired, identity)
-	var changes []plugin.Change
-	if current == nil {
-		changes = append(changes, plugin.Change{Kind: "content", Field: "package", Action: "create", After: raw(content.filename)})
-		current = &observed{Fields: defaults(content.filename, identity)}
-	} else if !contentDigestMatches(current, content) {
-		changes = append(changes, plugin.Change{Kind: "content", Field: "sha256", Action: "upload", Before: current.Fields["sha256"], After: raw(content.sha256)})
-	}
-	for _, key := range slices.Sorted(maps.Keys(desired)) {
-		if !equalJSON(current.Fields[key], desired[key]) {
-			changes = append(changes, plugin.Change{Kind: "metadata", Field: fieldName(key), Action: "set", Before: current.Fields[key], After: desired[key]})
+// planPackage reports the content upload and the managed package fields that
+// differ from replaced, the package the publication supersedes. Without one,
+// every managed field is an initial value.
+func (c *client) planPackage(ctx context.Context, current, replaced *observed, m metadata, content payload) ([]plugin.Upload, []plugin.FieldChange, error) {
+	var uploads []plugin.Upload
+	if current == nil || !contentDigestMatches(current, content) {
+		upload := plugin.Upload{Name: plugin.UploadInstaller, Filename: content.filename, After: content.sha256}
+		if replaced != nil {
+			upload.Before = heldSHA256(replaced)
 		}
+		uploads = append(uploads, upload)
 	}
-	return changes
+	var fields []plugin.FieldChange
+	for _, key := range slices.Sorted(maps.Keys(m.fields)) {
+		change := plugin.FieldChange{Field: fieldName(key), After: m.fields[key]}
+		if key == "categoryId" {
+			change.After = raw(m.category.name)
+		}
+		if replaced != nil {
+			before := replaced.Fields[key]
+			switch key {
+			case "notes":
+				// Ownership is separate from the declared notes.
+				text := unmarked(stringField(replaced.Fields, key))
+				if text == stringField(m.fields, key) {
+					continue
+				}
+				before = raw(text)
+			case "categoryId":
+				if equalJSON(before, m.fields[key]) {
+					continue
+				}
+				name, err := c.categoryName(ctx, stringField(replaced.Fields, key))
+				if err != nil {
+					return nil, nil, err
+				}
+				before = raw(name)
+			default:
+				if equalJSON(before, m.fields[key]) {
+					continue
+				}
+			}
+			change.Before = before
+		}
+		fields = append(fields, change)
+	}
+	return uploads, fields, nil
+}
+
+// heldSHA256 is the SHA-256 Jamf records for a package's content, if any.
+func heldSHA256(pkg *observed) string {
+	if digest := stringField(pkg.Fields, "sha256"); digest != "" {
+		return strings.ToLower(digest)
+	}
+	switch stringField(pkg.Fields, "hashType") {
+	case "SHA_256", "SHA256", "SHA-256":
+		return strings.ToLower(stringField(pkg.Fields, "hashValue"))
+	}
+	return ""
 }
 
 func describePayload(identity plugin.Identity, artifact plugin.Artifact) (payload, error) {
@@ -410,7 +454,7 @@ func (c *client) awaitContent(ctx context.Context, id, filename string) (_ *obse
 
 // publishPackage converges the package record on the artifact and declared
 // metadata, creating it when current is nil, and returns its ID.
-func (c *client) publishPackage(ctx context.Context, current *observed, desired map[string]json.RawMessage, identity, file string, content payload) (string, error) {
+func (c *client) publishPackage(ctx context.Context, current *observed, desired map[string]json.RawMessage, identity, file string, content payload, completed *plugin.ReconcileResponse) (string, error) {
 	var err error
 	if current == nil {
 		if current, err = c.create(ctx, identity, content.filename); err != nil {
@@ -437,6 +481,7 @@ func (c *client) publishPackage(ctx context.Context, current *observed, desired 
 		if err := c.upload(ctx, id, file, content); err != nil {
 			return "", err
 		}
+		completed.Uploads = append(completed.Uploads, plugin.Upload{Name: plugin.UploadInstaller, Filename: content.filename, Before: heldSHA256(current), After: content.sha256})
 		if current, err = c.awaitContent(ctx, id, content.filename); err != nil {
 			return "", err
 		}
@@ -444,6 +489,7 @@ func (c *client) publishPackage(ctx context.Context, current *observed, desired 
 	if !contentMatches(current, content) {
 		return "", errors.New("jamf uploaded content does not match the artifact")
 	}
+	completed.Version = content.filename
 	// Declared metadata follows verified content, so a failed upload never leaves
 	// new settings over old bytes.
 	if current, err = c.merge(ctx, current, desired, identity); err != nil {

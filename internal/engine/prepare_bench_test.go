@@ -103,7 +103,7 @@ func BenchmarkPrepareUnchangedInput(b *testing.B) {
 	work := filepath.Join(b.TempDir(), "work")
 	b.ReportAllocs()
 	for b.Loop() {
-		if _, _, err := prepareResource(b.Context(), store, ops, plan, inputs, work, "signature"); err != nil {
+		if _, err := prepareResource(b.Context(), store, ops, plan, inputs, work, "signature"); err != nil {
 			b.Fatal(err)
 		}
 		if err := os.RemoveAll(work); err != nil {

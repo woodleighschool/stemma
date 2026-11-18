@@ -249,13 +249,13 @@ func TestChangedSincePreparesWhatChangesPreparation(t *testing.T) {
 
 func TestChangedSinceChecksTheLockfileWhereItReadsValues(t *testing.T) {
 	// A resource the catalog no longer declares has nothing to prepare, so
-	// the whole lockfile's shape is checked first.
+	// the whole lock's shape is checked first.
 	root, _, prepare := changedCatalog(t)
 	if err := os.Remove(filepath.Join(root, "software", "other.yaml")); err != nil {
 		t.Fatal(err)
 	}
 	report, err := prepare()
-	if err == nil || !strings.Contains(err.Error(), "lockfile: stemma.lock/MacSoftware/other.yaml locks a resource that is no longer declared; delete it or run stemma update") || len(report.Resources) != 0 {
+	if err == nil || !strings.Contains(err.Error(), "lock: stemma.lock/MacSoftware/other.yaml locks a resource that is no longer declared; delete it or run stemma update") || len(report.Resources) != 0 {
 		t.Fatalf("leftover lock entries passed: %v %+v", err, report)
 	}
 	// The lock document goes with the declaration, and nothing else changes.
@@ -431,7 +431,7 @@ func TestChangedSinceComparesTheSelectedProfile(t *testing.T) {
 	if report, err := prepare(); err != nil || len(report.Resources) != 0 {
 		t.Fatalf("a run without the profile compared a profiled resource: %v, prepared %v", err, preparedKeys(report))
 	}
-	if _, err := run("prepare", "HEAD", "capture"); err == nil || !strings.Contains(err.Error(), "lockfile: stemma/v1alpha1/MacSoftware/captured input source is missing; run stemma update") {
+	if _, err := run("prepare", "HEAD", "capture"); err == nil || !strings.Contains(err.Error(), "lock: stemma/v1alpha1/MacSoftware/captured input source is missing; run stemma update") {
 		t.Fatalf("the profile's run accepted an unlocked resource: %v", err)
 	}
 	writeFile(t, filepath.Join(root, "software", "captured.pkg"), testPackage(t, "com.example.captured"))

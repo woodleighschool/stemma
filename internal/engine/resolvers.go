@@ -17,12 +17,15 @@ func registerResolvers(manager *source.Manager, ops *operations, work string) er
 		if operation.Resolver == nil {
 			continue
 		}
-		call := func(ctx context.Context, method string, input plugin.Input, observation json.RawMessage, workspace string) (plugin.ResolveResponse, error) {
+		call := func(ctx context.Context, method string, input plugin.Input, entry source.Entry, workspace string) (plugin.ResolveResponse, error) {
 			settings, err := json.Marshal(input.Config)
 			if err != nil {
 				return plugin.ResolveResponse{}, err
 			}
-			request := plugin.ResolveRequest[json.RawMessage]{Config: settings, Base: input.Base, Root: manager.Root, Workspace: workspace, Observation: observation}
+			request := plugin.ResolveRequest[json.RawMessage]{Config: settings, Base: input.Base, Root: manager.Root, Workspace: workspace, Origin: entry.Origin, Version: entry.Version}
+			if content := entry.Content; content.SHA256 != "" {
+				request.Content = &plugin.SourceContent{SHA256: content.SHA256, Filename: content.Filename, Tree: content.Tree, Mode: content.Mode}
+			}
 			var response plugin.ResolveResponse
 			err = ops.call(ctx, operation.Name, method, request, &response)
 			return response, err
@@ -47,23 +50,23 @@ func registerResolvers(manager *source.Manager, ops *operations, work string) er
 				}{declaration, base}), nil
 			},
 			Discover: func(ctx context.Context, input plugin.Input) (source.Discovery, error) {
-				response, err := call(ctx, "discover", input, nil, "")
+				response, err := call(ctx, "discover", input, source.Entry{}, "")
 				if err == nil && (response.Download != nil || response.Artifact.Path != "") {
 					return source.Discovery{}, errors.New("resolver discovery must not return acquisition instructions")
 				}
-				result := source.Discovery{Observation: response.Observation, Immutable: response.Immutable, Evidence: response.Evidence, Version: response.Version, ContentRoot: response.ContentRoot}
+				result := source.Discovery{Origin: response.Origin, Immutable: response.Immutable, Evidence: response.Evidence, Version: response.Version, ContentRoot: response.ContentRoot}
 				if response.Content != nil {
 					result.Content = &source.Content{SHA256: response.Content.SHA256, Filename: response.Content.Filename, Mode: response.Content.Mode, Tree: response.Content.Tree}
 				}
 				return result, err
 			},
-			Acquire: func(ctx context.Context, input plugin.Input, observation json.RawMessage) (source.Acquisition, error) {
+			Acquire: func(ctx context.Context, input plugin.Input, entry source.Entry) (source.Acquisition, error) {
 				workspace, err := os.MkdirTemp(work, "resolver-*")
 				if err != nil {
 					return source.Acquisition{}, err
 				}
 				// Manager imports these bytes before the enclosing operation lease ends.
-				response, err := call(ctx, "run", input, observation, workspace)
+				response, err := call(ctx, "run", input, entry, workspace)
 				if err != nil {
 					return source.Acquisition{}, err
 				}

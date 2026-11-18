@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 
 	"github.com/woodleighschool/stemma/internal/cas"
 	"github.com/woodleighschool/stemma/internal/config"
@@ -47,12 +46,12 @@ func (e *execution) reconcile(ctx context.Context, ref destinationRef) error {
 	if e.publishing() {
 		for _, dependency := range plan.requires {
 			if e.failed[dependency] {
-				failure = fmt.Errorf("required publication %s/%s failed", dependency.Resource, dependency.Destination)
+				required := e.plans[dependency.Resource].Resource
+				failure = fmt.Errorf("requires %s/%s on %s, which failed", required.Kind, required.Metadata.Name, dependency.Destination)
 				break
 			}
 		}
 	}
-	before := len(item.Destinations)
 	// Preparation checks metadata against the prepared artifact, except
 	// metadata that reads env values, which only publication evaluates.
 	if failure == nil && (e.publishing() || !plan.environment) {
@@ -66,12 +65,14 @@ func (e *execution) reconcile(ctx context.Context, ref destinationRef) error {
 			failure = e.publishTo(ctx, ref, prepared, peers, item)
 		}
 	} else if failure == nil {
-		item.Publications = append(item.Publications, Publication{Destination: ref.Destination, Deferred: "its metadata reads environment values, which plan and apply evaluate"})
+		item.publication(ref.Destination).Deferred = "its metadata reads environment values, which plan and apply evaluate"
 	}
 	if failure != nil {
 		e.failed[ref] = true
-		if len(item.Destinations) == before {
-			item.Destinations = append(item.Destinations, DestinationReport{Name: ref.Destination, Error: failure.Error()})
+		publication := item.publication(ref.Destination)
+		publication.Status = StatusFailed
+		if publication.Error == "" {
+			publication.Error = failure.Error()
 		}
 		if item.Error == "" {
 			item.Error = failure.Error()
@@ -95,15 +96,15 @@ func (e *execution) reconcile(ctx context.Context, ref destinationRef) error {
 
 func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource preparedResource, peers map[string]json.RawMessage, item *ResourceReport) (runErr error) {
 	s, software, destination := e.session, e.plans[ref.Resource], ref.Destination
-	phase := "Check"
+	phase, stage := "Check", "Checking destination configuration"
 	switch e.opts.Method {
 	case "plan":
-		phase = "Plan"
+		phase, stage = "Plan", "Planning destination"
 	case "apply":
-		phase = "Publish"
+		phase, stage = "Publish", "Publishing to destination"
 	}
 	ctx = plugin.WithLogger(ctx, plugin.Logger(ctx).With("resource", software.Resource.Kind+"/"+software.Resource.Metadata.Name, "destination", destination, "phase", phase))
-	done := plugin.Stage(ctx, "Validating destination")
+	done := plugin.Stage(ctx, stage)
 	defer func() { done(runErr) }()
 	prepared, present := resource.outputs["installer"]
 	if reference, ok := software.Destinations[destination]["installer"].(string); ok {
@@ -165,38 +166,39 @@ func (e *execution) publishTo(ctx context.Context, ref destinationRef, resource 
 		}
 		request.Inputs["icon"] = artifact.artifact()
 	}
-	derived, err := e.callDestination(ctx, d.Operation, request, work)
-	if err != nil {
-		return err
+	if e.publishing() {
+		request.Method = e.opts.Method
+		request.Config = e.connections[destination]
 	}
-	publication := Publication{Destination: destination, Metadata: derived.Metadata, Origins: mergeOrigins(origins, derived.Origins)}
-	if len(derived.Metadata) == 0 {
+	response, err := e.callDestination(ctx, d.Operation, request, work)
+	publication := item.publication(destination)
+	publication.Metadata, publication.Origins = response.Metadata, mergeOrigins(origins, response.Origins)
+	if err == nil && len(response.Metadata) == 0 {
 		publication.Deferred = "the " + d.Operation + " destination does not report the values it derives"
 	}
-	item.Publications = append(item.Publications, publication)
 	if !e.publishing() {
-		return nil
-	}
-	done(nil)
-	report := DestinationReport{Name: destination, Origins: origins, Artifact: prepared.Filename}
-	if e.opts.Method == "plan" {
-		done = plugin.Stage(ctx, "Planning destination")
-	}
-	request.Method = e.opts.Method
-	request.Config = e.connections[destination]
-	response, err := e.callDestination(ctx, d.Operation, request, work)
-	report.Changes = response.Changes
-	report.Origins = mergeOrigins(report.Origins, response.Origins)
-	report.Applied = err == nil && e.opts.Method == "apply"
-	done(err, plugin.Detail(changeCount(len(response.Changes))))
-	if err != nil {
-		report.Error = err.Error()
-	}
-	item.Destinations = append(item.Destinations, report)
-	if err != nil {
 		return err
 	}
-	return nil
+	publication.Version, publication.Previous = response.Version, response.Previous
+	publication.Uploads, publication.Fields, publication.Removed = response.Uploads, response.Fields, response.Removed
+	publication.Repairs = response.Repairs
+	publication.Status = StatusUnchanged
+	if response.Changed() {
+		publication.Status = StatusChanged
+	}
+	return err
+}
+
+// publication returns the resource's publication to a destination, adding it
+// on first use.
+func (r *ResourceReport) publication(destination string) *Publication {
+	for i := range r.Publications {
+		if r.Publications[i].Destination == destination {
+			return &r.Publications[i]
+		}
+	}
+	r.Publications = append(r.Publications, Publication{Destination: destination})
+	return &r.Publications[len(r.Publications)-1]
 }
 
 func (e *execution) request(ref destinationRef, prepared Prepared, metadata map[string]any, peers map[string]json.RawMessage) (plugin.ReconcileRequest[json.RawMessage], error) {
@@ -227,10 +229,8 @@ func (e *execution) callDestination(ctx context.Context, operation string, reque
 		if artifact.SHA256 == "" || artifact.Path != "" {
 			return artifact, fmt.Errorf("destination requested unavailable content %q", name)
 		}
-		done := plugin.Stage(ctx, "Materializing destination content", plugin.Detail(name))
 		prepared := Prepared{Payload: cas.Ref{SHA256: artifact.SHA256, Size: artifact.Size}, Filename: artifact.Filename, Mode: artifact.Mode, Tree: artifact.Tree}
 		leased, err := e.session.ops.lease(ctx, e.session.store, operation, prepared, filepath.Join(work, directory))
-		done(err)
 		artifact.Path = leased.Path
 		return artifact, err
 	}
@@ -284,16 +284,6 @@ func connectionSettings(ops *operations, name string, destination config.Destina
 		return nil, fmt.Errorf("destination %s: %w", name, err)
 	}
 	return json.Marshal(settings)
-}
-
-func changeCount(count int) string {
-	switch count {
-	case 0:
-		return "no changes"
-	case 1:
-		return "1 change"
-	}
-	return strconv.Itoa(count) + " changes"
 }
 
 func destinationReferences(metadata map[string]any) map[string]string {

@@ -18,57 +18,93 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func TestGitHubObservationValidationOnDiscoveryAndReplay(t *testing.T) {
-	const body = "installer"
-	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(body)))
-	valid := githubObservation{URL: "https://github.com/example/app/releases/download/v1/App.pkg", Release: "v1", ReleaseID: 12, AssetID: 34, Filename: "App.pkg", SHA256: digest}
+// githubFixture is the release and asset a fake GitHub API reports.
+type githubFixture struct {
+	URL, Release, Filename, SHA256 string
+	ReleaseID, AssetID             int64
+}
+
+func (f githubFixture) transport(t *testing.T) roundTripFunc {
+	t.Helper()
+	return func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host != "api.github.com" {
+			t.Fatal("an invalid release reached artifact transfer")
+		}
+		asset := map[string]any{"id": f.AssetID, "name": f.Filename, "browser_download_url": f.URL, "digest": "sha256:" + f.SHA256}
+		data, err := json.Marshal(map[string]any{"id": f.ReleaseID, "tag_name": f.Release, "assets": []any{asset}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(data)))}, nil
+	}
+}
+
+func TestGitHubDiscoveryValidatesTheSelectedAsset(t *testing.T) {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("installer")))
+	valid := githubFixture{URL: "https://github.com/example/app/releases/download/v1/App.pkg", Release: "v1", ReleaseID: 12, AssetID: 34, Filename: "App.pkg", SHA256: digest}
+	input := plugin.Input{Resolver: "github", Config: map[string]any{"repository": "example/app", "release": "v1", "asset": "App.pkg", "sha256": digest, "token": "synthetic-token"}}
 	for _, test := range []struct {
 		name, failure string
-		change        func(*githubObservation)
+		change        func(*githubFixture)
 	}{
-		{"repository", "configured GitHub repository", func(o *githubObservation) { o.URL = "https://github.com/other/app/releases/download/v1/App.pkg" }},
-		{"insecure origin", "configured GitHub repository", func(o *githubObservation) { o.URL = "http://github.com/example/app/releases/download/v1/App.pkg" }},
-		{"release selection", "configured GitHub release", func(o *githubObservation) { o.Release = "v2" }},
-		{"URL selection", "selected release asset", func(o *githubObservation) { o.URL = "https://github.com/example/app/releases/download/v2/App.pkg" }},
-		{"release identity", "release and asset IDs", func(o *githubObservation) { o.ReleaseID = 0 }},
-		{"asset identity", "release and asset IDs", func(o *githubObservation) { o.AssetID = 0 }},
-		{"digest conflict", "declared sha256 disagrees", func(o *githubObservation) { o.SHA256 = strings.Repeat("0", 64) }},
-		{"invalid digest", "invalid sha256", func(o *githubObservation) { o.SHA256 = "invalid" }},
+		{"repository", "configured repository", func(f *githubFixture) { f.URL = "https://github.com/other/app/releases/download/v1/App.pkg" }},
+		{"insecure origin", "configured repository", func(f *githubFixture) { f.URL = "http://github.com/example/app/releases/download/v1/App.pkg" }},
+		{"release selection", "configured GitHub release", func(f *githubFixture) {
+			f.Release, f.URL = "v2", "https://github.com/example/app/releases/download/v2/App.pkg"
+		}},
+		{"URL selection", "selected release asset", func(f *githubFixture) { f.URL = "https://github.com/example/app/releases/download/v2/App.pkg" }},
+		{"release identity", "release and asset IDs", func(f *githubFixture) { f.ReleaseID = 0 }},
+		{"asset identity", "release and asset IDs", func(f *githubFixture) { f.AssetID = 0 }},
+		{"digest conflict", "declared sha256 disagrees", func(f *githubFixture) { f.SHA256 = strings.Repeat("0", 64) }},
+		{"invalid digest", "invalid sha256", func(f *githubFixture) { f.SHA256 = "invalid" }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			m := manager(t)
 			selected := valid
 			test.change(&selected)
-			transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
-				if r.URL.Host != "api.github.com" {
-					t.Fatal("invalid observation reached artifact transfer")
-				}
-				asset := map[string]any{"id": selected.AssetID, "name": selected.Filename, "browser_download_url": selected.URL, "digest": "sha256:" + selected.SHA256}
-				data, err := json.Marshal(map[string]any{"id": selected.ReleaseID, "tag_name": selected.Release, "assets": []any{asset}})
-				if err != nil {
-					t.Fatal(err)
-				}
-				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(data)))}, nil
-			})
-			m.Client.Transport = transport
-			input := plugin.Input{Resolver: "github", Config: map[string]any{"repository": "example/app", "release": "v1", "asset": "App.pkg", "sha256": digest, "token": "synthetic-token"}}
-			_, err := m.Resolve(t.Context(), input)
-			if err == nil || !strings.Contains(err.Error(), test.failure) {
+			m.Client.Transport = selected.transport(t)
+			if _, err := m.Resolve(t.Context(), input); err == nil || !strings.Contains(err.Error(), test.failure) {
 				t.Fatalf("discovery: %v, want %q", err, test.failure)
 			}
-			selected = valid
-			m = New(m.Store, m.Root, false)
-			m.Client.Transport = transport
-			entry, err := m.Resolve(t.Context(), input)
-			if err != nil {
-				t.Fatal(err)
-			}
-			test.change(&selected)
-			entry.Observation, err = json.Marshal(selected)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := m.FetchLocked(t.Context(), input, entry); err == nil || !strings.Contains(err.Error(), test.failure) {
+		})
+	}
+}
+
+func TestGitHubReplayValidatesTheLockedOrigin(t *testing.T) {
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("installer")))
+	valid := githubFixture{URL: "https://github.com/example/app/releases/download/v1/App.pkg", Release: "v1", ReleaseID: 12, AssetID: 34, Filename: "App.pkg", SHA256: digest}
+	input := plugin.Input{Resolver: "github", Config: map[string]any{"repository": "example/app", "release": "v1", "asset": "App.pkg", "token": "synthetic-token"}}
+	m := manager(t)
+	m.Client.Transport = valid.transport(t)
+	entry, err := m.Resolve(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Version != "v1" || entry.Content.SHA256 != digest || string(entry.Origin) != `{"asset_id":34,"release_id":12,"url":"https://github.com/example/app/releases/download/v1/App.pkg"}` {
+		t.Fatalf("entry = %+v", entry)
+	}
+	for _, test := range []struct {
+		name, failure string
+		change        func(*githubOrigin)
+	}{
+		{"repository", "configured repository", func(o *githubOrigin) { o.URL = "https://github.com/other/app/releases/download/v1/App.pkg" }},
+		{"insecure origin", "configured repository", func(o *githubOrigin) { o.URL = "http://github.com/example/app/releases/download/v1/App.pkg" }},
+		{"release selection", "configured GitHub release", func(o *githubOrigin) { o.URL = "https://github.com/example/app/releases/download/v2/App.pkg" }},
+		{"asset selection", "configured GitHub asset", func(o *githubOrigin) { o.URL = "https://github.com/example/app/releases/download/v1/Other.pkg" }},
+		{"release identity", "release and asset IDs", func(o *githubOrigin) { o.ReleaseID = 0 }},
+		{"asset identity", "release and asset IDs", func(o *githubOrigin) { o.AssetID = 0 }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			located := githubOrigin{URL: valid.URL, ReleaseID: valid.ReleaseID, AssetID: valid.AssetID}
+			test.change(&located)
+			tampered := entry
+			tampered.Origin, _ = json.Marshal(located)
+			replay := New(m.Store, m.Root, false)
+			replay.Client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				t.Fatalf("an invalid origin reached the network: %s", r.URL)
+				return nil, nil
+			})
+			if _, err := replay.githubResolver().Acquire(t.Context(), input, tampered); err == nil || !strings.Contains(err.Error(), test.failure) {
 				t.Fatalf("cold replay: %v, want %q", err, test.failure)
 			}
 		})
@@ -78,18 +114,11 @@ func TestGitHubObservationValidationOnDiscoveryAndReplay(t *testing.T) {
 func TestGitHubReplayRejectsReleasePathTraversal(t *testing.T) {
 	m := manager(t)
 	input := plugin.Input{Resolver: "github", Config: map[string]any{"repository": "example/app", "asset": "App.pkg", "token": "synthetic-token"}}
-	observed := githubObservation{
-		URL:       "https://github.com/example/app/releases/download/../../../../other/app/releases/download/v1/App.pkg",
-		Release:   "../../../../other/app/releases/download/v1",
-		ReleaseID: 12,
-		AssetID:   34,
-		Filename:  "App.pkg",
-	}
-	data, err := json.Marshal(observed)
+	data, err := json.Marshal(githubOrigin{URL: "https://github.com/example/app/releases/download/../../../../other/app/releases/download/v1/App.pkg", ReleaseID: 12, AssetID: 34})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := m.githubResolver().Acquire(t.Context(), input, data); err == nil || !strings.Contains(err.Error(), "selected release asset") {
+	if _, err := m.githubResolver().Acquire(t.Context(), input, Entry{Origin: data}); err == nil || !strings.Contains(err.Error(), "configured repository") {
 		t.Fatalf("accepted a release path outside the configured repository: %v", err)
 	}
 }
@@ -156,12 +185,12 @@ func TestGitHubAssetSelection(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			observed := observation(t, entry)
+			observed := origin(t, entry)
 			wantID := int64(34)
 			if test.name == "docs glob" {
 				wantID = 35
 			}
-			if entry.Content.Filename != test.want || observed.Release != "3.7.1" || observed.ReleaseID != 12 || observed.AssetID != wantID {
+			if entry.Content.Filename != test.want || entry.Version != "3.7.1" || observed.ReleaseID != 12 || observed.AssetID != wantID {
 				t.Fatalf("lost selected identity: %+v %+v", entry.Content, observed)
 			}
 			cachedPath, err := store.Path(cas.Ref{SHA256: entry.Content.SHA256})
@@ -334,8 +363,8 @@ func TestGitHubDiscoveryKeepsTokenAtAPIOrigin(t *testing.T) {
 				}
 				return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"message":"Not Found"}`)), Request: r}, nil
 			})
-			var observed githubObservation
-			err := m.github(t.Context(), githubConfig{Repository: "example/app", Asset: "App.pkg"}, &observed)
+			var selected githubAsset
+			err := m.github(t.Context(), githubConfig{Repository: "example/app", Asset: "App.pkg"}, &selected)
 			wantRequests, failure := 2, "HTTP 404"
 			if strings.HasPrefix(target, "http:") {
 				wantRequests, failure = 1, "HTTPS downgrade blocked"
@@ -349,8 +378,8 @@ func TestGitHubDiscoveryKeepsTokenAtAPIOrigin(t *testing.T) {
 
 func TestGitHubLockedFetchVerification(t *testing.T) {
 	for _, test := range []struct{ name, address, body, failure string }{
-		{"origin", "https://github.com/other/app/releases/download/v1/App.pkg", "installer", "configured GitHub repository"},
-		{"content", "https://github.com/example/app/releases/download/v1/App.pkg", "changed installer", "differs from the input lock"},
+		{"origin", "https://github.com/other/app/releases/download/v1/App.pkg", "installer", "configured repository"},
+		{"content", "https://github.com/example/app/releases/download/v1/App.pkg", "changed installer", "source integrity mismatch"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			store, err := cas.Open(t.TempDir())
@@ -380,9 +409,9 @@ func TestGitHubLockedFetchVerification(t *testing.T) {
 			if err := os.Remove(cachedPath); err != nil {
 				t.Fatal(err)
 			}
-			observed := observation(t, entry)
-			observed.URL = test.address
-			entry.Observation, err = json.Marshal(observed)
+			located := origin(t, entry)
+			located.URL = test.address
+			entry.Origin, err = json.Marshal(located)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -472,12 +501,12 @@ func TestGitHubReleaseDiscovery(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			observed := observation(t, entry)
+			observed := origin(t, entry)
 			wantRelease, wantAsset := int64(12), int64(34)
 			if test.tag == "v2-beta" {
 				wantRelease, wantAsset = 13, 35
 			}
-			if observed.Release != test.tag || observed.ReleaseID != wantRelease || observed.AssetID != wantAsset {
+			if entry.Version != test.tag || observed.ReleaseID != wantRelease || observed.AssetID != wantAsset {
 				t.Fatalf("lost release identity: %+v", observed)
 			}
 			cached, err := store.Path(cas.Ref{SHA256: entry.Content.SHA256})

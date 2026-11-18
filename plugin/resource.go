@@ -218,26 +218,30 @@ func (contract ContentContract) Accepts(artifact Artifact) error {
 	return nil
 }
 
-// ResolverKind versions an observation contract: within one version, an
-// observation keeps its meaning and an immutable one always fetches the same
-// bytes. Local resolvers also validate the current checkout when consuming a
-// lock, rather than trusting cached bytes.
+// ResolverKind versions an origin contract: within one version, an origin
+// keeps its meaning and an immutable one always fetches the same bytes. Local
+// resolvers also validate the current checkout when consuming a lock, rather
+// than trusting cached bytes.
 type ResolverKind struct {
 	Version string `json:"version"`
 	Local   bool   `json:"local,omitempty"`
 }
 
-// ResolveRequest asks discover for the declaration's current observation,
-// without downloading it, and run for the artifact Observation names,
-// reproducing that observation rather than looking up the latest release.
-// Each method validates its configuration; discover and run need no prior validate call.
+// ResolveRequest asks discover for the declaration's current origin, without
+// downloading it, and run for the artifact Origin names, reproducing that
+// origin rather than looking up the latest release. Run also receives the
+// Version the source stated and, when the lock or discovery states them, the
+// Content it is expected to fetch; an origin never repeats either. Each method
+// validates its configuration; discover and run need no prior validate call.
 type ResolveRequest[C any] struct {
-	Method      string          `json:"-"`
-	Config      C               `json:"config,omitempty"`
-	Base        string          `json:"base,omitempty"`
-	Root        string          `json:"root,omitempty"`
-	Workspace   string          `json:"workspace,omitempty"`
-	Observation json.RawMessage `json:"observation,omitempty"`
+	Method    string          `json:"-"`
+	Config    C               `json:"config,omitempty"`
+	Base      string          `json:"base,omitempty"`
+	Root      string          `json:"root,omitempty"`
+	Workspace string          `json:"workspace,omitempty"`
+	Origin    json.RawMessage `json:"origin,omitempty"`
+	Version   string          `json:"version,omitempty"`
+	Content   *SourceContent  `json:"content,omitempty"`
 }
 
 // SourceContent identifies expected input bytes and their representation, without
@@ -260,9 +264,11 @@ type Download struct {
 	SHA256   string            `json:"sha256,omitempty"`
 }
 
-// ResolveResponse answers discover with Observation and optional expected Content.
-// Run returns exactly one Download or Artifact for that observation.
-// Immutable promises that the observation always fetches the same bytes, so
+// ResolveResponse answers discover with Origin, the Version the source states
+// and, when known in advance, Content. Origin holds what run needs to fetch
+// the same bytes again and never repeats Version or Content; Evidence never
+// repeats them either. Run returns exactly one Download or Artifact for that
+// origin. Immutable promises that the origin always fetches the same bytes, so
 // the host reuses content it fetched for it before instead of calling run.
 type ResolveResponse struct {
 	Content     *SourceContent             `json:"content,omitempty"`
@@ -270,7 +276,7 @@ type ResolveResponse struct {
 	ContentRoot string                     `json:"content_root,omitempty"`
 	Download    *Download                  `json:"download,omitempty"`
 	Evidence    map[string]json.RawMessage `json:"evidence,omitzero"`
-	Observation json.RawMessage            `json:"observation,omitempty"`
+	Origin      json.RawMessage            `json:"origin,omitempty"`
 	Immutable   bool                       `json:"immutable,omitempty"`
 	Artifact    Artifact                   `json:"artifact,omitzero"`
 }
