@@ -50,7 +50,7 @@ require (
 	github.com/pb33f/ordered-map/v2 v2.3.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/sassoftware/relic/v8 v8.2.0
-	github.com/sergi/go-diff v1.4.4
+	github.com/sergi/go-diff v1.4.5
 	github.com/smallstep/pkcs7 v0.2.3
 	github.com/spf13/cobra v1.10.2
 	github.com/ulikunitz/xz v0.5.17
