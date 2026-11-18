@@ -13,10 +13,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/deploymenttheory/go-apfs-v2/pkg/appledouble"
 	"github.com/mholt/archives"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/plugin"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -109,6 +111,7 @@ func extract(ctx context.Context, reader archives.Extractor, stream io.Reader, d
 	defer func() { _ = root.Close() }()
 	x := extractor{ctx: ctx, root: root, seen: map[string]bool{}, spelling: map[string]string{}}
 	defer func() { err = errors.Join(err, x.closeParents()) }()
+	progress := &extractionProgress{ctx: ctx}
 
 	err = reader.Extract(ctx, stream, func(_ context.Context, entry archives.FileInfo) error {
 		if metadata == nil && !canonical && appleDouble(entry.NameInArchive) {
@@ -149,15 +152,16 @@ func extract(ctx context.Context, reader archives.Extractor, stream io.Reader, d
 			return err
 		}
 		var writeErr error
+		contentReader := io.TeeReader(data, progress)
 		if metadata != nil && appledouble.IsSidecarName(entry.NameInArchive) {
 			var handled bool
 			var content io.Reader
-			handled, content, writeErr = metadata.sidecar(ctx, entry.NameInArchive, data, entry.Size())
+			handled, content, writeErr = metadata.sidecar(ctx, entry.NameInArchive, contentReader, entry.Size())
 			if writeErr == nil && !handled {
 				writeErr = x.write(entry.NameInArchive, entry.Mode(), entry.Size(), entry.LinkTarget, content)
 			}
 		} else {
-			writeErr = x.write(entry.NameInArchive, entry.Mode(), entry.Size(), entry.LinkTarget, data)
+			writeErr = x.write(entry.NameInArchive, entry.Mode(), entry.Size(), entry.LinkTarget, contentReader)
 		}
 		closeErr := data.Close()
 		if writeErr != nil {
@@ -190,6 +194,22 @@ func extract(ctx context.Context, reader archives.Extractor, stream io.Reader, d
 		}
 	}
 	return x.finish()
+}
+
+// Archive streams do not necessarily declare their expanded size.
+type extractionProgress struct {
+	ctx     context.Context
+	current int64
+	last    time.Time
+}
+
+func (p *extractionProgress) Write(data []byte) (int, error) {
+	p.current += int64(len(data))
+	if time.Since(p.last) >= 250*time.Millisecond {
+		plugin.Logger(p.ctx).InfoContext(p.ctx, "Extracting archive", "progress", true, "current", p.current, "unit", "bytes")
+		p.last = time.Now()
+	}
+	return len(data), nil
 }
 
 type link struct{ name, target string }

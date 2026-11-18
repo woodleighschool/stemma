@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/woodleighschool/stemma/internal/apple"
 	"github.com/woodleighschool/stemma/internal/contents"
@@ -187,6 +188,7 @@ func Source(ctx context.Context, source *contents.Source) (plugin.Facts, error) 
 func Contents(ctx context.Context, fsys fs.ReadLinkFS) ([]plugin.Subject, error) {
 	var subjects []plugin.Subject
 	entries := 0
+	var lastProgress time.Time
 	metadataRemaining := int64(maxTreeMetadata)
 	err := fs.WalkDir(fsys, ".", func(name string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -197,6 +199,10 @@ func Contents(ctx context.Context, fsys fs.ReadLinkFS) ([]plugin.Subject, error)
 		}
 		if entries++; entries > maxTreeEntries {
 			return errors.New("entry limit exceeded")
+		}
+		if time.Since(lastProgress) >= 250*time.Millisecond {
+			plugin.Logger(ctx).InfoContext(ctx, "Inspecting files", "progress", true, "current", entries, "unit", "entries")
+			lastProgress = time.Now()
 		}
 		if name == "." || entry.Type()&fs.ModeSymlink != 0 {
 			return nil
@@ -348,7 +354,7 @@ func fileDigest(ctx context.Context, file *os.File, size int64) (string, error) 
 		return "", fmt.Errorf("inspect digest: %w", err)
 	}
 	digest := sha256.New()
-	written, err := io.Copy(digest, fileio.Reader{Context: ctx, Reader: io.LimitReader(file, size+1)})
+	written, err := io.Copy(digest, plugin.ProgressReader(ctx, fileio.Reader{Context: ctx, Reader: io.LimitReader(file, size+1)}, size))
 	if err != nil {
 		return "", fmt.Errorf("inspect digest: %w", err)
 	}

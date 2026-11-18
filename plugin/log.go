@@ -26,8 +26,8 @@ func Logger(ctx context.Context) *slog.Logger {
 
 // Stage starts an operation and returns its completion function. Attributes
 // describe the operation; call the function with the operation error and
-// optional attributes that describe its result. Progress displays show a
-// [Detail] beside the operation: its subject while it runs, then its outcome.
+// optional attributes that describe its result. [Item] names a member of a
+// collection; [Detail] describes the operation or its result.
 // Nested stages finish independently of their enclosing operation. The first
 // completion call wins; subsequent calls have no effect.
 func Stage(ctx context.Context, message string, attrs ...any) func(error, ...any) {
@@ -50,3 +50,8 @@ func Stage(ctx context.Context, message string, attrs ...any) func(error, ...any
 // works on, or the version, size or count it found. It must not carry
 // credentials, query strings or response bodies.
 func Detail(text string) slog.Attr { return slog.String("detail", text) }
+
+// Item names the member a stage works on. Progress displays nest it beneath
+// the operation even when the collection has only one member. Like [Detail],
+// it must not contain credentials, query strings or response bodies.
+func Item(name string) slog.Attr { return slog.String("item", name) }

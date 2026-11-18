@@ -22,6 +22,7 @@ import (
 	"github.com/klauspost/compress/gzip"
 	"github.com/mikelolasagasti/xz"
 	"github.com/woodleighschool/stemma/internal/fileio"
+	"github.com/woodleighschool/stemma/plugin"
 )
 
 const maxPayloadEntries = 1000000
@@ -339,9 +340,16 @@ func (a *xarArchive) payloadApps(ctx context.Context, name string, budget *paylo
 		return nil, err
 	}
 	defer func() { _ = entry.Close() }()
+	done := plugin.Stage(ctx, "Inspecting package payload", plugin.Item(name))
+	var size int64
+	if file := a.files[name]; file != nil && file.Data != nil {
+		size = file.Data.Size
+	}
 	// Entry reads observe cancellation, so the decoder is released after reading
 	// stops rather than closed concurrently with a read.
-	return readPayload(ctx, io.NopCloser(entry), budget, applicationRoot)
+	apps, err := readPayload(ctx, io.NopCloser(plugin.ProgressReader(ctx, entry, size)), budget, applicationRoot)
+	done(err)
+	return apps, err
 }
 
 func readPayload(ctx context.Context, source io.ReadCloser, budget *payloadBudget, applicationRoot string) ([]PackageApp, error) {

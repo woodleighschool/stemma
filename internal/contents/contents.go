@@ -214,7 +214,7 @@ func (s *Source) contents(ctx context.Context) (fs.ReadLinkFS, string, error) {
 		if s.container != "archive" {
 			return nil, "", nil
 		}
-		done := plugin.Stage(ctx, "Extracting archive", plugin.Detail(filepath.Base(s.input.Path)))
+		done := plugin.Stage(ctx, "Extracting archive", plugin.Item(s.input.Filename))
 		var err error
 		s.archive, err = archive.Open(ctx, s.input.Path, s.workspace)
 		done(err)
