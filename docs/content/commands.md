@@ -277,8 +277,9 @@ accounting details.
 
 `--jobs` / `STEMMA_JOBS` limits concurrent preparations (default `2`, `1` runs
 serially). Independent resources can prepare together once their producers
-finish. Input acquisition and destination operations remain serial. Workers
-release their workspaces after storing outputs, and cancellation waits for
+finish. A prepared resource can reach each destination as soon as its required
+publications there finish. Input acquisition and destination calls remain serial.
+Workers release their workspaces after storing outputs, and cancellation waits for
 workers before releasing the cache lease. Artifact, inspection and icon commands
 prepare only the outputs they need, serially.
 
@@ -293,14 +294,14 @@ write a block to stdout for each resource as it finishes, then a summary line:
     pkginfo.description: Original description → Revised description
     upload installer: example-2.0.pkg
       digest: aaaaaaaaaaaa… → bbbbbbbbbbbb…
-    remove 1.0
+    prune package 1.0
 ✓ MacSoftware/current: unchanged (intune 3.1.1)
 ✗ MacSoftware/another:
   munki: 1.0 unchanged
   intune: failed
     upload failed
 
-3 resources: 1 published, 1 unchanged, 1 failed; 1 older version removed.
+3 resources: 1 published, 1 unchanged, 1 failed; 1 package pruned.
 ```
 
 Headings use `name: summary`. Children are indented two spaces beneath their
@@ -323,20 +324,24 @@ resources, which use one line each.
 - `prepare` shows the installer's version and file, `signature` the signers and
   fragment to declare, and `icon` the asset it created.
 
-Collections use `-` and `+`; receipts, installs and included apps match by
-identity. Multi-line values such as scripts show line diffs. Human and JSON
+Collections show additions and removals with `+` and `-`. Matched receipts,
+installs, included apps and detection rules show their changed fields beneath
+the item. Jamf policy changes use the policy name. Multi-line values such as
+scripts show line diffs. Human and JSON
 reports include field values; pull requests omit them.
 
 Every selected resource appears, including unchanged and skipped resources.
 A tick marks a successful resource; a cross marks a failed or blocked resource.
-A failure at any destination fails the resource, while its other destination
-results remain visible. Skipped resources use a dash and state the reason.
+A destination waiting on a failed publication reports the resource it requires.
+An independent failure at any destination fails the resource. Its other
+destination results remain visible. Skipped resources use a dash and state the reason.
 Error explanations appear beneath the failed resource or destination.
 The resource title carries the failure mark; error rows do not repeat it.
 The summary counts every selected resource by outcome.
 
-Upload filenames and digests, changed lock fields and additional artifact
-outputs appear in the standard report.
+An installer upload at the same version is labelled `(same version)`, or
+`(same filename)` for Jamf packages. Uploads show the new digest and any distinct previous digest. When Intune cannot confirm
+the active installer, the upload gives that reason.
 
 Colour reinforces the text, which reads the same without it: new values are
 green, earlier values and unchanged resources subdued, changes worth a second
@@ -355,7 +360,7 @@ publication carries the preview preparation makes without connecting:
 `origins` naming where each value came from (`explicit`, `expression`,
 `artifact.version`, `installer.receipts`…), and `deferred` when no preview is
 possible. Plan and apply add `version`, `previous`, `uploads`, `fields`,
-`repairs` (derived destination records rebuilt), `removed` and `error`.
+`repairs` (derived destination records rebuilt), `removed`, `blocked_by` and `error`.
 `summary` has the same keys for every command; update adds `lock_changed`.
 Update saves each resource's inputs before streaming its result. The JSON document
 includes warnings from command cleanup; startup failures can stop before a report

@@ -21,7 +21,7 @@ func TestSemanticChanges(t *testing.T) {
 		{"large integer", "size", "9007199254740992", "9007199254740993", []string{"size: 9007199254740992 → 9007199254740993"}},
 		{"script", "package.postinstall_script", `"#!/bin/sh\necho old\nexit 0\n"`, `"#!/bin/sh\necho new\nexit 0\n"`, []string{"package.postinstall_script:", "  - echo old", "  + echo new"}},
 		{"added script", "package.postinstall_script", `null`, `"#!/bin/sh\nexit 0\n"`, []string{"package.postinstall_script:", "  - null", "  + #!/bin/sh", "  + exit 0", `  + ""`}},
-		{"receipt identity", "package.receipts", `[{"packageid":"com.example.pkg","version":"1"}]`, `[{"packageid":"com.example.pkg","version":"2"}]`, []string{"package.receipts:", "  - com.example.pkg: version: 1", "  + com.example.pkg: version: 2"}},
+		{"receipt identity", "package.receipts", `[{"packageid":"com.example.pkg","version":"1"}]`, `[{"packageid":"com.example.pkg","version":"2"}]`, []string{"package.receipts:", "  com.example.pkg:", "    version: 1 → 2"}},
 		{"removed object field", "metadata", `{"a":false,"b":1}`, `{"a":false}`, []string{"metadata.b: 1 → (absent)"}},
 		{"unchanged", "field", `{"a":1}`, `{"a":1}`, nil},
 	} {

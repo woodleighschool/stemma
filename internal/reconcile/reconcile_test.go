@@ -922,7 +922,7 @@ func TestProposalBodySummarisesWithoutValues(t *testing.T) {
 		"Stemma found an update for `MacSoftware/app`.",
 		"| Source | App 1.pkg → App 2.pkg |",
 		"| Prepared | `App-2.pkg` (2) |",
-		"| woodstar | 1 → 2; update `package.postinstall_script`, `package.installed_size`, `token`; upload `installer`: `App-2.pkg`; remove 0.9 |",
+		"| woodstar | 1 → 2; update `package.postinstall_script`, `package.installed_size`, `token`; upload `installer`: `App-2.pkg`; prune package 0.9 |",
 		"| munki | planning failed |",
 		"| woodstar (`MacSoftware/consumer`) | no changes |",
 		"Close this PR and Stemma won't propose these inputs again.",
@@ -1370,10 +1370,11 @@ func TestRunStopsOnceWhenTheReviewedProjectDoesNotLoad(t *testing.T) {
 
 func TestApplySummaryDistinguishesBlockedResources(t *testing.T) {
 	report := engine.Report{Resources: []engine.ResourceReport{
-		{Name: "producer", Error: "source unavailable"},
-		{Name: "consumer", Error: "blocked by producer", BlockedBy: []string{"producer"}},
+		{Name: "producer", Status: engine.StatusFailed, Error: "source unavailable"},
+		{Name: "consumer", Status: engine.StatusBlocked, BlockedBy: []string{"producer"}},
 		{Name: "healthy"},
 	}}
+	report.Summarize(len(report.Resources))
 	state, summary := applySummary(report, errors.New("source unavailable"))
 	if state != "failure" || summary != "1 resource failed: producer; 1 resource blocked" {
 		t.Fatalf("blocked resource counted as failed: %s: %s", state, summary)

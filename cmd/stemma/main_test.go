@@ -607,7 +607,7 @@ spec:
 					t.Fatalf("incomplete JSON report: %+v", report)
 				}
 			} else {
-				for _, want := range []string{"✗ MacSoftware/broken: failed\n", "  input source: download", "✗ MacSoftware/consumer: blocked\n  blocked by MacSoftware/broken\n", "✓ MacSoftware/healthy: healthy.pkg file changed\n", "3 resources: 1 updated, 1 failed, 1 blocked."} {
+				for _, want := range []string{"✗ MacSoftware/broken: failed\n", "  input source: download", "✗ MacSoftware/consumer: blocked\n  requires MacSoftware/broken\n", "✓ MacSoftware/healthy: healthy.pkg file changed\n", "3 resources: 1 updated, 1 failed, 1 blocked."} {
 					if !strings.Contains(out.String(), want) {
 						t.Fatalf("report missing %q: %s", want, out.String())
 					}

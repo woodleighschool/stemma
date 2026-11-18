@@ -83,7 +83,7 @@ func TestRowsShowEveryResourceOutcome(t *testing.T) {
 	selection := engine.Selection{}
 	got := render(t, "plan", selection, report, report.Resources)
 	want := "✓ MacSoftware/current: unchanged (repo 1)\n✗ MacSoftware/broken: failed\n  invalid signature\n" +
-		"✗ MacSoftware/waiting: blocked\n  blocked by MacSoftware/broken\n" +
+		"✗ MacSoftware/waiting: blocked\n  requires MacSoftware/broken\n" +
 		"\n3 resources: 1 unchanged, 1 failed, 1 blocked.\n"
 	if got != want {
 		t.Fatalf("plan report:\n%q\nwant:\n%q", got, want)
@@ -114,7 +114,7 @@ func TestPlanAndApplyUseTheSameRows(t *testing.T) {
 	if other := renderRows(textStyle{}, resourceName(resource), resource.Status, apply); got != other {
 		t.Fatalf("plan and apply differ:\n%s\n%s", got, other)
 	}
-	for _, want := range []string{"remove 1", "- com.example.old", "+ com.example.app", "upload installer: example-2.pkg", "upload icon: icon.png", "digest: a → b"} {
+	for _, want := range []string{"prune package 1", "- com.example.old", "+ com.example.app", "upload installer: example-2.pkg", "upload icon: icon.png", "digest: a → b"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("change missing %q: %s", want, got)
 		}

@@ -171,7 +171,8 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 	if err != nil {
 		return response, err
 	}
-	contentChanged := published.active(current) != artifact.identity
+	previousPayload := published.active(current)
+	contentChanged := previousPayload != artifact.identity
 	if current == nil {
 		if err := validateCreation(desired); err != nil {
 			return response, err
@@ -184,7 +185,10 @@ func (c *client) handle(ctx context.Context, req plugin.ReconcileRequest[Config]
 		planned.version = text(version)
 	}
 	if contentChanged {
-		planned.installer = &plugin.Upload{Name: plugin.UploadInstaller, Filename: uploadFilename(req.Identity.Resource.Name, req.Artifact, artifact), Before: published.active(current), After: artifact.identity}
+		planned.installer = &plugin.Upload{Name: plugin.UploadInstaller, Filename: uploadFilename(req.Identity.Resource.Name, req.Artifact, artifact), Before: previousPayload, After: artifact.identity}
+		if current != nil && previousPayload == "" {
+			planned.installer.Reason = "current installer could not be confirmed"
+		}
 	}
 	planned.metadata = metadataFields(current, desired, published)
 	declaredAssignments, assigning := desired["assignments"].([]any)

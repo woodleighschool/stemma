@@ -33,11 +33,8 @@ const (
 // when the apply stopped without a resource to name.
 func applySummary(report engine.Report, err error) (state, summary string) {
 	var failed []string
-	blocked := 0
 	for _, resource := range report.Resources {
-		if len(resource.BlockedBy) > 0 {
-			blocked++
-		} else if resource.Error != "" {
+		if resource.Status == engine.StatusFailed {
 			failed = append(failed, resource.Name)
 		}
 	}
@@ -46,8 +43,8 @@ func applySummary(report engine.Report, err error) (state, summary string) {
 		return sourcecontrol.Success, strings.TrimSuffix(changes.Summary("apply", report.Summary).String(), ".")
 	case len(failed) > 0:
 		summary := fmt.Sprintf("%s failed: %s", plural(len(failed), "resource"), strings.Join(failed, ", "))
-		if blocked > 0 {
-			summary += "; " + plural(blocked, "resource") + " blocked"
+		if report.Summary.Blocked > 0 {
+			summary += "; " + plural(report.Summary.Blocked, "resource") + " blocked"
 		}
 		return sourcecontrol.Failure, summary
 	default:
@@ -291,7 +288,7 @@ func onMerge(resource engine.ResourceReport) string {
 func stopped(resource engine.ResourceReport) string {
 	switch {
 	case len(resource.BlockedBy) > 0:
-		names := blockers(resource)
+		names := resource.BlockedBy.Names()
 		for i, name := range names {
 			names[i] = code(name)
 		}
@@ -300,16 +297,6 @@ func stopped(resource engine.ResourceReport) string {
 		return "Preparation failed"
 	}
 	return ""
-}
-
-// blockers names the resources whose outputs a blocked resource waits on.
-func blockers(resource engine.ResourceReport) []string {
-	names := make([]string, len(resource.BlockedBy))
-	for i, key := range resource.BlockedBy {
-		kind, name := splitKey(key)
-		names[i] = kind + "/" + name
-	}
-	return names
 }
 
 func boolOrder(a, b bool) int {
@@ -355,6 +342,9 @@ func artifacts(resource engine.ResourceReport) string {
 // fields it changes but none of their values: pull requests outlive the run,
 // and metadata values can carry environment values.
 func destinationChange(publication engine.Publication) string {
+	if publication.Status == engine.StatusBlocked {
+		return "blocked by " + cell(strings.Join(publication.BlockedBy.Names(), ", "))
+	}
 	if publication.Status == engine.StatusFailed {
 		return "planning failed"
 	}
@@ -376,7 +366,7 @@ func destinationChange(publication engine.Publication) string {
 		parts = append(parts, "rebuild "+cell(repair))
 	}
 	if len(publication.Removed) > 0 {
-		parts = append(parts, "remove "+cell(strings.Join(publication.Removed, ", ")))
+		parts = append(parts, cell(changes.PruneDetail(publication.Removed)))
 	}
 	return strings.Join(parts, "; ")
 }
@@ -388,12 +378,14 @@ func failures(plan planned) []string {
 		name := resource.Kind + "/" + resource.Name
 		switch {
 		case len(resource.BlockedBy) > 0:
-			parts = append(parts, name+" is blocked by "+strings.Join(blockers(resource), ", "))
+			parts = append(parts, name+" is blocked by "+strings.Join(resource.BlockedBy.Names(), ", "))
 		case resource.Error != "" && len(resource.Publications) == 0:
 			parts = append(parts, name+" could not be prepared")
 		}
 		for _, publication := range resource.Publications {
-			if publication.Error != "" {
+			if publication.Status == engine.StatusBlocked {
+				parts = append(parts, name+" on "+publication.Destination+" is blocked by "+strings.Join(publication.BlockedBy.Names(), ", "))
+			} else if publication.Error != "" {
 				parts = append(parts, publication.Destination+" could not plan "+name)
 			}
 		}

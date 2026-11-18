@@ -360,8 +360,9 @@ storage service's transfer checksum.
 return `version`, the native version or filename of the publication,
 and `previous`, what the destination held before: empty for software new to the
 destination, equal to `version` for an update in place. `uploads` list the bytes
-the method puts in the destination (`installer` or `icon`, with the SHA-256
-before and after). `fields` list the managed metadata that differs from the
+the method puts in the destination (`installer` or `icon`), with the new payload
+digest and the previous digest when known. An optional `reason` explains why
+the destination needs the transfer. `fields` list the managed metadata that differs from the
 object the publication replaces: the previous version's object where the
 destination keeps one per version, the current object where it updates in place,
 and initial values only for new software. Name each field by its path in the

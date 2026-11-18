@@ -38,21 +38,7 @@ func difference(field string, before, after any) []string {
 	left, lok := before.(map[string]any)
 	right, rok := after.(map[string]any)
 	if lok && rok {
-		var lines []string
-		keys := maps.Clone(left)
-		maps.Copy(keys, right)
-		for _, key := range slices.Sorted(maps.Keys(keys)) {
-			a, exists := left[key]
-			if !exists {
-				a = missing{}
-			}
-			b, exists := right[key]
-			if !exists {
-				b = missing{}
-			}
-			lines = append(lines, difference(field+"."+Text(key), a, b)...)
-		}
-		return lines
+		return objectDiff(left, right, func(key string) string { return field + "." + Text(key) })
 	}
 	_, aText := multiline(before)
 	_, bText := multiline(after)
@@ -100,92 +86,22 @@ func difference(field string, before, after any) []string {
 	return []string{field + ": " + transition(before, after)}
 }
 
-// members compares two collections as a diff, "- " for what goes and "+ " for
-// what comes, one member to a line. Members of the documented receipt,
-// install and included-app models are matched by identity, so a changed
-// member shows only the fields that changed. Other collections keep order.
-func members(field string, before, after []any) []string {
-	if key := identityKey(field); key != "" {
-		am, aok := indexed(before, key)
-		bm, bok := indexed(after, key)
-		if aok && bok {
-			// Removals come first, then changed members, then additions.
-			var removed, changed, added []string
-			ids := maps.Clone(am)
-			maps.Copy(ids, bm)
-			for _, id := range slices.Sorted(maps.Keys(ids)) {
-				left, had := am[id]
-				right, has := bm[id]
-				switch {
-				case !had:
-					added = append(added, "  + "+member(id, right))
-				case !has:
-					removed = append(removed, "  - "+member(id, left))
-				case !reflect.DeepEqual(left, right):
-					old, current := memberPair(id, left, right)
-					changed = append(changed, "  - "+old, "  + "+current)
-				}
-			}
-			if lines := slices.Concat(removed, changed, added); len(lines) > 0 {
-				return lines
-			}
-			// Reordering can still be an explicit destination change.
-		}
-	}
-	return lineDiff(before, after)
-}
-
-// identityKey names the field that identifies a member of a documented
-// collection, not a guessed key in arbitrary plugin data.
-func identityKey(field string) string {
-	switch {
-	case field == "receipts" || strings.HasSuffix(field, ".receipts"):
-		return "packageid"
-	case field == "installs" || strings.HasSuffix(field, ".installs"):
-		return "path"
-	case field == "included_apps":
-		return "id"
-	}
-	return ""
-}
-
-// member renders one collection member on a line: its identity, then its
-// fields in name order.
-func member(id string, fields map[string]any) string {
-	parts := make([]string, 0, len(fields))
-	for _, key := range slices.Sorted(maps.Keys(fields)) {
-		parts = append(parts, Text(key)+": "+value(fields[key]))
-	}
-	text := Text(id)
-	if text != "" && len(parts) > 0 {
-		text += ": "
-	}
-	return text + strings.Join(parts, ", ")
-}
-
-// memberPair renders the two versions of a changed member with only the
-// fields that differ, each pair of values reading differently.
-func memberPair(id string, before, after map[string]any) (string, string) {
-	keys := maps.Clone(before)
-	maps.Copy(keys, after)
-	var old, current []string
+func objectDiff(left, right map[string]any, label func(string) string) []string {
+	var lines []string
+	keys := maps.Clone(left)
+	maps.Copy(keys, right)
 	for _, key := range slices.Sorted(maps.Keys(keys)) {
-		a, had := before[key]
-		b, has := after[key]
-		if had && has && reflect.DeepEqual(a, b) {
-			continue
-		}
-		if !had {
+		a, exists := left[key]
+		if !exists {
 			a = missing{}
 		}
-		if !has {
+		b, exists := right[key]
+		if !exists {
 			b = missing{}
 		}
-		x, y := distinct(a, b)
-		old = append(old, Text(key)+": "+x)
-		current = append(current, Text(key)+": "+y)
+		lines = append(lines, difference(label(key), a, b)...)
 	}
-	return Text(id) + ": " + strings.Join(old, ", "), Text(id) + ": " + strings.Join(current, ", ")
+	return lines
 }
 
 func emptyValue(value any) bool {
@@ -231,27 +147,6 @@ func initial(field string, v any) []string {
 	return result
 }
 
-func indexed(items []any, key string) (map[string]map[string]any, bool) {
-	result := make(map[string]map[string]any, len(items))
-	for _, item := range items {
-		fields, ok := item.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		id, ok := fields[key].(string)
-		if !ok || id == "" {
-			return nil, false
-		}
-		if _, exists := result[id]; exists {
-			return nil, false
-		}
-		fields = maps.Clone(fields)
-		delete(fields, key)
-		result[id] = fields
-	}
-	return result, true
-}
-
 // readable renders one member of a collection without an identity.
 func readable(item any) string {
 	if fields, object := item.(map[string]any); object {
@@ -269,7 +164,7 @@ func readable(item any) string {
 			}
 			return strings.Join(lines, "\n")
 		}
-		return member("", fields)
+		return member("", "", fields)
 	}
 	return value(item)
 }

@@ -1188,7 +1188,7 @@ func TestMacValidationAndAdoption(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Graph exposes no digest of adopted content, so adoption publishes it again.
-	if len(response.Uploads) != 1 || response.Uploads[0].Name != plugin.UploadInstaller || response.Uploads[0].Before != "" {
+	if len(response.Uploads) != 1 || response.Uploads[0].Name != plugin.UploadInstaller || response.Uploads[0].Before != "" || response.Uploads[0].Reason == "" {
 		t.Fatalf("adoption did not plan publication: %+v", response)
 	}
 	if len(fake.paths) != 1 || fake.paths[0] != "/beta"+appsPath+"/app-1" {

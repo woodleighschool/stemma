@@ -168,13 +168,15 @@ const (
 	UploadIcon      = "icon"
 )
 
-// Upload is bytes a publication puts in the destination. Before is the SHA-256
-// of the bytes the destination held, if any.
+// Upload identifies the payload a destination writes. Before and After are the
+// destination's payload digests. Reason explains a transfer the digests alone
+// cannot account for.
 type Upload struct {
 	Name     string `json:"name"`
 	Filename string `json:"filename"`
 	Before   string `json:"before,omitempty"`
 	After    string `json:"after"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // FieldChange is one managed metadata field a publication sets. Field is its

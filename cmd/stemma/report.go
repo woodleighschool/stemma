@@ -77,11 +77,7 @@ func resourceRows(method string, resource engine.ResourceReport, namedInputs boo
 		return []changes.Row{{Summary: changes.Line{{Role: changes.Old, Text: summary}}}}
 	}
 	if len(resource.BlockedBy) > 0 {
-		names := make([]string, 0, len(resource.BlockedBy))
-		for _, key := range resource.BlockedBy {
-			names = append(names, keyName(key))
-		}
-		return []changes.Row{changes.BlockedBy(names)}
+		return []changes.Row{changes.BlockedBy("", resource.BlockedBy)}
 	}
 	switch method {
 	case "plan", "apply":

@@ -10,7 +10,6 @@ import (
 	"github.com/woodleighschool/stemma/internal/engine"
 	"github.com/woodleighschool/stemma/internal/lock"
 	"github.com/woodleighschool/stemma/internal/source"
-	"github.com/woodleighschool/stemma/plugin"
 )
 
 // Role says what a span of a row means; each surface styles it.
@@ -72,9 +71,9 @@ func Failed(subject, message string) Row {
 	return row
 }
 
-// BlockedBy is the row of a resource whose required outputs failed.
-func BlockedBy(names []string) Row {
-	return Row{Summary: Line{{Blocked, "blocked"}}, Details: []Line{{{Blocked, "blocked by " + Text(strings.Join(names, ", "))}}}}
+// BlockedBy names the prerequisites a resource or destination is waiting on.
+func BlockedBy(subject string, blockers engine.Blockers) Row {
+	return Row{Subject: subject, Summary: Line{{Blocked, "blocked"}}, Details: []Line{{{Blocked, "requires " + Text(strings.Join(blockers.Names(), ", "))}}}}
 }
 
 // Skipped is the row of a resource the command does not apply to.
@@ -233,81 +232,6 @@ func ShortDigest(digest string) string {
 	return Text(digest)
 }
 
-// PublicationRow renders the same change for plan and apply. The command's
-// summary distinguishes proposed changes from completed ones.
-func PublicationRow(p engine.Publication) Row {
-	row := Row{Subject: p.Destination, Summary: PublicationHeadline(p)}
-	if p.Error != "" {
-		row = Failed(p.Destination, p.Error)
-	}
-	for _, field := range p.Fields {
-		// A filename used as publication identity is already in the headline.
-		if p.Error == "" && p.Version != "" && field.Field == "filename" && decode(field.After) == p.Version {
-			if len(field.Before) == 0 && p.Previous == "" || decode(field.Before) == p.Previous {
-				continue
-			}
-		}
-		for _, line := range fieldChange(field) {
-			row.Details = append(row.Details, styled(line))
-		}
-	}
-	for _, u := range p.Uploads {
-		upload := Line{{Label, "upload " + Text(u.Name) + ":"}}
-		if p.Error != "" || u.Filename != p.Version {
-			upload = append(upload, Span{Plain, " " + Text(u.Filename)})
-		}
-		row.Details = append(row.Details, upload)
-		digest := Line{{Label, "  digest: "}}
-		if u.Before != "" {
-			before, after := distinct(u.Before, u.After)
-			digest = append(digest, Span{Old, before + " →"}, Span{Plain, " "}, Span{New, after})
-		} else {
-			digest = append(digest, Span{New, value(u.After)}, Span{Old, " (previous digest unavailable)"})
-		}
-		row.Details = append(row.Details, digest)
-	}
-	for _, repair := range p.Repairs {
-		row.Details = append(row.Details, Line{{New, "rebuild " + Text(repair)}})
-	}
-	if len(p.Removed) > 0 {
-		row.Details = append(row.Details, Line{{Removed, "remove " + Text(strings.Join(p.Removed, ", "))}})
-	}
-	return row
-}
-
-// PublicationHeadline identifies the version or content being published.
-func PublicationHeadline(p engine.Publication) Line {
-	switch {
-	case p.Version == "" && (len(p.Uploads) > 0 || len(p.Fields) > 0 || len(p.Removed) > 0 || len(p.Repairs) > 0):
-		return Line{{New, "updated"}}
-	case p.Version == "":
-		return Line{{Old, "unchanged"}}
-	case p.Previous == "":
-		return Line{{New, "new " + Text(p.Version)}}
-	case p.Version != p.Previous:
-		return replaced(p.Previous, p.Version)
-	case p.Status == engine.StatusUnchanged:
-		return Line{{Old, Text(p.Version) + " unchanged"}}
-	default:
-		return Line{{Old, Text(p.Version)}}
-	}
-}
-
-// fieldChange renders one field: its initial value, its removal, or the
-// difference between its values.
-func fieldChange(field plugin.FieldChange) []string {
-	name := Text(field.Field)
-	before, after := decode(field.Before), decode(field.After)
-	if _, absent := before.(missing); absent {
-		return initial(name, after)
-	}
-	lines := difference(name, before, after)
-	if len(lines) == 0 {
-		return []string{name + ": changed"}
-	}
-	return lines
-}
-
 // entryFields is a lock entry as the lock records it, by top-level field.
 func entryFields(entry source.Entry) map[string]any {
 	data, err := json.Marshal(entry)
@@ -321,15 +245,14 @@ func entryFields(entry source.Entry) map[string]any {
 	return fields
 }
 
-// words name statuses in each command's summary where they differ from the
-// status itself.
-var words = map[string]struct{ changed, unchanged, skipped string }{
+// words supplies the command-specific terms in a run summary.
+var words = map[string]struct{ changed, unchanged, skipped, pruned string }{
 	"update":    {changed: "updated"},
 	"prepare":   {changed: "prepared", unchanged: "cached"},
 	"signature": {changed: "derived", skipped: "nothing to declare"},
 	"icon":      {changed: "created", skipped: "without artwork"},
-	"plan":      {changed: "to publish"},
-	"apply":     {changed: "published"},
+	"plan":      {changed: "to publish", pruned: "to prune"},
+	"apply":     {changed: "published", pruned: "pruned"},
 }
 
 // Summary is an outcome command's last line: the resources it selected, how
@@ -357,12 +280,8 @@ func Summary(method string, s engine.Summary) Line {
 		return Line{{Strong, plural(s.Resources, "resource") + "."}}
 	}
 	line = append(line, parts...)
-	if s.Removed > 0 && (method == "plan" || method == "apply") {
-		verb := " to remove"
-		if method == "apply" {
-			verb = " removed"
-		}
-		line = append(line, Span{Plain, "; " + plural(s.Removed, "older version") + verb})
+	if s.Removed > 0 && word.pruned != "" {
+		line = append(line, Span{Plain, "; " + plural(s.Removed, "package") + " " + word.pruned})
 	}
 	return append(line, Span{Plain, "."})
 }

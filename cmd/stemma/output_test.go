@@ -200,7 +200,7 @@ func TestPreparationShowsWhatItBuiltOrCouldNot(t *testing.T) {
 			}
 			want := "✓ MacSoftware/cached: 1.0\n  installer: cached-1.0.pkg\n✓ MacSoftware/built: 2.0\n  installer: built-2.0.pkg\n" +
 				"✗ MacSoftware/failed: failed\n  source unavailable\n" +
-				"✗ MacSoftware/blocked: blocked\n  blocked by MacSoftware/failed\n"
+				"✗ MacSoftware/blocked: blocked\n  requires MacSoftware/failed\n"
 			if out.String() != want || diagnostic.Len() != 0 {
 				t.Fatalf("stdout=%q stderr=%q", &out, &diagnostic)
 			}

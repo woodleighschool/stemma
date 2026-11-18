@@ -104,23 +104,23 @@ func TestPublicationRowsStateTheVersionClientsGet(t *testing.T) {
 	}{
 		"version bump retiring the version it replaces": {
 			engine.Publication{Destination: "woodstar", Version: "26.1111.21308", Previous: "26.1106.51428", Uploads: installer("a", "b"), Removed: []string{"26.1106.51428"}, Fields: []plugin.FieldChange{field("pkginfo.installed_size", "100", "120")}},
-			"woodstar: 26.1106.51428 → 26.1111.21308\n  pkginfo.installed_size: 100 → 120\n  upload installer: app.pkg\n    digest: a → b\n  remove 26.1106.51428\n",
+			"woodstar: 26.1106.51428 → 26.1111.21308\n  pkginfo.installed_size (KiB): 100 → 120\n  upload installer: app.pkg\n    digest: a → b\n  prune package 26.1106.51428\n",
 		},
 		"new bytes at the same version": {
 			engine.Publication{Destination: "woodstar", Version: "25.10.26", Previous: "25.10.26", Uploads: installer("a", "b"), Fields: []plugin.FieldChange{field("pkginfo.installer_item_size", "1", "2")}},
-			"woodstar: 25.10.26\n  pkginfo.installer_item_size: 1 → 2\n  upload installer: app.pkg\n    digest: a → b\n",
+			"woodstar: 25.10.26 (same version)\n  pkginfo.installer_item_size (KiB): 1 → 2\n  upload installer: app.pkg\n    digest: a → b\n",
 		},
 		"bytes the destination lost": {
 			engine.Publication{Destination: "munki", Version: "1.0", Previous: "1.0", Uploads: installer("a", "a")},
-			"munki: 1.0\n  upload installer: app.pkg\n    digest: a → a\n",
+			"munki: 1.0 (same version)\n  upload installer: app.pkg\n    digest: a\n",
 		},
 		"new software shows initial values": {
 			engine.Publication{Destination: "woodstar", Version: "1.9.10", Uploads: installer("", "b"), Origins: map[string]string{"pkginfo.category": "explicit", "pkginfo.installed_size": "artifact.installed_size"}, Fields: []plugin.FieldChange{field("pkginfo.category", "", `"Productivity"`), field("pkginfo.installed_size", "", "120")}},
-			"woodstar: new 1.9.10\n  pkginfo.category: Productivity\n  pkginfo.installed_size: 120\n  upload installer: app.pkg\n    digest: b (previous digest unavailable)\n",
+			"woodstar: new 1.9.10\n  pkginfo.category: Productivity\n  pkginfo.installed_size (KiB): 120\n  upload installer: app.pkg\n    digest: b\n",
 		},
 		"retention beyond the replaced version": {
 			engine.Publication{Destination: "woodstar", Version: "7.43.2", Previous: "7.43.2", Removed: []string{"7.41.0", "7.42.0"}},
-			"woodstar: 7.43.2\n  remove 7.41.0, 7.42.0\n",
+			"woodstar: 7.43.2\n  prune packages 7.41.0, 7.42.0\n",
 		},
 		"a field change beneath its headline": {
 			engine.Publication{Destination: "intune", Version: "7.3", Previous: "7.3", Fields: []plugin.FieldChange{field("description", `"Old"`, `"New"`)}},
@@ -128,7 +128,7 @@ func TestPublicationRowsStateTheVersionClientsGet(t *testing.T) {
 		},
 		"content fields when nothing else explains the change": {
 			engine.Publication{Destination: "woodstar", Version: "157.0", Previous: "157.0", Fields: []plugin.FieldChange{field("pkginfo.installs", `[{"path":"/Applications/App.app","CFBundleVersion":"1"}]`, `[{"path":"/Applications/App.app","CFBundleVersion":"2"}]`)}},
-			"woodstar: 157.0\n  pkginfo.installs:\n    - /Applications/App.app: CFBundleVersion: 1\n    + /Applications/App.app: CFBundleVersion: 2\n",
+			"woodstar: 157.0\n  pkginfo.installs:\n    /Applications/App.app:\n      CFBundleVersion: 1 → 2\n",
 		},
 		"failure": {
 			engine.Publication{Destination: "jamf", Error: "401 Unauthorized\nthe client secret was rejected"},
@@ -144,7 +144,7 @@ func TestPublicationRowsStateTheVersionClientsGet(t *testing.T) {
 		}
 	}
 	details := plain([]Row{PublicationRow(engine.Publication{Destination: "woodstar", Version: "2", Previous: "1", Uploads: installer(strings.Repeat("a", 64), strings.Repeat("b", 64)), Fields: []plugin.FieldChange{field("pkginfo.installed_size", "100", "120")}})})
-	if !strings.Contains(details, "pkginfo.installed_size: 100 → 120") || !strings.Contains(details, "digest: aaaaaaaaaaaa… → bbbbbbbbbbbb…") {
+	if !strings.Contains(details, "pkginfo.installed_size (KiB): 100 → 120") || !strings.Contains(details, "digest: aaaaaaaaaaaa… → bbbbbbbbbbbb…") {
 		t.Errorf("details hide content fields or digests:\n%s", details)
 	}
 }
@@ -156,7 +156,7 @@ func TestSummaryCountsResourcesInOneGrammar(t *testing.T) {
 		want    string
 	}{
 		{"update", engine.Summary{Resources: 103, Changed: 1, Unchanged: 102}, "103 resources: 1 updated, 102 unchanged."},
-		{"apply", engine.Summary{Resources: 103, Changed: 8, Unchanged: 95, Removed: 7}, "103 resources: 8 published, 95 unchanged; 7 older versions removed."},
+		{"apply", engine.Summary{Resources: 103, Changed: 8, Unchanged: 95, Removed: 7}, "103 resources: 8 published, 95 unchanged; 7 packages pruned."},
 		{"plan", engine.Summary{Resources: 103, Changed: 4, Unchanged: 98, Failed: 1}, "103 resources: 4 to publish, 98 unchanged, 1 failed."},
 		{"update", engine.Summary{Resources: 103, Changed: 7, Unchanged: 94, Failed: 1, Blocked: 1}, "103 resources: 7 updated, 94 unchanged, 1 failed, 1 blocked."},
 		{"prepare", engine.Summary{Resources: 103, Changed: 4, Unchanged: 99}, "103 resources: 4 prepared, 99 cached."},

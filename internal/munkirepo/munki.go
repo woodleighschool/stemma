@@ -219,6 +219,15 @@ type transfer struct {
 	artifact plugin.Artifact
 }
 
+func repositoryTransfer(name, location, path, difference string, recorded any, artifact plugin.Artifact) transfer {
+	before, _ := recorded.(string)
+	upload := plugin.Upload{Name: name, Filename: location, Before: before, After: artifact.SHA256}
+	if before == artifact.SHA256 {
+		upload.Reason = difference
+	}
+	return transfer{upload, path, artifact}
+}
+
 func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest[Config]) (response plugin.ReconcileResponse, err error) {
 	input, managed, derived, err := nativeInput(request)
 	if err != nil {
@@ -323,7 +332,8 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	} else {
 		extension := filepath.Ext(request.Artifact.Filename)
 		input.InstallerLocation, err = freeName(filepath.Join(root, "pkgs"), strings.TrimSuffix(request.Artifact.Filename, extension), extension, func(name string) (bool, error) {
-			return fileMatches(ctx, filepath.Join(root, "pkgs", name), request.Artifact)
+			difference, err := fileDifference(ctx, filepath.Join(root, "pkgs", name), request.Artifact)
+			return difference == "", err
 		})
 		if err != nil {
 			return plugin.ReconcileResponse{}, err
@@ -380,11 +390,11 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 	contentNeeded := false
 	if input.InstallerType != "nopkg" {
 		filename := filepath.Join(root, "pkgs", filepath.FromSlash(input.InstallerLocation))
-		matches, err := fileMatches(ctx, filename, request.Artifact)
+		difference, err := fileDifference(ctx, filename, request.Artifact)
 		if err != nil {
 			return plugin.ReconcileResponse{}, err
 		}
-		if !matches {
+		if difference != "" {
 			contentNeeded = true
 			// Replacing bytes in place must not break another item that installs them.
 			for _, other := range items {
@@ -392,21 +402,19 @@ func reconcile(ctx context.Context, root string, request plugin.ReconcileRequest
 					return plugin.ReconcileResponse{}, fmt.Errorf("installer %s is shared with %s, so its bytes cannot be replaced", input.InstallerLocation, other.path)
 				}
 			}
-			before, _ := old["installer_item_hash"].(string)
-			transfers = append(transfers, transfer{plugin.Upload{Name: plugin.UploadInstaller, Filename: input.InstallerLocation, Before: before, After: request.Artifact.SHA256}, filename, request.Artifact})
+			transfers = append(transfers, repositoryTransfer(plugin.UploadInstaller, input.InstallerLocation, filename, difference, old["installer_item_hash"], request.Artifact))
 		}
 	}
 	if origins["pkginfo.icon_name"] == "input.icon" {
 		icon := request.Inputs["icon"]
 		name, _ := managed["icon_name"].(string)
 		filename := filepath.Join(root, "icons", filepath.FromSlash(name))
-		matches, err := fileMatches(ctx, filename, icon)
+		difference, err := fileDifference(ctx, filename, icon)
 		if err != nil {
 			return plugin.ReconcileResponse{}, err
 		}
-		if !matches {
-			before, _ := old["icon_hash"].(string)
-			transfers = append(transfers, transfer{plugin.Upload{Name: plugin.UploadIcon, Filename: name, Before: before, After: icon.SHA256}, filename, icon})
+		if difference != "" {
+			transfers = append(transfers, repositoryTransfer(plugin.UploadIcon, name, filename, difference, old["icon_hash"], icon))
 		}
 	}
 	catalogs, err := catalogChanges(root, old, desired)
@@ -556,28 +564,36 @@ func catalogNames(item map[string]any) []string {
 }
 func raw(value any) json.RawMessage { data, _ := json.Marshal(value); return data }
 
-func fileMatches(ctx context.Context, path string, artifact plugin.Artifact) (bool, error) {
+// fileDifference is empty when the repository already holds the artifact.
+func fileDifference(ctx context.Context, path string, artifact plugin.Artifact) (string, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
+		return "file missing from repository", nil
 	}
 	if err != nil {
-		return false, err
+		return "", err
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	if !info.Mode().IsRegular() || info.Size() != artifact.Size {
-		return false, nil
+	if !info.Mode().IsRegular() {
+		return "repository entry is not a regular file", nil
+	}
+	if info.Size() != artifact.Size {
+		return "repository file size differs", nil
 	}
 	h := sha256.New()
 	if _, err := io.Copy(h, fileio.Reader{Context: ctx, Reader: f}); err != nil {
-		return false, err
+		return "", err
 	}
-	return hex.EncodeToString(h.Sum(nil)) == artifact.SHA256, nil
+	if hex.EncodeToString(h.Sum(nil)) != artifact.SHA256 {
+		return "repository file digest differs", nil
+	}
+	return "", nil
 }
+
 func publishContent(ctx context.Context, path string, artifact plugin.Artifact) (err error) {
 	done := plugin.Stage(ctx, "Copying Munki installer", plugin.Detail(filepath.Base(path)))
 	defer func() { done(err) }()
