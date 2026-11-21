@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.13.0](https://github.com/woodleighschool/stemma/compare/v0.12.4...v0.13.0) (2026-11-21)
+
+
+### ⚠ BREAKING CHANGES
+
+* report reviewed inputs and destination changes as resources finish
+* **validate:** check configuration only
+
+### Features
+
+* **cache:** check stored content once and on request ([5d75641](https://github.com/woodleighschool/stemma/commit/5d7564158ebfd31e4eb33e3ae123e225b4649b5d))
+* **progress:** report archive and inspection work ([7a6a046](https://github.com/woodleighschool/stemma/commit/7a6a046f6b885cbd1bd43bdf4e38d1660d015eda))
+* report reviewed inputs and destination changes as resources finish ([b6049ad](https://github.com/woodleighschool/stemma/commit/b6049ad68310168392cdaed18f2a00056986a0f2))
+* **report:** explain publication changes and package pruning ([a671223](https://github.com/woodleighschool/stemma/commit/a671223d08b719c0efdc2ecbff7d0c7c250e2257))
+* **validate:** check configuration only ([fa18987](https://github.com/woodleighschool/stemma/commit/fa18987fdad21c711098ec7b76f993c4cfdd4ffe))
+
+
+### Bug Fixes
+
+* **apple:** verify file-backed bundle signatures ([ae22c78](https://github.com/woodleighschool/stemma/commit/ae22c7882fb328caf0284b8e404dce7caa34a3fa))
+* **engine:** reconcile ready destinations during preparation ([e9c71bf](https://github.com/woodleighschool/stemma/commit/e9c71bfa35d082480ea52b78affdd6f77842d029))
+* **go:** update module cel.dev/cel-go (v0.33.2 → v0.33.4) ([#326](https://github.com/woodleighschool/stemma/issues/326)) ([49b37d2](https://github.com/woodleighschool/stemma/commit/49b37d29c2d0d532d276bac29b7847cd7db45382))
+* **go:** update module github.com/microsoft/kiota-abstractions-go (v1.12.1 → v1.12.2) ([#327](https://github.com/woodleighschool/stemma/issues/327)) ([ebd675c](https://github.com/woodleighschool/stemma/commit/ebd675c7cb020f173671c6fbf9693157b84a96c0))
+* **go:** update module github.com/microsoft/kiota-http-go (v1.6.1 → v1.7.0) ([#331](https://github.com/woodleighschool/stemma/issues/331)) ([a1862e1](https://github.com/woodleighschool/stemma/commit/a1862e1e9ccc6e8a7312716349f8c109e93b1999))
+* **go:** update module github.com/microsoft/kiota-serialization-form-go (v1.1.7 → v1.1.8) ([#328](https://github.com/woodleighschool/stemma/issues/328)) ([8c14deb](https://github.com/woodleighschool/stemma/commit/8c14deb1bb5e432a6f43d9a6f35096aee7c746b6))
+* **go:** update module github.com/microsoft/kiota-serialization-multipart-go (v1.1.5 → v1.1.6) ([#312](https://github.com/woodleighschool/stemma/issues/312)) ([3a1db3d](https://github.com/woodleighschool/stemma/commit/3a1db3d14f909958c4a00503b9c028a8662c0e5c))
+* **go:** update module github.com/microsoft/kiota-serialization-multipart-go (v1.1.6 → v1.1.7) ([#329](https://github.com/woodleighschool/stemma/issues/329)) ([d873dc1](https://github.com/woodleighschool/stemma/commit/d873dc1992b9eace2115b2ec6bc72cc166035eb9))
+* **go:** update module github.com/microsoft/kiota-serialization-text-go (v1.1.7 → v1.1.8) ([#330](https://github.com/woodleighschool/stemma/issues/330)) ([a11ba16](https://github.com/woodleighschool/stemma/commit/a11ba1649481df62c3c7eb4f75b3886b7bc56020))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (0fa5e84 → ed66761) ([#318](https://github.com/woodleighschool/stemma/issues/318)) ([6475666](https://github.com/woodleighschool/stemma/commit/6475666ecd19ddf73adb5ac746c55afcf3420df5))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (328036e → 0fa5e84) ([#314](https://github.com/woodleighschool/stemma/issues/314)) ([f28225c](https://github.com/woodleighschool/stemma/commit/f28225c08e61a99f53bf0f6fdb99f73864081a7c))
+* **go:** update module github.com/modelcontextprotocol/go-sdk (v1.8.1-0.20261116114129-ed667612c119 → v1.9.0-pre.1) ([#323](https://github.com/woodleighschool/stemma/issues/323)) ([9bd68d7](https://github.com/woodleighschool/stemma/commit/9bd68d7f90a7e587d2657a53572e5b94b18d0dd6))
+* **go:** update module github.com/sergi/go-diff (v1.4.0 → v1.4.4) ([#320](https://github.com/woodleighschool/stemma/issues/320)) ([bf13f20](https://github.com/woodleighschool/stemma/commit/bf13f20a69d3692ad6006acd5baf5b23f1613d23))
+* **go:** update module github.com/sergi/go-diff (v1.4.4 → v1.4.5) ([#322](https://github.com/woodleighschool/stemma/issues/322)) ([b1531cd](https://github.com/woodleighschool/stemma/commit/b1531cdb89b3998c271be11d4c0cfffb35352ad7))
+
+
+### Performance Improvements
+
+* **intune:** package leased content without snapshots ([fe887b3](https://github.com/woodleighschool/stemma/commit/fe887b3bdf403de21c0c446232361d1b04868a2f))
+* read cached content in place instead of copying it ([bed49b2](https://github.com/woodleighschool/stemma/commit/bed49b2a5dab906696236ef3ea2f24df9492718d))
+* **source:** hash unchanged local inputs without rewriting them ([1b75dc9](https://github.com/woodleighschool/stemma/commit/1b75dc9106f139a82cdf09a89eb0e8e97a0d3587))
+
 ## [0.12.4](https://github.com/woodleighschool/stemma/compare/v0.12.3...v0.12.4) (2026-11-11)
 
 
