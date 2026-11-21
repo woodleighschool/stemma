@@ -26,33 +26,33 @@ url = "https://github.com/CodSpeedHQ/codspeed-go/releases/download/v1.4.0/codspe
 url_api = "https://api.github.com/repos/CodSpeedHQ/codspeed-go/releases/assets/705064479"
 
 [[tools."github:microsoft/kiota"]]
-version = "1.38.0"
+version = "1.39.0"
 backend = "github:microsoft/kiota"
-specifiers = ["v1.38.0"]
+specifiers = ["v1.39.0"]
 
 [tools."github:microsoft/kiota"."platforms.linux-arm64"]
-checksum = "sha256:c517a102b5203eee62aacf58f0baeefa6a828be62e7261a112e1d3c9b7dcaff1"
+checksum = "sha256:da8a151fae880cc51c375c79a04e6848c63149b0f055777f9e67f7947eb89487"
 checksum_source = "mise-versions"
-url = "https://github.com/microsoft/kiota/releases/download/v1.38.0/linux-arm64.zip"
-url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/703344915"
+url = "https://github.com/microsoft/kiota/releases/download/v1.39.0/linux-arm64.zip"
+url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/770016020"
 
 [tools."github:microsoft/kiota"."platforms.linux-x64"]
-checksum = "sha256:aca484531cd4aaeec1aa751f3cad6a0e1b5709260035c7955f1ee8e6b7615f5a"
+checksum = "sha256:1b8fd9de072113772788328bff9f60a2b4a736e799b88dcda6f0b52fc9c5f07a"
 checksum_source = "mise-versions"
-url = "https://github.com/microsoft/kiota/releases/download/v1.38.0/linux-x64.zip"
-url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/703345011"
+url = "https://github.com/microsoft/kiota/releases/download/v1.39.0/linux-x64.zip"
+url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/770016146"
 
 [tools."github:microsoft/kiota"."platforms.macos-arm64"]
-checksum = "sha256:d56a9dbd959e12748a19fc3b22352e4c1dfabdbd3a5149e44a605fc40ef78514"
+checksum = "sha256:de03ca9107755bf101df6cac544a91b325ad9bda1e76389421ef767b1a4de4a8"
 checksum_source = "mise-versions"
-url = "https://github.com/microsoft/kiota/releases/download/v1.38.0/osx-arm64.zip"
-url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/703345080"
+url = "https://github.com/microsoft/kiota/releases/download/v1.39.0/osx-arm64.zip"
+url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/770016255"
 
 [tools."github:microsoft/kiota"."platforms.windows-x64"]
-checksum = "sha256:7ff7f9a20ffe9e330e9dca1e10f1920c5a53e4af660eb89f5f027e9dff33a9d6"
+checksum = "sha256:2793356d90dc66925975617440b8b1fb8672c1ba2fadf1086239438755bbd2c6"
 checksum_source = "mise-versions"
-url = "https://github.com/microsoft/kiota/releases/download/v1.38.0/win-x64.zip"
-url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/703345354"
+url = "https://github.com/microsoft/kiota/releases/download/v1.39.0/win-x64.zip"
+url_api = "https://api.github.com/repos/microsoft/kiota/releases/assets/770016496"
 
 [[tools.go]]
 version = "1.27.4"
