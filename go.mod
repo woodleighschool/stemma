@@ -43,7 +43,7 @@ require (
 	github.com/mikelolasagasti/xz v1.0.1
 	github.com/modelcontextprotocol/go-sdk v1.9.0-pre.1
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12
-	github.com/ncruces/go-sqlite3 v0.37.0
+	github.com/ncruces/go-sqlite3 v0.38.0
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/oras-project/oras-go/v3 v3.0.0
@@ -120,7 +120,7 @@ require (
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/muesli/termenv v0.16.0 // indirect
-	github.com/ncruces/go-sqlite3-wasm/v6 v6.5.35401 // indirect
+	github.com/ncruces/go-sqlite3-wasm/v6 v6.7.35401 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
 	github.com/nwaples/rardecode/v2 v2.4.6 // indirect
 	github.com/pb33f/go-yaml v0.1.1 // indirect
