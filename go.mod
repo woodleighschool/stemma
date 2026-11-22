@@ -16,7 +16,7 @@ require (
 	github.com/deploymenttheory/go-apfs-v2 v0.18.0
 	github.com/deploymenttheory/go-bindings-macosplatform v0.20.1
 	github.com/deploymenttheory/go-macos-pkg v0.7.3
-	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.17.0
+	github.com/deploymenttheory/go-sdk-jamfpro-v2 v0.18.0
 	github.com/dustin/go-humanize v1.1.0
 	github.com/ebitengine/purego v0.11.3
 	github.com/fatih/color v1.19.0
