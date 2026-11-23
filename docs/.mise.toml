@@ -10,7 +10,6 @@ depends = [":deps"]
 run = "pnpm run build"
 
 [tasks.serve]
-description = "Serve the production build"
 depends = [":build"]
 run = "pnpm run serve"
 
@@ -25,15 +24,12 @@ run = "pnpm run format"
 run = "oxfmt --check"
 
 [tasks.lint]
-description = "Lint and type-check"
 depends = [":deps"]
 run = "pnpm run lint"
 
 [tasks.lint-fix]
-description = "Fix lint issues and type-check"
 depends = [":deps"]
 run = "pnpm run lint:fix"
 
 [tasks.clean]
-description = "Remove build output and Docusaurus caches"
 run = "rm -rf build .docusaurus .cache-loader"

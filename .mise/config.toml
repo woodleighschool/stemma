@@ -35,25 +35,21 @@ run = "go mod tidy -diff"
 run = "govulncheck ./..."
 
 [tasks.generate]
-description = "Generate the published default editor schema"
+description = "Editor schema"
 run = "go run ./cmd/stemma schema --builtins --output-file docs/static/stemma.schema.json"
 
 [tasks.generate-graph]
-description = "Regenerate scoped Microsoft Graph clients"
 tools = { "github:microsoft/kiota" = "v1.39.0" }
 run = "go run ./internal/intune/generate.go"
 
 [tasks.test]
-description = "Run race-enabled tests"
 run = "go test -race -count=1 ./..."
 
 [tasks.bench]
-description = "Run portable benchmarks without correctness tests"
 env = { GOMAXPROCS = "4", GOFLAGS = "-p=1 -vet=off" }
 run = "go test -run='^$' -bench=. -benchtime=1s ./internal/archive ./internal/apple ./internal/cas ./internal/diskimage ./internal/pkgbuild ./internal/engine ./internal/intunewin ./internal/intune ./internal/jamf"
 
 [tasks.bench-codspeed]
-description = "Record local CodSpeed measurements without uploading"
 tools = { "github:CodSpeedHQ/codspeed-go" = "1.4.0" }
 env = { GOMAXPROCS = "4", GOFLAGS = "-p=1 -vet=off", CODSPEED_PROFILE_FOLDER = "{{config_root}}/tmp/codspeed" }
 run = [
@@ -80,7 +76,6 @@ test -z "$unformatted" || { printf '%s\n' "$unformatted"; exit 1; }
 run = "rm -f stemma stemma.exe coverage.out && rm -rf dist"
 
 [tasks.docs]
-description = "Check and build the documentation"
 depends = ["//docs:fmt-check", "//docs:lint", "//docs:build"]
 
 [tasks.container-build]
