@@ -43,7 +43,7 @@ require (
 	github.com/mikelolasagasti/xz v1.0.1
 	github.com/modelcontextprotocol/go-sdk v1.9.0-pre.1
 	github.com/mrjoshuak/go-jpeg2000 v1.5.12
-	github.com/ncruces/go-sqlite3 v0.38.0
+	github.com/ncruces/go-sqlite3 v0.38.1
 	github.com/opencontainers/go-digest v1.0.0
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/oras-project/oras-go/v3 v3.0.0
